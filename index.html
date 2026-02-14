@@ -1215,6 +1215,7 @@ html, body{ overflow-x: hidden; }
 </head>
 <body>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 
 // ===== SAFE PATCH: debounce fallback =====
@@ -1684,20 +1685,26 @@ function undoInstallmentPay(entryId, number){
 }
 
 /* Hook renderAll to also render installments safely */
-const __renderAll = renderAll;
-renderAll = function(){
-  try{
-    const actor = currentActor();
-    const db = loadDB();
-    // ensure installments normalized
-    (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
-    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db); }
-  }catch(e){}
-  __renderAll();
-  try{
-    if(qs('[data-view="installments"].active')) renderInstallmentsView();
-  }catch(e){}
-};
+(function hookRenderAll(){
+  // Espera o script principal declarar window.renderAll antes de "embrulhar"
+  if (typeof window.renderAll !== 'function') {
+    return setTimeout(hookRenderAll, 50);
+  }
+  const __renderAll = window.renderAll;
+  window.renderAll = function(){
+    try { __renderAll(); } catch(e){ console.error(e); }
+    // Atualiza contador/localidade etc (se existir)
+    try {
+      const master = getMaster();
+      if (master && master.name){
+        const el = document.querySelector('#headerClinicName');
+        if(el) el.textContent = master.name;
+      }
+    } catch(e){}
+    // Garante que badges/prioridades sejam re-renderizadas se houver algo pendente
+    try { if (typeof window.renderBadges === 'function') window.renderBadges(); } catch(e){}
+  };
+})();
 
 // Ensure view switch triggers render
 const __showView = showView;
@@ -2246,6 +2253,207 @@ function getSmallLogoDataURI(){
 const DBKEY = "cronoscrm_phase1_db";
 const SESSIONKEY = "cronoscrm_phase1_session";
 const THEMEKEY = "cronoscrm_theme";
+
+
+// =========================
+// Supabase (Auth + DB)
+// =========================
+const SUPABASE_URL = "https://nsqpslierpulanxvsxaw.supabase.co";
+const SUPABASE_KEY = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
+const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Session/runtime
+window.__CRONOS = window.__CRONOS || {};
+window.__CRONOS.session = null; // supabase session
+window.__CRONOS.clinicId = null; // uuid string
+window.__CRONOS.userRole = null; // "master" | "internal"
+
+// Table names (Supabase)
+const T_CLINICS_PUBLIC = "clinics_public";
+const T_PROFILES = "profiles";
+const T_CLINIC_STATE = "clinic_state";
+
+// Email pattern for internal users created by master
+function internalEmail(username, clinicId){
+  const u = String(username||"").trim().toLowerCase();
+  return `${u}.${clinicId}@cronos.local`;
+}
+
+async function getSupabaseSession(){
+  const { data, error } = await supa.auth.getSession();
+  if(error) console.warn("Supabase session error:", error);
+  return data?.session || null;
+}
+
+async function signUpMaster(email, password){
+  return await supa.auth.signUp({
+    email: String(email||"").trim().toLowerCase(),
+    password,
+    options: {
+      emailRedirectTo: "https://cronosodonto.github.io/cronosodonto/"
+    }
+  });
+}
+
+async function signIn(email, password){
+  return await supa.auth.signInWithPassword({
+    email: String(email||"").trim().toLowerCase(),
+    password
+  });
+}
+
+async function signOut(){
+  return await supa.auth.signOut();
+}
+
+// Cloud state helpers (keeps legacy DB structure, but stores JSON in Supabase)
+window.__CRONOS.dbCache = null;
+window.__CRONOS.dbDirtyTimer = null;
+
+async function ensureClinicPublic(clinicId, clinicName){
+  if(!clinicId) return;
+  const name = (clinicName||"").trim() || "Clínica";
+  try {
+    // Upsert public clinic list (readable without login)
+    await supa.from(T_CLINICS_PUBLIC).upsert({
+      clinic_id: clinicId,
+      name,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "clinic_id" });
+  } catch(e) {
+    console.warn("ensureClinicPublic failed:", e);
+  }
+}
+
+async function loadClinicStateCloud(clinicId){
+  const { data, error } = await supa.from(T_CLINIC_STATE)
+    .select("state")
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if(error) {
+    console.warn("Cloud load failed, falling back to local:", error.message || error);
+    return null;
+  }
+  return data?.state || null;
+}
+
+async function saveClinicStateCloud(clinicId, state){
+  const payload = {
+    clinic_id: clinicId,
+    state,
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await supa.from(T_CLINIC_STATE).upsert(payload, { onConflict: "clinic_id" });
+  if(error) console.warn("Cloud save failed:", error.message || error);
+}
+
+function scheduleCloudSave(){
+  if(window.__CRONOS.dbDirtyTimer) clearTimeout(window.__CRONOS.dbDirtyTimer);
+  window.__CRONOS.dbDirtyTimer = setTimeout(async ()=>{
+    if(!window.__CRONOS.clinicId || !window.__CRONOS.dbCache) return;
+    await saveClinicStateCloud(window.__CRONOS.clinicId, window.__CRONOS.dbCache);
+  }, 600);
+}
+
+async function initCloudForCurrentUser() {
+  const session = await getSupabaseSession();
+  window.__CRONOS.session = session;
+  window.__CRONOS.clinicId = null;
+  window.__CRONOS.userRole = null;
+
+  if(!session) return false;
+
+  // Determine clinicId + role via profiles table; masters default to clinicId=user.id
+  const userId = session.user.id;
+  const { data: prof, error: profErr } = await supa.from(T_PROFILES)
+    .select("clinic_id, role, display_name")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if(profErr) {
+    console.warn("Profile read error:", profErr.message || profErr);
+  }
+
+  if(!prof) {
+    // Assume this is a master logging in for the first time.
+    window.__CRONOS.clinicId = userId;
+    window.__CRONOS.userRole = "master";
+    // create profile row for master (idempotent)
+    await supa.from(T_PROFILES).upsert({
+      user_id: userId,
+      clinic_id: userId,
+      role: "master",
+      display_name: session.user.email || "Master"
+    }, { onConflict: "user_id" });
+  } else {
+    window.__CRONOS.clinicId = prof.clinic_id;
+    window.__CRONOS.userRole = prof.role || "internal";
+  }
+
+  // Load cloud db state into cache; if empty, seed from freshDB()
+  let cloudState = await loadClinicStateCloud(window.__CRONOS.clinicId);
+  if(!cloudState) {
+    const localSeed = freshDB();
+    window.__CRONOS.dbCache = localSeed;
+    await saveClinicStateCloud(window.__CRONOS.clinicId, localSeed);
+  } else {
+    window.__CRONOS.dbCache = cloudState;
+  }
+
+
+  // Ensure legacy actors exist in DB cache for compatibility with existing UI
+  try{
+    const db = window.__CRONOS.dbCache;
+    if(db){
+      db.masters = Array.isArray(db.masters) ? db.masters : [];
+      db.users = Array.isArray(db.users) ? db.users : [];
+      const uid = session.user.id;
+      if(window.__CRONOS.userRole==="master"){
+        const email = (session.user.email||"").toLowerCase();
+        if(!db.masters.some(x=>x.id===uid)){
+          db.masters.push({ id: uid, name: (email.split("@")[0]||"Master"), email, passHash:"", createdAt: new Date().toISOString() });
+        }
+        // save session in local format for the rest of the app
+        try{ saveSession({kind:"master", id: uid}); }catch(e){}
+      } else {
+        // internal: derive username from email pattern
+        const em = (session.user.email||"").toLowerCase();
+        let uname = em.includes("@") ? em.split("@")[0] : em;
+        // if pattern username.clinicId
+        if(uname.includes(".")) uname = uname.split(".")[0];
+        if(!db.users.some(x=>x.id===uid)){
+          db.users.push({ id: uid, masterId: window.__CRONOS.clinicId, name: uname, email: em, username: uname, passHash:"", role:"internal", createdAt: new Date().toISOString() });
+        }
+        try{ saveSession({kind:"user", id: uid}); }catch(e){}
+      }
+      window.__CRONOS.dbCache = db;
+      // Persist any added actor records
+      await saveClinicStateCloud(window.__CRONOS.clinicId, db);
+    }
+  }catch(e){ console.warn("Legacy actor sync failed:", e); }
+
+  return true;
+}
+
+async function refreshClinicDropdown() {
+  // Populate authMasterSelect with clinics from cloud (public)
+  try {
+    const { data, error } = await supa.from(T_CLINICS_PUBLIC).select("clinic_id, name").order("name");
+    if(error) throw error;
+    const sel = el("authMasterSelect");
+    if(!sel) return;
+    sel.innerHTML = "";
+    (data||[]).forEach(c=>{
+      const opt = document.createElement("option");
+      opt.value = c.clinic_id;
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
+  } catch(e) {
+    console.warn("refreshClinicDropdown failed:", e.message || e);
+  }
+}
+
 window.__KPI_ACTIVE = null; // filtro do KPI clicável
 
 const ROLES = ["MASTER","GERENTE","SECRETARIA","DENTISTA"];
@@ -2388,8 +2596,18 @@ function loadDB(){
   try{ const db = JSON.parse(raw); if(!db.tasks) db.tasks=[]; if(!db.tasks) db.tasks=[]; if(!db.payments) db.payments=[]; if(!db.settings) db.settings={};
     return db; }catch{ const db=freshDB(); saveDB(db); return db; }
 }
-function saveDB(db){ localStorage.setItem(DBKEY, JSON.stringify(db)); 
+function saveDB(db){
+  // Always keep local fallback
+  try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(e){}
+  // Update cloud cache + debounce save when logged in
+  if(window.__CRONOS){
+    window.__CRONOS.dbCache = db;
+    if(window.__CRONOS.session && window.__CRONOS.clinicId){
+      scheduleCloudSave();
+    }
+  }
 }
+
 
 function migrateDBValues(db){
   let changed = false;
@@ -2502,6 +2720,8 @@ function showAuth(){
   el("authView").classList.remove("hidden");
   el("appView").classList.add("hidden");
   refreshAuthMasters();
+  // Also pull clinics from cloud so other devices can log in
+  refreshClinicDropdown();
   syncThemeButtons();
   window.__CRONOS_BOOTED = true;
 }
@@ -4623,7 +4843,7 @@ function exportJSON(){
 }
 function importJSON(file){
   const r = new FileReader();
-  r.onload = ()=>{
+  r.onload = async ()=>{
     try{
       const data = JSON.parse(r.result);
       if(!data || typeof data!=="object") throw new Error("invalid");
@@ -4631,7 +4851,9 @@ function importJSON(file){
       if(!Array.isArray(data.masters) || !Array.isArray(data.entries)) throw new Error("invalid");
       saveDB(data);
       toast("Backup importado ✅");
-      boot();
+      // If there is an existing Supabase session, hydrate cloud state first
+  try{ await initCloudForCurrentUser(); }catch(e){ console.warn(e);} 
+  boot();
     }catch(e){
       toast("Falha ao importar", "Arquivo inválido.");
     }
@@ -5042,7 +5264,7 @@ const bTask = el("btnNewTask"); if(bTask) bTask.addEventListener("click", openNe
 
 }
 function bindActions(){
-  el("btnLogout").onclick = ()=>{ clearSession(); toast("Saiu"); showAuth(); };
+  el("btnLogout").onclick = async ()=>{ try{ await signOut(); }catch(e){} clearSession(); toast("Saiu"); showAuth(); };
   el("btnNewLeadSide").onclick = openNewLead;
   el("btnNewLeadTop").onclick = openNewLead;
   el("btnNewLeadList").onclick = openNewLead;
@@ -5148,51 +5370,62 @@ function bindAuth(){
   });
 
   el("btnCreateMaster").addEventListener("click", async ()=>{
-    const db = loadDB();
+    const mode = val("authMode");
+    if(mode!=="master") return toast("Troque o modo para Master");
     const name = val("authMasterName").trim();
     const email = val("authLogin").trim().toLowerCase();
     const pass = val("authPass");
-    if(!name) return toast("Nome da clínica obrigatório");
-    if(!email) return toast("E-mail do master obrigatório");
-    if(!pass) return toast("Senha obrigatória");
-    if(db.masters.some(m=>m.email===email)) return toast("E-mail já existe");
+    if(!name) return toast("Preencha o nome da clínica");
+    if(!email || !email.includes("@")) return toast("Use um e-mail válido (master)");
+    if(!pass || pass.length<6) return toast("Senha fraca (mín. 6 caracteres)");
 
-    const passHash = await hashPass(pass);
-    const m = { id: uid("m"), name, email, passHash, createdAt: new Date().toISOString() };
-    db.masters.push(m);
-    saveDB(db);
-    saveSession({kind:"master", id:m.id});
-    toast("Master criado ✅", name);
-    boot();
+    // Store pending clinic name for first login after email confirmation
+    try{ localStorage.setItem("cronos_pending_clinic_name_"+email, name); }catch(e){}
+
+    const { data, error } = await signUpMaster(email, pass);
+    if(error){
+      console.warn(error);
+      return toast("Erro ao criar Master", error.message || "Falha");
+    }
+    toast("Conta criada ✅", "Confirme o e-mail para entrar");
   });
 
   el("btnLogin").addEventListener("click", async ()=>{
-    const db = loadDB();
     const mode = val("authMode");
     const login = val("authLogin").trim();
     const pass = val("authPass");
     if(!login || !pass) return toast("Preencha login e senha");
 
-    const passHash = await hashPass(pass);
-
-    if(mode==="master"){
-      const email = login.toLowerCase();
-      const m = db.masters.find(x=>x.email===email && x.passHash===passHash);
-      if(!m) return toast("Login inválido");
-      saveSession({kind:"master", id:m.id});
-      toast("Bem-vindo ✅", m.name);
-      boot();
-      return;
+    try{
+      if(mode==="master"){
+        if(!login.includes("@")) return toast("Use seu e-mail de Master");
+        const { data, error } = await signIn(login, pass);
+        if(error) return toast("Login inválido", error.message || "");
+        // Init cloud + ensure clinic visible
+        await initCloudForCurrentUser();
+        const email = String(login).toLowerCase();
+        let clinicName = "";
+        try{ clinicName = localStorage.getItem("cronos_pending_clinic_name_"+email) || ""; }catch(e){}
+        if(!clinicName) clinicName = (val("authMasterName").trim() || "Clínica");
+        await ensureClinicPublic(window.__CRONOS.clinicId, clinicName);
+        // Continue normal boot
+        toast("Bem-vindo ✅");
+        boot();
+      } else {
+        // internal user: allow email OR username (no @)
+        const clinicId = val("authMasterSelect");
+        if(!clinicId) return toast("Selecione a clínica");
+        const email = login.includes("@") ? login.toLowerCase() : internalEmail(login, clinicId);
+        const { data, error } = await signIn(email, pass);
+        if(error) return toast("Login inválido", error.message || "");
+        await initCloudForCurrentUser();
+        toast("Bem-vindo ✅");
+        boot();
+      }
+    }catch(err){
+      console.warn(err);
+      toast("Erro", err.message || "Falha");
     }
-
-    // user internal needs selected master
-    const masterId = val("authMasterSelect");
-    if(!masterId) return toast("Selecione um Master");
-    const u = db.users.find(x=>x.masterId===masterId && (x.username===login || (x.email||"").toLowerCase()===login.toLowerCase()) && x.passHash===passHash);
-    if(!u) return toast("Login inválido");
-    saveSession({kind:"user", id:u.id});
-    toast("Bem-vindo ✅", u.name);
-    boot();
   });
 }
 
@@ -5231,7 +5464,7 @@ function boot(){
 }
 
 /* One-time bindings */
-(function init(){
+(async function init(){
   // theme at start
   applyTheme(localStorage.getItem(THEMEKEY) || "dark");
 
