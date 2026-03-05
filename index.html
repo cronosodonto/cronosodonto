@@ -1700,7 +1700,7 @@ function undoInstallmentPay(entryId, number){
 }
 
 /* Hook renderAll to also render installments safely */
-const __renderAll = renderAll;
+const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
 renderAll = function(){
   try{
     const actor = currentActor();
