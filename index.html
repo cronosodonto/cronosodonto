@@ -5585,7 +5585,7 @@ function bindAuth(){
     if(!login || !pass) return toast("Preencha login e senha");
 
     const passHash = await hashPass(pass);
-
+/*
     if(mode==="master"){
       const email = login.toLowerCase();
       const m = db.masters.find(x=>x.email===email && x.passHash===passHash);
@@ -5595,8 +5595,9 @@ function bindAuth(){
       boot();
       return;
     }
-
-    // user internal needs selected master
+*/
+   // user internal needs selected master
+    /*
     const masterId = val("authMasterSelect");
     if(!masterId) return toast("Selecione um Master");
     const u = db.users.find(x=>x.masterId===masterId && (x.username===login || (x.email||"").toLowerCase()===login.toLowerCase()) && x.passHash===passHash);
@@ -5604,6 +5605,7 @@ function bindAuth(){
     saveSession({kind:"user", id:u.id});
     toast("Bem-vindo ✅", u.name);
     boot();
+    */
   });
 }
 
