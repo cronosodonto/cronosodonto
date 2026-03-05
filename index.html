@@ -5629,7 +5629,8 @@ function boot(){
   const actor = currentActor();
   if(!actor){
     showAuth();
-el("authMasterSelect").parentElement.classList.add("hidden");
+const authSelect = el("authMasterSelect");
+if (authSelect) authSelect.parentElement.classList.add("hidden");
     // auth defaults
     el("authMode").value = "master";
     // refreshAuthMasters();
