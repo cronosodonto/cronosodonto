@@ -1716,7 +1716,7 @@ renderAll = function(){
 };
 
 // Ensure view switch triggers render
-const __showView = showView;
+const __showView = typeof showView === "function" ? showView : function(){};
 showView = function(view){
   __showView(view);
   if(view==="installments"){
