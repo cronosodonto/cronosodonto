@@ -6025,7 +6025,27 @@ document.getElementById("appView").classList.remove("hidden");
 // iniciar sistema
 // boot(); // desativado temporariamente
 });
+async function verificarSessao() {
 
+  const { data } = await supabaseClient.auth.getSession();
+
+  if (data.session) {
+
+    // esconder login
+    document.getElementById("authView").classList.add("hidden");
+
+    // mostrar sistema
+    document.getElementById("appView").classList.remove("hidden");
+
+    console.log("Sessão ativa encontrada");
+
+    boot();
+
+  }
+
+}
+
+verificarSessao();
 </script>
 </body>
 </html>
