@@ -6018,7 +6018,11 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
 
     // login deu certo
   console.log("Login realizado com sucesso");
-
+  // criar sessão do Cronos
+saveSession({
+  kind: "master",
+  id: email
+});
 // esconder tela de login
 document.getElementById("authView").classList.add("hidden");
 
