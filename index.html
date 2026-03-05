@@ -5992,7 +5992,7 @@ function __bindKpiClicks(){
 const supabaseUrl = "https://nsqpslierpulanxvsxaw.supabase.co";
 const supabaseKey = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
 
-const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
 
 // quando clicar no botão entrar
@@ -6001,7 +6001,7 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
     const email = document.getElementById("authLogin").value;
     const password = document.getElementById("authPass").value;
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabaseClient.auth.signInWithPassword({
         email: email,
         password: password
     });
