@@ -6025,6 +6025,9 @@ document.getElementById("appView").classList.remove("hidden");
 // iniciar sistema
 // boot(); // desativado temporariamente
 });
+  function renderAll(){
+  console.log("renderAll executado");
+}
 async function verificarSessao() {
 
   const { data } = await supabaseClient.auth.getSession();
