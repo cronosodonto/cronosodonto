@@ -6014,8 +6014,16 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
     }
 
     // login deu certo
-   console.log("Login realizado com sucesso");
+  console.log("Login realizado com sucesso");
 
+// esconder tela de login
+document.getElementById("authView").classList.add("hidden");
+
+// mostrar sistema
+document.getElementById("appView").classList.remove("hidden");
+
+// iniciar sistema
+boot();
 });
 
 </script>
