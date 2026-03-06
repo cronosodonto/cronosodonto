@@ -5569,10 +5569,10 @@ function bindAuth(){
 //   if(!pass) return toast("Senha obrigatória");
 //   if(db.masters.some(m=>m.email===email)) return toast("E-mail já existe");
 
-//   const passHash = await hashPass(pass);
-//   const m = { id: uid("m"), name, email, passHash, createdAt: new Date() };
-//   db.masters.push(m);
-//   saveDB(db);
+   const passHash = await hashPass(pass);
+   const m = { id: uid("m"), name, email, passHash, createdAt: new Date() };
+   db.masters.push(m);
+   saveDB(db);
    // saveSession({kind:"master", id:"master"});
 //   toast("Master criado✅", name);
  //  boot();
