@@ -5573,9 +5573,9 @@ function bindAuth(){
 //   const m = { id: uid("m"), name, email, passHash, createdAt: new Date() };
 //   db.masters.push(m);
 //   saveDB(db);
-   saveSession({kind:"master", id:login});
+   // saveSession({kind:"master", id:"master"});
 //   toast("Master criado✅", name);
-   boot();
+ //  boot();
 // });
   el("btnLogin").addEventListener("click", async ()=>{
     const db = loadDB();
@@ -5585,7 +5585,7 @@ function bindAuth(){
     if(!login || !pass) return toast("Preencha login e senha");
 
     const passHash = await hashPass(pass);
-/*
+
     if(mode==="master"){
       const email = login.toLowerCase();
       const m = db.masters.find(x=>x.email===email && x.passHash===passHash);
@@ -5595,7 +5595,7 @@ function bindAuth(){
       boot();
       return;
     }
-*/
+
    // user internal needs selected master
     /*
     const masterId = val("authMasterSelect");
