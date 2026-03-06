@@ -5609,7 +5609,23 @@ function bindAuth(){
   });
 }
 function renderAll(){
-  console.log("renderAll executado");
+
+  if (typeof renderDashboard === "function") {
+    renderDashboard();
+  }
+
+  if (typeof renderLeads === "function") {
+    renderLeads();
+  }
+
+  if (typeof renderFunil === "function") {
+    renderFunil();
+  }
+
+  if (typeof renderTarefas === "function") {
+    renderTarefas();
+  }
+
 }
 function boot(){
   fillSelectOptions();
