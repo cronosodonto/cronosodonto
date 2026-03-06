@@ -6083,7 +6083,9 @@ async function verificarSessao() {
 
   if (data.session) {
 const email = data.session.user.email;
-localStorage.setItem("cronos_actor", email);
+    localStorage.setItem("cronos_actor", email);
+
+    await syncMasterUser();
     // esconder login
     document.getElementById("authView").classList.add("hidden");
 
