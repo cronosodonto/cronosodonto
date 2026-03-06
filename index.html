@@ -5573,9 +5573,9 @@ function bindAuth(){
 //   const m = { id: uid("m"), name, email, passHash, createdAt: new Date() };
 //   db.masters.push(m);
 //   saveDB(db);
-//   saveSession({kind:"master", id:m.id});
+   saveSession({kind:"master", id:login});
 //   toast("Master criado✅", name);
-//   boot();
+   boot();
 // });
   el("btnLogin").addEventListener("click", async ()=>{
     const db = loadDB();
