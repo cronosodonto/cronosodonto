@@ -6082,7 +6082,8 @@ async function verificarSessao() {
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
-
+const email = data.session.user.email;
+localStorage.setItem("cronos_actor", email);
     // esconder login
     document.getElementById("authView").classList.add("hidden");
 
