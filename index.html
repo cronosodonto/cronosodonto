@@ -2746,7 +2746,9 @@ function loadSession(){
   if(!raw) return null;
   try{ return JSON.parse(raw); }catch{ return null; }
 }
-Session(s){ localStorage.setItem(SESSIONKEY, JSON.stringify(s)); }
+function saveSession(s){
+  localStorage.setItem(SESSIONKEY, JSON.stringify(s));
+}
 function clearSession(){ localStorage.removeItem(SESSIONKEY); }
 
 async function hashPass(p){
