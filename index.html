@@ -5625,7 +5625,8 @@ function renderAll(){
 
 }
   async function syncMasterUser(){
-if(typeof supabaseClient === "undefined"){
+if(typeof supabaseClient === "undefined")
+{
    console.log("Supabase ainda não carregou");
    return;
 }
