@@ -5624,7 +5624,38 @@ function renderAll(){
   }
 
 }
-function boot(){
+  async function syncMasterUser(){
+
+  const { data } = await supabaseClient.auth.getUser();
+
+  if(!data?.user) return;
+
+  const email = data.user.email;
+
+  const db = loadDB();
+
+  if(!db.masters) db.masters = [];
+
+  const exists = db.masters.some(m => m.email === email);
+
+  if(!exists){
+
+    db.masters.push({
+      id: email,
+      name: email.split("@")[0],
+      email: email,
+      createdAt: new Date()
+    });
+
+    saveDB(db);
+
+  }
+
+}
+async function boot(){
+
+  await syncMasterUser();
+
   fillSelectOptions();
 
   // Filters (year/month) need options before we set values
