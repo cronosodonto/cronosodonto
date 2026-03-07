@@ -5625,7 +5625,10 @@ function renderAll(){
 
 }
   async function syncMasterUser(){
-
+if(typeof supabaseClient === "undefined"){
+   console.log("Supabase ainda não carregou");
+   return;
+}
   const { data } = await supabaseClient.auth.getUser();
 
   if(!data?.user) return;
