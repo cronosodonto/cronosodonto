@@ -2681,7 +2681,8 @@ function loadDB(){
   try{ const db = JSON.parse(raw); if(!db.tasks) db.tasks=[]; if(!db.tasks) db.tasks=[]; if(!db.payments) db.payments=[]; if(!db.settings) db.settings={};
     return db; }catch{ const db=freshDB(); saveDB(db); return db; }
 }
-DB(db){ localStorage.setItem(DBKEY, JSON.stringify(db)); 
+function saveDB(db){
+  localStorage.setItem(DBKEY, JSON.stringify(db));
 }
 
 function migrateDBValues(db){
