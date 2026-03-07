@@ -2681,7 +2681,7 @@ function loadDB(){
   try{ const db = JSON.parse(raw); if(!db.tasks) db.tasks=[]; if(!db.tasks) db.tasks=[]; if(!db.payments) db.payments=[]; if(!db.settings) db.settings={};
     return db; }catch{ const db=freshDB(); saveDB(db); return db; }
 }
-function saveDB(db){ localStorage.setItem(DBKEY, JSON.stringify(db)); 
+DB(db){ localStorage.setItem(DBKEY, JSON.stringify(db)); 
 }
 
 function migrateDBValues(db){
@@ -2745,7 +2745,7 @@ function loadSession(){
   if(!raw) return null;
   try{ return JSON.parse(raw); }catch{ return null; }
 }
-function saveSession(s){ localStorage.setItem(SESSIONKEY, JSON.stringify(s)); }
+Session(s){ localStorage.setItem(SESSIONKEY, JSON.stringify(s)); }
 function clearSession(){ localStorage.removeItem(SESSIONKEY); }
 
 async function hashPass(p){
@@ -2854,7 +2854,7 @@ function loadFilters(){
     return def;
   }
 }
-function saveFilters(f){ localStorage.setItem(FILTERKEY, JSON.stringify(f)); }
+Filters(f){ localStorage.setItem(FILTERKEY, JSON.stringify(f)); }
 
 function getUIFilters(){
   return {
@@ -2953,7 +2953,7 @@ function fillSelectOptions(){
 function filteredEntries(){
   const db = loadDB();
   const actor = currentActor();
-  if(!actor) return [];
+  if(!actor) return db.entries || [];
   const f = getUIFilters();
   const search = (f.search||"").toLowerCase();
 
