@@ -2681,8 +2681,7 @@ function loadDB(){
   try{ const db = JSON.parse(raw); if(!db.tasks) db.tasks=[]; if(!db.tasks) db.tasks=[]; if(!db.payments) db.payments=[]; if(!db.settings) db.settings={};
     return db; }catch{ const db=freshDB(); saveDB(db); return db; }
 }
-function saveDB(db){
-  localStorage.setItem(DBKEY, JSON.stringify(db));
+function saveDB(db){ localStorage.setItem(DBKEY, JSON.stringify(db)); 
 }
 
 function migrateDBValues(db){
@@ -2746,9 +2745,7 @@ function loadSession(){
   if(!raw) return null;
   try{ return JSON.parse(raw); }catch{ return null; }
 }
-function saveSession(s){
-  localStorage.setItem(SESSIONKEY, JSON.stringify(s));
-}
+function saveSession(s){ localStorage.setItem(SESSIONKEY, JSON.stringify(s)); }
 function clearSession(){ localStorage.removeItem(SESSIONKEY); }
 
 async function hashPass(p){
@@ -2857,7 +2854,7 @@ function loadFilters(){
     return def;
   }
 }
-Filters(f){ localStorage.setItem(FILTERKEY, JSON.stringify(f)); }
+function saveFilters(f){ localStorage.setItem(FILTERKEY, JSON.stringify(f)); }
 
 function getUIFilters(){
   return {
@@ -2956,7 +2953,7 @@ function fillSelectOptions(){
 function filteredEntries(){
   const db = loadDB();
   const actor = currentActor();
-  if(!actor) return db.entries || [];
+  if(!actor) return [];
   const f = getUIFilters();
   const search = (f.search||"").toLowerCase();
 
@@ -5627,41 +5624,7 @@ function renderAll(){
   }
 
 }
-  async function syncMasterUser(){
-if(typeof supabaseClient === "undefined"){
-   console.log("Supabase ainda não carregou");
-   return;
-}
-  const { data } = await supabaseClient.auth.getUser();
-
-  if(!data?.user) return;
-
-  const email = data.user.email;
-
-  const db = loadDB();
-
-  if(!db.masters) db.masters = [];
-
-  const exists = db.masters.some(m => m.email === email);
-
-  if(!exists){
-
-    db.masters.push({
-      id: email,
-      name: email.split("@")[0],
-      email: email,
-      createdAt: new Date()
-    });
-
-    saveDB(db);
-
-  }
-
-}
-async function boot(){
-
-  await syncMasterUser();
-
+function boot(){
   fillSelectOptions();
 
   // Filters (year/month) need options before we set values
@@ -6088,10 +6051,7 @@ async function verificarSessao() {
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
-const email = data.session.user.email;
-    localStorage.setItem("cronos_actor", email);
 
-    await syncMasterUser();
     // esconder login
     document.getElementById("authView").classList.add("hidden");
 
@@ -6100,7 +6060,7 @@ const email = data.session.user.email;
 
     console.log("Sessão ativa encontrada");
 
-    await boot();
+    boot();
 
   }
 
