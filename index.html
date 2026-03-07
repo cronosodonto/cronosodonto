@@ -5610,9 +5610,9 @@ function renderAll(){
   if (typeof renderDashboard === "function") {
     renderDashboard();
   }
-
-  if (typeof renderLeads === "function") {
-    renderLeads();
+const db = loadDB();
+  if (typeof renderLeadsTable === "function") {
+    renderLeadsTable(db.contacts || []);
   }
 
   if (typeof renderFunil === "function") {
