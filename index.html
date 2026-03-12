@@ -4429,7 +4429,13 @@ let contact = {
   lastSeenAt: val("lf_first") || todayISO()
 };
 
-db.contacts.push(contact);
+const existingIndex = db.contacts.findIndex(c => c.phone === contact.phone);
+
+if (existingIndex >= 0) {
+  db.contacts[existingIndex] = contact;
+} else {
+  db.contacts.push(contact);
+}
 
     const status = val("lf_status");
     const origin = val("lf_origin");
