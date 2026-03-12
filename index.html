@@ -4432,7 +4432,10 @@ let contact = {
 const existingIndex = db.contacts.findIndex(c => c.phone === contact.phone);
 
 if (existingIndex >= 0) {
-  db.contacts[existingIndex] = contact;
+  db.contacts[existingIndex] = {
+    ...db.contacts[existingIndex],
+    ...contact
+  };
 } else {
   db.contacts.push(contact);
 }
