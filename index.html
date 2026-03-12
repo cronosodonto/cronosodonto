@@ -4570,6 +4570,7 @@ if(!editingEntryId && hadBefore){
     }
 
     saveDB(db);
+    calcKPIs();
     closeModal();
     ensureMonthOptions(); // in case new month
     toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
