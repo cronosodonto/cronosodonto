@@ -4429,15 +4429,26 @@ let contact = {
   lastSeenAt: val("lf_first") || todayISO()
 };
 
-const existingIndex = db.contacts.findIndex(c => c.phone === contact.phone);
+const existingIndex = db.contacts.findIndex(function(c){
+  return String(c.phone) === String(contact.phone);
+});
 
 if (existingIndex >= 0) {
-  db.contacts[existingIndex] = {
-    ...db.contacts[existingIndex],
-    ...contact
-  };
+
+  // atualiza apenas nome e telefone
+  db.contacts[existingIndex].name = contact.name;
+  db.contacts[existingIndex].phone = contact.phone;
+
+  // usa o contato existente para manter histórico
+  contact = db.contacts[existingIndex];
+
 } else {
+
+  // novo contato
+  contact.id = crypto.randomUUID();
+
   db.contacts.push(contact);
+
 }
 
     const status = val("lf_status");
