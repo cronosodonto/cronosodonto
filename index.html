@@ -5612,7 +5612,7 @@ function renderAll(){
   }
 const db = loadDB();
   if (typeof renderLeadsTable === "function") {
-    renderLeadsTable(db.contacts || []);
+    renderLeadsTable(db.entries || []);
   }
 
   if (typeof renderFunil === "function") {
