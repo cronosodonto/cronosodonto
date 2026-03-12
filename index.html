@@ -4500,7 +4500,7 @@ if (existingIndex >= 0) {
       entry = db.entries.find(e=>e.id===editingEntryId);
       if(!entry) return toast("Erro", "Entrada não encontrada");
     }else{
-      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, createdAt: todayISO(), statusLog: [], tags: [] };
+      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [] };
       db.entries.push(entry);
     }
 
