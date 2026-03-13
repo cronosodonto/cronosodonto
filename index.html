@@ -3797,11 +3797,22 @@ function renderUsers(){
 
 /* -------- Navigation -------- */
 function setActiveView(view){
-  qsa(".nav button").forEach(b=> b.classList.toggle("active", b.dataset.view===view));
-  ["dashboard","leads","kanban","tasks","installments","users","settings"].forEach(v=>{
-    el(`view-${v}`).classList.toggle("hidden", v!==view);
-  });
-  renderAll();
+
+ qsa(".nav button").forEach(b =>
+   b.classList.toggle("active", b.dataset.view === view)
+ );
+
+ ["dashboard","leads","kanban","tasks","installments","users","settings"]
+ .forEach(v=>{
+   el(view-${v}).classList.toggle("hidden", v !== view);
+ });
+
+ renderAll();
+
+ if(view === "kanban"){
+   setTimeout(() => renderKanban(), 50);
+ }
+
 }
 
 /* -------- Modal helpers -------- */
