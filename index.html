@@ -5080,13 +5080,20 @@ function renderKanban(){
   const actor = currentActor();
   if(!actor) return;
   const rows = filteredEntries().slice(); // respects filters + month
+  function currentStatus(entry){
+  if(!entry.statusLog || entry.statusLog.length === 0){
+    return "Conversando";
+  }
+  return entry.statusLog[entry.statusLog.length - 1].to;
+}
   const db = loadDB();
   const board = el("kanbanBoard");
   if(!board) return;
 
   const groups = new Map(KANBAN_COLUMNS.map(c=>[c.status, []]));
   rows.forEach(e=>{
-    const key = groups.has(e.status) ? e.status : "Conversando";
+    const s = currentStatus(e);
+const key = groups.has(s) ? s : "Conversando";
     groups.get(key).push(e);
   });
 
