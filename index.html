@@ -3801,7 +3801,7 @@ function setActiveView(view){
   ["dashboard","leads","kanban","tasks","installments","users","settings"].forEach(v=>{
     el(`view-${v}`).classList.toggle("hidden", v!==view);
   });
-  renderAll();
+  setTimeout(renderAll, 0);
 }
 
 /* -------- Modal helpers -------- */
