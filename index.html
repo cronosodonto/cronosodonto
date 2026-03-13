@@ -5078,17 +5078,20 @@ const KANBAN_COLUMNS = [
 
 function renderKanban(){
   const actor = currentActor();
-  if(!actor) return;
-  const rows = filteredEntries().slice(); // respects filters + month
-  function currentStatus(entry){
-  if(!entry.statusLog || entry.statusLog.length === 0){
-    return "Conversando";
-  }
-  return entry.statusLog[entry.statusLog.length - 1].to;
+if(!actor) return;
+
+const db = loadDB();
+const board = el("kanbanBoard");
+if(!board) return;
+
+const rows = filteredEntries().slice(); // respects filters + month
+
+function currentStatus(entry){
+ if(!entry.statusLog || entry.statusLog.length === 0){
+  return "Conversando";
+ }
+ return entry.statusLog[entry.statusLog.length - 1].to;
 }
-  const db = loadDB();
-  const board = el("kanbanBoard");
-  if(!board) return;
 
   const groups = new Map(KANBAN_COLUMNS.map(c=>[c.status, []]));
   rows.forEach(e=>{
