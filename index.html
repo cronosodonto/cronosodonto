@@ -1719,6 +1719,9 @@ renderAll = function(){
 const __showView = typeof showView === "function" ? showView : function(){};
 showView = function(view){
   __showView(view);
+
+  console.log("VIEW:", view);
+  
   if(view==="installments"){
     try{ renderInstallmentsView(); }catch(e){ console.error(e); toast("Erro", "Falha ao abrir Parcelamentos."); }
   }
