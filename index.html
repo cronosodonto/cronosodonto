@@ -1726,7 +1726,10 @@ showView = function(view){
     try{ renderInstallmentsView(); }catch(e){ console.error(e); toast("Erro", "Falha ao abrir Parcelamentos."); }
   }
 if(view==="kanban"){
-  renderKanban();
+  setTimeout(() => {
+    renderKanban();
+  }, 50);
+}
 }
 };
 
