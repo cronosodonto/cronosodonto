@@ -1325,6 +1325,17 @@ function ensureInstallmentsForEntry(entry){
   (entry.installments||[]).forEach(p=>{
     if(p.due && !p.dueDate) p.dueDate = p.due;
     if(p.paid && !p.paidAt) p.paidAt = p.paid;
+    const hoje = new Date();
+const dataParcela = new Date(p.dueDate || p.due || 0);
+
+const forma = (p.payMethod || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+if (forma.includes("cart")) {
+  if (dataParcela <= hoje && !p.paidAt) {
+    p.paidAt = new Date().toISOString();
+    p.status = "PAGA";
+  }
+}
     if(!p.payMethod && entry.installPlan?.payMethod) p.payMethod = entry.installPlan.payMethod;
     if(!p.total && entry.installPlan?.n) p.total = parseInt(entry.installPlan.n||0,10) || p.total || 0;
     if(!p.status){
