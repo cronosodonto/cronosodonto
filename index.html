@@ -1721,7 +1721,11 @@ showView = function(view){
   __showView(view);
 
   console.log("VIEW:", view);
-  
+  if(view==="dashboard"){
+  setTimeout(() => {
+    renderDashboard();
+  }, 50);
+}
   if(view==="installments" && typeof renderInstallmentsView === "function"){
   renderInstallmentsView();
 }
