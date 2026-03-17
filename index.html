@@ -1722,9 +1722,9 @@ showView = function(view){
 
   console.log("VIEW:", view);
   
-  if(view==="installments"){
-    try{ renderInstallmentsView(); }catch(e){ console.error(e); toast("Erro", "Falha ao abrir Parcelamentos."); }
-  }
+  if(view==="installments" && typeof renderInstallmentsView === "function"){
+  renderInstallmentsView();
+}
 if(view==="kanban"){
   setTimeout(() => {
     renderKanban();
