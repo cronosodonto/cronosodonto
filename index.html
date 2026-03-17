@@ -5673,10 +5673,10 @@ const db = loadDB();
 
 }
   async function syncMasterUser(){
-if(typeof supabaseClient === "undefined")
-{
-   console.log("Supabase ainda não carregou");
-   return;
+if(typeof supabaseClient === "undefined"){
+  console.log("Supabase ainda não carregou, tentando novamente...");
+  setTimeout(syncMasterUser, 500);
+  return;
 }
   const { data } = await supabaseClient.auth.getUser();
 
