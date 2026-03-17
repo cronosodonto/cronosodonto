@@ -5199,7 +5199,13 @@ const total = list.reduce((sum,e)=>{
     const entryId = window.__KANBAN_DRAG_ID;
     window.__KANBAN_DRAG_ID = null;
     qsa(".kanCard", board).forEach(c=>c.classList.remove("kanSelected"));
-    if(entryId && status) quickUpdateStatus(entryId, status);
+    if(entryId && status){
+  quickUpdateStatus(entryId, status);
+
+  setTimeout(() => {
+    renderKanban();
+  }, 50);
+}
   }
 
   qsa("[data-dropzone], .kanCol", board).forEach(zone=>{
