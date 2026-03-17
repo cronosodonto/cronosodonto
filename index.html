@@ -5217,29 +5217,12 @@ const total = list.reduce((sum,e)=>{
       zone.classList.remove("kanDropHint");
 
       let entryId = null;
+      try{
+        entryId = ev.dataTransfer && ev.dataTransfer.getData("text/plain");
+      }catch(e){}
 
-try {
-  entryId = ev.dataTransfer && ev.dataTransfer.getData("text/plain");
-} catch(e) {}
-
-// fallback (IMPORTANTE)
-if (!entryId) {
-  entryId = window.__KANBAN_DRAG_ID;
-}
-
-// salva o ID
-if (entryId) {
-  window.__KANBAN_DRAG_ID = entryId;
-}
-
-// move o lead
-kanbanMoveTo(status);
-
-// atualiza visual
-setTimeout(() => {
-  renderKanban();
-}, 50);  
-  }
+      if(entryId) window.__KANBAN_DRAG_ID = entryId;
+      kanbanMoveTo(status);
     });
 
     // Tap-to-move fallback (mobile)
