@@ -5503,6 +5503,10 @@ const bTask = el("btnNewTask"); if(bTask) bTask.addEventListener("click", openNe
   if(instSearch) instSearch.addEventListener("input", debounce(renderInstallmentsView, 150));
   if(instFilter) instFilter.addEventListener("change", renderInstallmentsView);
   if(instRefresh) instRefresh.addEventListener("click", renderInstallmentsView);
+  setTimeout(() => {
+  renderInstallmentsView();
+  updateSidebarPills();
+}, 50);
 
 }
 function bindActions(){
