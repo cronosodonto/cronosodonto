@@ -3134,7 +3134,24 @@ el("kpiTotal").textContent = rows.length;
     });
   }
   try{ grid.dataset.rendered="1"; }catch(_){}
+updateSidebarCounts();
+}
+  function updateSidebarCounts(){
+  const db = loadDB();
+  const leads = db.leads || [];
 
+  const total = leads.length;
+  const hot = leads.filter(l => l.status === "hot").length;
+
+  const dash = document.querySelector('[data-view="dashboard"] .count');
+  if(dash) dash.textContent = total;
+
+  const leadsEl = document.querySelector('[data-view="leads"] .count');
+  if(leadsEl) leadsEl.textContent = ${hot} hot;
+
+  const funil = document.querySelector('[data-view="kanban"] .count');
+  if(funil) funil.textContent = total;
+}
 
 
 
