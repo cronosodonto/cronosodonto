@@ -5473,12 +5473,14 @@ function deleteTask(taskId){
 }
 
 function renderAll(){
+ setTimeout(() => {
   updateSidebarPills();
+  renderInstallmentsView();
+}, 100);
   renderDashboard();
   renderLeadsTable(filteredEntries());
 renderKanban();
   renderTasks();
-  renderInstallmentsView();
   renderUsers();
   renderSettings();
 }
