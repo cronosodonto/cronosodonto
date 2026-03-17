@@ -1722,6 +1722,9 @@ showView = function(view){
   if(view==="installments"){
     try{ renderInstallmentsView(); }catch(e){ console.error(e); toast("Erro", "Falha ao abrir Parcelamentos."); }
   }
+if(view==="kanban"){
+  renderKanban();
+}
 };
 
 // Bind filters events on DOM ready
