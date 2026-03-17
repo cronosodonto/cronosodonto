@@ -6142,10 +6142,13 @@ const email = data.session.user.email;
 
     console.log("Sessão ativa encontrada");
 
-    await boot();
-setTimeout(() => {
-  showView("dashboard");
-}, 50);
+   await boot();
+
+// força carregar os dados primeiro
+const db = loadDB();
+
+// agora sim renderiza
+showView("dashboard");
   }
 
 }
