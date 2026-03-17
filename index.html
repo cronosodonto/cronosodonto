@@ -6143,7 +6143,9 @@ const email = data.session.user.email;
     console.log("Sessão ativa encontrada");
 
     await boot();
-
+setTimeout(() => {
+  showView("dashboard");
+}, 50);
   }
 
 }
