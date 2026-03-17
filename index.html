@@ -3770,7 +3770,7 @@ function renderUsers(){
   const db = loadDB();
   const tbody = el("usersTbody");
   const master = db.masters.find(m=>m.id===actor.masterId);
-  const users = db.users.filter(u=>u.masterId===actor.masterId);
+ const users = db.users || [];
 
   const rows = [
     {
@@ -5285,8 +5285,7 @@ function renderTasks(){
 
   const f = getUIFilters();
   const monthKey = f.monthKey;
-  const tasks = (db.tasks||[])
-    .filter(t=>!t.masterId || t.masterId===actor.masterId)
+  const tasks = db.tasks || [];
         .sort((a,b)=> String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31")));
 
   if(!tasks.length){
