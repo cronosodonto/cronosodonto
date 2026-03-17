@@ -1330,7 +1330,7 @@ const dataParcela = new Date(p.dueDate || p.due || 0);
 
 const forma = (p.payMethod || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-if (forma.includes("cart")) {
+if (forma.includes("credito")) {
   if (dataParcela <= hoje && !p.paidAt) {
     p.paidAt = new Date().toISOString();
     p.status = "PAGA";
