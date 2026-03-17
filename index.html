@@ -5221,8 +5221,16 @@ const total = list.reduce((sum,e)=>{
         entryId = ev.dataTransfer && ev.dataTransfer.getData("text/plain");
       }catch(e){}
 
-      if(entryId) window.__KANBAN_DRAG_ID = entryId;
-      kanbanMoveTo(status);
+      if (entryId) {
+  window.__KANBAN_DRAG_ID = entryId;
+
+  kanbanMoveTo(status);
+
+  setTimeout(() => {
+    renderKanban();
+  }, 50);
+}  
+  }
     });
 
     // Tap-to-move fallback (mobile)
