@@ -6143,6 +6143,21 @@ const email = data.session.user.email;
 }
 
 window.addEventListener("load", verificarSessao);
+document.addEventListener("DOMContentLoaded", () => {
+  const btnKanban = document.querySelector('[data-view="kanban"]');
+
+  if (btnKanban) {
+    btnKanban.addEventListener("click", () => {
+      setTimeout(() => {
+        try {
+          renderKanban();
+        } catch (e) {
+          console.error("Erro ao renderizar kanban:", e);
+        }
+      }, 150);
+    });
+  }
+});
 </script>
 </body>
 </html>
