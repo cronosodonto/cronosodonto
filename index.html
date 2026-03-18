@@ -4721,10 +4721,8 @@ function markOK(entryId){
     }
 
     saveDB(db);
-toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : Voltou para: ${toStatus});
-
-if (typeof renderTasks === "function") renderTasks();
-if (typeof updateSidebarPills === "function") updateSidebarPills();
+    toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
+    renderAll();
   }catch(e){
     console.error(e);
     toast("Erro", "Não foi possível marcar OK.");
