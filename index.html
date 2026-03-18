@@ -1691,8 +1691,20 @@ function payInstallment(entryId, number){
   saveDB(db);
   toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
   // re-sync tasks + rerender
-  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
-  renderAll();
+  try {
+  syncInstallmentTasks(db, actor);
+  saveDB(db);
+} catch {}
+
+
+// 🔥 FORÇA ATUALIZAÇÃO REAL
+if (typeof renderInstallments === "function") renderInstallments();
+
+if (typeof renderTasks === "function") renderTasks();
+
+if (typeof renderKanban === "function") renderKanban();
+
+if (typeof renderAll === "function") renderAll();
 }
 
 function undoInstallmentPay(entryId, number){
