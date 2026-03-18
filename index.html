@@ -2722,13 +2722,18 @@ db = {
 function freshDB(){
   return { masters:[], users:[], contacts:[], entries:[], tasks:[], payments:[], settings:{ waTemplate: "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊" }, version:"phase1", createdAt:new Date().toISOString() };
 }
+  let DB = null
 function loadDB(){
+  if(DB) return DB;
+
   const raw = localStorage.getItem(DBKEY);
   if(!raw){ const db=freshDB(); saveDB(db); return db; }
   try{ const db = JSON.parse(raw); if(!db.tasks) db.tasks=[]; if(!db.tasks) db.tasks=[]; if(!db.payments) db.payments=[]; if(!db.settings) db.settings={};
     return db; }catch{ const db=freshDB(); saveDB(db); return db; }
 }
 function saveDB(db){
+  DB = db; // 👈 ESSA LINHA É A MÁGICA
+
   localStorage.setItem(DBKEY, JSON.stringify(db));
 
   try{
