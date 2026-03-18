@@ -1383,7 +1383,13 @@ function syncInstallmentTasks(db, actor){
   const entries = (db.entries||[]).filter(e=>e.masterId===masterId);
   const tasks = db.tasks || (db.tasks=[]);
 // remove tarefas antigas de parcelas (instalments)
-db.tasks = tasks.filter(t => !t.id?.startsWith("INST:"));
+db.tasks = tasks.filter(t => {
+  return !(
+    t.id?.includes("INST") ||
+    t.type === "installment" ||
+    t.desc?.includes("Parcela")
+  );
+});
   
   function taskKey(entryId, dueDate, number){
     return `INST:${entryId}:${dueDate}:${number}`;
@@ -1398,7 +1404,7 @@ db.tasks = tasks.filter(t => !t.id?.startsWith("INST:"));
     (e.installments||[]).forEach(p=>{
       const due = p.dueDate;
       const isPaid = !!p.paidAt || p.status==="PAGA";
-      const isLate = due && due < today && !isPaid;
+      const isLate = due && new Date(due) < new Date(today) && !isPaid;
       if(!isLate) return;
 
       const key = taskKey(e.id, due, p.number);
