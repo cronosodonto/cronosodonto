@@ -5498,7 +5498,8 @@ function toggleTaskDone(taskId){
   t.done = !t.done;
   saveDB(db);
   toast(t.done ? "Tarefa marcada como feita" : "Tarefa reaberta");
-  renderAll();
+ if (typeof renderTasks === "function") renderTasks();
+  if (typeof updateSidebarPills === "function") updateSidebarPills();
 }
 // compat
 function markTaskDone(taskId){ return toggleTaskDone(taskId); }
