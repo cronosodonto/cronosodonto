@@ -1709,7 +1709,9 @@ function undoInstallmentPay(entryId, number){
   saveDB(db);
   toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
   try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
+  setTimeout(() => {
   if (typeof renderAll === "function") renderAll();
+}, 50);
 }
 
 /* Hook renderAll to also render installments safely */
