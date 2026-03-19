@@ -1696,16 +1696,6 @@ function payInstallment(entryId, number){
   saveDB(db);
 } catch {}
   renderAll();
-
-
-// 🔥 FORÇA ATUALIZAÇÃO REAL
-if (typeof renderInstallments === "function") renderInstallments();
-
-if (typeof renderTasks === "function") renderTasks();
-
-if (typeof renderKanban === "function") renderKanban();
-
-if (typeof renderAll === "function") renderAll();
 }
 
 function undoInstallmentPay(entryId, number){
