@@ -1695,6 +1695,8 @@ function payInstallment(entryId, number){
   syncInstallmentTasks(db, actor);
   saveDB(db);
 } catch {}
+  renderFinanceiro();
+  renderTarefas();
 
 
 // 🔥 FORÇA ATUALIZAÇÃO REAL
