@@ -1405,7 +1405,7 @@ const tasks = db.tasks;
       const due = p.dueDate;
       const isPaid = !!p.paidAt || p.status==="PAGA";
       const isLate = due && new Date(due) < new Date(today) && !isPaid;
-      if(!isLate) return;
+      if(!isLate && !isPaid) return;
 
       const key = taskKey(e.id, due, p.number);
       seen.add(key);
