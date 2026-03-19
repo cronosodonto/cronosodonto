@@ -1424,7 +1424,7 @@ const tasks = db.tasks;
         if(!t.entryId) t.entryId = e.id;
         t.dueDate = due;
         t.phone = c.phone;
-        if(isPaid) t.done = true;
+        t.done = isPaid;
       }
     });
   });
