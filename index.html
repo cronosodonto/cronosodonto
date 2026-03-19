@@ -5495,6 +5495,11 @@ function toggleTaskDone(taskId){
   const db = loadDB();
   const t = (db.tasks||[]).find(x=>x.id===taskId);
   if(!t) return;
+
+  // 🔒 BLOQUEIO DE TAREFA AUTOMÁTICA
+  if (t.key && t.key.startsWith("INST:")) {
+    return toast("Aviso", "Essa tarefa é automática e vinculada ao parcelamento.");
+  }
   // toggle done and keep a memory of previous state if you want future audits
   t.done = !t.done;
   saveDB(db);
