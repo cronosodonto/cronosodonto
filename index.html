@@ -1381,15 +1381,15 @@ function syncInstallmentTasks(db, actor){
 
   const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===masterId).map(c=>[c.id,c]));
   const entries = (db.entries||[]).filter(e=>e.masterId===masterId);
-  const tasks = db.tasks || (db.tasks=[]);
-// remove tarefas antigas de parcelas (instalments)
-db.tasks = tasks.filter(t => {
+db.tasks = (db.tasks || []).filter(t => {
   return !(
     t.id?.includes("INST") ||
     t.type === "installment" ||
     t.desc?.includes("Parcela")
   );
 });
+
+const tasks = db.tasks;
   
   function taskKey(entryId, dueDate, number){
     return `INST:${entryId}:${dueDate}:${number}`;
