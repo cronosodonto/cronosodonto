@@ -5321,6 +5321,9 @@ function renderTasks(){
   const actor = currentActor();
   if(!actor) return;
   const db = loadDB();
+  syncInstallmentTasks(db, actor);
+  saveDB(db);
+
   const tbody = el("tasksTbody");
   if(!tbody) return;
 
