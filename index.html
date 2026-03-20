@@ -4613,45 +4613,25 @@ if(!editingEntryId && hadBefore){
     const firstDue = val("lf_inst_firstdue","").trim();
 
     // Se tiver entrada, soma no valuePaid automaticamente (sem tirar do que você digitou, só se valuePaid estiver vazio)
-   const prevValuePaid = Number(entry.valuePaid || 0);
+    if(entryAmount>0 && (valuePaid==null || isNaN(valuePaid))){
+      entry.valuePaid = entryAmount;
+      entry.valueClosed = (status==="Fechou") ? entry.valuePaid : null;
+    }
 
-if(entryAmount>0 && (valuePaid==null || isNaN(valuePaid))){
-  entry.valuePaid = entryAmount;
-  entry.valueClosed = (status==="Fechou") ? entry.valuePaid : null;
-}
+    if(instAmount>0 && instN>0){
+      entry.installPlan = { amount: instAmount, n: instN, firstDue: firstDue, payMethod: payMethod, entryAmount: entryAmount, each: Number((instAmount/instN).toFixed(2)) };
+      buildInstallments(entry);
+    }else{
+      // se zerou os campos, remove plano
+      entry.installPlan = null;
+      entry.installments = [];
+    }
 
-if(instAmount>0 && instN>0){
-  entry.installPlan = { amount: instAmount, n: instN, firstDue: firstDue, payMethod: payMethod, entryAmount: entryAmount, each: Number(/* ... */) };
-  buildInstallments(entry);
-}else{
-  entry.installPlan = null;
-  entry.installments = [];
-}
-
-const newValuePaid = Number(entry.valuePaid || 0);
-const deltaPaid = newValuePaid - prevValuePaid;
-
-if (deltaPaid > 0) {
-  db.payments = db.payments || [];
-  db.payments.push({
-    id: uid("p"),
-    masterId: actor?.masterId || null,
-    entryId: entry.id || null,
-    contactId: entry.contactId || null,
-    at: new Date().toISOString(),
-    date: new Date().toISOString().slice(0, 10),
-    value: deltaPaid,
-    status: "PAGO",
-    method: payMethod || null,
-    source: "lead-save"
-  });
-}
-
-saveDB(db);
-closeModal();
-ensureMonthOptions();
-toast(Lead salvo 🟩, ${name} • ${monthLabel(monthKey)});
-renderAll();
+    saveDB(db);
+    closeModal();
+    ensureMonthOptions(); // in case new month
+    toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
+    renderAll();
   });
 }
 
