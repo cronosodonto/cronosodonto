@@ -3185,14 +3185,23 @@ el("kpiTotal").textContent = rows.length;
 
 
   // preview (max 8)
-  const db = loadDB();
-  const prev = rows.slice().sort((a,b)=> (b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||"")).slice(0,8);
-  const box = el("dashPreview");
-  if(!prev.length){
-    box.innerHTML = `<div class="muted">Nada aqui ainda. Crie seu primeiro lead.</div>`;
-      return;
-  }
-  box.innerHTML = prev.map(e=>{
+ const db = loadDB();
+const sortedRows = rows
+  .slice()
+  .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""));
+
+const totalPrev = sortedRows.length;
+const previewLimit = window.DASH_PREVIEW_LIMIT || 10;
+const prev = sortedRows.slice(0, previewLimit);
+
+const box = el("dashPreview");
+if(!prev.length){
+  box.innerHTML = `<div class="muted">Nada aqui ainda. Crie seu primeiro lead.</div>`;
+  return;
+}
+
+box.innerHTML =
+  prev.map(e=>{
     const c = db.contacts.find(x=>x.id===e.contactId);
     const tagRes = e.tags?.includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : "";
     return `
@@ -3200,7 +3209,9 @@ el("kpiTotal").textContent = rows.length;
         <div style="display:flex; justify-content:space-between; gap:10px">
           <div>
             <div style="font-weight:800">${escapeHTML(c?.name||"—")}</div>
-            <div class="muted" style="font-size:12px; margin-top:2px">${escapeHTML(c?.phone||"—")} • ${escapeHTML(e.status||"—")}</div>
+            <div class="muted" style="font-size:12px; margin-top:2px">
+              ${escapeHTML(c?.phone||"—")} • ${escapeHTML(e.status||"—")}
+            </div>
           </div>
           <div style="display:flex; gap:8px; align-items:start">
             ${tagRes}
@@ -3209,7 +3220,28 @@ el("kpiTotal").textContent = rows.length;
         </div>
       </div>
     `;
-  }).join("");
+  }).join("")
+  +
+  `
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px">
+      <div class="muted" style="font-size:12px">
+        Mostrando ${prev.length} de ${totalPrev} leads
+      </div>
+      ${
+        totalPrev > previewLimit
+          ? `<button id="btnDashPreviewMore" class="miniBtn">Ver mais</button>`
+          : `<div class="muted" style="font-size:12px">Todos os leads exibidos</div>`
+      }
+    </div>
+  `;
+
+const btnMore = el("btnDashPreviewMore");
+if(btnMore){
+  btnMore.onclick = () => {
+    window.DASH_PREVIEW_LIMIT = (window.DASH_PREVIEW_LIMIT || 10) + 10;
+    renderAll();
+  };
+}
 
   // charts
   requestAnimationFrame(()=>renderDashboardCharts(rows));
@@ -3250,7 +3282,7 @@ function chipTreatment(e){
   return `<span class="chip">${escapeHTML(v||"—")}</span>`;
 }
 
-
+window.DASH_PREVIEW_LIMIT = 10;
 
 /* -------- Dashboard charts (Canvas, sem biblioteca) -------- */
 function renderDashboardCharts(rows){
