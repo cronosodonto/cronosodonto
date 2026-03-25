@@ -5380,45 +5380,87 @@ function renderTasks(){
   const tbody = el("tasksTbody");
   if(!tbody) return;
 
-  const f = getUIFilters();
-  const monthKey = f.monthKey;
-  const tasks = (db.tasks||[])
-    .filter(t=>!t.masterId || t.masterId===actor.masterId)
-        .sort((a,b)=> String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31")));
+  const monthEl = el("taskMonth");
+const searchEl = el("taskSearch");
+const filterEl = el("taskFilter");
 
-  if(!tasks.length){
-    tbody.innerHTML = `<tr><td colspan="6" class="muted">Sem tarefas pendentes no momento.</td></tr>`;
-    return;
+const currentMonth = new Date().toISOString().slice(0,7);
+
+if(monthEl && !monthEl.value){
+  monthEl.value = currentMonth;
+}
+
+[monthEl, searchEl, filterEl].forEach(ctrl => {
+  if(ctrl && !ctrl.dataset.bound){
+    ctrl.addEventListener(
+      ctrl.tagName === "INPUT" && ctrl.type === "text" ? "input" : "change",
+      () => renderTasks()
+    );
+    ctrl.dataset.bound = "1";
   }
+});
 
-  const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
+const taskMonth = monthEl?.value || currentMonth;
+const taskSearch = (searchEl?.value || "").trim().toLowerCase();
+const taskFilter = filterEl?.value || "Todos";
 
-  tbody.innerHTML = tasks.map(t=>{
-    const e = db.entries.find(x=>x.id===t.entryId);
-    const c = e ? db.contacts.find(x=>x.id===e.contactId) : null;
+const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
+
+const tasks = (db.tasks||[])
+  .filter(t => !t.masterId || t.masterId === actor.masterId)
+  .filter(t => {
+    if(!taskMonth) return true;
+    return String(t.dueDate || "").slice(0,7) === taskMonth;
+  })
+  .filter(t => {
+    const e = db.entries.find(x => x.id === t.entryId);
+    const c = e ? db.contacts.find(x => x.id === e.contactId) : null;
+    const hay = `${c?.name || ""} ${c?.phone || ""}`.toLowerCase();
+    return !taskSearch || hay.includes(taskSearch);
+  })
+  .filter(t => {
     const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
     const overdue = due && due < today && !t.done;
-    const cls = t.done ? "taskOk" : (overdue ? "taskBad" : "");
-    return `
-      <tr class="${cls}">
-        <td class="nowrap">${taskStatusLabel(t)}</td>
-        <td><b>${escapeHTML(t.title||"—")}</b><div class="muted" style="font-size:12px">${escapeHTML(t.action||"")}</div></td>
-        <td>${escapeHTML(c?.name||"—")}<div class="muted" style="font-size:12px">${escapeHTML(c?.phone||"")}</div></td>
-        <td class="nowrap">${t.dueDate?fmtBR(t.dueDate):"—"}</td>
-        <td>${escapeHTML(t.notes||"")}</td>
-        <td>
-          <div class="taskActionsCell">
-            <div class="taskActionsRow">
-              <button class="miniBtn" onclick="openTaskEdit('${t.id}')" title="Editar">✏️</button>
-              ${`<button class="miniBtn ok" onclick="toggleTaskDone(\'${t.id}\')" title="${t.done?'Reabrir':'Concluir'}">${t.done?'↩️':'✔️'}</button>`}
-              <button class="miniBtn danger" onclick="deleteTask('${t.id}')" title="Apagar">🗑️</button>
-            </div>
-            ${e?`<button class="miniBtn taskOpenLead" onclick="openLeadEntry('${e.id}')">Abrir lead</button>`:""}
+    const pending = !t.done && !overdue;
+
+    if(taskFilter === "Atrasado") return !!overdue;
+    if(taskFilter === "Pendente") return !!pending;
+    if(taskFilter === "Feito") return !!t.done;
+    return true;
+  })
+  .sort((a,b)=> String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31")));
+
+if(!tasks.length){
+  tbody.innerHTML = `<tr><td colspan="6" class="muted">Nenhuma tarefa encontrada para este filtro.</td></tr>`;
+  return;
+}
+
+tbody.innerHTML = tasks.map(t=>{
+  const e = db.entries.find(x=>x.id===t.entryId);
+  const c = e ? db.contacts.find(x=>x.id===e.contactId) : null;
+  const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
+  const overdue = due && due < today && !t.done;
+  const cls = t.done ? "taskOk" : (overdue ? "taskBad" : "");
+  return `
+    <tr class="${cls}">
+      <td class="nowrap">${taskStatusLabel(t)}</td>
+      <td><b>${escapeHTML(t.title||"—")}</b><div class="muted" style="font-size:12px">${escapeHTML(t.action||"")}</div></td>
+      <td>${escapeHTML(c?.name||"—")}<div class="muted" style="font-size:12px">${escapeHTML(c?.phone||"")}</div></td>
+      <td class="nowrap">${t.dueDate?fmtBR(t.dueDate):"—"}</td>
+      <td>${escapeHTML(t.notes||"")}</td>
+      <td>
+        <div class="taskActionsCell">
+          <div class="taskActionsRow">
+            <button class="miniBtn" onclick="openTaskEdit('${t.id}')" title="Editar">✏️</button>
+            ${`<button class="miniBtn ok" onclick="toggleTaskDone(\'${t.id}\')" title="${t.done?'Reabrir':'Concluir'}">${t.done?'↩️':'✔️'}</button>`}
+            <button class="miniBtn danger" onclick="deleteTask('${t.id}')" title="Apagar">🗑️</button>
           </div>
-        </td>
-      </tr>
-    `;
-  }).join("");
+          ${e?`<button class="miniBtn taskOpenLead" onclick="openLeadEntry('${e.id}')">Abrir lead</button>`:""}
+        </div>
+      </td>
+    </tr>
+  `;
+}).join("");
 }
 
 function openNewTask(){
