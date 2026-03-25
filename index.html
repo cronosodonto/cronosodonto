@@ -1181,7 +1181,7 @@ html, body{ overflow-x: hidden; }
 
 
 /* =========================
-   v53 – Ajustes finos (pedido André)
+   v53 – Ajustes
    - Resumo por Status: mais respiro, colunas equilibradas, alinhamento financeiro
    - Tarefas: coluna Ação sem corte, quebra de linha na Tarefa sem esmagar o resto
    ========================= */
@@ -2395,14 +2395,35 @@ fill="currentColor" stroke="none">
 <!-- TASKS -->
 <section id="view-tasks" class="hidden">
   <div class="topbar">
-    <div class="titleBlock">
-      <h2>✓ Tarefas</h2>
-      <p>Controle de follow-up: atrasos, próximos passos e ações.</p>
-    </div>
-    <div class="actions">
-      <button class="btn primary" id="btnNewTask">➕ Nova tarefa</button>
-    </div>
+  <div class="titleBlock">
+    <h2>✓ Tarefas</h2>
+    <p>Controle de follow-up: atrasos, próximos passos e ações.</p>
   </div>
+
+  <div class="actions" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end">
+    <div style="min-width:170px">
+      <label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Mês</label>
+      <input id="taskMonth" type="month" class="input" />
+    </div>
+
+    <div class="grow" style="min-width:220px">
+      <label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Busca</label>
+      <input id="taskSearch" class="input" placeholder="Nome ou telefone..." />
+    </div>
+
+    <div style="min-width:180px">
+      <label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Filtro</label>
+      <select id="taskFilter" class="input">
+        <option value="Todos">Todos</option>
+        <option value="Atrasado">Atrasado</option>
+        <option value="Pendente">Pendente</option>
+        <option value="Feito">Feito</option>
+      </select>
+    </div>
+
+    <button class="btn primary" id="btnNewTask">➕ Nova tarefa</button>
+  </div>
+</div>
 
   <div class="card">
     <div class="tableWrap">
