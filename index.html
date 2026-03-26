@@ -283,6 +283,7 @@ to { transform: rotate(360deg); }
     .kpi .label{font-size:12px; color:var(--muted)}
     .kpi .value{font-size:20px; font-weight:800; margin-top:6px}
     .kpi .hint{font-size:12px; color:var(--muted); margin-top:4px}
+    :root.light .kpi{background:var(--panel2); border-color:rgba(17,24,39,.12); box-shadow:0 4px 14px rgba(17,24,39,.05);}
 
     /* Sticky filter bar */
     .stickyFilters{
@@ -1161,6 +1162,9 @@ html, body{ overflow-x: hidden; }
 :root.light .chip{background:rgba(17,24,39,.04); border-color:rgba(17,24,39,.12); color:rgba(17,24,39,.92);}
 :root.light .chip .dot.st-yellow{background:#ca8a04;}
 :root.light .chart-inline-value{color:var(--text);}
+:root.light #view-dashboard .chartNote,
+:root.light #view-dashboard .muted{color:rgba(15,23,42,.72);}
+:root:not(.light) #view-dashboard .chart-inline-value{color:rgba(235,240,246,.95);}
 #view-leads .leadCardBottom{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px;}
 #view-leads .leadActionsRow{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
 #view-leads .leadActionsRow .iconBtn{border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04);}
@@ -4276,10 +4280,13 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
   if(!canvas) return;
 
   const css = getComputedStyle(document.documentElement);
-  const textColor = css.getPropertyValue('--text').trim() || "#e8eef7";
-  const mutedColor = css.getPropertyValue('--muted').trim() || "#aab4c3";
-  const gridColor = document.documentElement.classList.contains("light") ? "rgba(15,23,42,0.10)" : "rgba(180,190,205,0.10)";
-  const axisColor = document.documentElement.classList.contains("light") ? "rgba(15,23,42,0.18)" : "rgba(180,190,205,0.16)";
+  const isLight = document.documentElement.classList.contains("light");
+  const textColor = css.getPropertyValue('--text').trim() || (isLight ? "#0f172a" : "#e8eef7");
+  const mutedColor = css.getPropertyValue('--muted').trim() || (isLight ? "#334155" : "#aab4c3");
+  const gridColor = isLight ? "rgba(15,23,42,0.12)" : "rgba(255,255,255,0.18)";
+  const axisColor = isLight ? "rgba(15,23,42,0.20)" : "rgba(255,255,255,0.28)";
+  const labelColor = isLight ? "rgba(15,23,42,0.78)" : "rgba(232,238,246,0.88)";
+  const legendTextColor = isLight ? "rgba(15,23,42,0.90)" : "rgba(232,238,246,0.96)";
 
   const w0 = canvas.clientWidth || canvas.width || 0;
   const h0 = canvas.clientHeight || canvas.height || 0;
@@ -4421,7 +4428,7 @@ ctx.restore();
 
   // x labels (few)
   ctx.save();
-  ctx.fillStyle = mutedColor;
+  ctx.fillStyle = labelColor;
   ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
   const step = Math.ceil(labels.length/7);
   for(let i=0;i<labels.length;i+=step){
@@ -4431,7 +4438,7 @@ ctx.restore();
 
   // y max label (optional)
   if(opt.showMaxLabel !== false){
-    ctx.fillStyle = mutedColor;
+    ctx.fillStyle = labelColor;
     ctx.fillText((opt.yPrefix||"")+moneyBR(maxV).replace(/R\$\s*/,""), 10, 18);
   }
   ctx.restore();
@@ -4457,7 +4464,7 @@ ctx.restore();
       ctx.stroke();
       ctx.restore();
     }
-    ctx.fillStyle = textColor;
+    ctx.fillStyle = legendTextColor;
     ctx.fillText(name, x+16, y+7);
     x += need;
   });
@@ -4492,6 +4499,10 @@ function drawBarChart(canvas, labels, values){
   const h0 = canvas.clientHeight || canvas.height || 0;
   if(w0===0 || h0===0) return;
 
+  const isLight = document.documentElement.classList.contains("light");
+  const labelColor = isLight ? "rgba(15,23,42,0.82)" : "rgba(232,238,246,0.92)";
+  const axisColor = isLight ? "rgba(15,23,42,0.18)" : "rgba(255,255,255,0.26)";
+
   const {ctx,w,h} = clearCanvas(canvas);
   const pad = 28;
   const top = 56;// mais área útil p/ barras
@@ -4501,7 +4512,7 @@ function drawBarChart(canvas, labels, values){
   const rects = [];
 
   // axes
-  ctx.strokeStyle = "rgba(120,120,120,0.35)";
+  ctx.strokeStyle = axisColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad, top);
@@ -4518,7 +4529,7 @@ function drawBarChart(canvas, labels, values){
     ctx.fillStyle = "rgba(30,120,255,0.7)";
     ctx.fillRect(x, y, Math.max(6, barW-12), bh);
     rects.push({x:x, y:y, w:Math.max(6, barW-12), h:bh, label:labels[i]||"", value:values[i]||0});
-    ctx.fillStyle = "rgba(160,160,160,0.95)";
+    ctx.fillStyle = labelColor;
     ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
     const lab = (labels[i]||"").slice(0,12);
     ctx.fillText(lab, x, h-10);
