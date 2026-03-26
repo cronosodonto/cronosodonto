@@ -532,6 +532,48 @@ to { transform: rotate(360deg); }
     .toast.show{display:block}
     .toast .small{color:var(--muted); font-size:12px; margin-top:4px}
 
+    .authCard.loading{
+      transform: translateY(-1px);
+      box-shadow: 0 18px 50px rgba(0,0,0,.22);
+    }
+    .authStatus{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      margin-top:12px;
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid var(--line);
+      background: color-mix(in srgb, var(--panel2) 88%, transparent);
+      color: var(--text);
+      font-size:13px;
+    }
+    .spinner{
+      width:16px;
+      height:16px;
+      border-radius:999px;
+      border:2px solid color-mix(in srgb, var(--text) 16%, transparent);
+      border-top-color: var(--accent);
+      animation: authSpin .8s linear infinite;
+      flex:0 0 auto;
+    }
+    .spinner.sm{width:14px;height:14px;border-width:2px}
+    .btn.loading{
+      opacity:.94;
+      pointer-events:none;
+    }
+    .btn.loading .btnSpinner{
+      display:inline-flex;
+      margin-right:8px;
+      vertical-align:-2px;
+    }
+    .btn.loading .btnSpinner .spinner{
+      width:14px;
+      height:14px;
+      border-width:2px;
+    }
+    @keyframes authSpin{to{transform:rotate(360deg)}}
+
     .tagPill{
       display:inline-flex; align-items:center; gap:6px;
       padding:2px 8px;
@@ -1997,6 +2039,11 @@ style="width:344px; height:auto; display:block; margin:0 auto; color:inherit;">
       <button class="btn ok" id="btnLogin" style="flex:1">Entrar</button>
       <button class="btn primary hidden" id="btnCreateMaster">Cadastrar Clínica</button>
     </div>
+    <div id="authLoadingHint" class="authStatus hidden" aria-live="polite" aria-atomic="true">
+      <span class="spinner sm" aria-hidden="true"></span>
+      <span id="authLoadingText">Entrando no Cronos...</span>
+    </div>
+
 
     <div class="muted" style="font-size:12px; margin-top:10px; line-height:1.35">
          </div>
@@ -3229,18 +3276,7 @@ async function createCloudUserIdentity({ name, username, email, password }){
 
   try{ await tempClient.auth.signOut(); }catch(_){}
 
-  if(error){
-    const msg = String(error?.message || error?.error_description || "");
-    if(/already registered|already been registered|user already/i.test(msg)){
-      if(normalizedUsername){
-        throw new Error("Esse nome de usuário já foi usado antes. Como o acesso cloud continua registrado no Auth, hoje o caminho é reativar o usuário antigo ou usar outro login.");
-      }
-      if(explicitEmail){
-        throw new Error("Esse e-mail já está registrado no sistema.");
-      }
-    }
-    throw error;
-  }
+  if(error) throw error;
   if(!data?.user?.id){
     throw new Error("Não foi possível criar o acesso do usuário.");
   }
@@ -3444,6 +3480,71 @@ function currentActor(){
   return null;
 }
 
+
+function roleLabelPt(role){
+  const map = {
+    MASTER: "Master",
+    GERENTE: "Gerente",
+    SECRETARIA: "Secretária",
+    DENTISTA: "Dentista"
+  };
+  return map[String(role || "").toUpperCase()] || String(role || "Usuário");
+}
+
+function setLoginLoading(isLoading, message="Entrando no Cronos..."){
+  window.__CRONOS_LOGIN_BUSY__ = !!isLoading;
+
+  const card = document.querySelector("#authView .authCard");
+  const hint = el("authLoadingHint");
+  const hintText = el("authLoadingText");
+  const btn = el("btnLogin");
+  const btnCreate = el("btnCreateMaster");
+  const authMode = el("authMode");
+  const authLogin = el("authLogin");
+  const authPass = el("authPass");
+
+  if(card) card.classList.toggle("loading", !!isLoading);
+
+  if(hint){
+    hint.classList.toggle("hidden", !isLoading);
+  }
+  if(hintText && message){
+    hintText.textContent = message;
+  }
+
+  [authMode, authLogin, authPass, btnCreate].forEach(node=>{
+    if(node) node.disabled = !!isLoading;
+  });
+
+  if(btn){
+    btn.disabled = !!isLoading;
+    btn.classList.toggle("loading", !!isLoading);
+    btn.innerHTML = isLoading
+      ? '<span class="btnSpinner"><span class="spinner" aria-hidden="true"></span></span>Entrando...'
+      : 'Entrar';
+  }
+}
+
+function triggerLoginSubmit(){
+  if(window.__CRONOS_LOGIN_BUSY__) return;
+  const btn = el("btnLogin");
+  if(btn) btn.click();
+}
+
+function bindLoginEnterSubmit(){
+  ["authLogin","authPass","authMode"].forEach(id=>{
+    const node = el(id);
+    if(!node || node.dataset.enterBound === "1") return;
+    node.dataset.enterBound = "1";
+    node.addEventListener("keydown", (ev)=>{
+      if(ev.key === "Enter"){
+        ev.preventDefault();
+        triggerLoginSubmit();
+      }
+    });
+  });
+}
+
 function refreshAuthMasters(){
   const db = loadDB();
   const sel = el("authMasterSelect");
@@ -3457,6 +3558,7 @@ function refreshAuthMasters(){
 function showAuth(){
   el("authView").classList.remove("hidden");
   el("appView").classList.add("hidden");
+  setLoginLoading(false);
   // refreshAuthMasters();
   syncThemeButtons();
   window.__CRONOS_BOOTED = true;
@@ -3467,7 +3569,7 @@ function showApp(actor){
   el("appView").classList.remove("hidden");
   el("brandName").textContent = "CRONOS ODONTO";
   el("brandSub").textContent = `Clínica: ${actor.kind==="master" ? actor.name : masterName(actor.masterId)}`;
-  el("whoami").textContent = `${actor.name} • ${actor.role}`;
+  el("whoami").textContent = `Bem-vindo, ${actor.name} • ${roleLabelPt(actor.role)}`;
   syncThemeButtons();
   applyRoleVisibility(actor);
   window.__CRONOS_BOOTED = true;
@@ -4159,7 +4261,7 @@ const mutedColor = css.getPropertyValue('--muted').trim();
   ctx.stroke();
 
   // labels (poucos pra não poluir)
-  ctx.fillStyle = textColor || "#1f2937";
+  ctx.fillStyle = textColor || "1f2937";
   ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
   const step = Math.ceil(labels.length/8);
   for(let i=0;i<labels.length;i+=step){
@@ -4385,10 +4487,6 @@ ctx.restore();
 
 function drawBarChart(canvas, labels, values){
   if(!canvas) return;
-  const css = getComputedStyle(document.documentElement);
-  const textColor = css.getPropertyValue('--text').trim() || "#e8eef7";
-  const mutedColor = css.getPropertyValue('--muted').trim() || "#aab4c3";
-  const axisColor = document.documentElement.classList.contains("light") ? "rgba(15,23,42,0.18)" : "rgba(120,120,120,0.35)";
   // evita erro quando canvas está oculto/sem tamanho
   const w0 = canvas.clientWidth || canvas.width || 0;
   const h0 = canvas.clientHeight || canvas.height || 0;
@@ -4403,7 +4501,7 @@ function drawBarChart(canvas, labels, values){
   const rects = [];
 
   // axes
-  ctx.strokeStyle = axisColor;
+  ctx.strokeStyle = "rgba(120,120,120,0.35)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad, top);
@@ -4420,7 +4518,7 @@ function drawBarChart(canvas, labels, values){
     ctx.fillStyle = "rgba(30,120,255,0.7)";
     ctx.fillRect(x, y, Math.max(6, barW-12), bh);
     rects.push({x:x, y:y, w:Math.max(6, barW-12), h:bh, label:labels[i]||"", value:values[i]||0});
-    ctx.fillStyle = mutedColor;
+    ctx.fillStyle = "rgba(160,160,160,0.95)";
     ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
     const lab = (labels[i]||"").slice(0,12);
     ctx.fillText(lab, x, h-10);
@@ -6689,12 +6787,12 @@ function bindAuth(){
     const sel = el("authMasterSelect");
     const wrap = el("authMasterNameWrap");
     if(mode==="master"){
-      sel.disabled = true;
-      wrap.classList.remove("hidden");
+      if(sel) sel.disabled = true;
+      if(wrap) wrap.classList.remove("hidden");
       el("authLogin").placeholder = "E-mail do Master";
     }else{
-      sel.disabled = true;
-      wrap.classList.add("hidden");
+      if(sel) sel.disabled = true;
+      if(wrap) wrap.classList.add("hidden");
       el("authLogin").placeholder = "Usuário ou e-mail do usuário";
     }
   });
@@ -6767,6 +6865,7 @@ if (authSelect) authSelect.parentElement.classList.add("hidden");
 
   bindActions();
   bindAuth();
+  bindLoginEnterSubmit();
 
 boot();
 })();
@@ -7110,6 +7209,8 @@ const supabaseKey = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
 const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 window.__SUPABASE_CLOUD_LOGIN__ = true;
 window.__SUPABASE_MASTER_LOGIN__ = false;
+window.__CRONOS_LOGIN_BUSY__ = false;
+window.__CRONOS_EXPLICIT_LOGIN__ = false;
 
 async function finalizeCloudLogin(){
   try{
@@ -7131,9 +7232,21 @@ async function finalizeCloudLogin(){
   document.getElementById("authView").classList.add("hidden");
   document.getElementById("appView").classList.remove("hidden");
   await boot();
+
+  const actor = currentActor();
+  if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
+    setTimeout(()=>{
+      toast(`Bem-vindo, ${actor.name} 👋`, actor.kind === "master"
+        ? "Sua clínica já está pronta para uso."
+        : `${roleLabelPt(actor.role)} conectado com sucesso.`);
+    }, 220);
+  }
+  window.__CRONOS_EXPLICIT_LOGIN__ = false;
 }
 
 document.getElementById("btnLogin").addEventListener("click", async () => {
+  if(window.__CRONOS_LOGIN_BUSY__) return;
+
   const mode = String(document.getElementById("authMode")?.value || "master");
   const rawLogin = String(document.getElementById("authLogin").value || "").trim();
   const password = document.getElementById("authPass").value;
@@ -7152,23 +7265,35 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
     return;
   }
 
-  const { error } = await supabaseClient.auth.signInWithPassword({
-    email,
-    password
-  });
+  setLoginLoading(true, "Conectando e validando seu acesso...");
+  window.__CRONOS_EXPLICIT_LOGIN__ = true;
 
-  if (error) {
-    alert("Login ou senha inválidos");
-    return;
+  try{
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      toast("Login ou senha inválidos", "Confere os dados e tenta de novo.");
+      return;
+    }
+
+    await finalizeCloudLogin();
+  }catch(err){
+    console.error("Falha no login:", err);
+    toast("Falha ao entrar", "O sistema demorou mais do que devia. Tenta de novo.");
+  }finally{
+    setLoginLoading(false);
+    window.__CRONOS_EXPLICIT_LOGIN__ = false;
   }
-
-  await finalizeCloudLogin();
 });
 
 async function verificarSessao() {
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
+    window.__CRONOS_EXPLICIT_LOGIN__ = false;
     await finalizeCloudLogin();
     showView("dashboard");
   }
