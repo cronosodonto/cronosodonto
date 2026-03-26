@@ -2746,25 +2746,192 @@ db = {
 }
 */
 function freshDB(){
-  return { masters:[], users:[], contacts:[], entries:[], tasks:[], payments:[], settings:{ waTemplate: "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊" }, version:"phase1", createdAt:new Date().toISOString() };
+  return { masters:[], users:[], contacts:[], entries:[], tasks:[], payments:[], settings:{ waTemplate: "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊" }, version:"cloud_v1", createdAt:new Date().toISOString() };
 }
-  let DB = null
+const CLOUD_TABLE = "clinic_state";
+let DB = null;
+let CLOUD_DB_READY = false;
+let CLOUD_ROW_ID = null;
+let CLOUD_OWNER_UID = null;
+let CLOUD_OWNER_EMAIL = "";
+let __cloudSaveTimer = null;
+let __cloudSavePromise = null;
+
+function normalizeDBShape(db){
+  const base = freshDB();
+  const out = (db && typeof db === "object") ? { ...base, ...db } : base;
+  if(!Array.isArray(out.masters)) out.masters = [];
+  if(!Array.isArray(out.users)) out.users = [];
+  if(!Array.isArray(out.contacts)) out.contacts = [];
+  if(!Array.isArray(out.entries)) out.entries = [];
+  if(!Array.isArray(out.tasks)) out.tasks = [];
+  if(!Array.isArray(out.payments)) out.payments = [];
+  if(!out.settings || typeof out.settings !== "object") out.settings = {};
+  if(typeof out.settings.waTemplate !== "string" || !out.settings.waTemplate.trim()){
+    out.settings.waTemplate = base.settings.waTemplate;
+  }
+  if(!out.version) out.version = "cloud_v1";
+  if(!out.createdAt) out.createdAt = new Date().toISOString();
+  return out;
+}
+
+function getLegacyLocalDB(){
+  const raw = localStorage.getItem(DBKEY);
+  if(!raw) return null;
+  try{ return normalizeDBShape(JSON.parse(raw)); }catch(_){ return null; }
+}
+
+async function getCurrentSupabaseUser(){
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
+  try{
+    const { data, error } = await supabaseClient.auth.getUser();
+    if(error) return null;
+    return data?.user || null;
+  }catch(_){
+    return null;
+  }
+}
+
+function ensureMasterRecord(db, user){
+  db = normalizeDBShape(db);
+  const email = String(user?.email || CLOUD_OWNER_EMAIL || "").trim().toLowerCase();
+  if(!email) return db;
+  let master = (db.masters || []).find(m => (String(m?.email || "").toLowerCase() === email) || m?.id === email);
+  if(!master){
+    master = {
+      id: email,
+      name: ((db.masters && db.masters[0] && db.masters[0].name) ? db.masters[0].name : email.split("@")[0]),
+      email,
+      createdAt: new Date().toISOString()
+    };
+    db.masters.unshift(master);
+  }else{
+    master.id = email;
+    master.email = email;
+    if(!master.name) master.name = email.split("@")[0];
+    if(!master.createdAt) master.createdAt = new Date().toISOString();
+  }
+  return db;
+}
+
+function buildClinicStatePayload(db, user){
+  const normalized = ensureMasterRecord(normalizeDBShape(db), user);
+  const email = String(user?.email || "").trim().toLowerCase();
+  const master = normalized.masters.find(m => String(m?.email || "").toLowerCase() === email) || normalized.masters[0] || {};
+  return {
+    owner_uid: user.id,
+    owner_email: email,
+    clinic_name: master.name || (email ? email.split("@")[0] : "Clínica"),
+    data: normalized
+  };
+}
+
+async function flushCloudSave(dbToSave){
+  const user = await getCurrentSupabaseUser();
+  if(!user) return false;
+
+  CLOUD_OWNER_UID = user.id;
+  CLOUD_OWNER_EMAIL = String(user.email || "").trim().toLowerCase();
+
+  const normalized = ensureMasterRecord(normalizeDBShape(dbToSave || DB || freshDB()), user);
+  DB = normalized;
+  localStorage.setItem(DBKEY, JSON.stringify(normalized));
+
+  const payload = buildClinicStatePayload(normalized, user);
+  const { data, error } = await supabaseClient
+    .from(CLOUD_TABLE)
+    .upsert(payload, { onConflict: "owner_uid" })
+    .select("id, updated_at")
+    .single();
+
+  if(error){
+    console.error("Erro ao salvar no Supabase:", error);
+    toast("Falha ao salvar na nuvem", "Os dados ficaram no navegador e podem ser sincronizados depois.");
+    return false;
+  }
+
+  CLOUD_ROW_ID = data?.id || CLOUD_ROW_ID;
+  CLOUD_DB_READY = true;
+  return true;
+}
+
+function scheduleCloudSave(immediate=false){
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
+  if(__cloudSaveTimer){
+    clearTimeout(__cloudSaveTimer);
+    __cloudSaveTimer = null;
+  }
+  const run = ()=>{
+    __cloudSavePromise = flushCloudSave(DB).catch(err=>{
+      console.error("Erro na sincronização com a nuvem:", err);
+      return false;
+    });
+    return __cloudSavePromise;
+  };
+  if(immediate){
+    run();
+    return;
+  }
+  __cloudSaveTimer = setTimeout(run, 650);
+}
+
+async function ensureCloudDBLoaded(force=false){
+  if(DB && CLOUD_DB_READY && !force) return DB;
+
+  const user = await getCurrentSupabaseUser();
+  if(!user){
+    CLOUD_DB_READY = false;
+    DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
+    return DB;
+  }
+
+  CLOUD_OWNER_UID = user.id;
+  CLOUD_OWNER_EMAIL = String(user.email || "").trim().toLowerCase();
+
+  const { data: row, error } = await supabaseClient
+    .from(CLOUD_TABLE)
+    .select("id, owner_uid, owner_email, clinic_name, data, updated_at")
+    .eq("owner_uid", user.id)
+    .maybeSingle();
+
+  if(error && error.code !== "PGRST116"){
+    console.error("Erro ao carregar dados da nuvem:", error);
+    toast("Falha ao carregar da nuvem", "Usando o backup local por enquanto.");
+    DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
+    return DB;
+  }
+
+  if(row && row.data){
+    DB = ensureMasterRecord(normalizeDBShape(row.data), user);
+    CLOUD_ROW_ID = row.id || null;
+    CLOUD_DB_READY = true;
+    localStorage.setItem(DBKEY, JSON.stringify(DB));
+    return DB;
+  }
+
+  DB = ensureMasterRecord(normalizeDBShape(getLegacyLocalDB() || freshDB()), user);
+  localStorage.setItem(DBKEY, JSON.stringify(DB));
+
+  const created = await flushCloudSave(DB);
+  CLOUD_DB_READY = !!created;
+  return DB;
+}
+
 function loadDB(){
   if(DB) return DB;
-
-  const raw = localStorage.getItem(DBKEY);
-  if(!raw){ const db=freshDB(); saveDB(db); return db; }
-  try{ const db = JSON.parse(raw); if(!db.tasks) db.tasks=[]; if(!db.tasks) db.tasks=[]; if(!db.payments) db.payments=[]; if(!db.settings) db.settings={};
-    return db; }catch{ const db=freshDB(); saveDB(db); return db; }
+  DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
+  return DB;
 }
-function saveDB(db){
-  DB = db; // 👈 ESSA LINHA É A MÁGICA
-
-  localStorage.setItem(DBKEY, JSON.stringify(db));
+function saveDB(db, options={}){
+  DB = normalizeDBShape(db);
+  localStorage.setItem(DBKEY, JSON.stringify(DB));
 
   try{
     updateSidebarPills();
   }catch(e){}
+
+  if(options.skipCloud) return;
+  scheduleCloudSave(!!options.immediate);
 }
 
 function migrateDBValues(db){
@@ -5170,28 +5337,33 @@ function exportJSON(){
 }
 function importJSON(file){
   const r = new FileReader();
-  r.onload = ()=>{
+  r.onload = async ()=>{
     try{
       const data = JSON.parse(r.result);
       if(!data || typeof data!=="object") throw new Error("invalid");
       // basic shape check
       if(!Array.isArray(data.masters) || !Array.isArray(data.entries)) throw new Error("invalid");
-      saveDB(data);
-      toast("Backup importado ✅");
-      boot();
+      saveDB(normalizeDBShape(data), { immediate:true });
+      toast("Backup importado ✅", "Se a sessão estiver ativa, já sobe para a nuvem.");
+      await boot();
     }catch(e){
       toast("Falha ao importar", "Arquivo inválido.");
     }
   };
   r.readAsText(file);
 }
-function wipeAll(){
+async function wipeAll(){
   if(!confirm("Zerar TUDO? (usuários, leads, masters)")) return;
-  localStorage.removeItem(DBKEY);
-  localStorage.removeItem(SESSIONKEY);
+  const fresh = freshDB();
+  try{
+    const user = await getCurrentSupabaseUser();
+    if(user) ensureMasterRecord(fresh, user);
+  }catch(_){}
+  saveDB(fresh, { immediate:true });
   localStorage.removeItem(FILTERKEY);
+  clearSession();
   toast("Zerado 🧨");
-  location.reload();
+  setTimeout(()=>location.reload(), 250);
 }
 
 /* -------- Render all -------- */
@@ -5681,7 +5853,17 @@ const bTask = el("btnNewTask"); if(bTask) bTask.addEventListener("click", openNe
 
 }
 function bindActions(){
-  el("btnLogout").onclick = ()=>{ clearSession(); toast("Saiu"); showAuth(); };
+  el("btnLogout").onclick = async ()=>{
+    try{ if(typeof supabaseClient !== "undefined" && supabaseClient?.auth) await supabaseClient.auth.signOut(); }catch(_){}
+    DB = null;
+    CLOUD_DB_READY = false;
+    CLOUD_ROW_ID = null;
+    CLOUD_OWNER_UID = null;
+    CLOUD_OWNER_EMAIL = "";
+    clearSession();
+    toast("Saiu");
+    showAuth();
+  };
   el("btnNewLeadSide").onclick = openNewLead;
   el("btnNewLeadTop").onclick = openNewLead;
   el("btnNewLeadList").onclick = openNewLead;
@@ -5805,8 +5987,9 @@ function bindAuth(){
  //  boot();
 // });
   el("btnLogin").addEventListener("click", async ()=>{
-    const db = loadDB();
     const mode = val("authMode");
+    if(window.__SUPABASE_MASTER_LOGIN__ && mode==="master") return;
+    const db = loadDB();
     const login = val("authLogin").trim();
     const pass = val("authPass");
     if(!login || !pass) return toast("Preencha login e senha");
@@ -5849,38 +6032,23 @@ function renderAll(){
   try{ renderSettings(); }catch(_){ }
 }
   async function syncMasterUser(){
-if(typeof supabaseClient === "undefined"){
-  console.log("Supabase ainda não carregou, tentando novamente...");
-  setTimeout(syncMasterUser, 500);
-  return;
-}
-  const { data } = await supabaseClient.auth.getUser();
-
-  if(!data?.user) return;
-
-  const email = data.user.email;
-
-  const db = loadDB();
-
-  if(!db.masters) db.masters = [];
-
-  const exists = db.masters.some(m => m.email === email);
-
-  if(!exists){
-
-    db.masters.push({
-      id: email,
-      name: email.split("@")[0],
-      email: email,
-      createdAt: new Date()
-    });
-
-    saveDB(db);
-
+  if(typeof supabaseClient === "undefined"){
+    console.log("Supabase ainda não carregou, tentando novamente...");
+    setTimeout(syncMasterUser, 500);
+    return;
   }
 
+  const user = await getCurrentSupabaseUser();
+  if(!user) return;
+
+  const db = await ensureCloudDBLoaded();
+  ensureMasterRecord(db, user);
+  saveDB(db, { immediate:true });
 }
+
 async function boot(){
+  await ensureCloudDBLoaded();
+
 
   await syncMasterUser();
 
@@ -6269,17 +6437,21 @@ const supabaseUrl = "https://nsqpslierpulanxvsxaw.supabase.co";
 const supabaseKey = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
 
 const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
-
+window.__SUPABASE_MASTER_LOGIN__ = true;
 
 // quando clicar no botão entrar
 document.getElementById("btnLogin").addEventListener("click", async () => {
-
-    const email = document.getElementById("authLogin").value;
+    const email = String(document.getElementById("authLogin").value || "").trim().toLowerCase();
     const password = document.getElementById("authPass").value;
 
+    if (!email || !password) {
+      toast("Preencha login e senha");
+      return;
+    }
+
     const { data, error } = await supabaseClient.auth.signInWithPassword({
-        email: email,
-        password: password
+        email,
+        password
     });
 
     if (error) {
@@ -6287,49 +6459,53 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
         return;
     }
 
-    // login deu certo
-  console.log("Login realizado com sucesso");
-  // criar sessão do Cronos
-saveSession({
-  kind: "master",
-  id: email
-});
-// esconder tela de login
-document.getElementById("authView").classList.add("hidden");
+    console.log("Login realizado com sucesso");
 
-// mostrar sistema
-document.getElementById("appView").classList.remove("hidden");
+    saveSession({
+      kind: "master",
+      id: email
+    });
 
-// iniciar sistema
-boot();
+    try{
+      await ensureCloudDBLoaded(true);
+      await syncMasterUser();
+    }catch(err){
+      console.error("Erro ao preparar dados da nuvem:", err);
+    }
+
+    document.getElementById("authView").classList.add("hidden");
+    document.getElementById("appView").classList.remove("hidden");
+
+    await boot();
 });
 
 async function verificarSessao() {
-
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
-const email = data.session.user.email;
+    const email = String(data.session.user.email || "").trim().toLowerCase();
     localStorage.setItem("cronos_actor", email);
 
-    await syncMasterUser();
-    // esconder login
-    document.getElementById("authView").classList.add("hidden");
+    saveSession({
+      kind: "master",
+      id: email
+    });
 
-    // mostrar sistema
+    try{
+      await ensureCloudDBLoaded(true);
+      await syncMasterUser();
+    }catch(err){
+      console.error("Erro ao recuperar dados da nuvem:", err);
+    }
+
+    document.getElementById("authView").classList.add("hidden");
     document.getElementById("appView").classList.remove("hidden");
 
     console.log("Sessão ativa encontrada");
 
-   await boot();
-
-// força carregar os dados primeiro
-const db = loadDB();
-
-// agora sim renderiza
-showView("dashboard");
+    await boot();
+    showView("dashboard");
   }
-
 }
 
 window.addEventListener("load", verificarSessao);
