@@ -1110,11 +1110,15 @@ html, body{ overflow-x: hidden; }
 #view-leads .leadMeta{font-size:12px; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap;}
 #view-leads .leadGrid{display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:10px; margin-top:12px;}
 #view-leads .kv{background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:12px; padding:10px;}
+:root.light #view-leads .kv{background:rgba(17,24,39,.03); border-color:rgba(17,24,39,.12); box-shadow: inset 0 1px 0 rgba(255,255,255,.55);}
 #view-leads .kv .k{font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:rgba(255,255,255,.7);}
 :root.light #view-leads .kv .k{color:rgba(17,24,39,.70);}
 :root.light .leadCard .kv .k{color:rgba(17,24,39,.78)!important;}
 
 #view-leads .kv .v{margin-top:4px; font-weight:700; color:var(--text); word-break:break-word;}
+:root.light .chip{background:rgba(17,24,39,.04); border-color:rgba(17,24,39,.12); color:rgba(17,24,39,.92);}
+:root.light .chip .dot.st-yellow{background:#ca8a04;}
+:root.light .chart-inline-value{color:var(--text);}
 #view-leads .leadCardBottom{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px;}
 #view-leads .leadActionsRow{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
 #view-leads .leadActionsRow .iconBtn{border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04);}
@@ -2554,28 +2558,50 @@ fill="currentColor" stroke="none">
 
       
       <div class="card">
+        <h3>Identidade da clínica</h3>
+        <div class="muted" style="line-height:1.5; margin-bottom:10px">
+          Esse nome será exibido no topo do sistema para identificar a clínica logada.
+        </div>
+        <div class="twoCol">
+          <div>
+            <label>Nome exibido da clínica</label>
+            <input id="clinicDisplayName" placeholder="Ex: Mundo Odonto"/>
+          </div>
+          <div>
+            <label>E-mail do master</label>
+            <input id="clinicOwnerEmail" disabled />
+          </div>
+        </div>
+        <div class="muted" id="clinicDisplayNameHint" style="font-size:12px; margin-top:8px"></div>
+        <div style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap">
+          <button class="btn" id="btnSaveClinicIdentity">🏷️ Salvar identidade da clínica</button>
+          <span class="muted" style="font-size:12px" id="clinicIdentitySavedHint"></span>
+        </div>
+      </div>
+
+      <div class="card">
         <h3>Preferências de mensagens</h3>
         <div class="muted" style="line-height:1.5; margin-bottom:10px">
           Mensagem padrão do WhatsApp (variáveis: <b>{nome}</b> e <b>{tratamento}</b>).
         </div>
         <textarea id="waTemplate" placeholder="Ex: Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar com uma simulação?"></textarea>
         <div style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap">
-          <button class="btn" id="btnSavePrefs">💾 Salvar preferências</button>
+          <button class="btn" id="btnSavePrefs">💾 Salvar preferência de mensagem</button>
           <span class="muted" style="font-size:12px" id="prefsSavedHint"></span>
         </div>
       </div>
 
-      <hr style="border:0; border-top:1px solid rgba(255,255,255,.10); margin:16px 0"/>
-
-      <h3>Mensagem de cobrança (Parcelamentos)</h3>
-      <div class="muted" style="line-height:1.5; margin-bottom:10px">
-        Edita o texto do botão <b>Cobrar</b> em Parcelamentos. Variáveis: <b>{nome}</b>, <b>{parcela}</b>, <b>{total}</b>, <b>{valor}</b>, <b>{vencimento}</b>.
-      </div>
-      <textarea id="waChargeTemplate" placeholder="Ex: Oi {nome}! 😊 Sua parcela {parcela}/{total} de {valor} vence em {vencimento}. Quer que eu te mande o Pix?"></textarea>
-      <div style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap">
-        <button class="btn ok" id="btnSaveChargeTpl">Salvar cobrança</button>
-        <button class="btn" id="btnResetChargeTpl">Restaurar padrão</button>
-        <span class="muted" id="chargeTplSaved" style="font-size:12px"></span>
+      <div class="card">
+        <h3>Mensagem de cobrança (Parcelamentos)</h3>
+        <div class="muted" style="line-height:1.5; margin-bottom:10px">
+          Edita o texto do botão <b>Cobrar</b> em Parcelamentos. Variáveis: <b>{nome}</b>, <b>{parcela}</b>, <b>{total}</b>, <b>{valor}</b>, <b>{vencimento}</b>.
+        </div>
+        <textarea id="waChargeTemplate" placeholder="Ex: Oi {nome}! 😊 Sua parcela {parcela}/{total} de {valor} vence em {vencimento}. Quer que eu te mande o Pix?"></textarea>
+        <div style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap">
+          <button class="btn ok" id="btnSaveChargeTpl">Salvar cobrança</button>
+          <button class="btn" id="btnResetChargeTpl">Restaurar padrão</button>
+          <span class="muted" id="chargeTplSaved" style="font-size:12px"></span>
+        </div>
       </div>
 
 
@@ -2674,7 +2700,7 @@ function applyRoleVisibility(actor=currentActor()){
   const btnNewUser = el("btnNewUser");
   if(btnNewUser) btnNewUser.classList.toggle("hidden", !canUsers);
 
-  ["btnBackup","btnSavePrefs","btnResetChargeTpl"].forEach(id=>{
+  ["btnBackup","btnSavePrefs","btnSaveClinicIdentity","btnResetChargeTpl"].forEach(id=>{
     const node = el(id);
     if(node) node.classList.toggle("hidden", !canSettings);
   });
@@ -3119,6 +3145,11 @@ async function ensureCloudDBLoaded(force=false){
 
   if(ctx?.row?.data){
     let loaded = ensureMasterRecordByEmail(normalizeDBShape(ctx.row.data), ctx.ownerEmail || user.email || "");
+    const cloudClinicName = String(ctx.row.clinic_name || "").trim();
+    if(cloudClinicName){
+      const master = getMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "") || loaded.masters?.[0];
+      if(master) master.name = cloudClinicName;
+    }
     if(ctx.member){
       loaded = ensureMemberMirror(loaded, ctx.member);
     }
@@ -3198,7 +3229,18 @@ async function createCloudUserIdentity({ name, username, email, password }){
 
   try{ await tempClient.auth.signOut(); }catch(_){}
 
-  if(error) throw error;
+  if(error){
+    const msg = String(error?.message || error?.error_description || "");
+    if(/already registered|already been registered|user already/i.test(msg)){
+      if(normalizedUsername){
+        throw new Error("Esse nome de usuário já foi usado antes. Como o acesso cloud continua registrado no Auth, hoje o caminho é reativar o usuário antigo ou usar outro login.");
+      }
+      if(explicitEmail){
+        throw new Error("Esse e-mail já está registrado no sistema.");
+      }
+    }
+    throw error;
+  }
   if(!data?.user?.id){
     throw new Error("Não foi possível criar o acesso do usuário.");
   }
@@ -4117,7 +4159,7 @@ const mutedColor = css.getPropertyValue('--muted').trim();
   ctx.stroke();
 
   // labels (poucos pra não poluir)
-  ctx.fillStyle = textColor || "1f2937";
+  ctx.fillStyle = textColor || "#1f2937";
   ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
   const step = Math.ceil(labels.length/8);
   for(let i=0;i<labels.length;i+=step){
@@ -4130,6 +4172,12 @@ const mutedColor = css.getPropertyValue('--muted').trim();
 
 function drawMultiLineChart(canvas, labels, series, opt={}){
   if(!canvas) return;
+
+  const css = getComputedStyle(document.documentElement);
+  const textColor = css.getPropertyValue('--text').trim() || "#e8eef7";
+  const mutedColor = css.getPropertyValue('--muted').trim() || "#aab4c3";
+  const gridColor = document.documentElement.classList.contains("light") ? "rgba(15,23,42,0.10)" : "rgba(180,190,205,0.10)";
+  const axisColor = document.documentElement.classList.contains("light") ? "rgba(15,23,42,0.18)" : "rgba(180,190,205,0.16)";
 
   const w0 = canvas.clientWidth || canvas.width || 0;
   const h0 = canvas.clientHeight || canvas.height || 0;
@@ -4169,7 +4217,7 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.lineWidth = 1;
-  ctx.strokeStyle = "rgba(180,190,205,0.10)";
+  ctx.strokeStyle = gridColor;
   const gridLines = 4;
   for(let g=0; g<=gridLines; g++){
     const yy = plotTop + (g*(plotBottom-plotTop))/gridLines;
@@ -4179,7 +4227,7 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
     ctx.stroke();
   }
   // axis
-  ctx.strokeStyle = "rgba(180,190,205,0.16)";
+  ctx.strokeStyle = axisColor;
   ctx.beginPath();
   ctx.moveTo(plotLeft, plotTop);
   ctx.lineTo(plotLeft, plotBottom);
@@ -4271,7 +4319,7 @@ ctx.restore();
 
   // x labels (few)
   ctx.save();
-  ctx.fillStyle = "rgba(170,180,195,0.9)";
+  ctx.fillStyle = mutedColor;
   ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
   const step = Math.ceil(labels.length/7);
   for(let i=0;i<labels.length;i+=step){
@@ -4281,7 +4329,7 @@ ctx.restore();
 
   // y max label (optional)
   if(opt.showMaxLabel !== false){
-    ctx.fillStyle = "rgba(170,180,195,0.9)";
+    ctx.fillStyle = mutedColor;
     ctx.fillText((opt.yPrefix||"")+moneyBR(maxV).replace(/R\$\s*/,""), 10, 18);
   }
   ctx.restore();
@@ -4307,7 +4355,7 @@ ctx.restore();
       ctx.stroke();
       ctx.restore();
     }
-    ctx.fillStyle = "rgba(210,220,235,0.95)";
+    ctx.fillStyle = textColor;
     ctx.fillText(name, x+16, y+7);
     x += need;
   });
@@ -4337,6 +4385,10 @@ ctx.restore();
 
 function drawBarChart(canvas, labels, values){
   if(!canvas) return;
+  const css = getComputedStyle(document.documentElement);
+  const textColor = css.getPropertyValue('--text').trim() || "#e8eef7";
+  const mutedColor = css.getPropertyValue('--muted').trim() || "#aab4c3";
+  const axisColor = document.documentElement.classList.contains("light") ? "rgba(15,23,42,0.18)" : "rgba(120,120,120,0.35)";
   // evita erro quando canvas está oculto/sem tamanho
   const w0 = canvas.clientWidth || canvas.width || 0;
   const h0 = canvas.clientHeight || canvas.height || 0;
@@ -4351,7 +4403,7 @@ function drawBarChart(canvas, labels, values){
   const rects = [];
 
   // axes
-  ctx.strokeStyle = "rgba(120,120,120,0.35)";
+  ctx.strokeStyle = axisColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad, top);
@@ -4368,7 +4420,7 @@ function drawBarChart(canvas, labels, values){
     ctx.fillStyle = "rgba(30,120,255,0.7)";
     ctx.fillRect(x, y, Math.max(6, barW-12), bh);
     rects.push({x:x, y:y, w:Math.max(6, barW-12), h:bh, label:labels[i]||"", value:values[i]||0});
-    ctx.fillStyle = "rgba(160,160,160,0.95)";
+    ctx.fillStyle = mutedColor;
     ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
     const lab = (labels[i]||"").slice(0,12);
     ctx.fillText(lab, x, h-10);
@@ -4577,6 +4629,31 @@ function renderSettings(){
   const prefs = getPrefs();
   const ta = el("waTemplate");
   if(ta) ta.value = prefs.waTemplate || "";
+  const taCharge = el("waChargeTemplate");
+  if(taCharge) taCharge.value = (prefs && prefs.waChargeTemplate) ? String(prefs.waChargeTemplate) : "";
+  const db = loadDB();
+  const master = db.masters.find(m=>m.id===actor?.masterId);
+  const clinicInput = el("clinicDisplayName");
+  const clinicHint = el("clinicDisplayNameHint");
+  const ownerEmailInput = el("clinicOwnerEmail");
+  if(clinicInput){
+    clinicInput.value = master?.name || "";
+    const canEditClinicName = !!(actor && actor.kind === "master");
+    clinicInput.disabled = !canEditClinicName;
+    if(clinicHint){
+      clinicHint.textContent = canEditClinicName
+        ? "Esse nome aparece no topo, relatórios e identificação principal da clínica."
+        : "Só o master principal pode alterar o nome exibido da clínica.";
+    }
+    const btnClinic = el("btnSaveClinicIdentity");
+    if(btnClinic){
+      btnClinic.disabled = !canEditClinicName;
+      btnClinic.title = canEditClinicName ? "" : "Só o master principal pode alterar a identidade da clínica.";
+    }
+  }
+  if(ownerEmailInput){
+    ownerEmailInput.value = master?.email || actor?.email || "";
+  }
 }
 
 function renderUsers(){
@@ -6532,6 +6609,29 @@ function bindActions(){
   const dbInitPrefs = loadDB();
   if(el("waTemplate")) el("waTemplate").value = (dbInitPrefs.settings && dbInitPrefs.settings.waTemplate) ? String(dbInitPrefs.settings.waTemplate) : "";
   if(el("waChargeTemplate")) el("waChargeTemplate").value = (dbInitPrefs.settings && dbInitPrefs.settings.waChargeTemplate) ? String(dbInitPrefs.settings.waChargeTemplate) : "";
+  const btnClinicIdentity = el("btnSaveClinicIdentity");
+  if(btnClinicIdentity) btnClinicIdentity.onclick = ()=>{
+    const actor = currentActor();
+    if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode alterar configurações.");
+    if(!(actor && actor.kind === "master")) return toast("Sem permissão", "Só o master principal pode alterar a identidade da clínica.");
+    const db = loadDB();
+    const master = db.masters.find(m=>m.id===actor.masterId);
+    const clinicDisplayName = String(val("clinicDisplayName") || "").trim();
+    if(!clinicDisplayName) return toast("Nome da clínica", "Digite um nome para a clínica antes de salvar.");
+    if(master){
+      master.name = clinicDisplayName;
+      saveDB(db);
+      try{
+        const actorNow = currentActor();
+        if(actorNow) showApp(actorNow);
+        renderUsers();
+      }catch(_){}
+      const hint = el("clinicIdentitySavedHint");
+      if(hint){ hint.textContent = "Identidade salva."; setTimeout(()=>hint.textContent="", 2200); }
+      toast("Identidade da clínica salva.");
+    }
+  };
+
   const btnPrefs = el("btnSavePrefs");
   if(btnPrefs) btnPrefs.onclick = ()=>{
     const actor = currentActor();
@@ -6539,10 +6639,16 @@ function bindActions(){
     const db = loadDB();
     if(!db.settings) db.settings = {};
     db.settings.waTemplate = (val("waTemplate")||"").trim();
+
     saveDB(db);
+    try{
+      const actorNow = currentActor();
+      if(actorNow) showApp(actorNow);
+      renderUsers();
+    }catch(_){}
     const hint = el("prefsSavedHint");
-    if(hint){ hint.textContent = "Salvo."; setTimeout(()=>hint.textContent="", 2000); }
-    toast("Preferências salvas.");
+    if(hint){ hint.textContent = "Mensagem salva."; setTimeout(()=>hint.textContent="", 2000); }
+    toast("Preferência de mensagem salva.");
   };
 
   // Parcelamentos: template de cobrança
@@ -6770,7 +6876,8 @@ function __bindChartHoverOnce(canvas){
       let body = `<div class="ttTitle">${title}</div>`;
       series.forEach(s=>{
         const v = (s.values && s.values[idx]!=null) ? s.values[idx] : 0;
-        const val = (data.yPrefix||"") + moneyBR(v);
+        const rawPrefix = String(data.yPrefix || "");
+        const val = rawPrefix.trim().replace(/\s+/g,"") === "R$" ? moneyBR(v) : (rawPrefix + moneyBR(v));
         body += `<div class="ttRow"><span style="display:flex; gap:8px; align-items:flex-start">
           <span class="ttDot" style="background:${s.color||'rgba(30,120,255,0.9)'}"></span>
           <span>${escapeHTML(s.name||'')}</span>
