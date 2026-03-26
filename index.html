@@ -3931,51 +3931,74 @@ function buildDashboardRevenueData(rows, db, actor, filters){
   const monthNamesShort = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
   const fromISO = String(filters?.periodFrom||"").trim();
   const toISO = String(filters?.periodTo||"").trim();
-  const paymentsAll = getDashboardPaymentsForRows(db, actor, rows);
 
-  if(filters?.monthKey && filters.monthKey !== "all"){
-    const monthKey = filters.monthKey;
+  const entryKey = (obj)=>{
+    const entryId = String(obj?.entryId || obj?.id || "").trim();
+    if(entryId) return `entry:${entryId}`;
+    const contactId = String(obj?.contactId || "").trim();
+    if(contactId) return `contact:${contactId}`;
+    return "";
+  };
+
+  function computeMonthData(monthKey, monthRows){
     const daysInMonth = new Date(Number(monthKey.slice(0,4)), Number(monthKey.slice(5,7)), 0).getDate();
-    const labels = Array.from({length: daysInMonth}, (_,i)=>String(i+1).padStart(2,"0"));
     const grossSeries = Array.from({length: daysInMonth}, ()=>0);
     const receivedSeries = Array.from({length: daysInMonth}, ()=>0);
     const isCurrentMonth = monthKey === currentMonthKey;
+    const monthRowsSafe = (monthRows||[]).filter(e=>String(e?.monthKey||"")===monthKey);
+    const monthPaymentsAll = getDashboardPaymentsForRows(db, actor, monthRowsSafe)
+      .filter(p=>p.__iso.slice(0,7)===monthKey)
+      .filter(p=>!(fromISO || toISO) || dashboardDateInRange(p.__iso, fromISO, toISO));
 
-    (rows||[]).forEach(e=>{
+    (monthRowsSafe||[]).forEach(e=>{
       const budget = getEntryBudgetValue(e);
       if(!budget) return;
       const iso = getDashboardEntryDate(e);
       if(!iso || iso.slice(0,7)!==monthKey) return;
+      if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
       const day = Number(iso.slice(8,10));
       if(day>=1 && day<=daysInMonth) grossSeries[day-1] += budget;
     });
 
-    let payments = paymentsAll.filter(p=>p.__iso.slice(0,7)===monthKey);
-    if(isCurrentMonth) payments = payments.filter(p=>p.__iso <= todayISO);
+    let monthPayments = monthPaymentsAll;
+    if(isCurrentMonth) monthPayments = monthPayments.filter(p=>p.__iso <= todayISO);
 
-    if(payments.length){
-      payments.forEach(p=>{
-        const day = Number(String(p.__iso||"").slice(8,10));
-        if(day>=1 && day<=daysInMonth) receivedSeries[day-1] += Number(p.value||0);
-      });
-    }else{
-      (rows||[]).forEach(e=>{
-        const paid = getEntryPaidValue(e);
-        if(!paid) return;
-        const iso = getDashboardEntryDate(e);
-        if(!iso || iso.slice(0,7)!==monthKey) return;
-        if(isCurrentMonth && iso > todayISO) return;
-        const day = Number(iso.slice(8,10));
-        if(day>=1 && day<=daysInMonth) receivedSeries[day-1] += paid;
-      });
-    }
+    const keysWithPayment = new Set();
+    monthPayments.forEach(p=>{
+      const day = Number(String(p.__iso||"").slice(8,10));
+      if(day>=1 && day<=daysInMonth) receivedSeries[day-1] += Number(p.value||0);
+      const key = entryKey(p);
+      if(key) keysWithPayment.add(key);
+    });
+
+    (monthRowsSafe||[]).forEach(e=>{
+      const paid = getEntryPaidValue(e);
+      if(!paid) return;
+      const iso = getDashboardEntryDate(e);
+      if(!iso || iso.slice(0,7)!==monthKey) return;
+      if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
+      if(isCurrentMonth && iso > todayISO) return;
+      const key = entryKey(e);
+      if(key && keysWithPayment.has(key)) return;
+      const day = Number(iso.slice(8,10));
+      if(day>=1 && day<=daysInMonth) receivedSeries[day-1] += paid;
+    });
+
+    return { grossSeries, receivedSeries };
+  }
+
+  if(filters?.monthKey && filters.monthKey !== "all"){
+    const monthKey = filters.monthKey;
+    const labels = Array.from({length: new Date(Number(monthKey.slice(0,4)), Number(monthKey.slice(5,7)), 0).getDate()}, (_,i)=>String(i+1).padStart(2,"0"));
+    const monthData = computeMonthData(monthKey, rows || []);
 
     return {
       mode: "daily",
+      axisLabelPrefix: "Dia",
       labels,
-      grossSeries,
-      receivedSeries,
-      totalReceived: receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
+      grossSeries: monthData.grossSeries,
+      receivedSeries: monthData.receivedSeries,
+      totalReceived: monthData.receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
       titleText: "Receita (R$) por dia",
       hintText: "(bruto/orçado por dia • recebido por dia)"
     };
@@ -3985,42 +4008,18 @@ function buildDashboardRevenueData(rows, db, actor, filters){
   const labels = monthNamesShort.slice();
   const grossSeries = Array.from({length: 12}, ()=>0);
   const receivedSeries = Array.from({length: 12}, ()=>0);
-  const capFutureInCurrentYear = selectedYear === currentYear;
 
-  (rows||[]).forEach(e=>{
-    const budget = getEntryBudgetValue(e);
-    if(!budget) return;
-    const iso = getDashboardEntryDate(e);
-    if(!iso || iso.slice(0,4)!==selectedYear) return;
-    if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
-    const monthIndex = Number(iso.slice(5,7)) - 1;
-    if(monthIndex>=0 && monthIndex<12) grossSeries[monthIndex] += budget;
-  });
-
-  let payments = paymentsAll.filter(p=>p.__iso.slice(0,4)===selectedYear);
-  if(fromISO || toISO) payments = payments.filter(p=>dashboardDateInRange(p.__iso, fromISO, toISO));
-  if(capFutureInCurrentYear) payments = payments.filter(p=>p.__iso <= todayISO);
-
-  if(payments.length){
-    payments.forEach(p=>{
-      const monthIndex = Number(String(p.__iso||"").slice(5,7)) - 1;
-      if(monthIndex>=0 && monthIndex<12) receivedSeries[monthIndex] += Number(p.value||0);
-    });
-  }else{
-    (rows||[]).forEach(e=>{
-      const paid = getEntryPaidValue(e);
-      if(!paid) return;
-      const iso = getDashboardEntryDate(e);
-      if(!iso || iso.slice(0,4)!==selectedYear) return;
-      if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
-      if(capFutureInCurrentYear && iso > todayISO) return;
-      const monthIndex = Number(iso.slice(5,7)) - 1;
-      if(monthIndex>=0 && monthIndex<12) receivedSeries[monthIndex] += paid;
-    });
+  for(let monthIndex=0; monthIndex<12; monthIndex++){
+    const monthKey = `${selectedYear}-${String(monthIndex+1).padStart(2,"0")}`;
+    const monthRows = (rows||[]).filter(e=>String(e?.monthKey||"")===monthKey);
+    const monthData = computeMonthData(monthKey, monthRows);
+    grossSeries[monthIndex] = monthData.grossSeries.reduce((sum,v)=>sum + (Number(v)||0), 0);
+    receivedSeries[monthIndex] = monthData.receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0);
   }
 
   return {
     mode: "monthly",
+    axisLabelPrefix: "Mês",
     labels,
     grossSeries,
     receivedSeries,
@@ -4296,7 +4295,7 @@ function renderDashboardCharts(rows){
     drawMultiLineChart(line, revenueData.labels, [
       { name:"Recebido", values: revenueData.receivedSeries, color:"rgba(46,229,157,0.9)", fill:true },
       { name:"Bruto/Orçado", values: revenueData.grossSeries, color:"rgba(255,90,90,0.9)", dash:[6,6], fill:false }
-    ], { yPrefix: "", showPoints: false, showMaxLabel: false });
+    ], { yPrefix: "", showPoints: false, showMaxLabel: false, axisLabelPrefix: revenueData.axisLabelPrefix || "Dia" });
 
     const valueEl = document.getElementById("lineChartValue");
     if(valueEl) valueEl.textContent = moneyBR(revenueData.totalReceived);
@@ -4583,6 +4582,7 @@ ctx.restore();
       })),
       pad: plotLeft, top: plotTop, w: w, h: h,
       yPrefix: (opt.yPrefix||"R$ "),
+      axisLabelPrefix: (opt.axisLabelPrefix||"Dia"),
       plotLeft, plotRight, plotTop, plotBottom,
       minV, maxV
     };
@@ -7082,7 +7082,8 @@ function __bindChartHoverOnce(canvas){
       const innerW = (w - pad - 10);
       if(x < pad || x > pad + innerW || y < top-6 || y > h-8){ __hideChartTooltip(); return; }
       const idx = Math.max(0, Math.min(labels.length-1, Math.round(((x - pad) / innerW) * Math.max(1, labels.length-1))));
-      const title = labels[idx] ? `Dia ${labels[idx]}` : `Ponto ${idx+1}`;
+      const labelPrefix = String(data.axisLabelPrefix || "Dia");
+      const title = labels[idx] ? `${labelPrefix} ${labels[idx]}` : `Ponto ${idx+1}`;
       let body = `<div class="ttTitle">${title}</div>`;
       series.forEach(s=>{
         const v = (s.values && s.values[idx]!=null) ? s.values[idx] : 0;
