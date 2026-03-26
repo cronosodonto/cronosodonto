@@ -2635,13 +2635,50 @@ const TREATMENTS = [
 const POSITIVE = new Set(["Agendado","Compareceu","Fechou","Remarcou","Conversando","Concluído"]);
 const DISQUALIFIED = new Set(["Número incorreto","Achou caro","Não tem interesse","Mora longe","Mora em outra cidade","Fechou em outro lugar","Msg não entregue","Mensagem não entregue"]);
 // Permissions
+const APP_VIEWS = ["dashboard","leads","kanban","tasks","installments","users","settings"];
+
 const PERMS = {
   // MASTER (secundário): acesso alto, mas NÃO pode criar/remover outros masters
-  MASTER:     {viewAll:true, edit:true, delete:true, manageUsers:true, manageMasters:false},
-  GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false},
-  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false},
-  DENTISTA:   {viewAll:true, edit:false, delete:false, manageUsers:false, manageMasters:false},
+  MASTER:     {viewAll:true, edit:true, delete:true, manageUsers:true, manageMasters:false, views:[...APP_VIEWS]},
+  GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban","tasks","installments"]},
+  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban","tasks","installments"]},
+  DENTISTA:   {viewAll:true, edit:false, delete:false, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban"]},
 };
+
+function actorAllowedViews(actor=currentActor()){
+  if(!actor) return [...APP_VIEWS];
+  const views = Array.isArray(actor?.perms?.views) && actor.perms.views.length ? actor.perms.views : ["dashboard"];
+  return [...new Set(views.filter(v=>APP_VIEWS.includes(v)))];
+}
+function canAccessView(view, actor=currentActor()){
+  return actorAllowedViews(actor).includes(view);
+}
+function firstAllowedView(actor=currentActor()){
+  return actorAllowedViews(actor)[0] || "dashboard";
+}
+function applyRoleVisibility(actor=currentActor()){
+  APP_VIEWS.forEach(view=>{
+    const btn = qs(`.nav button[data-view="${view}"]`);
+    if(btn) btn.classList.toggle("hidden", !canAccessView(view, actor));
+  });
+
+  const canEdit = !!actor?.perms?.edit;
+  const canUsers = canAccessView("users", actor) && !!actor?.perms?.manageUsers;
+  const canSettings = canAccessView("settings", actor);
+
+  ["btnNewLeadSide","btnNewLeadTop","btnNewLeadList","btnNewLeadKanban","btnNewTask"].forEach(id=>{
+    const node = el(id);
+    if(node) node.classList.toggle("hidden", !canEdit);
+  });
+
+  const btnNewUser = el("btnNewUser");
+  if(btnNewUser) btnNewUser.classList.toggle("hidden", !canUsers);
+
+  ["btnBackup","btnSavePrefs","btnResetChargeTpl"].forEach(id=>{
+    const node = el(id);
+    if(node) node.classList.toggle("hidden", !canSettings);
+  });
+}
 
 const el = (id)=>document.getElementById(id);
 const qs = (sel,root=document)=>root.querySelector(sel);
@@ -2748,14 +2785,31 @@ db = {
 function freshDB(){
   return { masters:[], users:[], contacts:[], entries:[], tasks:[], payments:[], settings:{ waTemplate: "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊" }, version:"cloud_v1", createdAt:new Date().toISOString() };
 }
+
 const CLOUD_TABLE = "clinic_state";
+const CLOUD_MEMBERS_TABLE = "clinic_members";
 let DB = null;
 let CLOUD_DB_READY = false;
 let CLOUD_ROW_ID = null;
 let CLOUD_OWNER_UID = null;
 let CLOUD_OWNER_EMAIL = "";
+let CLOUD_CLINIC_OWNER_UID = null;
+let CLOUD_CLINIC_OWNER_EMAIL = "";
+let CLOUD_ACCESS_KIND = "guest"; // owner | member | guest
+let CLOUD_MEMBER_INFO = null;
 let __cloudSaveTimer = null;
 let __cloudSavePromise = null;
+
+function resetCloudContext(){
+  CLOUD_DB_READY = false;
+  CLOUD_ROW_ID = null;
+  CLOUD_OWNER_UID = null;
+  CLOUD_OWNER_EMAIL = "";
+  CLOUD_CLINIC_OWNER_UID = null;
+  CLOUD_CLINIC_OWNER_EMAIL = "";
+  CLOUD_ACCESS_KIND = "guest";
+  CLOUD_MEMBER_INFO = null;
+}
 
 function normalizeDBShape(db){
   const base = freshDB();
@@ -2770,7 +2824,7 @@ function normalizeDBShape(db){
   if(typeof out.settings.waTemplate !== "string" || !out.settings.waTemplate.trim()){
     out.settings.waTemplate = base.settings.waTemplate;
   }
-  if(!out.version) out.version = "cloud_v1";
+  if(!out.version) out.version = "cloud_v2";
   if(!out.createdAt) out.createdAt = new Date().toISOString();
   return out;
 }
@@ -2792,36 +2846,200 @@ async function getCurrentSupabaseUser(){
   }
 }
 
-function ensureMasterRecord(db, user){
+function normalizeUsername(value){
+  return String(value || "").trim().toLowerCase();
+}
+
+function usernameToSyntheticEmail(username){
+  const clean = normalizeUsername(username).replace(/[^a-z0-9._-]/g, "");
+  if(!clean) return "";
+  return `${clean}@users.cronos.local`;
+}
+
+function resolveUserLoginEmail(login){
+  const raw = String(login || "").trim().toLowerCase();
+  if(!raw) return "";
+  if(raw.includes("@")) return raw;
+  return usernameToSyntheticEmail(raw);
+}
+
+function ensureMasterRecordByEmail(db, email, fallbackName=""){
   db = normalizeDBShape(db);
-  const email = String(user?.email || CLOUD_OWNER_EMAIL || "").trim().toLowerCase();
-  if(!email) return db;
-  let master = (db.masters || []).find(m => (String(m?.email || "").toLowerCase() === email) || m?.id === email);
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if(!normalizedEmail) return db;
+
+  let master = (db.masters || []).find(m => (String(m?.email || "").toLowerCase() === normalizedEmail) || m?.id === normalizedEmail);
   if(!master){
     master = {
-      id: email,
-      name: ((db.masters && db.masters[0] && db.masters[0].name) ? db.masters[0].name : email.split("@")[0]),
-      email,
+      id: normalizedEmail,
+      name: fallbackName || normalizedEmail.split("@")[0],
+      email: normalizedEmail,
       createdAt: new Date().toISOString()
     };
     db.masters.unshift(master);
   }else{
-    master.id = email;
-    master.email = email;
-    if(!master.name) master.name = email.split("@")[0];
+    master.id = normalizedEmail;
+    master.email = normalizedEmail;
+    if(!master.name) master.name = fallbackName || normalizedEmail.split("@")[0];
     if(!master.createdAt) master.createdAt = new Date().toISOString();
   }
+
   return db;
 }
 
-function buildClinicStatePayload(db, user){
-  const normalized = ensureMasterRecord(normalizeDBShape(db), user);
-  const email = String(user?.email || "").trim().toLowerCase();
-  const master = normalized.masters.find(m => String(m?.email || "").toLowerCase() === email) || normalized.masters[0] || {};
+function getMasterRecordByEmail(db, email){
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  return (db?.masters || []).find(m => String(m?.email || "").toLowerCase() === normalizedEmail || m?.id === normalizedEmail) || null;
+}
+
+function ensureMemberMirror(db, membership){
+  db = normalizeDBShape(db);
+  if(!membership) return db;
+
+  const ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || "").trim().toLowerCase();
+  if(ownerEmail){
+    ensureMasterRecordByEmail(db, ownerEmail);
+  }
+  const masterId = ownerEmail || membership.owner_uid;
+
+  let userRow = (db.users || []).find(u => u?.authUid === membership.auth_uid)
+    || (db.users || []).find(u => masterId && u?.masterId === masterId && membership.username && normalizeUsername(u?.username) === normalizeUsername(membership.username))
+    || (db.users || []).find(u => masterId && u?.masterId === masterId && String(u?.loginEmail || u?.email || "").trim().toLowerCase() === String(membership.email || "").trim().toLowerCase());
+
+  const visibleEmail = String(membership.email || "").endsWith("@users.cronos.local") ? "" : String(membership.email || "");
+
+  if(!userRow){
+    userRow = {
+      id: uid("u"),
+      authUid: membership.auth_uid,
+      masterId,
+      name: membership.name || membership.username || "Usuário",
+      username: membership.username || "",
+      email: visibleEmail,
+      loginEmail: String(membership.email || "").trim().toLowerCase(),
+      role: membership.role || "SECRETARIA",
+      active: membership.active !== false,
+      createdAt: new Date().toISOString()
+    };
+    db.users.push(userRow);
+  }else{
+    userRow.authUid = membership.auth_uid;
+    userRow.masterId = userRow.masterId || masterId;
+    userRow.name = membership.name || userRow.name || membership.username || "Usuário";
+    userRow.username = membership.username || userRow.username || "";
+    userRow.email = visibleEmail || userRow.email || "";
+    userRow.loginEmail = String(membership.email || userRow.loginEmail || userRow.email || "").trim().toLowerCase();
+    userRow.role = membership.role || userRow.role || "SECRETARIA";
+    userRow.active = membership.active !== false;
+  }
+
+  return db;
+}
+
+async function getClinicMembershipByAuthUid(authUid){
+  if(typeof supabaseClient === "undefined" || !supabaseClient) return null;
+  if(!authUid) return null;
+
+  const { data, error } = await supabaseClient
+    .from(CLOUD_MEMBERS_TABLE)
+    .select("id, owner_uid, auth_uid, email, username, name, role, active, created_at, updated_at")
+    .eq("auth_uid", authUid)
+    .eq("active", true)
+    .maybeSingle();
+
+  if(error && error.code !== "PGRST116"){
+    console.error("Erro ao carregar vínculo do usuário:", error);
+    return null;
+  }
+
+  return data || null;
+}
+
+async function resolveClinicAccessContext(user){
+  if(!user) return null;
+
+  const ownerEmail = String(user.email || "").trim().toLowerCase();
+  const isInternalUser = String(user?.user_metadata?.cronos_kind || "").toLowerCase() === "member"
+    || ownerEmail.endsWith("@users.cronos.local");
+
+  const ownerResp = await supabaseClient
+    .from(CLOUD_TABLE)
+    .select("id, owner_uid, owner_email, clinic_name, data, updated_at")
+    .eq("owner_uid", user.id)
+    .maybeSingle();
+
+  if(ownerResp.error && ownerResp.error.code !== "PGRST116"){
+    throw ownerResp.error;
+  }
+
+  if(ownerResp.data){
+    return {
+      kind: "owner",
+      ownerUid: user.id,
+      ownerEmail: String(ownerResp.data.owner_email || ownerEmail || "").trim().toLowerCase(),
+      row: ownerResp.data,
+      member: null
+    };
+  }
+
+  const membership = await getClinicMembershipByAuthUid(user.id);
+  if(membership){
+    const rowResp = await supabaseClient
+      .from(CLOUD_TABLE)
+      .select("id, owner_uid, owner_email, clinic_name, data, updated_at")
+      .eq("owner_uid", membership.owner_uid)
+      .maybeSingle();
+
+    if(rowResp.error && rowResp.error.code !== "PGRST116"){
+      throw rowResp.error;
+    }
+
+    return {
+      kind: "member",
+      ownerUid: membership.owner_uid,
+      ownerEmail: String(rowResp.data?.owner_email || "").trim().toLowerCase(),
+      row: rowResp.data || null,
+      member: membership
+    };
+  }
+
   return {
-    owner_uid: user.id,
-    owner_email: email,
-    clinic_name: master.name || (email ? email.split("@")[0] : "Clínica"),
+    kind: isInternalUser ? "member_orphan" : "orphan",
+    ownerUid: isInternalUser ? null : user.id,
+    ownerEmail: isInternalUser ? "" : ownerEmail,
+    row: null,
+    member: null
+  };
+}
+
+async function applyCloudAccessContext(user){
+  const ctx = await resolveClinicAccessContext(user);
+
+  if(!ctx){
+    resetCloudContext();
+    return null;
+  }
+
+  CLOUD_OWNER_UID = user?.id || null;
+  CLOUD_OWNER_EMAIL = String(user?.email || "").trim().toLowerCase();
+  CLOUD_CLINIC_OWNER_UID = ctx.ownerUid || null;
+  CLOUD_CLINIC_OWNER_EMAIL = String(ctx.ownerEmail || "").trim().toLowerCase();
+  CLOUD_ACCESS_KIND = ctx.kind || "guest";
+  CLOUD_MEMBER_INFO = ctx.member || null;
+  CLOUD_ROW_ID = ctx.row?.id || null;
+
+  return ctx;
+}
+
+function buildClinicStatePayload(db, user){
+  const ownerUid = CLOUD_CLINIC_OWNER_UID || user.id;
+  const ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || user.email || "").trim().toLowerCase();
+  const normalized = ensureMasterRecordByEmail(normalizeDBShape(db), ownerEmail);
+  const master = getMasterRecordByEmail(normalized, ownerEmail) || normalized.masters[0] || {};
+  return {
+    owner_uid: ownerUid,
+    owner_email: ownerEmail,
+    clinic_name: master.name || (ownerEmail ? ownerEmail.split("@")[0] : "Clínica"),
     data: normalized
   };
 }
@@ -2830,10 +3048,14 @@ async function flushCloudSave(dbToSave){
   const user = await getCurrentSupabaseUser();
   if(!user) return false;
 
-  CLOUD_OWNER_UID = user.id;
-  CLOUD_OWNER_EMAIL = String(user.email || "").trim().toLowerCase();
+  const ctx = await applyCloudAccessContext(user);
+  const ownerEmail = String(ctx?.ownerEmail || user.email || "").trim().toLowerCase();
 
-  const normalized = ensureMasterRecord(normalizeDBShape(dbToSave || DB || freshDB()), user);
+  let normalized = ensureMasterRecordByEmail(normalizeDBShape(dbToSave || DB || freshDB()), ownerEmail);
+  if(CLOUD_MEMBER_INFO){
+    normalized = ensureMemberMirror(normalized, CLOUD_MEMBER_INFO);
+  }
+
   DB = normalized;
   localStorage.setItem(DBKEY, JSON.stringify(normalized));
 
@@ -2880,36 +3102,43 @@ async function ensureCloudDBLoaded(force=false){
 
   const user = await getCurrentSupabaseUser();
   if(!user){
-    CLOUD_DB_READY = false;
+    resetCloudContext();
     DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
     return DB;
   }
 
-  CLOUD_OWNER_UID = user.id;
-  CLOUD_OWNER_EMAIL = String(user.email || "").trim().toLowerCase();
-
-  const { data: row, error } = await supabaseClient
-    .from(CLOUD_TABLE)
-    .select("id, owner_uid, owner_email, clinic_name, data, updated_at")
-    .eq("owner_uid", user.id)
-    .maybeSingle();
-
-  if(error && error.code !== "PGRST116"){
+  let ctx = null;
+  try{
+    ctx = await applyCloudAccessContext(user);
+  }catch(error){
     console.error("Erro ao carregar dados da nuvem:", error);
     toast("Falha ao carregar da nuvem", "Usando o backup local por enquanto.");
     DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
     return DB;
   }
 
-  if(row && row.data){
-    DB = ensureMasterRecord(normalizeDBShape(row.data), user);
-    CLOUD_ROW_ID = row.id || null;
+  if(ctx?.row?.data){
+    let loaded = ensureMasterRecordByEmail(normalizeDBShape(ctx.row.data), ctx.ownerEmail || user.email || "");
+    if(ctx.member){
+      loaded = ensureMemberMirror(loaded, ctx.member);
+    }
+    DB = loaded;
     CLOUD_DB_READY = true;
     localStorage.setItem(DBKEY, JSON.stringify(DB));
     return DB;
   }
 
-  DB = ensureMasterRecord(normalizeDBShape(getLegacyLocalDB() || freshDB()), user);
+  if(ctx?.kind === "member" || ctx?.kind === "member_orphan"){
+    DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
+    DB = ensureMasterRecordByEmail(DB, ctx.ownerEmail || "");
+    DB = ensureMemberMirror(DB, ctx.member);
+    CLOUD_DB_READY = false;
+    localStorage.setItem(DBKEY, JSON.stringify(DB));
+    toast("Acesso sem base da clínica", "Peça para o master entrar primeiro para criar a base na nuvem.");
+    return DB;
+  }
+
+  DB = ensureMasterRecordByEmail(normalizeDBShape(getLegacyLocalDB() || freshDB()), ctx?.ownerEmail || user.email || "");
   localStorage.setItem(DBKEY, JSON.stringify(DB));
 
   const created = await flushCloudSave(DB);
@@ -2934,6 +3163,148 @@ function saveDB(db, options={}){
   scheduleCloudSave(!!options.immediate);
 }
 
+function createIsolatedSupabaseClient(){
+  return window.supabase.createClient(supabaseUrl, supabaseKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      storageKey: `cronos-temp-${Date.now()}-${Math.random()}`
+    }
+  });
+}
+
+async function createCloudUserIdentity({ name, username, email, password }){
+  const explicitEmail = String(email || "").trim().toLowerCase();
+  const normalizedUsername = normalizeUsername(username);
+  const loginEmail = normalizedUsername ? usernameToSyntheticEmail(normalizedUsername) : explicitEmail;
+
+  if(!loginEmail){
+    throw new Error("Informe um usuário ou e-mail para o login.");
+  }
+
+  const tempClient = createIsolatedSupabaseClient();
+  const { data, error } = await tempClient.auth.signUp({
+    email: loginEmail,
+    password,
+    options: {
+      data: {
+        display_name: name || "",
+        username: normalizedUsername || "",
+        cronos_kind: "member"
+      }
+    }
+  });
+
+  try{ await tempClient.auth.signOut(); }catch(_){}
+
+  if(error) throw error;
+  if(!data?.user?.id){
+    throw new Error("Não foi possível criar o acesso do usuário.");
+  }
+
+  return {
+    authUid: data.user.id,
+    loginEmail,
+    explicitEmail,
+    username: normalizedUsername
+  };
+}
+
+async function insertClinicMemberRecord({ authUid, loginEmail, username, name, role }){
+  const owner = await getCurrentSupabaseUser();
+  if(!owner) throw new Error("Faça login como master para cadastrar usuários.");
+
+  const payload = {
+    owner_uid: owner.id,
+    auth_uid: authUid,
+    email: String(loginEmail || "").trim().toLowerCase(),
+    username: username || null,
+    name,
+    role,
+    active: true
+  };
+
+  const { error } = await supabaseClient.from(CLOUD_MEMBERS_TABLE).insert(payload);
+  if(error) throw error;
+  return payload;
+}
+
+async function updateClinicMemberRecord(userRow, { name, role }){
+  if(!userRow?.authUid) return;
+  const owner = await getCurrentSupabaseUser();
+  if(!owner) throw new Error("Sessão do master não encontrada.");
+
+  const { error } = await supabaseClient
+    .from(CLOUD_MEMBERS_TABLE)
+    .update({
+      name,
+      role,
+      active: true
+    })
+    .eq("owner_uid", owner.id)
+    .eq("auth_uid", userRow.authUid);
+
+  if(error) throw error;
+}
+
+async function deactivateClinicMemberRecord(userRow){
+  if(!userRow?.authUid) return;
+  const owner = await getCurrentSupabaseUser();
+  if(!owner) throw new Error("Sessão do master não encontrada.");
+
+  const { error } = await supabaseClient
+    .from(CLOUD_MEMBERS_TABLE)
+    .update({ active: false })
+    .eq("owner_uid", owner.id)
+    .eq("auth_uid", userRow.authUid);
+
+  if(error) throw error;
+}
+
+async function syncCurrentCloudActor(){
+  if(typeof supabaseClient === "undefined"){
+    console.log("Supabase ainda não carregou, tentando novamente...");
+    setTimeout(syncCurrentCloudActor, 500);
+    return null;
+  }
+
+  const user = await getCurrentSupabaseUser();
+  if(!user) return null;
+
+  let db = await ensureCloudDBLoaded(true);
+
+  const ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || user.email || "").trim().toLowerCase();
+  db = ensureMasterRecordByEmail(db, ownerEmail);
+
+  if(CLOUD_ACCESS_KIND === "owner"){
+    const master = getMasterRecordByEmail(db, ownerEmail) || db.masters[0];
+    if(master){
+      saveSession({ kind: "master", id: master.id });
+      saveDB(db, { immediate: true });
+      return { kind: "master", id: master.id };
+    }
+  }
+
+  if(CLOUD_MEMBER_INFO){
+    db = ensureMemberMirror(db, CLOUD_MEMBER_INFO);
+  } else if(CLOUD_ACCESS_KIND === "member_orphan"){
+    return null;
+  }
+
+  let memberRow = (db.users || []).find(u => u?.authUid === user.id)
+    || (db.users || []).find(u => String(u?.loginEmail || u?.email || "").trim().toLowerCase() === String(user.email || "").trim().toLowerCase());
+
+  if(memberRow){
+    memberRow.authUid = user.id;
+    memberRow.loginEmail = memberRow.loginEmail || String(user.email || "").trim().toLowerCase();
+    saveSession({ kind: "user", id: memberRow.id });
+    saveDB(db, { immediate: true });
+    return { kind: "user", id: memberRow.id };
+  }
+
+  return null;
+}
 function migrateDBValues(db){
   let changed = false;
   (db.entries||[]).forEach(e=>{
@@ -3026,7 +3397,7 @@ function currentActor(){
   if(s.kind==="user"){
     const u = db.users.find(x=>x.id===s.id);
     if(!u) return null;
-    return {kind:"user", id:u.id, masterId:u.masterId, name:u.name, email:u.email, username:u.username, role:u.role, isPrimaryMaster:false, perms: (PERMS[u.role] || PERMS.DENTISTA)};
+    return {kind:"user", id:u.id, masterId:u.masterId, name:u.name, email:(u.email || u.loginEmail || ""), username:u.username, role:u.role, isPrimaryMaster:false, perms: (PERMS[u.role] || PERMS.DENTISTA)};
   }
   return null;
 }
@@ -3056,6 +3427,7 @@ function showApp(actor){
   el("brandSub").textContent = `Clínica: ${actor.kind==="master" ? actor.name : masterName(actor.masterId)}`;
   el("whoami").textContent = `${actor.name} • ${actor.role}`;
   syncThemeButtons();
+  applyRoleVisibility(actor);
   window.__CRONOS_BOOTED = true;
 }
 
@@ -3300,6 +3672,39 @@ const pillT = el("pillTasks"); if(pillT) pillT.textContent = overdue ? `${overdu
 
 }
 
+
+const STATUS_UI_LABELS = {
+  "Conversando":"Em conversa",
+  "Agendado":"Agendados",
+  "Compareceu":"Compareceram",
+  "Fechou":"Fechados",
+  "Remarcou":"Remarcados",
+  "Faltou":"Faltaram",
+  "Desmarcou":"Desmarcados",
+  "Sem resposta":"Sem resposta",
+  "Msg não entregue":"Mensagens não entregues",
+  "Mensagem não entregue":"Mensagens não entregues",
+  "Número incorreto":"Números incorretos",
+  "Achou caro":"Acharam caro",
+  "Não tem interesse":"Sem interesse",
+  "Mora longe":"Moram longe",
+  "Mora em outra cidade":"Moram em outra cidade",
+  "Fechou em outro lugar":"Fecharam em outro lugar",
+  "Concluído":"Concluídos"
+};
+
+function dashStatusLabel(status){
+  return STATUS_UI_LABELS[String(status||"").trim()] || String(status||"—");
+}
+function getDashStatusFilter(){
+  return String(window.__DASH_STATUS_ACTIVE || "");
+}
+function setDashStatusFilter(status){
+  const next = String(status||"");
+  window.__DASH_STATUS_ACTIVE = (getDashStatusFilter()===next) ? "" : next;
+  renderDashboard();
+}
+
 function renderDashboard(){
   const rows = filteredEntries();
   const byStatus = new Map();
@@ -3350,12 +3755,17 @@ el("kpiTotal").textContent = rows.length;
 
   const grid = el("dashByStatusGrid");
   const ordered = STATUS_LIST.map(s=>[s, byStatus.get(s)||0]).filter(([_,n])=>n>0);
+  let dashStatusActive = getDashStatusFilter();
+  if(dashStatusActive && !ordered.some(([s])=>s===dashStatusActive)){
+    window.__DASH_STATUS_ACTIVE = "";
+    dashStatusActive = "";
+  }
 
   // Robust render (grid)
   grid.innerHTML = `
     <div class="sgHead">Status</div>
     <div class="sgHead center">Total</div>
-    <div class="sgHead right">Valor (R$)</div>
+    <div class="sgHead right">Valor em aberto</div>
   `;
   if(!ordered.length){
     const a=document.createElement("div"); a.className="muted"; a.style.gridColumn="1 / -1"; a.style.padding="12px";
@@ -3363,32 +3773,96 @@ el("kpiTotal").textContent = rows.length;
     grid.appendChild(a);
   } else {
     ordered.forEach(([s,n])=>{
+      const active = dashStatusActive===s;
+      const activeStyle = active ? "background:rgba(96,165,250,.14); box-shadow:inset 0 0 0 1px rgba(96,165,250,.35);" : "";
       const row = document.createElement("div"); row.className="sgRow";
-      const c1=document.createElement("div"); c1.textContent=String(s);
-      const c2=document.createElement("div"); c2.className="center nowrap"; c2.innerHTML="<b>"+String(n)+"</b>";
-      const c3=document.createElement("div"); c3.className="right nowrap"; c3.innerHTML="<b>"+moneyBR(byStatusValue.get(s)||0)+"</b>";
+      const c1=document.createElement("div");
+      c1.textContent = dashStatusLabel(s);
+      c1.style.cursor = "pointer";
+      c1.style.fontWeight = active ? "800" : "600";
+      c1.style.transition = "all .15s ease";
+      c1.style.cssText += activeStyle;
+      c1.dataset.dashStatus = s;
+      c1.title = "Clique para filtrar os leads abaixo por este status";
+
+      const c2=document.createElement("div");
+      c2.className="center nowrap";
+      c2.innerHTML="<b>"+String(n)+"</b>";
+      c2.style.cursor = "pointer";
+      c2.style.transition = "all .15s ease";
+      c2.style.cssText += activeStyle;
+      c2.dataset.dashStatus = s;
+      c2.title = "Clique para filtrar os leads abaixo por este status";
+
+      const c3=document.createElement("div");
+      c3.className="right nowrap";
+      c3.innerHTML="<b>"+moneyBR(byStatusValue.get(s)||0)+"</b>";
+      c3.style.cursor = "pointer";
+      c3.style.transition = "all .15s ease";
+      c3.style.cssText += activeStyle;
+      c3.dataset.dashStatus = s;
+      c3.title = "Clique para filtrar os leads abaixo por este status";
+
       row.appendChild(c1); row.appendChild(c2); row.appendChild(c3);
       grid.appendChild(row);
     });
+
+    const hint = document.createElement("div");
+    hint.style.gridColumn = "1 / -1";
+    hint.style.padding = "10px 12px";
+    hint.style.display = "flex";
+    hint.style.justifyContent = "space-between";
+    hint.style.alignItems = "center";
+    hint.style.gap = "10px";
+    hint.innerHTML = `
+      <div class="muted" style="font-size:12px">
+        Clique em um status para filtrar os leads abaixo.
+      </div>
+      ${dashStatusActive ? `<button type="button" id="btnDashStatusClear" class="miniBtn">Mostrar todos</button>` : `<div class="muted" style="font-size:12px">Filtro atual: Todos</div>`}
+    `;
+    grid.appendChild(hint);
+  }
+  grid.querySelectorAll("[data-dash-status]").forEach(node=>{
+    node.onclick = ()=> setDashStatusFilter(node.dataset.dashStatus || "");
+    node.onkeydown = (ev)=>{
+      if(ev.key==="Enter" || ev.key===" "){
+        ev.preventDefault();
+        setDashStatusFilter(node.dataset.dashStatus || "");
+      }
+    };
+    node.tabIndex = 0;
+    node.setAttribute("role","button");
+  });
+  const btnDashStatusClear = el("btnDashStatusClear");
+  if(btnDashStatusClear){
+    btnDashStatusClear.onclick = ()=>{
+      window.__DASH_STATUS_ACTIVE = "";
+      renderDashboard();
+    };
   }
   try{ grid.dataset.rendered="1"; }catch(_){}
 
 
 
 
-  // preview (max 8)
+  // preview (max 10)
  const db = loadDB();
+const dashStatusActivePreview = getDashStatusFilter();
 const sortedRows = rows
   .slice()
   .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""));
 
-const totalPrev = sortedRows.length;
+const previewSource = dashStatusActivePreview
+  ? sortedRows.filter(e=>String(e.status||"")===dashStatusActivePreview)
+  : sortedRows;
+
+const totalPrev = previewSource.length;
 const previewLimit = window.DASH_PREVIEW_LIMIT || 10;
-const prev = sortedRows.slice(0, previewLimit);
+const prev = previewSource.slice(0, previewLimit);
 
 const box = el("dashPreview");
 if(!prev.length){
-  box.innerHTML = `<div class="muted">Nada aqui ainda. Crie seu primeiro lead.</div>`;
+  box.innerHTML = `<div class="muted">Nenhum lead encontrado${dashStatusActivePreview ? ` para <b>${escapeHTML(dashStatusLabel(dashStatusActivePreview))}</b>` : ""}.</div>`;
   return;
 }
 
@@ -3417,7 +3891,7 @@ box.innerHTML =
   `
     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px">
       <div class="muted" style="font-size:12px">
-        Mostrando ${prev.length} de ${totalPrev} leads
+        Mostrando ${prev.length} de ${totalPrev} leads${dashStatusActivePreview ? ` • Status: ${escapeHTML(dashStatusLabel(dashStatusActivePreview))}` : ""}
       </div>
       ${
         totalPrev > previewLimit
@@ -3912,6 +4386,66 @@ function drawBarChart(canvas, labels, values){
 let currentPage = 1;
 const leadsPerPage = 50;
 
+
+function renderLeadsPagination(totalLeads, totalPages){
+  const wrap = document.getElementById('leadsPagination');
+  if(!wrap) return;
+  if(!totalLeads){
+    wrap.innerHTML = `<span class="muted">Mostrando 0 de 0 leads</span>`;
+    return;
+  }
+
+  const startItem = ((currentPage - 1) * leadsPerPage) + 1;
+  const endItem = Math.min(totalLeads, currentPage * leadsPerPage);
+
+  const pages = [];
+  const addPage = (p) => {
+    if(p >= 1 && p <= totalPages && !pages.includes(p)) pages.push(p);
+  };
+
+  addPage(1);
+  for(let p = currentPage - 2; p <= currentPage + 2; p++) addPage(p);
+  addPage(totalPages);
+  pages.sort((a,b)=>a-b);
+
+  const parts = [];
+  for(let i=0; i<pages.length; i++){
+    const p = pages[i];
+    const prev = pages[i-1];
+    if(i>0 && p - prev > 1){
+      parts.push(`<span class="muted">…</span>`);
+    }
+    parts.push(
+      p === currentPage
+        ? `<button class="btn primary" type="button" data-page="${p}" aria-current="page">${p}</button>`
+        : `<button class="btn ghost" type="button" data-page="${p}">${p}</button>`
+    );
+  }
+
+  wrap.innerHTML = `
+    <div class="muted" style="margin-right:auto">Mostrando ${startItem}-${endItem} de ${totalLeads} leads</div>
+    <button class="btn ghost" type="button" data-page="prev" ${currentPage <= 1 ? 'disabled' : ''}>← Anterior</button>
+    ${parts.join('')}
+    <button class="btn ghost" type="button" data-page="next" ${currentPage >= totalPages ? 'disabled' : ''}>Próxima →</button>
+  `;
+
+  wrap.querySelectorAll('button[data-page]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const token = btn.dataset.page;
+      if(token === 'prev' && currentPage > 1){
+        currentPage--;
+      }else if(token === 'next' && currentPage < totalPages){
+        currentPage++;
+      }else if(/^\d+$/.test(token)){
+        currentPage = Number(token);
+      }else{
+        return;
+      }
+      renderLeadsTable(filteredEntries());
+    });
+  });
+}
+
 function renderLeadsTable(list){
   // Novo layout (cards) na aba Leads
   const cardsWrap = document.getElementById('leadsCards');
@@ -3923,16 +4457,19 @@ function renderLeadsTable(list){
   const target = cardsWrap || tbody;
   if(!target) return;
 
-// === PAGINAÇÃO ===
-const totalLeads = list.length;
-const totalPages = Math.ceil(totalLeads / leadsPerPage);
+  const fullList = Array.isArray(list) ? [...list] : [];
 
-if (currentPage > totalPages) currentPage = 1;
+  // === PAGINAÇÃO ===
+  const totalLeads = fullList.length;
+  const totalPages = Math.max(1, Math.ceil(totalLeads / leadsPerPage));
 
-const start = (currentPage - 1) * leadsPerPage;
-const end = start + leadsPerPage;
+  if (currentPage > totalPages) currentPage = 1;
+  if (currentPage < 1) currentPage = 1;
 
-list = list.slice(start, end);
+  const start = (currentPage - 1) * leadsPerPage;
+  const end = start + leadsPerPage;
+
+  list = fullList.slice(start, end);
 
   const cardsHtml = (list||[]).map((e)=>{
     const c = e?.contactId ? _getContact(e.contactId) : null;
@@ -3952,7 +4489,7 @@ list = list.slice(start, end);
     else if (priNorm === '0' || priNorm === 'cold' || priNorm === 'frio' || priNorm === 'f') prioridade = 'Frio';
 
     // fallback: prioridade via tag "Prioridade: X"
-    const tagsArr = ([] 
+    const tagsArr = ([]
       .concat(Array.isArray(e.tags) ? e.tags : (Array.isArray(e.tag) ? e.tag : (e.tag ? [e.tag] : [])))
       .concat(Array.isArray(c?.tags) ? c.tags : (Array.isArray(c?.tag) ? c.tag : (c?.tag ? [c.tag] : [])))
       .map(String));
@@ -4028,10 +4565,15 @@ list = list.slice(start, end);
   }else{
     tbody.innerHTML = cardsHtml || `<tr><td colspan="6" class="emptyCell">Nenhum lead encontrado.</td></tr>`;
   }
+
+  renderLeadsPagination(totalLeads, totalPages);
 }
 
 
+
 function renderSettings(){
+  const actor = currentActor();
+  if(actor && !canAccessView("settings", actor)) return;
   const prefs = getPrefs();
   const ta = el("waTemplate");
   if(ta) ta.value = prefs.waTemplate || "";
@@ -4039,6 +4581,7 @@ function renderSettings(){
 
 function renderUsers(){
   const actor = currentActor();
+  if(actor && !canAccessView("users", actor)) return;
   const db = loadDB();
   const tbody = el("usersTbody");
   const master = db.masters.find(m=>m.id===actor.masterId);
@@ -4086,15 +4629,27 @@ function renderUsers(){
 
 /* -------- Navigation -------- */
 function setActiveView(view){
-  qsa(".nav button").forEach(b=> b.classList.toggle("active", b.dataset.view===view));
-  ["dashboard","leads","kanban","tasks","installments","users","settings"].forEach(v=>{
-    el(`view-${v}`).classList.toggle("hidden", v!==view);
+  const actor = currentActor();
+  let targetView = view;
+
+  if(actor && !canAccessView(targetView, actor)){
+    const fallback = firstAllowedView(actor);
+    if(view !== fallback){
+      toast("Acesso restrito", `Seu nível ${actor.role} não pode abrir ${view}.`);
+    }
+    targetView = fallback;
+  }
+
+  applyRoleVisibility(actor);
+  qsa(".nav button").forEach(b=> b.classList.toggle("active", b.dataset.view===targetView));
+  APP_VIEWS.forEach(v=>{
+    el(`view-${v}`).classList.toggle("hidden", v!==targetView);
   });
 
   const sticky = el("stickyFilters");
   if(sticky){
     const viewsWithGlobalFilters = new Set(["dashboard","leads","kanban"]);
-    sticky.classList.toggle("hidden", !viewsWithGlobalFilters.has(view));
+    sticky.classList.toggle("hidden", !viewsWithGlobalFilters.has(targetView));
   }
 
   renderAll();
@@ -4339,6 +4894,7 @@ function buildSuggestList(actor, typedName, typedPhone){
 function openNewLead(){
   const actor = currentActor();
   if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
+  if(!actor.perms.edit || !canAccessView("leads", actor)) return toast("Sem permissão", "Seu nível não pode criar leads.");
   const monthKey = val("fMonth", new Date().toISOString().slice(0,7));
   const entry = { monthKey, firstContactAt: todayISO(), status:"Conversando", origin:"Instagram orgânico", treatment:"Clínica geral", tags:[] };
   const contact = { name:"", phone:"", firstSeenAt:"", lastSeenAt:"" };
@@ -5013,6 +5569,8 @@ function deleteEntry(entryId){
 /* -------- Users CRUD -------- */
 function userFormHTML(user){
   const u = user || {name:"", username:"", email:"", role:"SECRETARIA"};
+  const isCloudUser = !!u.authUid;
+  const visibleEmail = (u.email && !String(u.email).endsWith("@users.cronos.local")) ? u.email : "";
   return `
     <div class="twoCol">
       <div>
@@ -5026,19 +5584,23 @@ function userFormHTML(user){
         </select>
       </div>
       <div>
-        <label>Usuário (opcional)</label>
-        <input id="uf_username" value="${escapeHTML(u.username||"")}" placeholder="Ex: secretaria1"/>
+        <label>Usuário / login</label>
+        <input id="uf_username" value="${escapeHTML(u.username||"")}" placeholder="Ex: secretaria1" ${isCloudUser ? "disabled" : ""}/>
       </div>
       <div>
-        <label>E-mail</label>
-        <input id="uf_email" value="${escapeHTML(u.email||"")}" placeholder="email@clinica.com"/>
+        <label>E-mail (opcional)</label>
+        <input id="uf_email" value="${escapeHTML(visibleEmail||"")}" placeholder="email@clinica.com" ${isCloudUser ? "disabled" : ""}/>
       </div>
       <div style="grid-column:1/-1">
         <label>Senha</label>
-        <input id="uf_pass" type="password" placeholder="defina uma senha"/>
+        <input id="uf_pass" type="password" placeholder="${isCloudUser ? "senha não editável aqui" : "defina uma senha"}" ${isCloudUser ? "disabled" : ""}/>
       </div>
       <div class="muted" style="font-size:12px; grid-column:1/-1">
-        Login do interno pode ser <b>usuário</b> ou <b>e-mail</b>.
+        ${
+          isCloudUser
+            ? 'Este acesso já existe na nuvem. Aqui você pode alterar <b>nome</b> e <b>nível</b>. Para trocar login ou senha, remova e crie de novo.'
+            : 'Se preencher <b>usuário</b>, ele vira o login principal. O <b>e-mail</b> fica como contato. Se deixar o usuário vazio, o login será pelo e-mail.'
+        }
       </div>
     </div>
   `;
@@ -5062,23 +5624,48 @@ function openNewUser(){
         const role = val("uf_role");
         if(role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode criar outros masters.");
 
-        const username = val("uf_username").trim();
+        const username = normalizeUsername(val("uf_username"));
         const email = val("uf_email").trim().toLowerCase();
         const pass = val("uf_pass");
         if(!name) return toast("Nome obrigatório");
-        if(!email && !username) return toast("Informe e-mail ou usuário");
+        if(!email && !username) return toast("Informe um usuário ou e-mail");
         if(!pass) return toast("Senha obrigatória");
 
-        // uniqueness within master
-        if(username && db.users.some(u=>u.masterId===actor.masterId && u.username===username)) return toast("Usuário já existe");
-        if(email && db.users.some(u=>u.masterId===actor.masterId && u.email===email)) return toast("E-mail já existe");
+        if(username && db.users.some(u=>u.masterId===actor.masterId && normalizeUsername(u.username)===username)) return toast("Usuário já existe");
+        if(email && db.users.some(u=>u.masterId===actor.masterId && String(u.email||"").toLowerCase()===email)) return toast("E-mail já existe");
 
-        const passHash = await hashPass(pass);
-        db.users.push({ id: uid("u"), masterId: actor.masterId, name, username, email, role, passHash, createdAt: new Date().toISOString() });
-        saveDB(db);
-        closeModal();
-        toast("Usuário criado ✅", name);
-        renderAll();
+        try{
+          const identity = await createCloudUserIdentity({ name, username, email, password: pass });
+          await insertClinicMemberRecord({
+            authUid: identity.authUid,
+            loginEmail: identity.loginEmail,
+            username: identity.username,
+            name,
+            role
+          });
+
+          db.users.push({
+            id: uid("u"),
+            authUid: identity.authUid,
+            masterId: actor.masterId,
+            name,
+            username: identity.username || "",
+            email: identity.explicitEmail || "",
+            loginEmail: identity.loginEmail,
+            role,
+            active: true,
+            createdAt: new Date().toISOString()
+          });
+
+          saveDB(db, { immediate:true });
+          closeModal();
+          toast("Usuário criado ✅", `${name} já pode entrar no sistema.`);
+          renderAll();
+        }catch(err){
+          console.error("Erro ao criar usuário cloud:", err);
+          const msg = String(err?.message || err?.error_description || "Não foi possível criar o usuário.");
+          toast("Falha ao criar usuário", msg);
+        }
       });
     }
   });
@@ -5092,28 +5679,45 @@ function openUserEdit(userId){
   if(!u) return toast("Usuário não encontrado");
   openModal({
     title: "Editar usuário",
-    sub: "Altere nível e login. (Senha opcional)",
+    sub: u.authUid ? "Nome e nível podem ser alterados sem derrubar o acesso." : "Altere nível e login. (Senha opcional)",
     bodyHTML: userFormHTML(u),
     footHTML: `
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn ok" id="btnSaveUser">Salvar</button>
     `,
     onMount: ()=>{
-      el("uf_pass").placeholder = "deixe vazio para manter";
+      if(!u.authUid){
+        el("uf_pass").placeholder = "deixe vazio para manter";
+      }
       el("btnSaveUser").addEventListener("click", async ()=>{
         const name = val("uf_name").trim();
         const role = val("uf_role");
         if(role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode promover para MASTER.");
+        if(!name) return toast("Nome obrigatório");
 
-        const username = val("uf_username").trim();
+        if(u.authUid){
+          try{
+            u.name = name;
+            u.role = role;
+            await updateClinicMemberRecord(u, { name, role });
+            saveDB(db, { immediate:true });
+            closeModal();
+            toast("Usuário atualizado ✅");
+            renderAll();
+          }catch(err){
+            console.error("Erro ao atualizar usuário cloud:", err);
+            toast("Falha ao atualizar usuário", String(err?.message || "Tente novamente."));
+          }
+          return;
+        }
+
+        const username = normalizeUsername(val("uf_username"));
         const email = val("uf_email").trim().toLowerCase();
         const pass = val("uf_pass");
-        if(!name) return toast("Nome obrigatório");
         if(!email && !username) return toast("Informe e-mail ou usuário");
 
-        // uniqueness
-        if(username && db.users.some(x=>x.masterId===actor.masterId && x.username===username && x.id!==u.id)) return toast("Usuário já existe");
-        if(email && db.users.some(x=>x.masterId===actor.masterId && x.email===email && x.id!==u.id)) return toast("E-mail já existe");
+        if(username && db.users.some(x=>x.masterId===actor.masterId && normalizeUsername(x.username)===username && x.id!==u.id)) return toast("Usuário já existe");
+        if(email && db.users.some(x=>x.masterId===actor.masterId && String(x.email||"").toLowerCase()===email && x.id!==u.id)) return toast("E-mail já existe");
 
         u.name = name;
         u.role = role;
@@ -5122,7 +5726,7 @@ function openUserEdit(userId){
         if(pass){
           u.passHash = await hashPass(pass);
         }
-        saveDB(db);
+        saveDB(db, { immediate:true });
         closeModal();
         toast("Usuário atualizado ✅");
         renderAll();
@@ -5131,7 +5735,7 @@ function openUserEdit(userId){
   });
 }
 
-function deleteUser(userId){
+async function deleteUser(userId){
   const actor = currentActor();
   if(!actor.perms.manageUsers) return toast("Sem permissão");
   const db = loadDB();
@@ -5139,10 +5743,19 @@ function deleteUser(userId){
   if(!u) return;
   if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode remover outros masters.");
   if(!confirm(`Excluir usuário ${u.name}?`)) return;
-  db.users = db.users.filter(x=>x.id!==userId);
-  saveDB(db);
-  toast("Usuário excluído");
-  renderAll();
+
+  try{
+    if(u.authUid){
+      await deactivateClinicMemberRecord(u);
+    }
+    db.users = db.users.filter(x=>x.id!==userId);
+    saveDB(db, { immediate:true });
+    toast("Usuário excluído");
+    renderAll();
+  }catch(err){
+    console.error("Erro ao remover usuário:", err);
+    toast("Falha ao excluir usuário", String(err?.message || "Tente novamente."));
+  }
 }
 
 /* -------- CSV Export -------- */
@@ -5324,6 +5937,8 @@ function csvSafe(s){
 
 /* -------- Backup / Import -------- */
 function exportJSON(){
+  const actor = currentActor();
+  if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode exportar backup.");
   const db = loadDB();
   const blob = new Blob([JSON.stringify(db,null,2)], {type:"application/json"});
   const a = document.createElement("a");
@@ -5336,6 +5951,8 @@ function exportJSON(){
   toast("Backup exportado ✅");
 }
 function importJSON(file){
+  const actor = currentActor();
+  if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode importar backup.");
   const r = new FileReader();
   r.onload = async ()=>{
     try{
@@ -5353,6 +5970,8 @@ function importJSON(file){
   r.readAsText(file);
 }
 async function wipeAll(){
+  const actor = currentActor();
+  if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode zerar a base.");
   if(!confirm("Zerar TUDO? (usuários, leads, masters)")) return;
   const fresh = freshDB();
   try{
@@ -5661,6 +6280,7 @@ tbody.innerHTML = tasks.map(t=>{
 function openNewTask(){
   const actor = currentActor();
   if(!actor) return;
+  if(!actor.perms.edit || !canAccessView("tasks", actor)) return toast("Sem permissão", "Seu nível não pode criar tarefas.");
   const db = loadDB();
   const monthKey = val("fMonth") || new Date().toISOString().slice(0,7);
 
@@ -5856,10 +6476,7 @@ function bindActions(){
   el("btnLogout").onclick = async ()=>{
     try{ if(typeof supabaseClient !== "undefined" && supabaseClient?.auth) await supabaseClient.auth.signOut(); }catch(_){}
     DB = null;
-    CLOUD_DB_READY = false;
-    CLOUD_ROW_ID = null;
-    CLOUD_OWNER_UID = null;
-    CLOUD_OWNER_EMAIL = "";
+    resetCloudContext();
     clearSession();
     toast("Saiu");
     showAuth();
@@ -5876,6 +6493,7 @@ function bindActions(){
     f.search=""; f.status=""; f.treatment=""; f.origin=""; f.periodFrom=""; f.periodTo=""; f.order="recent";
     saveFilters(f);
     setUIFilters(f);
+    currentPage = 1;
     renderAll();
   };
 
@@ -5886,6 +6504,7 @@ function bindActions(){
     el(id).addEventListener("input", ()=>{
       const f = getUIFilters();
       saveFilters(f);
+      currentPage = 1;
       renderAll();
     });
     el(id).addEventListener("change", ()=>{
@@ -5896,6 +6515,7 @@ function bindActions(){
       }
       // persist again in case month selection was adjusted
       saveFilters(getUIFilters());
+      currentPage = 1;
       renderAll();
     });
   });
@@ -5914,6 +6534,8 @@ function bindActions(){
   if(el("waChargeTemplate")) el("waChargeTemplate").value = (dbInitPrefs.settings && dbInitPrefs.settings.waChargeTemplate) ? String(dbInitPrefs.settings.waChargeTemplate) : "";
   const btnPrefs = el("btnSavePrefs");
   if(btnPrefs) btnPrefs.onclick = ()=>{
+    const actor = currentActor();
+    if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode alterar configurações.");
     const db = loadDB();
     if(!db.settings) db.settings = {};
     db.settings.waTemplate = (val("waTemplate")||"").trim();
@@ -5956,7 +6578,7 @@ function bindActions(){
 }
 
 function bindAuth(){ 
- el("authMode").addEventListener("change", ()=>{
+  el("authMode").addEventListener("change", ()=>{
     const mode = val("authMode");
     const sel = el("authMasterSelect");
     const wrap = el("authMasterNameWrap");
@@ -5965,57 +6587,14 @@ function bindAuth(){
       wrap.classList.remove("hidden");
       el("authLogin").placeholder = "E-mail do Master";
     }else{
-      sel.disabled = false;
+      sel.disabled = true;
       wrap.classList.add("hidden");
-      el("authLogin").placeholder = "Usuário ou e-mail";
+      el("authLogin").placeholder = "Usuário ou e-mail do usuário";
     }
- // refreshAuthMasters();
   });
-// el("btnCreateMaster").addEventListener("click", async ()=>{
-//   const db = loadDB();
-//   const name = val("authMasterName").trim();
-//   const email = val("authLogin").trim().toLowerCase();
-//   const pass = val("authPass");
-//   if(!name) return toast("Nome da clínica obrigatório");
-//   if(!email) return toast("E-mail do master obrigatório");
-//   if(!pass) return toast("Senha obrigatória");
-//   if(db.masters.some(m=>m.email===email)) return toast("E-mail já existe");
 
-  
-   // saveSession({kind:"master", id:"master"});
-//   toast("Master criado✅", name);
- //  boot();
-// });
   el("btnLogin").addEventListener("click", async ()=>{
-    const mode = val("authMode");
-    if(window.__SUPABASE_MASTER_LOGIN__ && mode==="master") return;
-    const db = loadDB();
-    const login = val("authLogin").trim();
-    const pass = val("authPass");
-    if(!login || !pass) return toast("Preencha login e senha");
-
-    const passHash = await hashPass(pass);
-
-    if(mode==="master"){
-      const email = login.toLowerCase();
-      const m = db.masters.find(x=>x.email===email && x.passHash===passHash);
-      if(!m) return toast("Login inválido");
-      saveSession({kind:"master", id:m.id});
-      toast("Bem-vindo ✅", m.name);
-      boot();
-      return;
-    }
-
-   // user internal needs selected master
-    /*
-    const masterId = val("authMasterSelect");
-    if(!masterId) return toast("Selecione um Master");
-    const u = db.users.find(x=>x.masterId===masterId && (x.username===login || (x.email||"").toLowerCase()===login.toLowerCase()) && x.passHash===passHash);
-    if(!u) return toast("Login inválido");
-    saveSession({kind:"user", id:u.id});
-    toast("Bem-vindo ✅", u.name);
-    boot();
-    */
+    if(window.__SUPABASE_CLOUD_LOGIN__) return;
   });
 }
 function renderAll(){
@@ -6032,25 +6611,14 @@ function renderAll(){
   try{ renderSettings(); }catch(_){ }
 }
   async function syncMasterUser(){
-  if(typeof supabaseClient === "undefined"){
-    console.log("Supabase ainda não carregou, tentando novamente...");
-    setTimeout(syncMasterUser, 500);
-    return;
-  }
-
-  const user = await getCurrentSupabaseUser();
-  if(!user) return;
-
-  const db = await ensureCloudDBLoaded();
-  ensureMasterRecord(db, user);
-  saveDB(db, { immediate:true });
+  return syncCurrentCloudActor();
 }
 
 async function boot(){
   await ensureCloudDBLoaded();
 
 
-  await syncMasterUser();
+  await syncCurrentCloudActor();
 
   fillSelectOptions();
 
@@ -6080,14 +6648,10 @@ if (authSelect) authSelect.parentElement.classList.add("hidden");
   }
 
   showApp(actor);
-
-  // disable Users view if not allowed
-  const usersBtn = qs('.nav button[data-view="users"]');
-  usersBtn.classList.toggle("hidden", !actor.perms.manageUsers);
-  el("btnNewUser").classList.toggle("hidden", !actor.perms.manageUsers);
+  applyRoleVisibility(actor);
 
   bindNav();
-  setActiveView("dashboard");
+  setActiveView(firstAllowedView(actor));
 }
 
 /* One-time bindings */
@@ -6280,8 +6844,8 @@ function __applyKpiClick(key){
   }
   __updateKpiActiveUI();
 
-  // Vai direto pra lista (sem modal) e re-renderiza com filtro real
-  try{ showView("leads"); }catch(_){}
+  // Re-renderiza mantendo a view atual; no dashboard isso atualiza
+  // o resumo por status e os leads filtrados sem pular para Leads.
   try{ renderAll(); }catch(_){}
 }
 
@@ -6437,73 +7001,68 @@ const supabaseUrl = "https://nsqpslierpulanxvsxaw.supabase.co";
 const supabaseKey = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
 
 const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
-window.__SUPABASE_MASTER_LOGIN__ = true;
+window.__SUPABASE_CLOUD_LOGIN__ = true;
+window.__SUPABASE_MASTER_LOGIN__ = false;
 
-// quando clicar no botão entrar
-document.getElementById("btnLogin").addEventListener("click", async () => {
-    const email = String(document.getElementById("authLogin").value || "").trim().toLowerCase();
-    const password = document.getElementById("authPass").value;
-
-    if (!email || !password) {
-      toast("Preencha login e senha");
+async function finalizeCloudLogin(){
+  try{
+    await ensureCloudDBLoaded(true);
+    const actorInfo = await syncCurrentCloudActor();
+    if(!actorInfo){
+      toast("Acesso sem vínculo", "Esse login autenticou, mas não está ligado a nenhuma clínica.");
+      try{ await supabaseClient.auth.signOut(); }catch(_){}
+      clearSession();
+      showAuth();
       return;
     }
+  }catch(err){
+    console.error("Erro ao preparar dados da nuvem:", err);
+    toast("Falha ao abrir o sistema", "A autenticação ocorreu, mas a clínica não carregou direito.");
+    return;
+  }
 
-    const { data, error } = await supabaseClient.auth.signInWithPassword({
-        email,
-        password
-    });
+  document.getElementById("authView").classList.add("hidden");
+  document.getElementById("appView").classList.remove("hidden");
+  await boot();
+}
 
-    if (error) {
-        alert("Login ou senha inválidos");
-        return;
-    }
+document.getElementById("btnLogin").addEventListener("click", async () => {
+  const mode = String(document.getElementById("authMode")?.value || "master");
+  const rawLogin = String(document.getElementById("authLogin").value || "").trim();
+  const password = document.getElementById("authPass").value;
 
-    console.log("Login realizado com sucesso");
+  if (!rawLogin || !password) {
+    toast("Preencha login e senha");
+    return;
+  }
 
-    saveSession({
-      kind: "master",
-      id: email
-    });
+  const email = mode === "user"
+    ? resolveUserLoginEmail(rawLogin)
+    : String(rawLogin || "").trim().toLowerCase();
 
-    try{
-      await ensureCloudDBLoaded(true);
-      await syncMasterUser();
-    }catch(err){
-      console.error("Erro ao preparar dados da nuvem:", err);
-    }
+  if(!email){
+    toast("Login inválido");
+    return;
+  }
 
-    document.getElementById("authView").classList.add("hidden");
-    document.getElementById("appView").classList.remove("hidden");
+  const { error } = await supabaseClient.auth.signInWithPassword({
+    email,
+    password
+  });
 
-    await boot();
+  if (error) {
+    alert("Login ou senha inválidos");
+    return;
+  }
+
+  await finalizeCloudLogin();
 });
 
 async function verificarSessao() {
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
-    const email = String(data.session.user.email || "").trim().toLowerCase();
-    localStorage.setItem("cronos_actor", email);
-
-    saveSession({
-      kind: "master",
-      id: email
-    });
-
-    try{
-      await ensureCloudDBLoaded(true);
-      await syncMasterUser();
-    }catch(err){
-      console.error("Erro ao recuperar dados da nuvem:", err);
-    }
-
-    document.getElementById("authView").classList.add("hidden");
-    document.getElementById("appView").classList.remove("hidden");
-
-    console.log("Sessão ativa encontrada");
-
-    await boot();
+    await finalizeCloudLogin();
     showView("dashboard");
   }
 }
