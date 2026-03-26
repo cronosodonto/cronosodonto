@@ -2362,7 +2362,7 @@ fill="currentColor" stroke="none">
 <div class="kpi">
             <div class="label">R$ Recebido</div>
             <div class="value mono" id="kpiClosedValue">R$ 0,00</div>
-            <div class="hint">Soma do “Valor pago” no filtro</div>
+            <div class="hint">Recebido no período selecionado</div>
           </div>
 
           <div class="kpi">
@@ -2378,7 +2378,7 @@ fill="currentColor" stroke="none">
         <h3>Gráficos</h3>
         <div class="grid cols2" style="margin-top:10px">
           <div>
-            <div class="muted" style="font-size:12px; margin-bottom:6px">Receita (R$) por dia <span id="lineChartValue" class="chart-inline-value"></span> <span class="muted">(recebido por dia + em aberto distribuído por dia)</span></div>
+            <div class="muted" style="font-size:12px; margin-bottom:6px"><span id="lineChartTitleText">Receita (R$) por dia</span> <span id="lineChartValue" class="chart-inline-value"></span> <span class="muted" id="lineChartHint">(bruto/orçado por dia • recebido por dia)</span></div>
             <canvas id="chartRevenueLine" style="width:100%; height:260px"></canvas>
           </div>
           <div>
@@ -3853,23 +3853,203 @@ function setDashStatusFilter(status){
   renderDashboard();
 }
 
+function getEntryBudgetValue(e){
+  return (e && e.valueBudget!=null && !isNaN(Number(e.valueBudget)))
+    ? Number(e.valueBudget)
+    : ((e && e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
+}
+function getEntryPaidValue(e){
+  return (e && e.valuePaid!=null && !isNaN(Number(e.valuePaid)))
+    ? Number(e.valuePaid)
+    : ((e && e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
+}
+function pickISOFlexible(raw){
+  if(raw instanceof Date) return raw.toISOString().slice(0,10);
+  if(typeof raw === "number"){
+    const d = new Date(raw);
+    return isNaN(d) ? "" : d.toISOString().slice(0,10);
+  }
+  if(typeof raw === "string"){
+    const s = raw.trim();
+    if(!s) return "";
+    if(/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(s)) return s.slice(0,10);
+    const mm = s.match(/^([0-3]?\d)\/([0-1]?\d)\/([12]\d{3})(?:\s+.*)?$/);
+    if(mm){
+      const dd = String(mm[1]).padStart(2,'0');
+      const mo = String(mm[2]).padStart(2,'0');
+      const yyyy = mm[3];
+      return `${yyyy}-${mo}-${dd}`;
+    }
+    const d = new Date(s);
+    if(!isNaN(d)) return d.toISOString().slice(0,10);
+  }
+  return "";
+}
+function getDashboardEntryDate(e){
+  return pickISOFlexible(
+    e?.apptDate ||
+    e?.firstContactAt ||
+    e?.firstContact ||
+    e?.createdAt ||
+    e?.createdISO ||
+    e?.lastUpdateAt ||
+    e?.updatedAt ||
+    e?.appointmentAt ||
+    e?.agendamentoAt ||
+    e?.date ||
+    (e?.monthKey ? `${String(e.monthKey).slice(0,7)}-01` : "")
+  );
+}
+function dashboardDateInRange(iso, fromISO, toISO){
+  if(!iso) return false;
+  if(fromISO && iso < fromISO) return false;
+  if(toISO && iso > toISO) return false;
+  return true;
+}
+function getDashboardPaymentsForRows(db, actor, rows){
+  const ids = new Set((rows||[]).map(e=>String(e?.id||"")).filter(Boolean));
+  const contactIds = new Set((rows||[]).map(e=>String(e?.contactId||"")).filter(Boolean));
+  return (db?.payments||[])
+    .filter(p=>!actor || !p.masterId || p.masterId===actor.masterId)
+    .filter(p=>{
+      const entryId = String(p?.entryId||"");
+      const contactId = String(p?.contactId||"");
+      if(ids.size){
+        if(entryId && ids.has(entryId)) return true;
+        if(!entryId && contactId && contactIds.has(contactId)) return true;
+        return false;
+      }
+      return true;
+    })
+    .map(p=>({ ...p, __iso: pickISOFlexible(p?.date || p?.at || p?.paidAt || "") }))
+    .filter(p=>p.__iso);
+}
+function buildDashboardRevenueData(rows, db, actor, filters){
+  const todayISO = new Date().toISOString().slice(0,10);
+  const currentMonthKey = todayISO.slice(0,7);
+  const currentYear = todayISO.slice(0,4);
+  const monthNamesShort = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+  const fromISO = String(filters?.periodFrom||"").trim();
+  const toISO = String(filters?.periodTo||"").trim();
+  const paymentsAll = getDashboardPaymentsForRows(db, actor, rows);
+
+  if(filters?.monthKey && filters.monthKey !== "all"){
+    const monthKey = filters.monthKey;
+    const daysInMonth = new Date(Number(monthKey.slice(0,4)), Number(monthKey.slice(5,7)), 0).getDate();
+    const labels = Array.from({length: daysInMonth}, (_,i)=>String(i+1).padStart(2,"0"));
+    const grossSeries = Array.from({length: daysInMonth}, ()=>0);
+    const receivedSeries = Array.from({length: daysInMonth}, ()=>0);
+    const isCurrentMonth = monthKey === currentMonthKey;
+
+    (rows||[]).forEach(e=>{
+      const budget = getEntryBudgetValue(e);
+      if(!budget) return;
+      const iso = getDashboardEntryDate(e);
+      if(!iso || iso.slice(0,7)!==monthKey) return;
+      const day = Number(iso.slice(8,10));
+      if(day>=1 && day<=daysInMonth) grossSeries[day-1] += budget;
+    });
+
+    let payments = paymentsAll.filter(p=>p.__iso.slice(0,7)===monthKey);
+    if(isCurrentMonth) payments = payments.filter(p=>p.__iso <= todayISO);
+
+    if(payments.length){
+      payments.forEach(p=>{
+        const day = Number(String(p.__iso||"").slice(8,10));
+        if(day>=1 && day<=daysInMonth) receivedSeries[day-1] += Number(p.value||0);
+      });
+    }else{
+      (rows||[]).forEach(e=>{
+        const paid = getEntryPaidValue(e);
+        if(!paid) return;
+        const iso = getDashboardEntryDate(e);
+        if(!iso || iso.slice(0,7)!==monthKey) return;
+        if(isCurrentMonth && iso > todayISO) return;
+        const day = Number(iso.slice(8,10));
+        if(day>=1 && day<=daysInMonth) receivedSeries[day-1] += paid;
+      });
+    }
+
+    return {
+      mode: "daily",
+      labels,
+      grossSeries,
+      receivedSeries,
+      totalReceived: receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
+      titleText: "Receita (R$) por dia",
+      hintText: "(bruto/orçado por dia • recebido por dia)"
+    };
+  }
+
+  const selectedYear = String(filters?.year || currentYear);
+  const labels = monthNamesShort.slice();
+  const grossSeries = Array.from({length: 12}, ()=>0);
+  const receivedSeries = Array.from({length: 12}, ()=>0);
+  const capFutureInCurrentYear = selectedYear === currentYear;
+
+  (rows||[]).forEach(e=>{
+    const budget = getEntryBudgetValue(e);
+    if(!budget) return;
+    const iso = getDashboardEntryDate(e);
+    if(!iso || iso.slice(0,4)!==selectedYear) return;
+    if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
+    const monthIndex = Number(iso.slice(5,7)) - 1;
+    if(monthIndex>=0 && monthIndex<12) grossSeries[monthIndex] += budget;
+  });
+
+  let payments = paymentsAll.filter(p=>p.__iso.slice(0,4)===selectedYear);
+  if(fromISO || toISO) payments = payments.filter(p=>dashboardDateInRange(p.__iso, fromISO, toISO));
+  if(capFutureInCurrentYear) payments = payments.filter(p=>p.__iso <= todayISO);
+
+  if(payments.length){
+    payments.forEach(p=>{
+      const monthIndex = Number(String(p.__iso||"").slice(5,7)) - 1;
+      if(monthIndex>=0 && monthIndex<12) receivedSeries[monthIndex] += Number(p.value||0);
+    });
+  }else{
+    (rows||[]).forEach(e=>{
+      const paid = getEntryPaidValue(e);
+      if(!paid) return;
+      const iso = getDashboardEntryDate(e);
+      if(!iso || iso.slice(0,4)!==selectedYear) return;
+      if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
+      if(capFutureInCurrentYear && iso > todayISO) return;
+      const monthIndex = Number(iso.slice(5,7)) - 1;
+      if(monthIndex>=0 && monthIndex<12) receivedSeries[monthIndex] += paid;
+    });
+  }
+
+  return {
+    mode: "monthly",
+    labels,
+    grossSeries,
+    receivedSeries,
+    totalReceived: receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
+    titleText: "Receita (R$) por mês",
+    hintText: "(bruto/orçado por mês • recebido por mês)"
+  };
+}
+
 function renderDashboard(){
   const rows = filteredEntries();
   const byStatus = new Map();
   const byStatusValue = new Map(); // soma R$ em aberto (orçado - pago) por status
-  let totalPaid = 0;
   let totalBudget = 0;
   let totalOpen = 0;
   let positive = 0, dq = 0, appt = 0;
 
+  const actor = currentActor();
+  const db = loadDB();
+  const dashRevenue = buildDashboardRevenueData(rows, db, actor, getUIFilters());
+  const totalPaid = dashRevenue.totalReceived;
+
   rows.forEach(e=>{
     byStatus.set(e.status, (byStatus.get(e.status)||0) + 1);
 
-    const budget = (e.valueBudget!=null && !isNaN(Number(e.valueBudget))) ? Number(e.valueBudget) : ((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
+    const budget = getEntryBudgetValue(e);
     totalBudget += (budget||0);
-    const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid))) ? Number(e.valuePaid) : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
+    const paid = getEntryPaidValue(e);
 
-    totalPaid += paid||0;
     const open = Math.max(0, (budget||0) - (paid||0));
     byStatusValue.set(e.status, (byStatusValue.get(e.status)||0) + (open||0));
     if(open) totalOpen += open;
@@ -3886,13 +4066,13 @@ el("kpiTotal").textContent = rows.length;
   // Ticket médio (orçado): média do orçamento no filtro (considera apenas leads com orçamento > 0)
   try{
     const budgetCount = rows.reduce((acc,e)=>{
-      const b = (e.valueBudget!=null && !isNaN(Number(e.valueBudget))) ? Number(e.valueBudget) : ((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
+      const b = getEntryBudgetValue(e);
       return acc + ((b && b>0) ? 1 : 0);
     }, 0);
     const avg = budgetCount ? (totalBudget / budgetCount) : 0;
     const kpiAvg = el("kpiBudgetAvg");
     if(kpiAvg) kpiAvg.textContent = moneyBR(avg);
-  }catch(_){}
+  }catch(_){ }
 
   const kpiBudget = el("kpiBudgetTotal");
   if(kpiBudget) kpiBudget.textContent = moneyBR(totalBudget);
@@ -3988,14 +4168,13 @@ el("kpiTotal").textContent = rows.length;
       renderDashboard();
     };
   }
-  try{ grid.dataset.rendered="1"; }catch(_){}
+  try{ grid.dataset.rendered="1"; }catch(_){ }
 
 
 
 
   // preview (max 10)
- const db = loadDB();
-const dashStatusActivePreview = getDashStatusFilter();
+ const dashStatusActivePreview = getDashStatusFilter();
 const sortedRows = rows
   .slice()
   .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""));
@@ -4060,7 +4239,6 @@ if(btnMore){
   // charts
   requestAnimationFrame(()=>renderDashboardCharts(rows));
 }
-
 function statusDotClass(status){
   const s = (status||"").trim();
   // cores inspiradas no layout de referência
@@ -4106,87 +4284,7 @@ function renderDashboardCharts(rows){
 
   const actor = currentActor();
   const db = loadDB();
-
-  const f = getUIFilters();
-  const __mk = f.monthKey || new Date().toISOString().slice(0,7);
-  const monthKey = (__mk==="all") ? new Date().toISOString().slice(0,7) : __mk;
-  const daysInMonth = new Date(Number(monthKey.slice(0,4)), Number(monthKey.slice(5,7)), 0).getDate();
-  const labels = Array.from({length: daysInMonth}, (_,i)=>String(i+1).padStart(2,"0"));
-
-  const rev = Array.from({length: daysInMonth}, ()=>0);
-  const openDaily = Array.from({length: daysInMonth}, ()=>0);
-
-  const pickISO = (raw)=>{
-    if(raw instanceof Date) return raw.toISOString().slice(0,10);
-    if(typeof raw === "number") return new Date(raw).toISOString().slice(0,10);
-    if(typeof raw === "string"){
-      const s = raw.trim();
-      if(/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(s)) return s.slice(0,10);
-      const mm = s.match(/^([0-3]?\d)\/([0-1]?\d)\/([12]\d{3})(?:\s+.*)?$/);
-      if(mm){
-        const dd = String(mm[1]).padStart(2,'0');
-        const mo = String(mm[2]).padStart(2,'0');
-        const yyyy = mm[3];
-        return `${yyyy}-${mo}-${dd}`;
-      }
-      const d = new Date(s);
-      if(!isNaN(d)) return d.toISOString().slice(0,10);
-    }
-    return "";
-  };
-
-  const pickEntryDate = (e)=>{
-    return pickISO(
-      e.apptDate ||
-      e.firstContactAt ||
-      e.firstContact ||
-      e.createdAt ||
-      e.createdISO ||
-      e.lastUpdateAt ||
-      e.updatedAt ||
-      e.appointmentAt ||
-      e.agendamentoAt ||
-      e.date || ""
-    );
-  };
-
-  const payments = (db.payments||[])
-    .filter(p=>!actor || !p.masterId || p.masterId===actor.masterId)
-    .filter(p=>p.date && String(p.date).slice(0,7)===monthKey);
-
-  if(payments.length){
-    payments.forEach(p=>{
-      const d = String(p.date||"").slice(0,10);
-      const day = Number(d.slice(8,10));
-      if(day>=1 && day<=daysInMonth) rev[day-1] += Number(p.value||0);
-    });
-  }else{
-    rows.forEach(e=>{
-      const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid)))
-        ? Number(e.valuePaid)
-        : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
-      if(!paid) return;
-      const d = pickEntryDate(e);
-      if(!d || d.slice(0,7)!==monthKey) return;
-      const day = Number(d.slice(8,10));
-      if(day>=1 && day<=daysInMonth) rev[day-1] += paid;
-    });
-  }
-
-  rows.forEach(e=>{
-    const budget = (e.valueBudget!=null && !isNaN(Number(e.valueBudget)))
-      ? Number(e.valueBudget)
-      : ((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
-    const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid)))
-      ? Number(e.valuePaid)
-      : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
-    const open = Math.max(0, budget - paid);
-    if(!open) return;
-    const d = pickEntryDate(e);
-    if(!d || d.slice(0,7)!==monthKey) return;
-    const day = Number(d.slice(8,10));
-    if(day>=1 && day<=daysInMonth) openDaily[day-1] += open;
-  });
+  const revenueData = buildDashboardRevenueData(rows, db, actor, getUIFilters());
 
   const by = new Map();
   rows.forEach(e=> by.set(e.status||"—", (by.get(e.status||"—")||0)+1));
@@ -4195,16 +4293,19 @@ function renderDashboardCharts(rows){
   const barValues = statusPairs.map(([_,n])=>n);
 
   const __doDrawDashCharts = () => {
-    drawMultiLineChart(line, labels, [
-      { name:"Recebido", values: rev, color:"rgba(46,229,157,0.9)", fill:true },
-      { name:"Em aberto", values: openDaily, color:"rgba(255,90,90,0.9)", dash:[6,6], fill:true }
+    drawMultiLineChart(line, revenueData.labels, [
+      { name:"Recebido", values: revenueData.receivedSeries, color:"rgba(46,229,157,0.9)", fill:true },
+      { name:"Bruto/Orçado", values: revenueData.grossSeries, color:"rgba(255,90,90,0.9)", dash:[6,6], fill:false }
     ], { yPrefix: "", showPoints: false, showMaxLabel: false });
 
-    const __vEl = document.getElementById("lineChartValue");
-    if(__vEl){
-      const totalMonth = rev.reduce((sum,v)=>sum + (Number(v)||0), 0);
-      __vEl.textContent = moneyBR(totalMonth);
-    }
+    const valueEl = document.getElementById("lineChartValue");
+    if(valueEl) valueEl.textContent = moneyBR(revenueData.totalReceived);
+
+    const titleEl = document.getElementById("lineChartTitleText");
+    if(titleEl) titleEl.textContent = revenueData.titleText;
+
+    const hintEl = document.getElementById("lineChartHint");
+    if(hintEl) hintEl.textContent = revenueData.hintText;
 
     drawBarChart(bar, barLabels, barValues);
   };
@@ -4214,7 +4315,6 @@ function renderDashboardCharts(rows){
     setTimeout(__doDrawDashCharts, 120);
   });
 }
-
 function clearCanvas(canvas){
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
