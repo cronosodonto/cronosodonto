@@ -1752,22 +1752,26 @@ renderAll = function(){
 // Ensure view switch triggers render
 const __showView = typeof showView === "function" ? showView : function(){};
 showView = function(view){
-  __showView(view);
+  if(typeof setActiveView === "function"){
+    setActiveView(view);
+  }else{
+    __showView(view);
+  }
 
   console.log("VIEW:", view);
   if(view==="dashboard"){
-  setTimeout(() => {
-    renderDashboard();
-  }, 50);
-}
+    setTimeout(() => {
+      renderDashboard();
+    }, 50);
+  }
   if(view==="installments" && typeof renderInstallmentsView === "function"){
-  renderInstallmentsView();
-}
-if(view==="kanban"){
-  setTimeout(() => {
-    renderKanban();
-  }, 50);
-}
+    renderInstallmentsView();
+  }
+  if(view==="kanban"){
+    setTimeout(() => {
+      renderKanban();
+    }, 50);
+  }
 }
 
 // Bind filters events on DOM ready
@@ -2319,7 +2323,7 @@ fill="currentColor" stroke="none">
         <h3>Gráficos</h3>
         <div class="grid cols2" style="margin-top:10px">
           <div>
-            <div class="muted" style="font-size:12px; margin-bottom:6px">Receita (R$) por dia <span id="lineChartValue" class="chart-inline-value"></span> <span class="muted">(usa “Primeiro contato” como data do lançamento)</span></div>
+            <div class="muted" style="font-size:12px; margin-bottom:6px">Receita (R$) por dia <span id="lineChartValue" class="chart-inline-value"></span> <span class="muted">(recebido por dia + em aberto distribuído por dia)</span></div>
             <canvas id="chartRevenueLine" style="width:100%; height:260px"></canvas>
           </div>
           <div>
@@ -3320,12 +3324,10 @@ function renderDashboardCharts(rows){
   const daysInMonth = new Date(Number(monthKey.slice(0,4)), Number(monthKey.slice(5,7)), 0).getDate();
   const labels = Array.from({length: daysInMonth}, (_,i)=>String(i+1).padStart(2,"0"));
 
-  // === Pagos por dia (preferência: db.payments) ===
   const rev = Array.from({length: daysInMonth}, ()=>0);
+  const openDaily = Array.from({length: daysInMonth}, ()=>0);
 
-  // helper: pick date for fallback legacy (entries without payments log)
-  const pickISO = (e)=>{
-    const raw = e.firstContactAt || e.firstContact || e.createdAt || e.createdISO || e.lastUpdateAt || e.updatedAt || e.firstContact || e.appointmentAt || e.agendamentoAt || e.date || "";
+  const pickISO = (raw)=>{
     if(raw instanceof Date) return raw.toISOString().slice(0,10);
     if(typeof raw === "number") return new Date(raw).toISOString().slice(0,10);
     if(typeof raw === "string"){
@@ -3344,44 +3346,59 @@ function renderDashboardCharts(rows){
     return "";
   };
 
-  let usedPayments = false;
+  const pickEntryDate = (e)=>{
+    return pickISO(
+      e.apptDate ||
+      e.firstContactAt ||
+      e.firstContact ||
+      e.createdAt ||
+      e.createdISO ||
+      e.lastUpdateAt ||
+      e.updatedAt ||
+      e.appointmentAt ||
+      e.agendamentoAt ||
+      e.date || ""
+    );
+  };
+
   const payments = (db.payments||[])
     .filter(p=>!actor || !p.masterId || p.masterId===actor.masterId)
     .filter(p=>p.date && String(p.date).slice(0,7)===monthKey);
 
   if(payments.length){
-    usedPayments = true;
     payments.forEach(p=>{
       const d = String(p.date||"").slice(0,10);
       const day = Number(d.slice(8,10));
       if(day>=1 && day<=daysInMonth) rev[day-1] += Number(p.value||0);
     });
   }else{
-    // fallback: usa valuePaid do lead no dia do último update (bem legado)
     rows.forEach(e=>{
-      const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid))) ? Number(e.valuePaid) : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
+      const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid)))
+        ? Number(e.valuePaid)
+        : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
       if(!paid) return;
-      const d = pickISO(e);
+      const d = pickEntryDate(e);
       if(!d || d.slice(0,7)!==monthKey) return;
       const day = Number(d.slice(8,10));
       if(day>=1 && day<=daysInMonth) rev[day-1] += paid;
     });
   }
 
-  // acumulado do mês (linha azul)
-  const revCum = [];
-  let acc = 0;
-  for(let i=0;i<rev.length;i++){ acc += (rev[i]||0); revCum.push(acc); }
-
-  // em aberto (linha vermelha) por dia: orçamento total - pagos acumulados até o dia
-  let totalBudget = 0;
   rows.forEach(e=>{
-    const b = (e.valueBudget!=null && !isNaN(Number(e.valueBudget))) ? Number(e.valueBudget) : ((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
-    totalBudget += (b||0);
+    const budget = (e.valueBudget!=null && !isNaN(Number(e.valueBudget)))
+      ? Number(e.valueBudget)
+      : ((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
+    const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid)))
+      ? Number(e.valuePaid)
+      : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
+    const open = Math.max(0, budget - paid);
+    if(!open) return;
+    const d = pickEntryDate(e);
+    if(!d || d.slice(0,7)!==monthKey) return;
+    const day = Number(d.slice(8,10));
+    if(day>=1 && day<=daysInMonth) openDaily[day-1] += open;
   });
-  const openLine = revCum.map(v=>Math.max(0, totalBudget - v));
 
-  // barras: contagem por status (top 6)
   const by = new Map();
   rows.forEach(e=> by.set(e.status||"—", (by.get(e.status||"—")||0)+1));
   const statusPairs = Array.from(by.entries()).sort((a,b)=>b[1]-a[1]).slice(0,6);
@@ -3389,26 +3406,20 @@ function renderDashboardCharts(rows){
   const barValues = statusPairs.map(([_,n])=>n);
 
   const __doDrawDashCharts = () => {
-    const __norm = (arr) => {
-      const nums = (arr||[]).map(v => (typeof v === "number" && isFinite(v)) ? v : 0);
-      if (!nums.length) return [];
-      let mn = Math.min(...nums), mx = Math.max(...nums);
-      if (mx === mn) return nums.map(_ => 50); // linha plana -> "pulso" neutro
-      return nums.map(v => ((v - mn) / (mx - mn)) * 100);
-    };
-    const revN = __norm(rev);
-    const openN = __norm(openLine);
+    drawMultiLineChart(line, labels, [
+      { name:"Recebido", values: rev, color:"rgba(46,229,157,0.9)", fill:true },
+      { name:"Em aberto", values: openDaily, color:"rgba(255,90,90,0.9)", dash:[6,6], fill:true }
+    ], { yPrefix: "", showPoints: false, showMaxLabel: false });
 
-    // Gráfico em escala relativa (0–100) para enxergar variações (batimentos), mesmo quando os valores absolutos são próximos.
-   const __lineMax = drawMultiLineChart(line, labels, [
-  { name:"Recebido", values: rev, color:"rgba(46,229,157,0.9)", fill:true },
-  { name:"Em aberto", values: openLine, color:"rgba(255,90,90,0.9)", dash:[6,6] }
-], { yPrefix: "", showPoints: false, showMaxLabel: false });
     const __vEl = document.getElementById("lineChartValue");
-    if(__vEl){ __vEl.textContent = moneyBR(__lineMax); }
+    if(__vEl){
+      const totalMonth = rev.reduce((sum,v)=>sum + (Number(v)||0), 0);
+      __vEl.textContent = moneyBR(totalMonth);
+    }
 
     drawBarChart(bar, barLabels, barValues);
   };
+
   requestAnimationFrame(() => {
     __doDrawDashCharts();
     setTimeout(__doDrawDashCharts, 120);
@@ -3912,6 +3923,13 @@ function setActiveView(view){
   ["dashboard","leads","kanban","tasks","installments","users","settings"].forEach(v=>{
     el(`view-${v}`).classList.toggle("hidden", v!==view);
   });
+
+  const sticky = el("stickyFilters");
+  if(sticky){
+    const viewsWithGlobalFilters = new Set(["dashboard","leads","kanban"]);
+    sticky.classList.toggle("hidden", !viewsWithGlobalFilters.has(view));
+  }
+
   renderAll();
 }
 
@@ -5238,6 +5256,10 @@ const total = list.reduce((sum,e)=>{
               const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid))) ? Number(e.valuePaid) : 0;
               const budget = (e.valueBudget!=null && !isNaN(Number(e.valueBudget))) ? Number(e.valueBudget) : 0;
               const open = Math.max(0, budget - paid);
+              const apptDateRaw = (e.apptDate || e.agendamentoData || e.appointmentDate || "").toString().trim();
+              const apptTimeRaw = (e.apptTime || e.agendamentoHora || e.appointmentTime || "").toString().trim();
+              const apptLabel = `${apptDateRaw ? fmtBR(apptDateRaw) : ""}${apptTimeRaw ? ` às ${apptTimeRaw}` : ""}`.trim() || "—";
+              const showApptOnCard = ["Agendado","Remarcou"].includes(col.status);
               return `
                 <div class="kanCard" draggable="true" data-entry="${e.id}">
                   <div style="display:flex; justify-content:space-between; gap:10px">
@@ -5245,6 +5267,7 @@ const total = list.reduce((sum,e)=>{
                       <div style="font-weight:900">${escapeHTML(c?.name||"—")}</div>
                       <div class="muted" style="font-size:12px; margin-top:2px">${escapeHTML(c?.phone||"—")}</div>
                       <div class="muted" style="font-size:12px; margin-top:6px">${escapeHTML(e.treatment||"—")} • ${escapeHTML(e.origin||"—")}</div>
+                      ${showApptOnCard ? `<div class="muted mono" style="font-size:12px; margin-top:6px">Agendamento: <b>${escapeHTML(apptLabel)}</b></div>` : ""}
                       ${(budget||paid)?`<div class="muted mono" style="font-size:12px; margin-top:6px">Pago: <b>${moneyBR(paid)}</b> • Em aberto: <b>${moneyBR(open)}</b></div>`:""}
                     </div>
                     <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
@@ -5632,6 +5655,9 @@ renderKanban();
 
 /* -------- Boot & bindings -------- */
 function bindNav(){
+  if(window.__navBound) return;
+  window.__navBound = true;
+
   qsa(".nav button").forEach(b=>{
     b.addEventListener("click", ()=>setActiveView(b.dataset.view));
   });
@@ -5810,23 +5836,17 @@ function bindAuth(){
   });
 }
 function renderAll(){
+  setTimeout(() => {
+    try{ updateSidebarPills(); }catch(_){ }
+    try{ renderInstallmentsView(); }catch(_){ }
+  }, 100);
 
-  if (typeof renderDashboard === "function") {
-    renderDashboard();
-  }
-const db = loadDB();
-  if (typeof renderLeadsTable === "function") {
-    renderLeadsTable(db.entries || []);
-  }
-
-  if (typeof renderFunil === "function") {
-    renderFunil();
-  }
-
-  if (typeof renderTarefas === "function") {
-    renderTarefas();
-  }
-
+  try{ renderDashboard(); }catch(_){ }
+  try{ renderLeadsTable(filteredEntries()); }catch(_){ }
+  try{ renderKanban(); }catch(_){ }
+  try{ renderTasks(); }catch(_){ }
+  try{ renderUsers(); }catch(_){ }
+  try{ renderSettings(); }catch(_){ }
 }
   async function syncMasterUser(){
 if(typeof supabaseClient === "undefined"){
