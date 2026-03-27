@@ -5109,62 +5109,12 @@ window.__CRONOS_PENDING_CLOUD_PULL__ = window.__CRONOS_PENDING_CLOUD_PULL__ || n
 window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ || null;
 
 async function refreshCloudDataNow({ force=false, reason="" } = {}){
-  const actor = currentActor();
-  if(!actor || typeof ensureCloudDBLoaded !== "function") return false;
-
-  const now = Date.now();
-  if(!force && (now - (window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0)) < CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS){
-    return false;
-  }
-
-  if(window.__CRONOS_CLOUD_PULL_IN_FLIGHT__){
-    return window.__CRONOS_CLOUD_PULL_IN_FLIGHT__;
-  }
-
-  window.__CRONOS_LAST_CLOUD_PULL_AT__ = now;
-  window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = (async ()=>{
-    try{
-      await ensureCloudDBLoaded(true);
-      if(typeof syncCurrentCloudActor === "function"){
-        await syncCurrentCloudActor();
-      }
-      renderAll();
-      return true;
-    }catch(err){
-      console.warn("Falha ao atualizar da nuvem:", reason || "view", err);
-      return false;
-    }finally{
-      window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = null;
-    }
-  })();
-
-  return window.__CRONOS_CLOUD_PULL_IN_FLIGHT__;
+  return false;
 }
 
 function scheduleCloudRefresh(reason="", { force=false, delay=120 } = {}){
-  const actor = currentActor();
-  if(!actor || typeof ensureCloudDBLoaded !== "function") return;
-
-  if(window.__CRONOS_PENDING_CLOUD_PULL__){
-    clearTimeout(window.__CRONOS_PENDING_CLOUD_PULL__);
-  }
-
-  const now = Date.now();
-  const elapsed = now - (window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0);
-  const wait = force ? delay : Math.max(delay, CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS - elapsed);
-
-  window.__CRONOS_PENDING_CLOUD_PULL__ = setTimeout(()=>{
-    window.__CRONOS_PENDING_CLOUD_PULL__ = null;
-    refreshCloudDataNow({ force, reason });
-  }, wait);
+  return;
 }
-
-window.addEventListener("focus", ()=> scheduleCloudRefresh("window-focus", { delay: 150 }));
-document.addEventListener("visibilitychange", ()=>{
-  if(!document.hidden){
-    scheduleCloudRefresh("visibility", { delay: 150 });
-  }
-});
 
 function setActiveView(view){
   const actor = currentActor();
@@ -5191,7 +5141,6 @@ function setActiveView(view){
   }
 
   renderAll();
-  scheduleCloudRefresh(`view:${targetView}`, { delay: 150 });
 }
 
 /* -------- Modal helpers -------- */
