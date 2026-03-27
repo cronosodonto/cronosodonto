@@ -1747,12 +1747,12 @@ function payInstallment(entryId, number){
   db.payments = db.payments || [];
   db.payments.push({ id: uid("p"), masterId: actor.masterId, entryId, contactId: entry.contactId, at: new Date().toISOString(), date: payDate, value: p.amount, method: p.payMethod || entry.installPlan?.payMethod || "", desc: `Parcela ${p.number}/${p.total}` });
 
-  saveDB(db);
+  saveDB(db, { immediate:true });
   toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
   // re-sync tasks + rerender
   try {
   syncInstallmentTasks(db, actor);
-  saveDB(db);
+  saveDB(db, { immediate:true });
 } catch {}
   renderAll();
 }
@@ -1776,9 +1776,9 @@ function undoInstallmentPay(entryId, number){
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (x.desc||"").includes(`Parcela ${number}/`));
   if(idx>=0) db.payments.splice(idx,1);
 
-  saveDB(db);
+  saveDB(db, { immediate:true });
   toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
-  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
+  try{ syncInstallmentTasks(db, actor); saveDB(db, { immediate:true });}catch{}
   setTimeout(() => {
   if (typeof renderAll === "function") renderAll();
 }, 50);
@@ -1887,7 +1887,7 @@ renderAll = function(){
     const db = loadDB();
     // ensure installments normalized
     (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
-    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db); }
+    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db, { skipCloud:true }); }
   }catch(e){}
   __renderAll();
   try{
@@ -3024,6 +3024,8 @@ function getLegacyLocalDB(){
 async function getCurrentSupabaseUser(){
   if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
   try{
+    const { data: sessData } = await supabaseClient.auth.getSession();
+    if(sessData?.session?.user) return sessData.session.user;
     const { data, error } = await supabaseClient.auth.getUser();
     if(error) return null;
     return data?.user || null;
@@ -3363,6 +3365,9 @@ function loadDB(){
   DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
   return DB;
 }
+function canSyncCloudNow(){
+  return !!(CLOUD_ACCESS_KIND && CLOUD_ACCESS_KIND !== "guest");
+}
 function saveDB(db, options={}){
   DB = normalizeDBShape(db);
   localStorage.setItem(DBKEY, JSON.stringify(DB));
@@ -3371,8 +3376,10 @@ function saveDB(db, options={}){
     updateSidebarPills();
   }catch(e){}
 
-  if(options.skipCloud) return;
+  if(options.skipCloud) return Promise.resolve(true);
+  if(!options.forceCloud && !canSyncCloudNow()) return Promise.resolve(true);
   scheduleCloudSave(!!options.immediate);
+  return options.immediate ? (__cloudSavePromise || Promise.resolve(true)) : Promise.resolve(true);
 }
 
 function createIsolatedSupabaseClient(){
@@ -5741,26 +5748,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const phone = normPhone(val("lf_phone"));
     if(!name || !phone) return toast("Nome e telefone são obrigatórios");
 
-    const rawFormMonthKey = (val("lf_month","") || "").trim();
-    const rawFilterMonthKey = (val("fMonth", "") || "").trim();
-    const selectedFilterMonth = /^\d{4}-\d{2}$/.test(rawFilterMonthKey) ? rawFilterMonthKey : "";
-    const editingOriginal = editingEntryId ? db.entries.find(e=>e.id===editingEntryId) : null;
-
-    let monthKey = (rawFormMonthKey || selectedFilterMonth || new Date().toISOString().slice(0,7)).trim();
-    let createRescueFromEdit = false;
-
-    if(editingOriginal && selectedFilterMonth && editingOriginal.monthKey && selectedFilterMonth !== editingOriginal.monthKey){
-      const wantsRescue = confirm(
-        `Esse lead pertence a ${monthLabel(editingOriginal.monthKey)} e o filtro atual está em ${monthLabel(selectedFilterMonth)}.
-
-Deseja registrar este retorno como resgatado em ${monthLabel(selectedFilterMonth)}?`
-      );
-      if(wantsRescue){
-        monthKey = selectedFilterMonth;
-        createRescueFromEdit = true;
-      }
-    }
-
+    const monthKey = (val("lf_month","") || val("fMonth", new Date().toISOString().slice(0,7))).trim();
     if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
 
     // find or create contact (unique by phone)
@@ -5847,7 +5835,7 @@ if (existingIndex >= 0) {
 
     if(isNew && existingThisMonth){
       // instead of duplicate, open existing entry and update it
-      saveDB(db);
+      await saveDB(db, { immediate:true });
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
       closeModal();
       openLeadEntry(existingThisMonth.id);
@@ -5855,12 +5843,7 @@ if (existingIndex >= 0) {
     }
 
     let entry;
-    if(createRescueFromEdit){
-      entry = existingThisMonth && existingThisMonth.id !== editingEntryId
-        ? existingThisMonth
-        : { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [] };
-      if(!db.entries.find(e=>e.id===entry.id)) db.entries.push(entry);
-    }else if(editingEntryId){
+    if(editingEntryId){
       entry = db.entries.find(e=>e.id===editingEntryId);
       if(!entry) return toast("Erro", "Entrada não encontrada");
     }else{
@@ -5871,13 +5854,9 @@ if (existingIndex >= 0) {
     const fromStatus = entry.status || "";
     const toStatus = status;
 
-    const normalizedFirstContactAt = (createRescueFromEdit && String(firstContactAt||"").slice(0,7)!==monthKey)
-      ? ((todayISO().slice(0,7)===monthKey) ? todayISO() : `${monthKey}-01`)
-      : firstContactAt;
-
     // update entry fields
     entry.monthKey = monthKey;
-    entry.firstContactAt = normalizedFirstContactAt;
+    entry.firstContactAt = firstContactAt;
     entry.lastUpdateAt = now;
     entry.status = status;
     entry.origin = origin;
@@ -5899,8 +5878,8 @@ if (existingIndex >= 0) {
     // tags: sobrescreve tags manuais (permite remover), preservando tags de sistema
 const preserved = (entry.tags||[]).filter(t=>String(t)==="Resgatado");
 entry.tags = Array.from(new Set([...preserved, ...tags]));
-// add "Resgatado" when this is a new monthly entry or a rescue from old month
-if(hadBefore && (!editingEntryId || createRescueFromEdit || (editingOriginal && monthKey !== editingOriginal.monthKey))){
+// add "Resgatado" if hadBefore and this is new entry
+if(!editingEntryId && hadBefore){
   entry.tags = Array.from(new Set([...(entry.tags||[]), "Resgatado"]));
 }
 
@@ -5937,16 +5916,10 @@ if(hadBefore && (!editingEntryId || createRescueFromEdit || (editingOriginal && 
       entry.installments = [];
     }
 
-    saveDB(db);
+    await saveDB(db, { immediate:true });
     closeModal();
     ensureMonthOptions(); // in case new month
-    if(createRescueFromEdit){
-      toast("Lead resgatado ✅", `${name} • ${monthLabel(monthKey)}`);
-    }else if(editingOriginal && editingOriginal.monthKey !== monthKey){
-      toast("Lead movido de mês ✅", `${name} • ${monthLabel(monthKey)}`);
-    }else{
-      toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
-    }
+    toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
     renderAll();
   });
 }
@@ -5985,7 +5958,7 @@ function toggleLeadDone(entryId){
     e.status = "Concluído";
   }
   e.lastUpdateAt = new Date().toISOString();
-  saveDB(db);
+  saveDB(db, { immediate:true });
   renderAll();
 }
 
@@ -5995,7 +5968,7 @@ function toggleLeadDone(entryId){
    💬 openWhats: abre WhatsApp do lead (template simples)
    🗑️ deleteLead: wrapper para deleteEntry
 */
-function markOK(entryId){
+async function markOK(entryId){
   try{
     const actor = currentActor();
     if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
@@ -6037,7 +6010,7 @@ function markOK(entryId){
       entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
     }
 
-    saveDB(db);
+    await saveDB(db, { immediate:true });
     toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
     renderAll();
   }catch(e){
@@ -6074,7 +6047,7 @@ function deleteLead(entryId){
   return deleteEntry(entryId);
 }
 
-function deleteEntry(entryId){
+async function deleteEntry(entryId){
   const actor = currentActor();
   if(!actor.perms.delete) return toast("Sem permissão", "Seu nível não permite excluir.");
   const db = loadDB();
@@ -6083,7 +6056,7 @@ function deleteEntry(entryId){
   const c = db.contacts.find(x=>x.id===e.contactId);
   if(!confirm(`Excluir lead do mês ${monthLabel(e.monthKey)}? (${c?.name||"—"})`)) return;
   db.entries = db.entries.filter(x=>x.id!==entryId);
-  saveDB(db);
+  await saveDB(db, { immediate:true });
   toast("Excluído", "Entrada removida.");
   renderAll();
 }
@@ -6688,7 +6661,7 @@ const total = list.reduce((sum,e)=>{
   e.lastUpdateAt = todayISO();
   e.statusLog = e.statusLog || [];
   e.statusLog.push({at: new Date().toISOString(), from: old, to: newStatus, by: actor.name});
-  saveDB(db);
+  saveDB(db, { immediate:true });
   renderAll();
 }
 
@@ -6858,7 +6831,7 @@ function openNewTask(){
         const t = {id: uid("task"), masterId: actor.masterId, entryId, dueDate, title, action, notes, done:false, createdAt:new Date().toISOString()};
         db.tasks = db.tasks || [];
         db.tasks.push(t);
-        saveDB(db);
+        saveDB(db, { immediate:true });
         closeModal();
         toast("Tarefa criada");
         renderAll();
@@ -6916,7 +6889,7 @@ function openTaskEdit(taskId){
         t.title = val("tf_title").trim();
         t.action = val("tf_action");
         t.notes = val("tf_notes").trim();
-        saveDB(db);
+        saveDB(db, { immediate:true });
         closeModal();
         toast("Tarefa atualizada");
         renderAll();
@@ -6936,7 +6909,7 @@ function toggleTaskDone(taskId){
   }
   // toggle done and keep a memory of previous state if you want future audits
   t.done = !t.done;
-  saveDB(db);
+  saveDB(db, { immediate:true });
   toast(t.done ? "Tarefa marcada como feita" : "Tarefa reaberta");
  if (typeof renderTasks === "function") renderTasks();
   if (typeof updateSidebarPills === "function") updateSidebarPills();
