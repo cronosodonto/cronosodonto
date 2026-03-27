@@ -1747,12 +1747,12 @@ function payInstallment(entryId, number){
   db.payments = db.payments || [];
   db.payments.push({ id: uid("p"), masterId: actor.masterId, entryId, contactId: entry.contactId, at: new Date().toISOString(), date: payDate, value: p.amount, method: p.payMethod || entry.installPlan?.payMethod || "", desc: `Parcela ${p.number}/${p.total}` });
 
-  saveDB(db, { immediate:true });
+  saveDB(db);
   toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
   // re-sync tasks + rerender
   try {
   syncInstallmentTasks(db, actor);
-  saveDB(db, { immediate:true });
+  saveDB(db);
 } catch {}
   renderAll();
 }
@@ -1776,9 +1776,9 @@ function undoInstallmentPay(entryId, number){
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (x.desc||"").includes(`Parcela ${number}/`));
   if(idx>=0) db.payments.splice(idx,1);
 
-  saveDB(db, { immediate:true });
+  saveDB(db);
   toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
-  try{ syncInstallmentTasks(db, actor); saveDB(db, { immediate:true });}catch{}
+  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
   setTimeout(() => {
   if (typeof renderAll === "function") renderAll();
 }, 50);
@@ -1887,7 +1887,7 @@ renderAll = function(){
     const db = loadDB();
     // ensure installments normalized
     (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
-    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db, { skipCloud:true }); }
+    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} }
   }catch(e){}
   __renderAll();
   try{
@@ -3024,8 +3024,6 @@ function getLegacyLocalDB(){
 async function getCurrentSupabaseUser(){
   if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
   try{
-    const { data: sessData } = await supabaseClient.auth.getSession();
-    if(sessData?.session?.user) return sessData.session.user;
     const { data, error } = await supabaseClient.auth.getUser();
     if(error) return null;
     return data?.user || null;
@@ -3365,9 +3363,6 @@ function loadDB(){
   DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
   return DB;
 }
-function canSyncCloudNow(){
-  return !!(CLOUD_ACCESS_KIND && CLOUD_ACCESS_KIND !== "guest");
-}
 function saveDB(db, options={}){
   DB = normalizeDBShape(db);
   localStorage.setItem(DBKEY, JSON.stringify(DB));
@@ -3376,10 +3371,8 @@ function saveDB(db, options={}){
     updateSidebarPills();
   }catch(e){}
 
-  if(options.skipCloud) return Promise.resolve(true);
-  if(!options.forceCloud && !canSyncCloudNow()) return Promise.resolve(true);
+  if(options.skipCloud) return;
   scheduleCloudSave(!!options.immediate);
-  return options.immediate ? (__cloudSavePromise || Promise.resolve(true)) : Promise.resolve(true);
 }
 
 function createIsolatedSupabaseClient(){
@@ -5835,7 +5828,7 @@ if (existingIndex >= 0) {
 
     if(isNew && existingThisMonth){
       // instead of duplicate, open existing entry and update it
-      await saveDB(db, { immediate:true });
+      saveDB(db);
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
       closeModal();
       openLeadEntry(existingThisMonth.id);
@@ -5916,7 +5909,7 @@ if(!editingEntryId && hadBefore){
       entry.installments = [];
     }
 
-    await saveDB(db, { immediate:true });
+    saveDB(db, { immediate:true });
     closeModal();
     ensureMonthOptions(); // in case new month
     toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
@@ -5968,7 +5961,7 @@ function toggleLeadDone(entryId){
    💬 openWhats: abre WhatsApp do lead (template simples)
    🗑️ deleteLead: wrapper para deleteEntry
 */
-async function markOK(entryId){
+function markOK(entryId){
   try{
     const actor = currentActor();
     if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
@@ -6010,7 +6003,7 @@ async function markOK(entryId){
       entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
     }
 
-    await saveDB(db, { immediate:true });
+    saveDB(db, { immediate:true });
     toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
     renderAll();
   }catch(e){
@@ -6047,7 +6040,7 @@ function deleteLead(entryId){
   return deleteEntry(entryId);
 }
 
-async function deleteEntry(entryId){
+function deleteEntry(entryId){
   const actor = currentActor();
   if(!actor.perms.delete) return toast("Sem permissão", "Seu nível não permite excluir.");
   const db = loadDB();
@@ -6056,7 +6049,7 @@ async function deleteEntry(entryId){
   const c = db.contacts.find(x=>x.id===e.contactId);
   if(!confirm(`Excluir lead do mês ${monthLabel(e.monthKey)}? (${c?.name||"—"})`)) return;
   db.entries = db.entries.filter(x=>x.id!==entryId);
-  await saveDB(db, { immediate:true });
+  saveDB(db, { immediate:true });
   toast("Excluído", "Entrada removida.");
   renderAll();
 }
@@ -6661,7 +6654,7 @@ const total = list.reduce((sum,e)=>{
   e.lastUpdateAt = todayISO();
   e.statusLog = e.statusLog || [];
   e.statusLog.push({at: new Date().toISOString(), from: old, to: newStatus, by: actor.name});
-  saveDB(db, { immediate:true });
+  saveDB(db);
   renderAll();
 }
 
@@ -6831,7 +6824,7 @@ function openNewTask(){
         const t = {id: uid("task"), masterId: actor.masterId, entryId, dueDate, title, action, notes, done:false, createdAt:new Date().toISOString()};
         db.tasks = db.tasks || [];
         db.tasks.push(t);
-        saveDB(db, { immediate:true });
+        saveDB(db);
         closeModal();
         toast("Tarefa criada");
         renderAll();
@@ -6889,7 +6882,7 @@ function openTaskEdit(taskId){
         t.title = val("tf_title").trim();
         t.action = val("tf_action");
         t.notes = val("tf_notes").trim();
-        saveDB(db, { immediate:true });
+        saveDB(db);
         closeModal();
         toast("Tarefa atualizada");
         renderAll();
