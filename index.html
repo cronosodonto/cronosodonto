@@ -1432,62 +1432,94 @@ function buildInstallments(entry){
 }
 
 function syncInstallmentTasks(db, actor){
-  // cria/atualiza tarefas de inadimplência (apenas para atrasos)
+  // cria/atualiza tarefas automáticas dos parcelamentos
   const today = todayISO();
   const masterId = actor?.masterId;
   if(!masterId) return;
 
-  const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===masterId).map(c=>[c.id,c]));
+  const contactsById = new Map((db.contacts||[])
+    .filter(c=>c.masterId===masterId)
+    .map(c=>[c.id,c]));
   const entries = (db.entries||[]).filter(e=>e.masterId===masterId);
-db.tasks = (db.tasks || []).filter(t => {
-  return !(
-    t.id?.includes("INST") ||
-    t.type === "installment" ||
-    t.desc?.includes("Parcela")
-  );
-});
 
-const tasks = db.tasks;
-  
+  db.tasks = Array.isArray(db.tasks) ? db.tasks : [];
+  const manualTasks = db.tasks.filter(t => !(t?.key && String(t.key).startsWith("INST:")));
+  const autoTasks = db.tasks.filter(t => (t?.key && String(t.key).startsWith("INST:")));
+  const taskMap = new Map(autoTasks.map(t => [String(t.key), t]));
+  const nextAutoTasks = [];
+
   function taskKey(entryId, dueDate, number){
     return `INST:${entryId}:${dueDate}:${number}`;
   }
 
-  // mark all existing installment tasks as not seen; we'll reconcile
-  const seen = new Set();
-
   entries.forEach(e=>{
     if(!e.installPlan) return;
     ensureInstallmentsForEntry(e);
+
     (e.installments||[]).forEach(p=>{
-      const due = p.dueDate;
-      const isPaid = !!p.paidAt || p.status==="PAGA";
-      const isLate = due && new Date(due) < new Date(today) && !isPaid;
-      if(!isLate && !isPaid) return;
+      const due = p.dueDate || p.due || "";
+      if(!due) return;
 
       const key = taskKey(e.id, due, p.number);
-      seen.add(key);
-
-      let t = tasks.find(x=>x.masterId===masterId && x.key===key);
+      const existing = taskMap.get(String(key));
       const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
       const title = `Inadimplente: ${c.name} • Parcela ${p.number}/${p.total}`;
-      const desc = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod||e.installPlan.payMethod||"—"}`;
-      if(!t){
-        t = { id: uid("t"), masterId, key, entryId: e.id, title, action:"WhatsApp", notes: desc, done:false, createdAt:new Date().toISOString(), dueDate: due, phone:c.phone, wa: true };
-        tasks.push(t);
-      }else{
-        t.title = title;
-        t.notes = desc;
-        if(!t.action) t.action = "WhatsApp";
-        if(!t.entryId) t.entryId = e.id;
-        t.dueDate = due;
-        t.phone = c.phone;
-        t.done = isPaid;
+      const desc = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod||e.installPlan?.payMethod||"—"}`;
+      const isPaid = !!p.paidAt || p.status === "PAGA";
+      const isLate = due < today && !isPaid;
+
+      // paga: mantém a tarefa apenas se ela já existia, marcada como feita
+      if(isPaid){
+        if(existing){
+          existing.masterId = masterId;
+          existing.entryId = e.id;
+          existing.title = title;
+          existing.action = existing.action || "WhatsApp";
+          existing.notes = desc;
+          existing.done = true;
+          existing.dueDate = due;
+          existing.phone = c.phone;
+          existing.wa = true;
+          nextAutoTasks.push(existing);
+        }
+        return;
       }
+
+      // futura/sem atraso: não mantém tarefa automática
+      if(!isLate){
+        return;
+      }
+
+      const task = existing || {
+        id: uid("t"),
+        masterId,
+        key,
+        entryId: e.id,
+        title,
+        action: "WhatsApp",
+        notes: desc,
+        done: false,
+        createdAt: new Date().toISOString(),
+        dueDate: due,
+        phone: c.phone,
+        wa: true
+      };
+
+      task.masterId = masterId;
+      task.key = key;
+      task.entryId = e.id;
+      task.title = title;
+      task.action = task.action || "WhatsApp";
+      task.notes = desc;
+      task.done = false;
+      task.dueDate = due;
+      task.phone = c.phone;
+      task.wa = true;
+      nextAutoTasks.push(task);
     });
   });
 
-  // optional: we don't delete tasks, just keep.
+  db.tasks = [...manualTasks, ...nextAutoTasks];
 }
 
 function installmentsKPIs(db, actor, monthKey){
@@ -1747,14 +1779,7 @@ function payInstallment(entryId, number){
   db.payments = db.payments || [];
   db.payments.push({ id: uid("p"), masterId: actor.masterId, entryId, contactId: entry.contactId, at: new Date().toISOString(), date: payDate, value: p.amount, method: p.payMethod || entry.installPlan?.payMethod || "", desc: `Parcela ${p.number}/${p.total}` });
 
-  saveDB(db);
-  toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
-  // re-sync tasks + rerender
-  try {
-  syncInstallmentTasks(db, actor);
-  saveDB(db);
-} catch {}
-  renderAll();
+  persistInstallmentMutation(db, actor, entryId, "Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
 }
 
 function undoInstallmentPay(entryId, number){
@@ -1775,13 +1800,7 @@ function undoInstallmentPay(entryId, number){
   db.payments = db.payments || [];
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (x.desc||"").includes(`Parcela ${number}/`));
   if(idx>=0) db.payments.splice(idx,1);
-
-  saveDB(db);
-  toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
-  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
-  setTimeout(() => {
-  if (typeof renderAll === "function") renderAll();
-}, 50);
+  persistInstallmentMutation(db, actor, entryId, "Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
 }
 
 function normalizeInstallmentsAfterMutation(entry){
@@ -1883,11 +1902,8 @@ function deleteInstallment(entryId, number){
 const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
 renderAll = function(){
   try{
-    const actor = currentActor();
     const db = loadDB();
-    // ensure installments normalized
     (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
-    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} }
   }catch(e){}
   __renderAll();
   try{
@@ -6002,7 +6018,6 @@ function markOK(entryId){
     if(fromStatus !== toStatus){
       entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
     }
-
     saveDB(db, { immediate:true });
     toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
     renderAll();
@@ -6882,7 +6897,7 @@ function openTaskEdit(taskId){
         t.title = val("tf_title").trim();
         t.action = val("tf_action");
         t.notes = val("tf_notes").trim();
-        saveDB(db);
+        saveDB(db, { immediate:true });
         closeModal();
         toast("Tarefa atualizada");
         renderAll();
@@ -7143,7 +7158,7 @@ async function boot(){
   ensureMonthOptions();
 
   // migração (valores antigos -> novos)
-  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db); }catch(e){}
+  try{ const db=loadDB(); if(migrateDBValues(db)){ DB = normalizeDBShape(db); localStorage.setItem(DBKEY, JSON.stringify(DB)); } }catch(e){}
 
   // persist normalized filters
   saveFilters(getUIFilters());
