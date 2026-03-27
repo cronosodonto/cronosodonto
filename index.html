@@ -1432,94 +1432,62 @@ function buildInstallments(entry){
 }
 
 function syncInstallmentTasks(db, actor){
-  // cria/atualiza tarefas automáticas dos parcelamentos
+  // cria/atualiza tarefas de inadimplência (apenas para atrasos)
   const today = todayISO();
   const masterId = actor?.masterId;
   if(!masterId) return;
 
-  const contactsById = new Map((db.contacts||[])
-    .filter(c=>c.masterId===masterId)
-    .map(c=>[c.id,c]));
+  const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===masterId).map(c=>[c.id,c]));
   const entries = (db.entries||[]).filter(e=>e.masterId===masterId);
+db.tasks = (db.tasks || []).filter(t => {
+  return !(
+    t.id?.includes("INST") ||
+    t.type === "installment" ||
+    t.desc?.includes("Parcela")
+  );
+});
 
-  db.tasks = Array.isArray(db.tasks) ? db.tasks : [];
-  const manualTasks = db.tasks.filter(t => !(t?.key && String(t.key).startsWith("INST:")));
-  const autoTasks = db.tasks.filter(t => (t?.key && String(t.key).startsWith("INST:")));
-  const taskMap = new Map(autoTasks.map(t => [String(t.key), t]));
-  const nextAutoTasks = [];
-
+const tasks = db.tasks;
+  
   function taskKey(entryId, dueDate, number){
     return `INST:${entryId}:${dueDate}:${number}`;
   }
 
+  // mark all existing installment tasks as not seen; we'll reconcile
+  const seen = new Set();
+
   entries.forEach(e=>{
     if(!e.installPlan) return;
     ensureInstallmentsForEntry(e);
-
     (e.installments||[]).forEach(p=>{
-      const due = p.dueDate || p.due || "";
-      if(!due) return;
+      const due = p.dueDate;
+      const isPaid = !!p.paidAt || p.status==="PAGA";
+      const isLate = due && new Date(due) < new Date(today) && !isPaid;
+      if(!isLate && !isPaid) return;
 
       const key = taskKey(e.id, due, p.number);
-      const existing = taskMap.get(String(key));
+      seen.add(key);
+
+      let t = tasks.find(x=>x.masterId===masterId && x.key===key);
       const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
       const title = `Inadimplente: ${c.name} • Parcela ${p.number}/${p.total}`;
-      const desc = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod||e.installPlan?.payMethod||"—"}`;
-      const isPaid = !!p.paidAt || p.status === "PAGA";
-      const isLate = due < today && !isPaid;
-
-      // paga: mantém a tarefa apenas se ela já existia, marcada como feita
-      if(isPaid){
-        if(existing){
-          existing.masterId = masterId;
-          existing.entryId = e.id;
-          existing.title = title;
-          existing.action = existing.action || "WhatsApp";
-          existing.notes = desc;
-          existing.done = true;
-          existing.dueDate = due;
-          existing.phone = c.phone;
-          existing.wa = true;
-          nextAutoTasks.push(existing);
-        }
-        return;
+      const desc = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod||e.installPlan.payMethod||"—"}`;
+      if(!t){
+        t = { id: uid("t"), masterId, key, entryId: e.id, title, action:"WhatsApp", notes: desc, done:false, createdAt:new Date().toISOString(), dueDate: due, phone:c.phone, wa: true };
+        tasks.push(t);
+      }else{
+        t.title = title;
+        t.notes = desc;
+        if(!t.action) t.action = "WhatsApp";
+        if(!t.entryId) t.entryId = e.id;
+        t.dueDate = due;
+        t.phone = c.phone;
+        t.done = isPaid;
       }
-
-      // futura/sem atraso: não mantém tarefa automática
-      if(!isLate){
-        return;
-      }
-
-      const task = existing || {
-        id: uid("t"),
-        masterId,
-        key,
-        entryId: e.id,
-        title,
-        action: "WhatsApp",
-        notes: desc,
-        done: false,
-        createdAt: new Date().toISOString(),
-        dueDate: due,
-        phone: c.phone,
-        wa: true
-      };
-
-      task.masterId = masterId;
-      task.key = key;
-      task.entryId = e.id;
-      task.title = title;
-      task.action = task.action || "WhatsApp";
-      task.notes = desc;
-      task.done = false;
-      task.dueDate = due;
-      task.phone = c.phone;
-      task.wa = true;
-      nextAutoTasks.push(task);
     });
   });
 
-  db.tasks = [...manualTasks, ...nextAutoTasks];
+  // optional: we don't delete tasks, just keep.
 }
 
 function installmentsKPIs(db, actor, monthKey){
@@ -1779,7 +1747,12 @@ function payInstallment(entryId, number){
   db.payments = db.payments || [];
   db.payments.push({ id: uid("p"), masterId: actor.masterId, entryId, contactId: entry.contactId, at: new Date().toISOString(), date: payDate, value: p.amount, method: p.payMethod || entry.installPlan?.payMethod || "", desc: `Parcela ${p.number}/${p.total}` });
 
-  persistInstallmentMutation(db, actor, entryId, "Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
+  try {
+    syncInstallmentTasks(db, actor);
+  } catch {}
+  saveDB(db, { immediate:true });
+  toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
+  renderAll();
 }
 
 function undoInstallmentPay(entryId, number){
@@ -1800,7 +1773,13 @@ function undoInstallmentPay(entryId, number){
   db.payments = db.payments || [];
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (x.desc||"").includes(`Parcela ${number}/`));
   if(idx>=0) db.payments.splice(idx,1);
-  persistInstallmentMutation(db, actor, entryId, "Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
+
+  try{ syncInstallmentTasks(db, actor); }catch{}
+  saveDB(db, { immediate:true });
+  toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
+  setTimeout(() => {
+  if (typeof renderAll === "function") renderAll();
+}, 50);
 }
 
 function normalizeInstallmentsAfterMutation(entry){
@@ -1903,6 +1882,7 @@ const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
 renderAll = function(){
   try{
     const db = loadDB();
+    // ensure installments normalized locally, sem salvar na nuvem só por renderizar
     (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
   }catch(e){}
   __renderAll();
@@ -5760,6 +5740,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const monthKey = (val("lf_month","") || val("fMonth", new Date().toISOString().slice(0,7))).trim();
     if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
 
+    const __dbSnapshot = JSON.parse(JSON.stringify(db));
+
     // find or create contact (unique by phone)
 // verifica se já existe alguém com esse telefone
 const existing = db.contacts.find(
@@ -5926,6 +5908,15 @@ if(!editingEntryId && hadBefore){
     }
 
     saveDB(db, { immediate:true });
+    const __leadSavedCloud = (await (__cloudSavePromise || Promise.resolve(true))) !== false;
+    if(!__leadSavedCloud){
+      DB = normalizeDBShape(__dbSnapshot);
+      localStorage.setItem(DBKEY, JSON.stringify(DB));
+      try{ updateSidebarPills(); }catch(_){ }
+      toast("Falha ao salvar lead", "Não foi possível sincronizar com a nuvem. O cadastro foi desfeito para evitar inconsistência.");
+      renderAll();
+      return;
+    }
     closeModal();
     ensureMonthOptions(); // in case new month
     toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
@@ -6018,6 +6009,7 @@ function markOK(entryId){
     if(fromStatus !== toStatus){
       entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
     }
+
     saveDB(db, { immediate:true });
     toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
     renderAll();
@@ -6897,7 +6889,7 @@ function openTaskEdit(taskId){
         t.title = val("tf_title").trim();
         t.action = val("tf_action");
         t.notes = val("tf_notes").trim();
-        saveDB(db, { immediate:true });
+        saveDB(db);
         closeModal();
         toast("Tarefa atualizada");
         renderAll();
@@ -6917,7 +6909,7 @@ function toggleTaskDone(taskId){
   }
   // toggle done and keep a memory of previous state if you want future audits
   t.done = !t.done;
-  saveDB(db, { immediate:true });
+  saveDB(db);
   toast(t.done ? "Tarefa marcada como feita" : "Tarefa reaberta");
  if (typeof renderTasks === "function") renderTasks();
   if (typeof updateSidebarPills === "function") updateSidebarPills();
@@ -7144,10 +7136,10 @@ function renderAll(){
 }
 
 async function boot(){
-  await ensureCloudDBLoaded();
-
-
-  await syncCurrentCloudActor();
+  if(window.__CRONOS_BOOT_PROMISE__) return await window.__CRONOS_BOOT_PROMISE__;
+  window.__CRONOS_BOOT_PROMISE__ = (async ()=>{
+    await ensureCloudDBLoaded();
+    await syncCurrentCloudActor();
 
   fillSelectOptions();
 
@@ -7158,7 +7150,7 @@ async function boot(){
   ensureMonthOptions();
 
   // migração (valores antigos -> novos)
-  try{ const db=loadDB(); if(migrateDBValues(db)){ DB = normalizeDBShape(db); localStorage.setItem(DBKEY, JSON.stringify(DB)); } }catch(e){}
+  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db, { skipCloud:true }); }catch(e){}
 
   // persist normalized filters
   saveFilters(getUIFilters());
@@ -7181,6 +7173,12 @@ if (authSelect) authSelect.parentElement.classList.add("hidden");
 
   bindNav();
   setActiveView(firstAllowedView(actor));
+  })();
+  try{
+    return await window.__CRONOS_BOOT_PROMISE__;
+  } finally {
+    window.__CRONOS_BOOT_PROMISE__ = null;
+  }
 }
 
 /* One-time bindings */
@@ -7192,7 +7190,14 @@ if (authSelect) authSelect.parentElement.classList.add("hidden");
   bindAuth();
   bindLoginEnterSubmit();
 
-boot();
+  if(window.__SUPABASE_CLOUD_LOGIN__){
+    showAuth();
+    const authSelect = el("authMasterSelect");
+    if (authSelect) authSelect.parentElement.classList.add("hidden");
+    if (el("authMode")) el("authMode").value = "master";
+  }else{
+    boot();
+  }
 })();
 
 function setupLeadsTopScrollbar(){
@@ -7539,35 +7544,41 @@ window.__CRONOS_LOGIN_BUSY__ = false;
 window.__CRONOS_EXPLICIT_LOGIN__ = false;
 
 async function finalizeCloudLogin(){
+  if(window.__CRONOS_FINALIZING_CLOUD_LOGIN__) return;
+  window.__CRONOS_FINALIZING_CLOUD_LOGIN__ = true;
   try{
-    await ensureCloudDBLoaded(true);
-    const actorInfo = await syncCurrentCloudActor();
-    if(!actorInfo){
-      toast("Acesso sem vínculo", "Esse login autenticou, mas não está ligado a nenhuma clínica.");
-      try{ await supabaseClient.auth.signOut(); }catch(_){}
-      clearSession();
-      showAuth();
+    try{
+      await ensureCloudDBLoaded(true);
+      const actorInfo = await syncCurrentCloudActor();
+      if(!actorInfo){
+        toast("Acesso sem vínculo", "Esse login autenticou, mas não está ligado a nenhuma clínica.");
+        try{ await supabaseClient.auth.signOut(); }catch(_){}
+        clearSession();
+        showAuth();
+        return;
+      }
+    }catch(err){
+      console.error("Erro ao preparar dados da nuvem:", err);
+      toast("Falha ao abrir o sistema", "A autenticação ocorreu, mas a clínica não carregou direito.");
       return;
     }
-  }catch(err){
-    console.error("Erro ao preparar dados da nuvem:", err);
-    toast("Falha ao abrir o sistema", "A autenticação ocorreu, mas a clínica não carregou direito.");
-    return;
-  }
 
-  document.getElementById("authView").classList.add("hidden");
-  document.getElementById("appView").classList.remove("hidden");
-  await boot();
+    document.getElementById("authView").classList.add("hidden");
+    document.getElementById("appView").classList.remove("hidden");
+    await boot();
 
-  const actor = currentActor();
-  if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
-    setTimeout(()=>{
-      toast(`Bem-vindo, ${actor.name} 👋`, actor.kind === "master"
-        ? "Sua clínica já está pronta para uso."
-        : `${roleLabelPt(actor.role)} conectado com sucesso.`);
-    }, 220);
+    const actor = currentActor();
+    if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
+      setTimeout(()=>{
+        toast(`Bem-vindo, ${actor.name} 👋`, actor.kind === "master"
+          ? "Sua clínica já está pronta para uso."
+          : `${roleLabelPt(actor.role)} conectado com sucesso.`);
+      }, 220);
+    }
+    window.__CRONOS_EXPLICIT_LOGIN__ = false;
+  } finally {
+    window.__CRONOS_FINALIZING_CLOUD_LOGIN__ = false;
   }
-  window.__CRONOS_EXPLICIT_LOGIN__ = false;
 }
 
 document.getElementById("btnLogin").addEventListener("click", async () => {
@@ -7616,12 +7627,14 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
 });
 
 async function verificarSessao() {
+  if(window.__CRONOS_FINALIZING_CLOUD_LOGIN__) return;
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
     await finalizeCloudLogin();
-    showView("dashboard");
+  } else {
+    showAuth();
   }
 }
 
