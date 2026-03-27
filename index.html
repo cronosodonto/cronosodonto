@@ -5741,7 +5741,26 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const phone = normPhone(val("lf_phone"));
     if(!name || !phone) return toast("Nome e telefone são obrigatórios");
 
-    const monthKey = (val("lf_month","") || val("fMonth", new Date().toISOString().slice(0,7))).trim();
+    const rawFormMonthKey = (val("lf_month","") || "").trim();
+    const rawFilterMonthKey = (val("fMonth", "") || "").trim();
+    const selectedFilterMonth = /^\d{4}-\d{2}$/.test(rawFilterMonthKey) ? rawFilterMonthKey : "";
+    const editingOriginal = editingEntryId ? db.entries.find(e=>e.id===editingEntryId) : null;
+
+    let monthKey = (rawFormMonthKey || selectedFilterMonth || new Date().toISOString().slice(0,7)).trim();
+    let createRescueFromEdit = false;
+
+    if(editingOriginal && selectedFilterMonth && editingOriginal.monthKey && selectedFilterMonth !== editingOriginal.monthKey){
+      const wantsRescue = confirm(
+        `Esse lead pertence a ${monthLabel(editingOriginal.monthKey)} e o filtro atual está em ${monthLabel(selectedFilterMonth)}.
+
+Deseja registrar este retorno como resgatado em ${monthLabel(selectedFilterMonth)}?`
+      );
+      if(wantsRescue){
+        monthKey = selectedFilterMonth;
+        createRescueFromEdit = true;
+      }
+    }
+
     if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
 
     // find or create contact (unique by phone)
@@ -5836,7 +5855,12 @@ if (existingIndex >= 0) {
     }
 
     let entry;
-    if(editingEntryId){
+    if(createRescueFromEdit){
+      entry = existingThisMonth && existingThisMonth.id !== editingEntryId
+        ? existingThisMonth
+        : { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [] };
+      if(!db.entries.find(e=>e.id===entry.id)) db.entries.push(entry);
+    }else if(editingEntryId){
       entry = db.entries.find(e=>e.id===editingEntryId);
       if(!entry) return toast("Erro", "Entrada não encontrada");
     }else{
@@ -5847,9 +5871,13 @@ if (existingIndex >= 0) {
     const fromStatus = entry.status || "";
     const toStatus = status;
 
+    const normalizedFirstContactAt = (createRescueFromEdit && String(firstContactAt||"").slice(0,7)!==monthKey)
+      ? ((todayISO().slice(0,7)===monthKey) ? todayISO() : `${monthKey}-01`)
+      : firstContactAt;
+
     // update entry fields
     entry.monthKey = monthKey;
-    entry.firstContactAt = firstContactAt;
+    entry.firstContactAt = normalizedFirstContactAt;
     entry.lastUpdateAt = now;
     entry.status = status;
     entry.origin = origin;
@@ -5871,8 +5899,8 @@ if (existingIndex >= 0) {
     // tags: sobrescreve tags manuais (permite remover), preservando tags de sistema
 const preserved = (entry.tags||[]).filter(t=>String(t)==="Resgatado");
 entry.tags = Array.from(new Set([...preserved, ...tags]));
-// add "Resgatado" if hadBefore and this is new entry
-if(!editingEntryId && hadBefore){
+// add "Resgatado" when this is a new monthly entry or a rescue from old month
+if(hadBefore && (!editingEntryId || createRescueFromEdit || (editingOriginal && monthKey !== editingOriginal.monthKey))){
   entry.tags = Array.from(new Set([...(entry.tags||[]), "Resgatado"]));
 }
 
@@ -5912,7 +5940,13 @@ if(!editingEntryId && hadBefore){
     saveDB(db);
     closeModal();
     ensureMonthOptions(); // in case new month
-    toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
+    if(createRescueFromEdit){
+      toast("Lead resgatado ✅", `${name} • ${monthLabel(monthKey)}`);
+    }else if(editingOriginal && editingOriginal.monthKey !== monthKey){
+      toast("Lead movido de mês ✅", `${name} • ${monthLabel(monthKey)}`);
+    }else{
+      toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
+    }
     renderAll();
   });
 }
