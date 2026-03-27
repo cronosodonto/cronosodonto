@@ -2334,6 +2334,9 @@ fill="currentColor" stroke="none">
         <button id="btnNewLeadSide" class="btn primary">➕ Lead</button>
         <button id="btnLogout" class="btn danger">Sair</button>
       </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnMyPasswordSide" class="btn">🔐 Minha senha</button>
+      </div>
     </div>
   </aside>
 
@@ -3243,11 +3246,32 @@ async function flushCloudSave(dbToSave){
   localStorage.setItem(DBKEY, JSON.stringify(normalized));
 
   const payload = buildClinicStatePayload(normalized, user);
-  const { data, error } = await supabaseClient
-    .from(CLOUD_TABLE)
-    .upsert(payload, { onConflict: "owner_uid" })
-    .select("id, updated_at")
-    .single();
+
+  let data = null;
+  let error = null;
+
+  if(ctx?.kind === "member"){
+    const resp = await supabaseClient
+      .from(CLOUD_TABLE)
+      .update({
+        owner_email: payload.owner_email,
+        clinic_name: payload.clinic_name,
+        data: payload.data
+      })
+      .eq("owner_uid", payload.owner_uid)
+      .select("id, updated_at")
+      .single();
+    data = resp.data;
+    error = resp.error;
+  }else{
+    const resp = await supabaseClient
+      .from(CLOUD_TABLE)
+      .upsert(payload, { onConflict: "owner_uid" })
+      .select("id, updated_at")
+      .single();
+    data = resp.data;
+    error = resp.error;
+  }
 
   if(error){
     console.error("Erro ao salvar no Supabase:", error);
@@ -3469,7 +3493,7 @@ async function syncCurrentCloudActor(){
     const master = getMasterRecordByEmail(db, ownerEmail) || db.masters[0];
     if(master){
       saveSession({ kind: "master", id: master.id });
-      saveDB(db, { immediate: true });
+      saveDB(db, { skipCloud:true });
       return { kind: "master", id: master.id };
     }
   }
@@ -3487,7 +3511,7 @@ async function syncCurrentCloudActor(){
     memberRow.authUid = user.id;
     memberRow.loginEmail = memberRow.loginEmail || String(user.email || "").trim().toLowerCase();
     saveSession({ kind: "user", id: memberRow.id });
-    saveDB(db, { immediate: true });
+    saveDB(db, { skipCloud:true });
     return { kind: "user", id: memberRow.id };
   }
 
@@ -7009,6 +7033,8 @@ function bindActions(){
   el("btnExportPDF").onclick = exportPDFFiltered;
   const btnChangeMyPassword = el("btnChangeMyPassword");
   if(btnChangeMyPassword) btnChangeMyPassword.onclick = openChangeMyPassword;
+  const btnMyPasswordSide = el("btnMyPasswordSide");
+  if(btnMyPasswordSide) btnMyPasswordSide.onclick = openChangeMyPassword;
 
   ["fYear","fMonth","fSearch","fStatus","fTreatment","fOrigin","fPeriodFrom","fPeriodTo","fOrder"].forEach(id=>{
     el(id).addEventListener("input", ()=>{
