@@ -1639,6 +1639,7 @@ function renderInstallmentsView(){
           <div class="instBtns">
             <button class="btn" onclick="openLeadEntry('${e.id}')">Abrir lead</button>
             <button class="btn primary" onclick="toggleInstRow('${e.id}')">Ver parcelas</button>
+            <button class="btn danger" onclick="deleteInstallmentPlan('${e.id}')">Excluir</button>
           </div>
         </div>
         <div class="instBody">
@@ -1691,7 +1692,7 @@ function renderInstallmentTable(entry, contact){
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod||pmDefault||"—")}</td>
         <td>${st} ${p.paidAt?`<div class="muted" style="font-size:12px">em ${fmtBR(p.paidAt)}</div>`:""}</td>
-        <td style="white-space:nowrap; display:flex; gap:10px; align-items:center">${action} ${wa}</td>
+        <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${wa} <button class="miniBtn danger" onclick="deleteInstallment('${entry.id}', ${p.number})" title="Excluir parcela">🗑️</button></td>
       </tr>
     `;
   }).join("");
@@ -1781,6 +1782,101 @@ function undoInstallmentPay(entryId, number){
   setTimeout(() => {
   if (typeof renderAll === "function") renderAll();
 }, 50);
+}
+
+function normalizeInstallmentsAfterMutation(entry){
+  entry.installments = Array.isArray(entry.installments) ? entry.installments : [];
+  const total = entry.installments.length;
+
+  if(!total){
+    entry.installPlan = null;
+    entry.installments = [];
+    return;
+  }
+
+  entry.installments = entry.installments
+    .sort((a,b)=> String(a?.dueDate||"").localeCompare(String(b?.dueDate||"")) || Number(a?.number||0) - Number(b?.number||0))
+    .map((p, idx)=> ({
+      ...p,
+      number: idx + 1,
+      total
+    }));
+
+  if(entry.installPlan){
+    const totalAmount = entry.installments.reduce((sum, parcela)=> sum + parseMoney(parcela.amount), 0);
+    entry.installPlan.n = total;
+    entry.installPlan.amount = Number(totalAmount.toFixed(2));
+    entry.installPlan.each = total ? Number((totalAmount / total).toFixed(2)) : 0;
+    entry.installPlan.firstDue = entry.installments[0]?.dueDate || entry.installPlan.firstDue || "";
+  }
+}
+
+function persistInstallmentMutation(db, actor, entryId, successMsg, successSub=""){
+  try{
+    syncInstallmentTasks(db, actor);
+  }catch(_){ }
+  saveDB(db, { immediate:true });
+  window.__instOpen = window.__instOpen || {};
+  if(entryId) window.__instOpen[entryId] = true;
+  toast(successMsg, successSub);
+  renderAll();
+}
+
+function deleteInstallmentPlan(entryId){
+  const actor = currentActor();
+  if(!actor?.perms?.edit) return toast("Sem permissão");
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>e.id===entryId);
+  if(!entry || !entry.installPlan) return toast("Parcelamento não encontrado");
+  ensureInstallmentsForEntry(entry);
+  const contact = (db.contacts||[]).find(c=>c.id===entry.contactId);
+  const totalParcelas = (entry.installments||[]).length;
+  if(!confirm(`Excluir todo o parcelamento de ${contact?.name || 'este paciente'}?
+
+Isso vai remover ${totalParcelas} parcela(s), pagamentos lançados por parcelas e tarefas automáticas vinculadas.`)) return;
+
+  const removedPaid = (entry.installments||[])
+    .filter(p=>p.paidAt || p.status === "PAGA")
+    .reduce((sum, p)=> sum + parseMoney(p.amount), 0);
+
+  if(removedPaid > 0){
+    entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - removedPaid);
+    entry.valueClosed = entry.status === "Fechou" ? entry.valuePaid : null;
+  }
+
+  db.payments = (db.payments||[]).filter(pay=>!(pay.entryId===entryId && String(pay.desc||"").startsWith("Parcela ")));
+  entry.installPlan = null;
+  entry.installments = [];
+
+  persistInstallmentMutation(db, actor, null, "Parcelamento excluído", `${totalParcelas} parcela(s) removida(s).`);
+}
+
+function deleteInstallment(entryId, number){
+  const actor = currentActor();
+  if(!actor?.perms?.edit) return toast("Sem permissão");
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>e.id===entryId);
+  if(!entry || !entry.installPlan) return toast("Parcelamento não encontrado");
+  ensureInstallmentsForEntry(entry);
+  const idx = (entry.installments||[]).findIndex(p=>Number(p.number)===Number(number));
+  if(idx < 0) return toast("Parcela não encontrada");
+
+  const parcela = entry.installments[idx];
+  const oldNumber = Number(parcela.number || number);
+  const oldTotal = Number(parcela.total || entry.installments.length || 0);
+
+  if(!confirm(`Excluir a parcela ${oldNumber}/${oldTotal}?`)) return;
+
+  if(parcela.paidAt || parcela.status === "PAGA"){
+    const amt = parseMoney(parcela.amount);
+    entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - amt);
+    entry.valueClosed = entry.status === "Fechou" ? entry.valuePaid : null;
+    db.payments = (db.payments||[]).filter(pay=>!(pay.entryId===entryId && Number(pay.value||0)===amt && String(pay.desc||"").includes(`Parcela ${oldNumber}/`)));
+  }
+
+  entry.installments.splice(idx, 1);
+  normalizeInstallmentsAfterMutation(entry);
+  persistInstallmentMutation(db, actor, entryId, "Parcela excluída", `A parcela ${oldNumber}/${oldTotal} foi removida.`);
 }
 
 /* Hook renderAll to also render installments safely */
@@ -2652,6 +2748,16 @@ fill="currentColor" stroke="none">
           <button class="btn ok" id="btnSaveChargeTpl">Salvar cobrança</button>
           <button class="btn" id="btnResetChargeTpl">Restaurar padrão</button>
           <span class="muted" id="chargeTplSaved" style="font-size:12px"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Segurança do acesso</h3>
+        <div class="muted" style="line-height:1.5; margin-bottom:10px">
+          Cada usuário logado pode trocar a própria senha por aqui, sem depender do navegador.
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center">
+          <button class="btn ok" id="btnChangeMyPassword">🔐 Alterar minha senha</button>
+          <span class="muted" style="font-size:12px">Para alterar a senha de outro usuário cloud ainda é necessário um fluxo administrativo no Supabase.</span>
         </div>
       </div>
 
@@ -4832,6 +4938,65 @@ function renderLeadsTable(list){
 
 
 
+
+function openChangeMyPassword(){
+  const actor = currentActor();
+  if(!actor) return toast("Sessão não encontrada");
+  openModal({
+    title: "Alterar minha senha",
+    sub: "Essa alteração vale para o acesso logado agora.",
+    bodyHTML: `
+      <div class="twoCol">
+        <div>
+          <label>Nova senha</label>
+          <input id="myPass1" type="password" placeholder="Digite a nova senha"/>
+        </div>
+        <div>
+          <label>Confirmar senha</label>
+          <input id="myPass2" type="password" placeholder="Repita a nova senha"/>
+        </div>
+      </div>
+      <div class="muted" style="font-size:12px; margin-top:10px">Use pelo menos 6 caracteres para não dar palco pro caos.</div>
+    `,
+    footHTML: `
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn ok" id="btnSaveMyPassword">Salvar nova senha</button>
+    `,
+    onMount: ()=>{
+      el("btnSaveMyPassword").addEventListener("click", async ()=>{
+        const pass1 = val("myPass1").trim();
+        const pass2 = val("myPass2").trim();
+        if(!pass1 || pass1.length < 6) return toast("Senha fraca", "Usa pelo menos 6 caracteres.");
+        if(pass1 !== pass2) return toast("As senhas não batem");
+
+        try{
+          if(typeof supabaseClient !== "undefined" && supabaseClient?.auth?.updateUser){
+            const { error } = await supabaseClient.auth.updateUser({ password: pass1 });
+            if(error) throw error;
+          }else{
+            const db = loadDB();
+            const s = loadSession();
+            if(s?.kind === "user"){
+              const userRow = (db.users||[]).find(u=>u.id===s.id);
+              if(!userRow) throw new Error("Usuário local não encontrado.");
+              userRow.passHash = await hashPass(pass1);
+              saveDB(db, { immediate:true });
+            }else{
+              throw new Error("Sessão cloud não disponível para atualizar a senha.");
+            }
+          }
+
+          closeModal();
+          toast("Senha atualizada ✅", "A nova senha já vale para o seu próximo login.");
+        }catch(err){
+          console.error("Falha ao alterar a própria senha:", err);
+          toast("Falha ao alterar senha", String(err?.message || "Tente novamente."));
+        }
+      });
+    }
+  });
+}
+
 function renderSettings(){
   const actor = currentActor();
   if(actor && !canAccessView("settings", actor)) return;
@@ -4914,6 +5079,69 @@ function renderUsers(){
 }
 
 /* -------- Navigation -------- */
+const CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS = 4000;
+window.__CRONOS_LAST_CLOUD_PULL_AT__ = window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0;
+window.__CRONOS_PENDING_CLOUD_PULL__ = window.__CRONOS_PENDING_CLOUD_PULL__ || null;
+window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ || null;
+
+async function refreshCloudDataNow({ force=false, reason="" } = {}){
+  const actor = currentActor();
+  if(!actor || typeof ensureCloudDBLoaded !== "function") return false;
+
+  const now = Date.now();
+  if(!force && (now - (window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0)) < CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS){
+    return false;
+  }
+
+  if(window.__CRONOS_CLOUD_PULL_IN_FLIGHT__){
+    return window.__CRONOS_CLOUD_PULL_IN_FLIGHT__;
+  }
+
+  window.__CRONOS_LAST_CLOUD_PULL_AT__ = now;
+  window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = (async ()=>{
+    try{
+      await ensureCloudDBLoaded(true);
+      if(typeof syncCurrentCloudActor === "function"){
+        await syncCurrentCloudActor();
+      }
+      renderAll();
+      return true;
+    }catch(err){
+      console.warn("Falha ao atualizar da nuvem:", reason || "view", err);
+      return false;
+    }finally{
+      window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = null;
+    }
+  })();
+
+  return window.__CRONOS_CLOUD_PULL_IN_FLIGHT__;
+}
+
+function scheduleCloudRefresh(reason="", { force=false, delay=120 } = {}){
+  const actor = currentActor();
+  if(!actor || typeof ensureCloudDBLoaded !== "function") return;
+
+  if(window.__CRONOS_PENDING_CLOUD_PULL__){
+    clearTimeout(window.__CRONOS_PENDING_CLOUD_PULL__);
+  }
+
+  const now = Date.now();
+  const elapsed = now - (window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0);
+  const wait = force ? delay : Math.max(delay, CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS - elapsed);
+
+  window.__CRONOS_PENDING_CLOUD_PULL__ = setTimeout(()=>{
+    window.__CRONOS_PENDING_CLOUD_PULL__ = null;
+    refreshCloudDataNow({ force, reason });
+  }, wait);
+}
+
+window.addEventListener("focus", ()=> scheduleCloudRefresh("window-focus", { delay: 150 }));
+document.addEventListener("visibilitychange", ()=>{
+  if(!document.hidden){
+    scheduleCloudRefresh("visibility", { delay: 150 });
+  }
+});
+
 function setActiveView(view){
   const actor = currentActor();
   let targetView = view;
@@ -4939,6 +5167,7 @@ function setActiveView(view){
   }
 
   renderAll();
+  scheduleCloudRefresh(`view:${targetView}`, { delay: 150 });
 }
 
 /* -------- Modal helpers -------- */
@@ -5884,7 +6113,7 @@ function userFormHTML(user){
       <div class="muted" style="font-size:12px; grid-column:1/-1">
         ${
           isCloudUser
-            ? 'Este acesso já existe na nuvem. Aqui você pode alterar <b>nome</b> e <b>nível</b>. Para trocar login ou senha, remova e crie de novo.'
+            ? 'Este acesso já existe na nuvem. Aqui você pode alterar <b>nome</b> e <b>nível</b>. Login e senha de outro usuário cloud exigem uma rota administrativa segura.'
             : 'Se preencher <b>usuário</b>, ele vira o login principal. O <b>e-mail</b> fica como contato. Se deixar o usuário vazio, o login será pelo e-mail.'
         }
       </div>
@@ -5965,7 +6194,7 @@ function openUserEdit(userId){
   if(!u) return toast("Usuário não encontrado");
   openModal({
     title: "Editar usuário",
-    sub: u.authUid ? "Nome e nível podem ser alterados sem derrubar o acesso." : "Altere nível e login. (Senha opcional)",
+    sub: u.authUid ? "Nome e nível podem ser alterados aqui. Credenciais cloud de terceiros precisam de rota administrativa." : "Altere nível e login. (Senha opcional)",
     bodyHTML: userFormHTML(u),
     footHTML: `
       <button class="btn" onclick="closeModal()">Cancelar</button>
@@ -6553,7 +6782,6 @@ tbody.innerHTML = tasks.map(t=>{
           <div class="taskActionsRow">
             <button class="miniBtn" onclick="openTaskEdit('${t.id}')" title="Editar">✏️</button>
             ${`<button class="miniBtn ok" onclick="toggleTaskDone(\'${t.id}\')" title="${t.done?'Reabrir':'Concluir'}">${t.done?'↩️':'✔️'}</button>`}
-            <button class="miniBtn danger" onclick="deleteTask('${t.id}')" title="Apagar">🗑️</button>
           </div>
           ${e?`<button class="miniBtn taskOpenLead" onclick="openLeadEntry('${e.id}')">Abrir lead</button>`:""}
         </div>
@@ -6709,13 +6937,7 @@ function toggleTaskDone(taskId){
 // compat
 function markTaskDone(taskId){ return toggleTaskDone(taskId); }
 function deleteTask(taskId){
-  const actor = currentActor();
-  if(!actor?.perms?.edit) return toast("Sem permissão");
-  const db = loadDB();
-  db.tasks = (db.tasks||[]).filter(t=>t.id!==taskId);
-  saveDB(db);
-  toast("Tarefa removida");
-  renderAll();
+  return toast("Exclusão bloqueada", "As tarefas não podem mais ser apagadas. Use editar, concluir ou reabrir.");
 }
 
 function renderAll(){
@@ -6785,6 +7007,8 @@ function bindActions(){
 
   el("btnExportCSV").onclick = exportCSV;
   el("btnExportPDF").onclick = exportPDFFiltered;
+  const btnChangeMyPassword = el("btnChangeMyPassword");
+  if(btnChangeMyPassword) btnChangeMyPassword.onclick = openChangeMyPassword;
 
   ["fYear","fMonth","fSearch","fStatus","fTreatment","fOrigin","fPeriodFrom","fPeriodTo","fOrder"].forEach(id=>{
     el(id).addEventListener("input", ()=>{
