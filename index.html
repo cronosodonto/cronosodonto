@@ -280,6 +280,9 @@ to { transform: rotate(360deg); }
       background: rgba(255,255,255,.03);
       padding:12px;
     }
+    .kpiHead{display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:2px}
+    .kpiPct{display:inline-flex; align-items:center; justify-content:center; padding:2px 8px; min-height:24px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.05); color:var(--muted); font-size:12px; font-weight:700; white-space:nowrap}
+    :root.light .kpiPct{background:rgba(17,24,39,.05)}
     .kpi .label{font-size:12px; color:var(--muted)}
     .kpi .value{font-size:20px; font-weight:800; margin-top:6px}
     .kpi .hint{font-size:12px; color:var(--muted); margin-top:4px}
@@ -315,7 +318,11 @@ to { transform: rotate(360deg); }
       padding:10px 12px;
       border-radius: 14px;
       outline:none;
+      position:relative;
+      z-index:1;
+      pointer-events:auto;
     }
+    .stickyFilters input,.stickyFilters select,.modal input,.modal select,.modal textarea{position:relative; z-index:2; pointer-events:auto;}
     textarea{min-height: 90px; resize: vertical}
 
     .tableWrap{overflow:auto; border-radius: var(--radius2); border:1px solid var(--line)}
@@ -1361,6 +1368,12 @@ function parseMoney(v){
   const n = Number(v);
   return (isFinite(n) && !isNaN(n)) ? n : 0;
 }
+function parseBRNum(v){
+  const s = String(v ?? "").trim();
+  if(!s) return null;
+  const n = Number(s.replace(/\./g, "").replace(/,/g, ".").replace(/[^0-9.-]/g, ""));
+  return (isFinite(n) && !isNaN(n)) ? n : null;
+}
 function isoDate(d){ return (d instanceof Date) ? d.toISOString().slice(0,10) : String(d||"").slice(0,10); }
 function addMonthsISO(iso, k){
   const [y,m,d] = iso.split("-").map(x=>parseInt(x,10));
@@ -1747,11 +1760,13 @@ function payInstallment(entryId, number){
   db.payments = db.payments || [];
   db.payments.push({ id: uid("p"), masterId: actor.masterId, entryId, contactId: entry.contactId, at: new Date().toISOString(), date: payDate, value: p.amount, method: p.payMethod || entry.installPlan?.payMethod || "", desc: `Parcela ${p.number}/${p.total}` });
 
-  try {
-    syncInstallmentTasks(db, actor);
-  } catch {}
-  saveDB(db, { immediate:true });
+  saveDB(db);
   toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
+  // re-sync tasks + rerender
+  try {
+  syncInstallmentTasks(db, actor);
+  saveDB(db);
+} catch {}
   renderAll();
 }
 
@@ -1774,9 +1789,9 @@ function undoInstallmentPay(entryId, number){
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (x.desc||"").includes(`Parcela ${number}/`));
   if(idx>=0) db.payments.splice(idx,1);
 
-  try{ syncInstallmentTasks(db, actor); }catch{}
-  saveDB(db, { immediate:true });
+  saveDB(db);
   toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
+  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
   setTimeout(() => {
   if (typeof renderAll === "function") renderAll();
 }, 50);
@@ -1881,9 +1896,11 @@ function deleteInstallment(entryId, number){
 const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
 renderAll = function(){
   try{
+    const actor = currentActor();
     const db = loadDB();
-    // ensure installments normalized locally, sem salvar na nuvem só por renderizar
+    // ensure installments normalized
     (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
+    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db); }
   }catch(e){}
   __renderAll();
   try{
@@ -2362,6 +2379,15 @@ fill="currentColor" stroke="none">
         </div>
 
         <div>
+          <label>Campanha</label>
+          <select id="fCampaign">
+            <option value="">Todos</option>
+            <option value="yes">Em campanha</option>
+            <option value="no">Fora de campanha</option>
+          </select>
+        </div>
+
+        <div>
           <label>Tratamento</label>
           <select id="fTreatment">
             <option value="">Todos</option>
@@ -2419,24 +2445,36 @@ fill="currentColor" stroke="none">
         <h3 style="margin:0 0 10px">KPIs</h3>
         <div class="kpis">
           <div class="kpi" data-kpi="total">
-            <div class="label">Total (filtro)</div>
+            <div class="kpiHead">
+              <div class="label">Total (filtro)</div>
+              <div class="kpiPct" id="kpiTotalPct">100%</div>
+            </div>
             <div class="value" id="kpiTotal">0</div>
-            <div class="hint">Leads do mês/critério</div>
+            <div class="hint" id="kpiTotalHint">Leads do mês/critério</div>
           </div>
           <div class="kpi" data-kpi="pos">
-            <div class="label">Positivos - Em andamento</div>
+            <div class="kpiHead">
+              <div class="label">Positivos - Em andamento</div>
+              <div class="kpiPct" id="kpiPositivePct">0%</div>
+            </div>
             <div class="value" id="kpiPositive">0</div>
-            <div class="hint">Agendado/ Fechou/ Remarcou/ Conversando</div>
+            <div class="hint" id="kpiPositiveHint">Agendado/ Fechou/ Remarcou/ Conversando</div>
           </div>
           <div class="kpi" data-kpi="bad">
-            <div class="label">Desqualificados</div>
+            <div class="kpiHead">
+              <div class="label">Desqualificados</div>
+              <div class="kpiPct" id="kpiDQPct">0%</div>
+            </div>
             <div class="value" id="kpiDQ">0</div>
-            <div class="hint">Incorreto/sem interesse etc.</div>
+            <div class="hint" id="kpiDQHint">Incorreto/sem interesse etc.</div>
           </div>
           <div class="kpi" data-kpi="sched">
-            <div class="label">Agendados</div>
+            <div class="kpiHead">
+              <div class="label">Agendados</div>
+              <div class="kpiPct" id="kpiApptPct">0%</div>
+            </div>
             <div class="value" id="kpiAppt">0</div>
-            <div class="hint">Com data/hora</div>
+            <div class="hint">Agendado / Remarcou</div>
           </div>
 
 
@@ -2455,15 +2493,21 @@ fill="currentColor" stroke="none">
           </div>
 
 <div class="kpi">
-            <div class="label">R$ Recebido</div>
+            <div class="kpiHead">
+              <div class="label">R$ Recebido</div>
+              <div class="kpiPct" id="kpiReceivedPct">0%</div>
+            </div>
             <div class="value mono" id="kpiClosedValue">R$ 0,00</div>
-            <div class="hint">Recebido no período selecionado</div>
+            <div class="hint" id="kpiReceivedHint">Recebido no período selecionado</div>
           </div>
 
           <div class="kpi">
-            <div class="label">R$ em aberto</div>
+            <div class="kpiHead">
+              <div class="label">R$ em aberto</div>
+              <div class="kpiPct" id="kpiOpenPct">0%</div>
+            </div>
             <div class="value mono" id="kpiOpenValue">R$ 0,00</div>
-            <div class="hint">Orçamento em aberto (orçado − pago)</div>
+            <div class="hint" id="kpiOpenHint">Orçamento em aberto (orçado − pago)</div>
           </div>
         </div>
       </div>
@@ -3758,6 +3802,7 @@ function getUIFilters(){
     monthKey: val("fMonth", new Date().toISOString().slice(0,7)), // YYYY-MM or "all"
     search: val("fSearch","").trim(),
     status: val("fStatus",""),
+    campaign: val("fCampaign",""),
     treatment: val("fTreatment",""),
     origin: val("fOrigin",""),
     periodFrom: val("fPeriodFrom",""),
@@ -3771,6 +3816,7 @@ function setUIFilters(f){
   setVal("fMonth", f.monthKey || now.toISOString().slice(0,7));
   setVal("fSearch", f.search || "");
   setVal("fStatus", f.status || "");
+  setVal("fCampaign", f.campaign || "");
   setVal("fTreatment", f.treatment || "");
   setVal("fOrigin", f.origin || "");
   setVal("fPeriodFrom", f.periodFrom || "");
@@ -3887,6 +3933,11 @@ function filteredEntries(){
       return true;
     })
     .filter(e=> !f.status || e.status===f.status)
+    .filter(e=>{
+      if(!f.campaign) return true;
+      const inCampaign = Array.isArray(e?.tags) && e.tags.includes("Campanha");
+      return f.campaign === "yes" ? inCampaign : !inCampaign;
+    })
     .filter(e=> !f.treatment || e.treatment===f.treatment)
     .filter(e=> !f.origin || e.origin===f.origin)
     .filter(e=>{
@@ -4168,30 +4219,48 @@ function renderDashboard(){
   const dashRevenue = buildDashboardRevenueData(rows, db, actor, getUIFilters());
   const totalPaid = dashRevenue.totalReceived;
 
+  const isRescueEntry = (e)=> Array.isArray(e?.tags) && e.tags.includes("Resgatado");
+  const totalBase = rows.length || 0;
+
   rows.forEach(e=>{
-    byStatus.set(e.status, (byStatus.get(e.status)||0) + 1);
-
-    const budget = getEntryBudgetValue(e);
-    totalBudget += (budget||0);
+    const budget = isRescueEntry(e) ? 0 : getEntryBudgetValue(e);
     const paid = getEntryPaidValue(e);
-
     const open = Math.max(0, (budget||0) - (paid||0));
-    byStatusValue.set(e.status, (byStatusValue.get(e.status)||0) + (open||0));
-    if(open) totalOpen += open;
 
+    byStatus.set(e.status, (byStatus.get(e.status)||0) + 1);
+    byStatusValue.set(e.status, (byStatusValue.get(e.status)||0) + (open||0));
+
+    totalBudget += (budget||0);
+    if(open) totalOpen += open;
+  });
+
+  rows.forEach(e=>{
     if(POSITIVE.has(e.status)) positive++;
     if(DISQUALIFIED.has(e.status)) dq++;
     if(e && (e.status==='Agendado' || e.status==='Remarcou')) appt++;
   });
 
-el("kpiTotal").textContent = rows.length;
+  const pctBaseNum = (n)=> totalBase ? `${((Number(n||0)/totalBase)*100).toFixed(1).replace('.',',')}%` : '0%';
+  const pctBudgetNum = (n)=> totalBudget ? `${((Number(n||0)/totalBudget)*100).toFixed(1).replace('.',',')}%` : '0%';
+
+  el("kpiTotal").textContent = totalBase;
   el("kpiPositive").textContent = positive;
   el("kpiDQ").textContent = dq;
   el("kpiAppt").textContent = appt;
-  // Ticket médio (orçado): média do orçamento no filtro (considera apenas leads com orçamento > 0)
+
+  const kpiTotalPct = el('kpiTotalPct');
+  if(kpiTotalPct) kpiTotalPct.textContent = '100%';
+  const kpiPositivePct = el('kpiPositivePct');
+  if(kpiPositivePct) kpiPositivePct.textContent = pctBaseNum(positive);
+  const kpiDQPct = el('kpiDQPct');
+  if(kpiDQPct) kpiDQPct.textContent = pctBaseNum(dq);
+  const kpiApptPct = el('kpiApptPct');
+  if(kpiApptPct) kpiApptPct.textContent = pctBaseNum(appt);
+
+  // Ticket médio (orçado): média do orçamento no filtro (considera apenas leads com orçamento > 0, sem resgatados)
   try{
     const budgetCount = rows.reduce((acc,e)=>{
-      const b = getEntryBudgetValue(e);
+      const b = isRescueEntry(e) ? 0 : getEntryBudgetValue(e);
       return acc + ((b && b>0) ? 1 : 0);
     }, 0);
     const avg = budgetCount ? (totalBudget / budgetCount) : 0;
@@ -4205,6 +4274,10 @@ el("kpiTotal").textContent = rows.length;
   if(kpiClosed) kpiClosed.textContent = moneyBR(totalPaid);
   const kpiOpen = el("kpiOpenValue");
   if(kpiOpen) kpiOpen.textContent = moneyBR(totalOpen);
+  const kpiReceivedPct = el('kpiReceivedPct');
+  if(kpiReceivedPct) kpiReceivedPct.textContent = pctBudgetNum(totalPaid);
+  const kpiOpenPct = el('kpiOpenPct');
+  if(kpiOpenPct) kpiOpenPct.textContent = pctBudgetNum(totalOpen);
 
   const grid = el("dashByStatusGrid");
   const ordered = STATUS_LIST.map(s=>[s, byStatus.get(s)||0]).filter(([_,n])=>n>0);
@@ -5178,6 +5251,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
     .concat(__toArr(c.tags))
     .concat(__toArr(c.tag))
     .filter(t=>!String(t||"").startsWith("Prioridade:"))
+    .filter(t=>String(t||"")!=="Campanha")
   );
 
   return `
@@ -5236,56 +5310,64 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
 <div>
         <label>Valor do orçamento (R$) <span class="muted" style="font-weight:400">(opcional)</span></label>
-        <input id="lf_value_budget" type="number" step="0.01" min="0" ${ro?"disabled":""} placeholder="Ex: 12000" value="${(e.valueBudget!=null)?escapeHTML(e.valueBudget):((e.valueEstimated!=null)?escapeHTML(e.valueEstimated):"")}"/>
+        <input id="lf_value_budget" type="text" inputmode="decimal" ${ro?"disabled":""} placeholder="Ex: 12000" value="${(e.valueBudget!=null)?escapeHTML(e.valueBudget):((e.valueEstimated!=null)?escapeHTML(e.valueEstimated):"")}"/>
         <div class="help muted" style="font-size:12px">Quanto foi orçado/proposto.</div>
       </div>
 
       <div>
         <label>Valor pago (R$) <span class="muted" style="font-weight:400">(opcional)</span></label>
-        <input id="lf_value_paid" type="number" step="0.01" min="0" ${ro?"disabled":""} placeholder="Ex: 3000" value="${(e.valuePaid!=null)?escapeHTML(e.valuePaid):((e.valueClosed!=null)?escapeHTML(e.valueClosed):"")}"/>
+        <input id="lf_value_paid" type="text" inputmode="decimal" ${ro?"disabled":""} placeholder="Ex: 3000" value="${(e.valuePaidGross!=null)?escapeHTML(e.valuePaidGross):((e.valuePaid!=null)?escapeHTML(e.valuePaid):((e.valueClosed!=null)?escapeHTML(e.valueClosed):""))}"/>
         <div class="help muted" style="font-size:12px">Quanto entrou de fato (pode ser parcial).</div>
         <div class="help" style="font-size:12px; margin-top:6px">
           Em aberto: <b class="mono" id="lf_open_value">—</b>
         </div>
-      
-      <div class="hr" style="margin:10px 0; opacity:.6"></div>
-
-      <div class="twoCol" style="gap:14px">
-        <div>
-          <label>Forma de pagamento <span class="muted" style="font-weight:400">(parcelamento)</span></label>
-          <select id="lf_pay_method">
-            <option value="">—</option>
-            <option value="Pix">Pix</option>
-            <option value="Cartão de crédito">Cartão de crédito</option>
-            <option value="Cartão de débito">Cartão de débito</option>
-            <option value="Espécie">Espécie</option>
-            <option value="Boleto">Boleto</option>
-          </select>
-          <div class="help muted" style="font-size:12px">Usado para priorizar cobrança (boleto = risco maior).</div>
-        </div>
-        <div>
-          <label>Entrada (R$)</label>
-          <input id="lf_entry_amount" type="number" step="0.01" min="0" placeholder="Ex: 1000" />
-          <div class="help muted" style="font-size:12px">Se recebeu entrada e o restante vai parcelar.</div>
-        </div>
-        <div>
-          <label>Valor para parcelar (R$)</label>
-          <input id="lf_inst_amount" type="number" step="0.01" min="0" placeholder="Ex: 2000" />
-        </div>
-        <div>
-          <label>Vezes</label>
-          <input id="lf_inst_n" type="number" step="1" min="1" placeholder="Ex: 10" />
-          <div class="help" style="font-size:12px; margin-top:6px">Parcela estimada: <b class="mono" id="lf_inst_each">—</b></div>
-        </div>
-        <div>
-          <label>1º vencimento</label>
-          <input id="lf_inst_firstdue" type="date" />
-          <div class="help muted" style="font-size:12px">Se vazio, usa o mesmo dia no próximo mês.</div>
-        </div>
       </div>
 
-</div>
-</div>
+      <div>
+        <label>Data do pagamento <span class="muted" style="font-weight:400">(quando houver pagamento)</span></label>
+        <input id="lf_payment_date" type="date" ${ro?"disabled":""} value="${escapeHTML(e.lastPaymentDate || todayISO())}"/>
+        <div class="help muted" style="font-size:12px">Usada para lançar o pagamento no dia e no mês corretos.</div>
+      </div>
+
+      <div style="grid-column:1/-1">
+        <div class="hr" style="margin:10px 0; opacity:.6"></div>
+      </div>
+
+      <div style="grid-column:1/-1">
+        <div class="twoCol" style="gap:14px">
+          <div>
+            <label>Forma de pagamento <span class="muted" style="font-weight:400">(parcelamento)</span></label>
+            <select id="lf_pay_method">
+              <option value="">—</option>
+              <option value="Pix">Pix</option>
+              <option value="Cartão de crédito">Cartão de crédito</option>
+              <option value="Cartão de débito">Cartão de débito</option>
+              <option value="Espécie">Espécie</option>
+              <option value="Boleto">Boleto</option>
+            </select>
+            <div class="help muted" style="font-size:12px">Usado para priorizar cobrança (boleto = risco maior).</div>
+          </div>
+          <div>
+            <label>Entrada (R$)</label>
+            <input id="lf_entry_amount" type="text" inputmode="decimal" placeholder="Ex: 1000" />
+            <div class="help muted" style="font-size:12px">Se recebeu entrada e o restante vai parcelar.</div>
+          </div>
+          <div>
+            <label>Valor para parcelar (R$)</label>
+            <input id="lf_inst_amount" type="text" inputmode="decimal" placeholder="Ex: 2000" />
+          </div>
+          <div>
+            <label>Vezes</label>
+            <input id="lf_inst_n" type="number" step="1" min="1" placeholder="Ex: 10" />
+            <div class="help" style="font-size:12px; margin-top:6px">Parcela estimada: <b class="mono" id="lf_inst_each">—</b></div>
+          </div>
+          <div>
+            <label>1º vencimento</label>
+            <input id="lf_inst_firstdue" type="date" />
+            <div class="help muted" style="font-size:12px">Se vazio, usa o mesmo dia no próximo mês.</div>
+          </div>
+        </div>
+      </div>
 
       <div>
         <label>Agendamento (data)</label>
@@ -5324,6 +5406,13 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
             ${["Frio","Morno","Quente"].map(v=>`<option value="${v}" ${(e.tags||[]).includes("Prioridade: "+v)?"selected":""}>${v}</option>`).join("")}
           </select>
         </div>
+      </div>
+
+      <div style="grid-column:1/-1">
+        <label style="display:flex; align-items:center; gap:10px; color:var(--text); margin-bottom:0">
+          <input id="lf_campaign" type="checkbox" ${ro?"disabled":""} ${((e.tags||[]).includes("Campanha"))?"checked":""} style="width:auto; flex:0 0 auto"/>
+          <span style="font-size:13px; font-weight:700">Lead em campanha</span>
+        </label>
       </div>
 
       <div style="grid-column:1/-1">
@@ -5708,7 +5797,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
       .concat(Array.isArray(ent?.tag)?ent.tag:(ent?.tag?[ent.tag]:[]))
 .map(x=>String(x||"").trim())
       .filter(Boolean)
-      .filter(t=>!t.startsWith("Prioridade:"));
+      .filter(t=>!t.startsWith("Prioridade:"))
+      .filter(t=>t!=="Campanha");
     if(tagInp){
       tagInp.dataset.tags = JSON.stringify(__uniqTags(saved));
     }
@@ -5739,8 +5829,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
     const monthKey = (val("lf_month","") || val("fMonth", new Date().toISOString().slice(0,7))).trim();
     if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
-
-    const __dbSnapshot = JSON.parse(JSON.stringify(db));
 
     // find or create contact (unique by phone)
 // verifica se já existe alguém com esse telefone
@@ -5801,11 +5889,14 @@ if (existingIndex >= 0) {
     const callAttempts = val("lf_calls") || "";
     const callResult = val("lf_callResult") || "";
     const notes = val("lf_notes").trim();
+    const payMethod = val("lf_pay_method","").trim();
 
     const valueBudgetRaw = el("lf_value_budget")?.value;
-    const valueBudget = (valueBudgetRaw!==undefined && valueBudgetRaw!==null && valueBudgetRaw!=="") ? Number(valueBudgetRaw) : null;
+    const valueBudget = parseBRNum(valueBudgetRaw);
     const valuePaidRaw = el("lf_value_paid")?.value;
-    const valuePaid = (valuePaidRaw!==undefined && valuePaidRaw!==null && valuePaidRaw!=="") ? Number(valuePaidRaw) : null;
+    const valuePaid = parseBRNum(valuePaidRaw);
+    const paymentDate = val("lf_payment_date") || todayISO();
+    const campaign = !!el("lf_campaign")?.checked;
 
     let manualTags = [];
     try{ manualTags = JSON.parse((tagInp?.dataset.tags)||"[]") || []; }catch(_){ manualTags = []; }
@@ -5820,8 +5911,11 @@ if (existingIndex >= 0) {
     if(prio) tags.push("Prioridade: " + prio);
     tags.push(...manualTags);
 
-    // resgatado rule: if contact existed before and new month entry being created
-    const hadBefore = db.entries.some(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey !== monthKey);
+    // resgate financeiro: só entra no mês da data do pagamento quando houver dinheiro novo + status Fechou
+    const realToday = todayISO();
+    const rescueDate = paymentDate || realToday;
+    const rescueMonthKey = String(rescueDate).slice(0,7);
+    const hadBefore = db.entries.some(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey !== rescueMonthKey);
     const existingThisMonth = db.entries.find(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey === monthKey);
 
     if(isNew && existingThisMonth){
@@ -5842,14 +5936,26 @@ if (existingIndex >= 0) {
       db.entries.push(entry);
     }
 
-    const fromStatus = entry.status || "";
-    const toStatus = status;
+    const originalMonthKey = String(entry.monthKey || monthKey || "");
+    const originalStatus = String(entry.status || "");
+    const originalPaidBase = (entry.valuePaidGross!=null && !isNaN(Number(entry.valuePaidGross)))
+      ? Number(entry.valuePaidGross)
+      : getEntryPaidValue(entry);
+    const originalPaidShown = getEntryPaidValue(entry);
+    const isCrossMonthFinancialEdit = !!editingEntryId && originalMonthKey && originalMonthKey !== rescueMonthKey;
+    const paidNow = (valuePaid!=null && !isNaN(Number(valuePaid))) ? Number(valuePaid) : 0;
+    const paidDelta = Math.max(0, Number((paidNow - originalPaidBase).toFixed(2)));
+    const shouldRegisterRescue = isCrossMonthFinancialEdit && status === "Fechou" && paidDelta > 0;
+    const shouldRegisterDirectPayment = !shouldRegisterRescue && status === "Fechou" && paidDelta > 0;
 
-    // update entry fields
-    entry.monthKey = monthKey;
+    const fromStatus = shouldRegisterRescue ? originalStatus : (entry.status || "");
+    const toStatus = shouldRegisterRescue ? originalStatus : status;
+
+    // update entry fields (edições cadastrais sempre podem corrigir a ficha antiga)
+    entry.monthKey = editingEntryId ? (originalMonthKey || monthKey) : monthKey;
     entry.firstContactAt = firstContactAt;
     entry.lastUpdateAt = now;
-    entry.status = status;
+    entry.status = shouldRegisterRescue ? originalStatus : status;
     entry.origin = origin;
     entry.originOther = originOther;
     entry.treatment = treatment;
@@ -5857,37 +5963,115 @@ if (existingIndex >= 0) {
     entry.city = city;
     entry.notes = notes;
     entry.valueBudget = valueBudget;
-    entry.valuePaid = valuePaid;
-    // legacy fields (compat): mantêm relatórios antigos funcionando
-    entry.valueEstimated = valueBudget;
-    entry.valueClosed = (status==="Fechou") ? valuePaid : null;
     entry.apptDate = apptDate;
     entry.apptTime = apptTime;
     entry.callAttempts = callAttempts;
     entry.callResult = callResult;
+    entry.valueEstimated = valueBudget;
+
+    if(shouldRegisterRescue){
+      // mantém o mês antigo intacto e guarda o total bruto só como referência de edição
+      entry.valuePaid = (originalPaidShown || null);
+      entry.valueClosed = (originalStatus === "Fechou") ? (originalPaidShown || null) : null;
+      entry.valuePaidGross = paidNow;
+      entry.valueClosedGross = paidNow;
+      entry.lastPaymentDate = rescueDate;
+    }else{
+      entry.valuePaid = valuePaid;
+      entry.valueClosed = (status==="Fechou") ? valuePaid : null;
+      entry.valuePaidGross = valuePaid;
+      entry.valueClosedGross = (status==="Fechou") ? valuePaid : null;
+      if(shouldRegisterDirectPayment || paidNow>0) entry.lastPaymentDate = rescueDate;
+    }
 
     // tags: sobrescreve tags manuais (permite remover), preservando tags de sistema
-const preserved = (entry.tags||[]).filter(t=>String(t)==="Resgatado");
-entry.tags = Array.from(new Set([...preserved, ...tags]));
-// add "Resgatado" if hadBefore and this is new entry
-if(!editingEntryId && hadBefore){
-  entry.tags = Array.from(new Set([...(entry.tags||[]), "Resgatado"]));
-}
+    const preserved = (entry.tags||[]).filter(t=>String(t)==="Resgatado");
+    entry.tags = Array.from(new Set([...preserved, ...tags, ...(campaign ? ["Campanha"] : [])]));
+    if(!editingEntryId && hadBefore){
+      entry.tags = Array.from(new Set([...(entry.tags||[]), "Resgatado"]));
+    }
 
-
-    // status log
     if(fromStatus !== toStatus){
       entry.statusLog = entry.statusLog || [];
       entry.statusLog.push({ at: now, from: fromStatus, to: toStatus, by: actor.name });
     }
 
+    if(shouldRegisterRescue){
+      let rescueEntry = db.entries.find(e=>
+        e.masterId===actor.masterId &&
+        e.contactId===contact.id &&
+        e.monthKey===rescueMonthKey &&
+        Array.isArray(e.tags) && e.tags.includes("Resgatado")
+      );
+
+      const rescuePrevPaid = rescueEntry ? getEntryPaidValue(rescueEntry) : 0;
+      const rescuePrevStatus = rescueEntry ? String(rescueEntry.status || "") : "";
+      if(!rescueEntry){
+        rescueEntry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey: rescueMonthKey, statusLog: [], tags: [] };
+        db.entries.push(rescueEntry);
+      }
+
+      rescueEntry.firstContactAt = rescueEntry.firstContactAt || rescueDate;
+      rescueEntry.lastUpdateAt = now;
+      rescueEntry.status = status;
+      rescueEntry.origin = origin;
+      rescueEntry.originOther = originOther;
+      rescueEntry.treatment = treatment;
+      rescueEntry.treatmentOther = treatmentOther;
+      rescueEntry.city = city;
+      rescueEntry.notes = notes;
+      rescueEntry.valueBudget = rescueEntry.valueBudget ?? valueBudget ?? null;
+      rescueEntry.valueEstimated = rescueEntry.valueBudget;
+      rescueEntry.valuePaid = Number((rescuePrevPaid + paidDelta).toFixed(2));
+      rescueEntry.valueClosed = (status==="Fechou") ? rescueEntry.valuePaid : null;
+      rescueEntry.valuePaidGross = rescueEntry.valuePaid;
+      rescueEntry.valueClosedGross = rescueEntry.valueClosed;
+      rescueEntry.lastPaymentDate = rescueDate;
+      rescueEntry.apptDate = rescueDate;
+      rescueEntry.apptTime = rescueEntry.apptTime || now.slice(11,16);
+      rescueEntry.callAttempts = callAttempts;
+      rescueEntry.callResult = callResult;
+      rescueEntry.tags = Array.from(new Set([...(rescueEntry.tags||[]), ...tags, "Resgatado", ...(campaign ? ["Campanha"] : [])]));
+
+      if(rescuePrevStatus !== status || !rescuePrevStatus){
+        rescueEntry.statusLog = rescueEntry.statusLog || [];
+        rescueEntry.statusLog.push({ at: now, from: rescuePrevStatus, to: status, by: actor.name });
+      }
+
+      db.payments = db.payments || [];
+      db.payments.push({
+        id: uid("p"),
+        masterId: actor.masterId,
+        entryId: rescueEntry.id,
+        contactId: contact.id,
+        at: now,
+        date: rescueDate,
+        value: paidDelta,
+        method: payMethod || "",
+        desc: "Resgate / pagamento manual"
+      });
+    }
+
+    if(shouldRegisterDirectPayment){
+      db.payments = db.payments || [];
+      db.payments.push({
+        id: uid("p"),
+        masterId: actor.masterId,
+        entryId: entry.id,
+        contactId: contact.id,
+        at: now,
+        date: rescueDate,
+        value: paidDelta,
+        method: payMethod || "",
+        desc: "Pagamento manual"
+      });
+    }
 
     /* ===== Parcelamento: captura e gera parcelas ===== */
-    const payMethod = val("lf_pay_method","").trim();
     const entryAmtRaw = el("lf_entry_amount")?.value;
-    const entryAmount = (entryAmtRaw!==undefined && entryAmtRaw!==null && entryAmtRaw!=="") ? Number(entryAmtRaw) : 0;
+    const entryAmount = parseBRNum(entryAmtRaw) || 0;
     const instAmtRaw = el("lf_inst_amount")?.value;
-    const instAmount = (instAmtRaw!==undefined && instAmtRaw!==null && instAmtRaw!=="") ? Number(instAmtRaw) : 0;
+    const instAmount = parseBRNum(instAmtRaw) || 0;
     const instNRaw = el("lf_inst_n")?.value;
     const instN = (instNRaw!==undefined && instNRaw!==null && instNRaw!=="") ? parseInt(instNRaw,10) : 0;
     const firstDue = val("lf_inst_firstdue","").trim();
@@ -5907,19 +6091,11 @@ if(!editingEntryId && hadBefore){
       entry.installments = [];
     }
 
-    saveDB(db, { immediate:true });
-    const __leadSavedCloud = (await (__cloudSavePromise || Promise.resolve(true))) !== false;
-    if(!__leadSavedCloud){
-      DB = normalizeDBShape(__dbSnapshot);
-      localStorage.setItem(DBKEY, JSON.stringify(DB));
-      try{ updateSidebarPills(); }catch(_){ }
-      toast("Falha ao salvar lead", "Não foi possível sincronizar com a nuvem. O cadastro foi desfeito para evitar inconsistência.");
-      renderAll();
-      return;
-    }
+    saveDB(db);
     closeModal();
     ensureMonthOptions(); // in case new month
-    toast("Lead salvo ✅", `${name} • ${monthLabel(monthKey)}`);
+    const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
+    toast("Lead salvo ✅", `${name} • ${savedMonthLabel}`);
     renderAll();
   });
 }
@@ -5928,19 +6104,89 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   const db = loadDB();
   const c = db.contacts.find(x=>x.id===contactId);
   if(!c) return;
-  // If entry exists for selected month, open it
+
   const monthKey = (val("lf_month","") || val("fMonth", new Date().toISOString().slice(0,7))).trim();
-  const existing = db.entries.find(e=>e.masterId===actor.masterId && e.contactId===c.id && e.monthKey===monthKey);
+  const entries = (db.entries||[])
+    .filter(e=>e.masterId===actor.masterId && e.contactId===c.id)
+    .sort((a,b)=>{
+      const da = String(a.lastUpdateAt || a.firstContactAt || a.monthKey || "");
+      const dbb = String(b.lastUpdateAt || b.firstContactAt || b.monthKey || "");
+      return dbb.localeCompare(da);
+    });
+
+  const existing = entries.find(e=>e.monthKey===monthKey);
   if(existing){
     closeModal();
     openLeadEntry(existing.id);
     return;
   }
-  // Fill name/phone fields, keep rest
-  el("lf_name").value = c.name || "";
-  el("lf_phone").value = c.phone || "";
+
+  const latest = entries[0] || null;
+
+  const setIf = (id, value)=>{
+    const node = el(id);
+    if(!node) return;
+    node.value = value == null ? "" : String(value);
+  };
+
+  setIf("lf_name", c.name || latest?.name || "");
+  setIf("lf_phone", c.phone || "");
+
+  if(latest){
+    setIf("lf_first", latest.firstContactAt || c.firstSeenAt || todayISO());
+    setIf("lf_status", latest.status || "Conversando");
+    setIf("lf_origin", latest.origin || "Instagram orgânico");
+    setIf("lf_originOther", latest.originOther || "");
+    setIf("lf_treatment", latest.treatment || "Clínica geral");
+    setIf("lf_treatOther", latest.treatmentOther || "");
+    setIf("lf_value_budget", latest.valueBudget != null ? latest.valueBudget : (latest.valueEstimated != null ? latest.valueEstimated : ""));
+    setIf("lf_value_paid", latest.valuePaidGross != null ? latest.valuePaidGross : (latest.valuePaid != null ? latest.valuePaid : (latest.valueClosed != null ? latest.valueClosed : "")));
+    setIf("lf_payment_date", todayISO());
+    setIf("lf_apptDate", latest.apptDate || "");
+    setIf("lf_apptTime", latest.apptTime || "");
+    setIf("lf_calls", latest.callAttempts || "");
+    setIf("lf_callResult", latest.callResult || "");
+    setIf("lf_notes", latest.notes || "");
+
+    if(el("lf_pay_method")) setIf("lf_pay_method", latest.installPlan?.payMethod || "");
+    if(el("lf_entry_amount")) setIf("lf_entry_amount", latest.installPlan?.entryAmount != null ? latest.installPlan.entryAmount : "");
+    if(el("lf_inst_amount")) setIf("lf_inst_amount", latest.installPlan?.amount != null ? latest.installPlan.amount : "");
+    if(el("lf_inst_n")) setIf("lf_inst_n", latest.installPlan?.n != null ? latest.installPlan.n : "");
+    if(el("lf_inst_firstdue")) setIf("lf_inst_firstdue", latest.installPlan?.firstDue || "");
+
+    const tags = Array.isArray(latest.tags) ? latest.tags : [];
+    const prioTag = tags.find(t=>String(t||"").startsWith("Prioridade: ")) || "";
+    const prio = prioTag ? prioTag.replace(/^Prioridade:\s*/, "") : "";
+    setIf("lf_priority", prio);
+
+    const manualTags = tags
+      .map(t=>String(t||"").trim())
+      .filter(Boolean)
+      .filter(t=>!t.startsWith("Prioridade:"))
+      .filter(t=>t!=="Campanha");
+
+    const tagInp = el("lf_tag");
+    const tagListEl = el("lf_tag_list");
+    if(tagInp) tagInp.dataset.tags = JSON.stringify(Array.from(new Set(manualTags)));
+    const campaignChk = el("lf_campaign");
+    if(campaignChk) campaignChk.checked = tags.includes("Campanha");
+    if(tagListEl){
+      const uniq = Array.from(new Set(manualTags));
+      tagListEl.innerHTML = uniq.map((t,i)=>`<span class="tagPill" data-i="${i}">${escapeHTML(t)}<button type="button" class="tagRemove" data-i="${i}" aria-label="Remover tag">×</button></span>`).join("");
+    }
+  }else{
+    setIf("lf_first", c.firstSeenAt || todayISO());
+    setIf("lf_payment_date", todayISO());
+    const campaignChk = el("lf_campaign");
+    if(campaignChk) campaignChk.checked = false;
+  }
+
+  ["lf_origin","lf_treatment"].forEach(id=>el(id)?.dispatchEvent(new Event("change", { bubbles:true })));
+  ["lf_value_budget","lf_value_paid","lf_inst_amount","lf_inst_n"].forEach(id=>el(id)?.dispatchEvent(new Event("input", { bubbles:true })));
+
   fillHistory(c.id);
-  toast("Cadastro carregado", "Agora você cria a entrada do mês.");
+  document.querySelectorAll(".suggestBox.show").forEach(box=>box.classList.remove("show"));
+  toast("Cadastro carregado", latest ? "Dados anteriores preenchidos automaticamente." : "Contato existente carregado para novo registro.");
 }
 
 /* -------- Delete -------- */
@@ -5958,7 +6204,7 @@ function toggleLeadDone(entryId){
     e.status = "Concluído";
   }
   e.lastUpdateAt = new Date().toISOString();
-  saveDB(db, { immediate:true });
+  saveDB(db);
   renderAll();
 }
 
@@ -6010,7 +6256,7 @@ function markOK(entryId){
       entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
     }
 
-    saveDB(db, { immediate:true });
+    saveDB(db);
     toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
     renderAll();
   }catch(e){
@@ -6056,7 +6302,7 @@ function deleteEntry(entryId){
   const c = db.contacts.find(x=>x.id===e.contactId);
   if(!confirm(`Excluir lead do mês ${monthLabel(e.monthKey)}? (${c?.name||"—"})`)) return;
   db.entries = db.entries.filter(x=>x.id!==entryId);
-  saveDB(db, { immediate:true });
+  saveDB(db);
   toast("Excluído", "Entrada removida.");
   renderAll();
 }
@@ -6978,7 +7224,7 @@ function bindActions(){
 
   el("btnClearFilters").onclick = ()=>{
     const f = loadFilters();
-    f.search=""; f.status=""; f.treatment=""; f.origin=""; f.periodFrom=""; f.periodTo=""; f.order="recent";
+    f.search=""; f.status=""; f.campaign=""; f.treatment=""; f.origin=""; f.periodFrom=""; f.periodTo=""; f.order="recent";
     saveFilters(f);
     setUIFilters(f);
     currentPage = 1;
@@ -6992,7 +7238,7 @@ function bindActions(){
   const btnMyPasswordSide = el("btnMyPasswordSide");
   if(btnMyPasswordSide) btnMyPasswordSide.onclick = openChangeMyPassword;
 
-  ["fYear","fMonth","fSearch","fStatus","fTreatment","fOrigin","fPeriodFrom","fPeriodTo","fOrder"].forEach(id=>{
+  ["fYear","fMonth","fSearch","fStatus","fCampaign","fTreatment","fOrigin","fPeriodFrom","fPeriodTo","fOrder"].forEach(id=>{
     el(id).addEventListener("input", ()=>{
       const f = getUIFilters();
       saveFilters(f);
@@ -7136,10 +7382,10 @@ function renderAll(){
 }
 
 async function boot(){
-  if(window.__CRONOS_BOOT_PROMISE__) return await window.__CRONOS_BOOT_PROMISE__;
-  window.__CRONOS_BOOT_PROMISE__ = (async ()=>{
-    await ensureCloudDBLoaded();
-    await syncCurrentCloudActor();
+  await ensureCloudDBLoaded();
+
+
+  await syncCurrentCloudActor();
 
   fillSelectOptions();
 
@@ -7150,7 +7396,7 @@ async function boot(){
   ensureMonthOptions();
 
   // migração (valores antigos -> novos)
-  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db, { skipCloud:true }); }catch(e){}
+  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db); }catch(e){}
 
   // persist normalized filters
   saveFilters(getUIFilters());
@@ -7173,12 +7419,6 @@ if (authSelect) authSelect.parentElement.classList.add("hidden");
 
   bindNav();
   setActiveView(firstAllowedView(actor));
-  })();
-  try{
-    return await window.__CRONOS_BOOT_PROMISE__;
-  } finally {
-    window.__CRONOS_BOOT_PROMISE__ = null;
-  }
 }
 
 /* One-time bindings */
@@ -7190,14 +7430,7 @@ if (authSelect) authSelect.parentElement.classList.add("hidden");
   bindAuth();
   bindLoginEnterSubmit();
 
-  if(window.__SUPABASE_CLOUD_LOGIN__){
-    showAuth();
-    const authSelect = el("authMasterSelect");
-    if (authSelect) authSelect.parentElement.classList.add("hidden");
-    if (el("authMode")) el("authMode").value = "master";
-  }else{
-    boot();
-  }
+boot();
 })();
 
 function setupLeadsTopScrollbar(){
@@ -7544,41 +7777,35 @@ window.__CRONOS_LOGIN_BUSY__ = false;
 window.__CRONOS_EXPLICIT_LOGIN__ = false;
 
 async function finalizeCloudLogin(){
-  if(window.__CRONOS_FINALIZING_CLOUD_LOGIN__) return;
-  window.__CRONOS_FINALIZING_CLOUD_LOGIN__ = true;
   try{
-    try{
-      await ensureCloudDBLoaded(true);
-      const actorInfo = await syncCurrentCloudActor();
-      if(!actorInfo){
-        toast("Acesso sem vínculo", "Esse login autenticou, mas não está ligado a nenhuma clínica.");
-        try{ await supabaseClient.auth.signOut(); }catch(_){}
-        clearSession();
-        showAuth();
-        return;
-      }
-    }catch(err){
-      console.error("Erro ao preparar dados da nuvem:", err);
-      toast("Falha ao abrir o sistema", "A autenticação ocorreu, mas a clínica não carregou direito.");
+    await ensureCloudDBLoaded(true);
+    const actorInfo = await syncCurrentCloudActor();
+    if(!actorInfo){
+      toast("Acesso sem vínculo", "Esse login autenticou, mas não está ligado a nenhuma clínica.");
+      try{ await supabaseClient.auth.signOut(); }catch(_){}
+      clearSession();
+      showAuth();
       return;
     }
-
-    document.getElementById("authView").classList.add("hidden");
-    document.getElementById("appView").classList.remove("hidden");
-    await boot();
-
-    const actor = currentActor();
-    if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
-      setTimeout(()=>{
-        toast(`Bem-vindo, ${actor.name} 👋`, actor.kind === "master"
-          ? "Sua clínica já está pronta para uso."
-          : `${roleLabelPt(actor.role)} conectado com sucesso.`);
-      }, 220);
-    }
-    window.__CRONOS_EXPLICIT_LOGIN__ = false;
-  } finally {
-    window.__CRONOS_FINALIZING_CLOUD_LOGIN__ = false;
+  }catch(err){
+    console.error("Erro ao preparar dados da nuvem:", err);
+    toast("Falha ao abrir o sistema", "A autenticação ocorreu, mas a clínica não carregou direito.");
+    return;
   }
+
+  document.getElementById("authView").classList.add("hidden");
+  document.getElementById("appView").classList.remove("hidden");
+  await boot();
+
+  const actor = currentActor();
+  if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
+    setTimeout(()=>{
+      toast(`Bem-vindo, ${actor.name} 👋`, actor.kind === "master"
+        ? "Sua clínica já está pronta para uso."
+        : `${roleLabelPt(actor.role)} conectado com sucesso.`);
+    }, 220);
+  }
+  window.__CRONOS_EXPLICIT_LOGIN__ = false;
 }
 
 document.getElementById("btnLogin").addEventListener("click", async () => {
@@ -7627,14 +7854,12 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
 });
 
 async function verificarSessao() {
-  if(window.__CRONOS_FINALIZING_CLOUD_LOGIN__) return;
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
     await finalizeCloudLogin();
-  } else {
-    showAuth();
+    showView("dashboard");
   }
 }
 
