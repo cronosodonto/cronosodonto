@@ -447,7 +447,8 @@
         openSupportAccess: "open-support-access",
         exportClinicCsv: "export-clinic-csv",
         importClinicCsv: "import-clinic-csv",
-        resetMasterPassword: "reset-master-password"
+        resetMasterPassword: "reset-master-password",
+        deleteClinic: "delete-clinic"
       }
     };
 
@@ -799,9 +800,11 @@
             <div class="header-meta">
               <span class="${badgeClass(status)}">${escapeHtml(STATUS_LABELS[status] || status)}</span>
               <span class="badge">${used} / ${included} usuários</span>
+              <span class="badge">${escapeHtml(clinic.slug || slugify(clinic.name || ""))}</span>
             </div>
           </div>
           <div class="row-actions">
+            <button class="btn btn-danger" id="btnDeleteClinic">Excluir clínica</button>
             <button class="btn btn-info" id="btnDetailSupport">Entrar como suporte</button>
             <button class="btn btn-success" id="btnSaveClinicSettings">Salvar mudanças</button>
           </div>
@@ -925,6 +928,7 @@
               <button class="btn btn-warning" id="btnImportCsv">Importar CSV</button>
             </div>
             <div class="helper">A ideia aqui é tirar exportação/importação do Cronos do cliente e centralizar no superadmin. Bem mais sensato.</div>
+            <div class="helper">Exclusão é só pra casos extremos. O fluxo normal continua sendo bloquear/desativar.</div>
           </div>
         </details>
 
@@ -1018,6 +1022,37 @@
         toast("Configurações salvas.", "success");
         await loadClinics();
         await loadClinicDetails(state.selectedClinicId);
+      });
+    }
+
+
+    async function handleDeleteClinic(button) {
+      if (!state.selectedClinicId || !state.selectedClinicDetails?.clinic) {
+        toast("Nenhuma clínica selecionada.", "error");
+        return;
+      }
+
+      const clinic = state.selectedClinicDetails.clinic;
+      const clinicSlug = String(clinic.slug || slugify(clinic.name || "")).trim() || "sem-slug";
+      const confirmation = prompt(`Para excluir de vez, digita exatamente o slug da clínica:\n\n${clinicSlug}`);
+
+      if (confirmation === null) return;
+
+      if (confirmation.trim() !== clinicSlug) {
+        toast("Slug digitado não confere. Exclusão cancelada.", "error", 3600);
+        return;
+      }
+
+      await withButtonLoading(button, "Excluindo...", async () => {
+        await callEdgeFunction(CONFIG.endpoints.deleteClinic, {
+          clinic_id: state.selectedClinicId
+        });
+
+        toast("Clínica excluída com sucesso.", "success", 3600);
+        state.selectedClinicId = null;
+        state.selectedClinicDetails = null;
+        closeDetailModal();
+        await loadClinics();
       });
     }
 
