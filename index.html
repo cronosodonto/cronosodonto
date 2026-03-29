@@ -1737,7 +1737,7 @@ function waChargeLink(phone, nome, entry, parcela){
   return `https://wa.me/55${clean}?text=${encodeURIComponent(msg)}`;
 }
 
-function payInstallment(entryId, number){
+async function payInstallment(entryId, number){
   window.__instOpen = window.__instOpen || {};
   window.__instOpen[entryId] = true;
   const actor = currentActor();
@@ -1760,17 +1760,17 @@ function payInstallment(entryId, number){
   db.payments = db.payments || [];
   db.payments.push({ id: uid("p"), masterId: actor.masterId, entryId, contactId: entry.contactId, at: new Date().toISOString(), date: payDate, value: p.amount, method: p.payMethod || entry.installPlan?.payMethod || "", desc: `Parcela ${p.number}/${p.total}` });
 
-  saveDB(db);
+  await persistCriticalDB(db);
   toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}`);
   // re-sync tasks + rerender
   try {
   syncInstallmentTasks(db, actor);
-  saveDB(db);
+  saveDBLocalOnly(db);
 } catch {}
   renderAll();
 }
 
-function undoInstallmentPay(entryId, number){
+async function undoInstallmentPay(entryId, number){
   const actor = currentActor();
   const db = loadDB();
   const entry = (db.entries||[]).find(e=>e.id===entryId);
@@ -1789,9 +1789,9 @@ function undoInstallmentPay(entryId, number){
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (x.desc||"").includes(`Parcela ${number}/`));
   if(idx>=0) db.payments.splice(idx,1);
 
-  saveDB(db);
+  await persistCriticalDB(db);
   toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
-  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
+  try{ syncInstallmentTasks(db, actor); saveDBLocalOnly(db);}catch{}
   setTimeout(() => {
   if (typeof renderAll === "function") renderAll();
 }, 50);
@@ -1900,7 +1900,7 @@ renderAll = function(){
     const db = loadDB();
     // ensure installments normalized
     (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
-    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db); }
+    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDBLocalOnly(db); }
   }catch(e){}
   __renderAll();
   try{
@@ -3415,6 +3415,23 @@ function saveDB(db, options={}){
   scheduleCloudSave(!!options.immediate);
 }
 
+function saveDBLocalOnly(db){
+  saveDB(db, { skipCloud:true });
+}
+
+async function persistCriticalDB(db){
+  saveDB(db, { immediate:true });
+  if(__cloudSavePromise){
+    try{
+      const ok = await __cloudSavePromise;
+      return ok !== false;
+    }catch(_){
+      return false;
+    }
+  }
+  return true;
+}
+
 function createIsolatedSupabaseClient(){
   return window.supabase.createClient(supabaseUrl, supabaseKey, {
     auth: {
@@ -3577,7 +3594,7 @@ function getPrefs(){
   if(!db.settings) db.settings = {};
   if(typeof db.settings.waTemplate !== "string" || !db.settings.waTemplate.trim()){
     db.settings.waTemplate = "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊";
-    saveDB(db);
+    saveDBLocalOnly(db);
   }
   return db.settings;
 }
@@ -5920,7 +5937,6 @@ if (existingIndex >= 0) {
 
     if(isNew && existingThisMonth){
       // instead of duplicate, open existing entry and update it
-      saveDB(db);
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
       closeModal();
       openLeadEntry(existingThisMonth.id);
@@ -6091,11 +6107,15 @@ if (existingIndex >= 0) {
       entry.installments = [];
     }
 
-    saveDB(db);
+    const persistOk = await persistCriticalDB(db);
     closeModal();
     ensureMonthOptions(); // in case new month
     const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
-    toast("Lead salvo ✅", `${name} • ${savedMonthLabel}`);
+    if(persistOk){
+      toast("Lead salvo ✅", `${name} • ${savedMonthLabel}`);
+    }else{
+      toast("Lead salvo localmente", `${name} • Houve falha ao confirmar a nuvem agora.`);
+    }
     renderAll();
   });
 }
@@ -6191,7 +6211,7 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
 
 /* -------- Delete -------- */
 
-function toggleLeadDone(entryId){
+async function toggleLeadDone(entryId){
   const db = loadDB();
   const e = db.entries.find(x=>x.id===entryId);
   if(!e) return;
@@ -6204,7 +6224,7 @@ function toggleLeadDone(entryId){
     e.status = "Concluído";
   }
   e.lastUpdateAt = new Date().toISOString();
-  saveDB(db);
+  await persistCriticalDB(db);
   renderAll();
 }
 
@@ -6214,7 +6234,7 @@ function toggleLeadDone(entryId){
    💬 openWhats: abre WhatsApp do lead (template simples)
    🗑️ deleteLead: wrapper para deleteEntry
 */
-function markOK(entryId){
+async function markOK(entryId){
   try{
     const actor = currentActor();
     if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
@@ -6256,8 +6276,8 @@ function markOK(entryId){
       entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
     }
 
-    saveDB(db);
-    toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
+    const ok = await persistCriticalDB(db);
+    toast(ok ? "Status atualizado" : "Status atualizado localmente", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
     renderAll();
   }catch(e){
     console.error(e);
@@ -6293,7 +6313,7 @@ function deleteLead(entryId){
   return deleteEntry(entryId);
 }
 
-function deleteEntry(entryId){
+async function deleteEntry(entryId){
   const actor = currentActor();
   if(!actor.perms.delete) return toast("Sem permissão", "Seu nível não permite excluir.");
   const db = loadDB();
@@ -6302,8 +6322,8 @@ function deleteEntry(entryId){
   const c = db.contacts.find(x=>x.id===e.contactId);
   if(!confirm(`Excluir lead do mês ${monthLabel(e.monthKey)}? (${c?.name||"—"})`)) return;
   db.entries = db.entries.filter(x=>x.id!==entryId);
-  saveDB(db);
-  toast("Excluído", "Entrada removida.");
+  const ok = await persistCriticalDB(db);
+  toast(ok ? "Excluído" : "Excluído localmente", "Entrada removida.");
   renderAll();
 }
 
@@ -6895,7 +6915,7 @@ const total = list.reduce((sum,e)=>{
   });
 
 
-  function quickUpdateStatus(entryId, newStatus){
+  async function quickUpdateStatus(entryId, newStatus){
   const actor = currentActor();
   if(!actor?.perms?.edit) return toast("Sem permissão para editar");
   const db = loadDB();
@@ -6907,7 +6927,7 @@ const total = list.reduce((sum,e)=>{
   e.lastUpdateAt = todayISO();
   e.statusLog = e.statusLog || [];
   e.statusLog.push({at: new Date().toISOString(), from: old, to: newStatus, by: actor.name});
-  saveDB(db);
+  await persistCriticalDB(db);
   renderAll();
 }
 
@@ -6930,7 +6950,7 @@ function renderTasks(){
   if(!actor) return;
   const db = loadDB();
   syncInstallmentTasks(db, actor);
-  saveDB(db);
+  saveDBLocalOnly(db);
 
   const tbody = el("tasksTbody");
   if(!tbody) return;
@@ -7381,44 +7401,48 @@ function renderAll(){
   return syncCurrentCloudActor();
 }
 
+let __bootPromise = null;
 async function boot(){
-  await ensureCloudDBLoaded();
+  if(__bootPromise) return __bootPromise;
+  __bootPromise = (async ()=>{
+    await ensureCloudDBLoaded(true);
+    await syncCurrentCloudActor();
 
+    fillSelectOptions();
 
-  await syncCurrentCloudActor();
+    // Filters (year/month) need options before we set values
+    const f = loadFilters();
+    ensureYearOptions();
+    setUIFilters(f);
+    ensureMonthOptions();
 
-  fillSelectOptions();
+    // migração (valores antigos -> novos) — nunca empurra para a nuvem durante a abertura
+    try{ const db=loadDB(); if(migrateDBValues(db)) saveDBLocalOnly(db); }catch(e){}
 
-  // Filters (year/month) need options before we set values
-  const f = loadFilters();
-  ensureYearOptions();
-  setUIFilters(f);
-  ensureMonthOptions();
+    // persist normalized filters
+    saveFilters(getUIFilters());
 
-  // migração (valores antigos -> novos)
-  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db); }catch(e){}
-
-  // persist normalized filters
-  saveFilters(getUIFilters());
-
-  const actor = currentActor();
-  if(!actor){
-    showAuth();
+    const actor = currentActor();
+    if(!actor){
+      showAuth();
 const authSelect = el("authMasterSelect");
 if (authSelect) authSelect.parentElement.classList.add("hidden");
-    // auth defaults
-    el("authMode").value = "master";
-    // refreshAuthMasters();
-  
-// el("authMasterNameWrap").classList.remove("hidden");
-    return;
+      // auth defaults
+      el("authMode").value = "master";
+      return;
+    }
+
+    showApp(actor);
+    applyRoleVisibility(actor);
+
+    bindNav();
+    setActiveView(firstAllowedView(actor));
+  })();
+  try{
+    return await __bootPromise;
+  }finally{
+    __bootPromise = null;
   }
-
-  showApp(actor);
-  applyRoleVisibility(actor);
-
-  bindNav();
-  setActiveView(firstAllowedView(actor));
 }
 
 /* One-time bindings */
@@ -7857,9 +7881,12 @@ async function verificarSessao() {
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
+    if(window.__CRONOS_BOOTED && currentActor()) return;
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
     await finalizeCloudLogin();
-    showView("dashboard");
+    if(window.__CRONOS_BOOTED){
+      try{ showView("dashboard"); }catch(_){}
+    }
   }
 }
 
