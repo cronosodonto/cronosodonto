@@ -87,8 +87,24 @@
       min-height:100vh;
     }
     @media(max-width: 980px){
-      .app{grid-template-columns: 1fr}
-      .sidebar{position:sticky; top:0; height:auto}
+      .app{display:block; grid-template-columns: 1fr; min-height:auto;}
+      .sidebar{
+        position:static !important;
+        top:auto !important;
+        height:auto !important;
+        overflow:visible !important;
+        border-right:none;
+        border-bottom:1px solid var(--line);
+      }
+      .main{
+        padding:12px;
+        overflow:visible;
+      }
+      .stickyFilters{
+        position:static !important;
+        top:auto !important;
+        z-index:auto;
+      }
     }
 
     .sidebar{
@@ -208,6 +224,12 @@
       display:flex; flex-wrap:wrap;
       gap:12px; align-items:center; justify-content:space-between;
       margin-bottom:12px;
+    }
+
+    @media(max-width: 980px){
+      .topbar{margin-bottom:10px;}
+      .card{padding:12px;}
+      .sidebar .nav{margin-bottom:8px;}
     }
     .titleBlock h2{margin:0; font-size:18px}
     .titleBlock p{margin:3px 0 0; color:var(--muted); font-size:13px}
@@ -1651,7 +1673,7 @@ function renderInstallmentsView(){
           </div>
           <div class="instBtns">
             <button class="btn" onclick="openLeadEntry('${e.id}')">Abrir lead</button>
-            <button class="btn primary" onclick="toggleInstRow('${e.id}')">Ver parcelas</button>
+            <button class="btn primary" data-toggle-inst="${e.id}" onclick="toggleInstRow('${e.id}')">Ver parcelas</button>
             <button class="btn danger" onclick="deleteInstallmentPlan('${e.id}')">Excluir</button>
           </div>
         </div>
@@ -1666,10 +1688,9 @@ function renderInstallmentsView(){
   try{
     window.__instOpen = window.__instOpen || {};
     Object.keys(window.__instOpen).forEach(id=>{
-      if(window.__instOpen[id]){
-        const rr = el(`instrow_${id}`);
-        if(rr) rr.classList.add("open");
-      }
+      const rr = el(`instrow_${id}`);
+      if(rr && window.__instOpen[id]) rr.classList.add("open");
+      updateInstallmentToggleLabel(id);
     });
   }catch(e){} 
 
@@ -1678,12 +1699,20 @@ function renderInstallmentsView(){
   }
 }
 
+function updateInstallmentToggleLabel(entryId){
+  const row = el(`instrow_${entryId}`);
+  const btn = row ? row.querySelector(`[data-toggle-inst="${entryId}"]`) : null;
+  if(!btn) return;
+  btn.textContent = row.classList.contains("open") ? "Fechar parcelas" : "Ver parcelas";
+}
+
 function toggleInstRow(entryId){
   window.__instOpen = window.__instOpen || {};
   const row = el(`instrow_${entryId}`);
   if(!row) return;
   row.classList.toggle("open");
   window.__instOpen[entryId] = row.classList.contains("open");
+  updateInstallmentToggleLabel(entryId);
 }
 
 function renderInstallmentTable(entry, contact){
@@ -2345,10 +2374,11 @@ fill="currentColor" stroke="none">
       <div class="muted" id="whoami">—</div>
       <div class="row">
         <button id="btnNewLeadSide" class="btn primary">➕ Lead</button>
-        <button id="btnLogout" class="btn danger">Sair</button>
+        <button id="btnRefreshNow" class="btn" data-label="Atualizar">Atualizar</button>
       </div>
       <div class="row" style="margin-top:8px">
         <button id="btnMyPasswordSide" class="btn">🔐 Minha senha</button>
+        <button id="btnLogout" class="btn danger">Sair</button>
       </div>
     </div>
   </aside>
@@ -2668,9 +2698,7 @@ fill="currentColor" stroke="none">
           <option value="open">Futuro</option>
         </select>
       </div>
-      <button class="btn" id="btnInstRefresh">
-  <span id="iconRefresh">↻</span> Atualizar
-</button>
+      <button class="btn" id="btnInstRefresh" data-label="Atualizar">Atualizar</button>
     </div>
   </div>
 
@@ -5183,11 +5211,69 @@ window.__CRONOS_PENDING_CLOUD_PULL__ = window.__CRONOS_PENDING_CLOUD_PULL__ || n
 window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ || null;
 
 async function refreshCloudDataNow({ force=false, reason="" } = {}){
-  return false;
+  const now = Date.now();
+  if(window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ && !force){
+    return window.__CRONOS_CLOUD_PULL_IN_FLIGHT__;
+  }
+  if(!force && DB && (now - (window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0) < CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS)){
+    return DB;
+  }
+  const run = (async ()=>{
+    try{
+      await ensureCloudDBLoaded(true);
+      await syncCurrentCloudActor();
+      window.__CRONOS_LAST_CLOUD_PULL_AT__ = Date.now();
+      return DB;
+    }finally{
+      window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = null;
+    }
+  })();
+  window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = run;
+  return run;
 }
 
 function scheduleCloudRefresh(reason="", { force=false, delay=120 } = {}){
-  return;
+  if(window.__CRONOS_PENDING_CLOUD_PULL__){
+    clearTimeout(window.__CRONOS_PENDING_CLOUD_PULL__);
+    window.__CRONOS_PENDING_CLOUD_PULL__ = null;
+  }
+  window.__CRONOS_PENDING_CLOUD_PULL__ = setTimeout(()=>{
+    window.__CRONOS_PENDING_CLOUD_PULL__ = null;
+    refreshCloudDataNow({ force, reason }).catch(err=>console.error("Falha no refresh cloud:", err));
+  }, Math.max(0, Number(delay)||0));
+}
+
+function setLoadingButtonState(btn, isLoading){
+  if(!btn) return;
+  const label = btn.dataset.label || btn.textContent.trim() || "Atualizar";
+  if(isLoading){
+    btn.disabled = true;
+    btn.classList.add("loading");
+    btn.innerHTML = `<span class="btnSpinner"><span class="spinner"></span></span>${escapeHTML(label)}`;
+    return;
+  }
+  btn.disabled = false;
+  btn.classList.remove("loading");
+  btn.innerHTML = escapeHTML(label);
+}
+
+async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
+  try{
+    setLoadingButtonState(btn, true);
+    await refreshCloudDataNow({ force:true, reason: installmentsOnly ? "installments_button" : "manual_button" });
+    if(installmentsOnly){
+      renderInstallmentsView();
+      updateSidebarPills();
+    }else{
+      renderAll();
+    }
+    toast("Atualizado", "Dados verificados na nuvem.");
+  }catch(error){
+    console.error("Falha ao atualizar manualmente:", error);
+    toast("Falha ao atualizar", "Não foi possível buscar os dados agora.");
+  }finally{
+    setLoadingButtonState(btn, false);
+  }
 }
 
 function setActiveView(view){
@@ -7223,7 +7309,7 @@ const bTask = el("btnNewTask"); if(bTask) bTask.addEventListener("click", openNe
   if(instMonth) instMonth.addEventListener("change", renderInstallmentsView);
   if(instSearch) instSearch.addEventListener("input", debounce(renderInstallmentsView, 150));
   if(instFilter) instFilter.addEventListener("change", renderInstallmentsView);
-  if(instRefresh) instRefresh.addEventListener("click", renderInstallmentsView);
+  if(instRefresh) instRefresh.addEventListener("click", ()=>runManualCloudRefresh(instRefresh, { installmentsOnly:true }));
   setTimeout(() => {
   renderInstallmentsView();
   updateSidebarPills();
@@ -7239,6 +7325,8 @@ function bindActions(){
     toast("Saiu");
     showAuth();
   };
+  const btnRefreshNow = el("btnRefreshNow");
+  if(btnRefreshNow) btnRefreshNow.onclick = ()=>runManualCloudRefresh(btnRefreshNow);
   el("btnNewLeadSide").onclick = openNewLead;
   el("btnNewLeadTop").onclick = openNewLead;
   el("btnNewLeadList").onclick = openNewLead;
@@ -7909,27 +7997,6 @@ document.addEventListener("DOMContentLoaded", () => {
     renderTasks();
     renderUsers();
   }, 200);
-    document.addEventListener("DOMContentLoaded", () => {
-  const btn = document.getElementById("btnInstRefresh");
-  const icon = document.getElementById("iconRefresh");
-
-  if (btn && icon) {
-    btn.addEventListener("click", () => {
-
-      // gira só o ícone
-      icon.classList.add("spin");
-
-      setTimeout(() => {
-        icon.classList.remove("spin");
-      }, 600);
-
-      // mantém o comportamento atual do sistema
-      if (typeof renderAll === "function") {
-        renderAll();
-      }
-    });
-  }
-});
 </script>
 </body>
 </html>
