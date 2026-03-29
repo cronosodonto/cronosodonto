@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cronos — Superadmin v3</title>
+  <style>
+    :root{
+      --bg:#0b0f17;
+      --line:rgba(255,255,255,.08);
+      --text:#eef2ff;
+      --muted:#9aa6bd;
+      --primary:#7c5cff;
+      --primary-2:#5f3fff;
+      --danger:#fb7185;
+      --info:#60a5fa;
+      --success:#34d399;
+      --warning:#fbbf24;
+      --radius:18px;
+      --shadow:0 20px 50px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    html,body{
+      margin:0;padding:0;min-height:100%;
+      background:linear-gradient(180deg,var(--bg),#0f1522 50%, #0d1420);
+      color:var(--text);
+      font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    body{min-height:100vh}
+    .app{max-width:1500px;margin:0 auto;padding:22px}
+    .topbar{
+      display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px
+    }
+    .title h1{margin:0 0 6px;font-size:30px;line-height:1.05;letter-spacing:-.02em}
+    .title p{margin:0;color:var(--muted);font-size:14px}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+    .btn{
+      border:none;outline:none;border-radius:14px;padding:11px 15px;color:#fff;cursor:pointer;font-weight:800;
+      transition:.18s ease;background:rgba(255,255,255,.05);border:1px solid var(--line)
+    }
+    .btn:hover{transform:translateY(-1px)}
+    .btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+    .btn-primary{background:linear-gradient(180deg,var(--primary),var(--primary-2));border:none;box-shadow:var(--shadow)}
+    .btn-ghost{background:rgba(255,255,255,.055)}
+    .btn-danger{background:linear-gradient(180deg,#ff849a,#f43f5e);border:none;box-shadow:var(--shadow)}
+    .btn-info{background:linear-gradient(180deg,#4f8dfd,#2563eb);border:none;box-shadow:var(--shadow)}
+
+    .grid-stats{
+      display:grid;grid-template-columns:repeat(5,minmax(160px,1fr));gap:12px;margin-bottom:18px
+    }
+    .card{
+      background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.03));
+      border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)
+    }
+    .stat{padding:16px}
+    .stat small{color:var(--muted);display:block;text-transform:uppercase;letter-spacing:.08em;font-size:11px;margin-bottom:10px}
+    .stat strong{font-size:30px;line-height:1}
+
+    .toolbar{
+      display:grid;grid-template-columns:1.5fr 220px 220px auto;gap:12px;padding:16px;border-bottom:1px solid var(--line)
+    }
+    .input,.select,.textarea{
+      width:100%;border-radius:14px;border:1px solid var(--line);background:#0c1220;color:#fff;padding:12px 13px;
+      outline:none;font:inherit
+    }
+    .textarea{min-height:100px;resize:vertical}
+    .input::placeholder,.textarea::placeholder{color:#73809c}
+
+    .table-wrap{overflow:auto}
+    table{width:100%;min-width:1120px;border-collapse:collapse}
+    thead th{
+      text-align:left;padding:14px 12px;color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+      border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)
+    }
+    tbody td{padding:14px 12px;border-bottom:1px solid rgba(255,255,255,.06);vertical-align:top}
+    .clinic-block{display:flex;flex-direction:column;gap:4px}
+    .clinic-block strong{font-size:15px}
+    .muted{color:var(--muted);font-size:12px}
+    .badge{
+      display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:7px 10px;font-size:12px;
+      font-weight:800;white-space:nowrap
+    }
+    .badge-active{background:rgba(52,211,153,.16);color:#7ef0bf}
+    .badge-blocked{background:rgba(251,113,133,.16);color:#ff9aac}
+    .badge-expired{background:rgba(251,191,36,.16);color:#ffd76b}
+    .badge-trial{background:rgba(96,165,250,.16);color:#9ec8ff}
+    .badge-inactive{background:rgba(148,163,184,.16);color:#d0d8e6}
+    .badge-scheduled{background:rgba(168,85,247,.16);color:#d8b4fe}
+    .row-actions{display:flex;flex-wrap:wrap;gap:8px}
+    .empty{padding:28px;text-align:center;color:var(--muted)}
+
+    .modal-backdrop{
+      position:fixed;inset:0;background:rgba(5,8,14,.72);display:none;align-items:center;justify-content:center;
+      z-index:10000;padding:20px
+    }
+    .modal-backdrop.show{display:flex}
+    .modal{
+      width:min(1120px,100%);background:linear-gradient(180deg,#121a2a,#0e1523);border:1px solid var(--line);
+      border-radius:22px;box-shadow:0 35px 90px rgba(0,0,0,.5);overflow:hidden
+    }
+    .modal-head,.modal-foot{
+      padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px
+    }
+    .modal-foot{border-bottom:none;border-top:1px solid var(--line);justify-content:flex-end}
+    .modal-body{
+      padding:18px;max-height:min(78vh,960px);overflow:auto;display:grid;gap:14px
+    }
+
+    details.section{
+      background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05);border-radius:16px;overflow:hidden
+    }
+    details.section[open]{background:rgba(255,255,255,.03)}
+    details.section summary{
+      list-style:none;cursor:pointer;padding:14px 16px;font-weight:800;display:flex;align-items:center;justify-content:space-between
+    }
+    details.section summary::-webkit-details-marker{display:none}
+    details.section summary::after{
+      content:"▾";color:var(--muted);font-size:16px;transition:.18s ease
+    }
+    details.section[open] summary::after{transform:rotate(180deg)}
+    .section-body{padding:0 16px 16px;display:grid;gap:14px}
+
+    .header-line{
+      display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap
+    }
+    .header-line h2{margin:0 0 6px;font-size:24px}
+    .header-meta{display:flex;gap:8px;flex-wrap:wrap}
+
+    .fields-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .fields-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    .field{display:flex;flex-direction:column;gap:8px}
+    .field label{font-size:13px;color:#aab4c7;font-weight:700}
+    .full{grid-column:1 / -1}
+
+    .kv{
+      display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)
+    }
+    .kv:last-child{border-bottom:none}
+    .kv strong{font-size:14px}
+    .kv span{color:var(--muted);font-size:13px;text-align:right}
+
+    .user-list{display:grid;gap:10px}
+    .user-item{
+      display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:12px 14px;border-radius:14px;
+      background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)
+    }
+    .user-meta{display:flex;flex-direction:column;gap:4px}
+    .chip{
+      display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:6px 10px;font-size:12px;
+      font-weight:800;background:rgba(255,255,255,.06);color:#d7dded;border:1px solid rgba(255,255,255,.06)
+    }
+
+    .toast-wrap{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:10px;z-index:99999}
+    .toast{
+      min-width:260px;max-width:360px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);
+      background:#131a2a;color:#fff;box-shadow:var(--shadow);animation:fadeIn .18s ease
+    }
+    .toast.success{border-color:rgba(52,211,153,.3)}
+    .toast.error{border-color:rgba(251,113,133,.3)}
+    .toast.info{border-color:rgba(96,165,250,.3)}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+    @media (max-width:1100px){
+      .grid-stats{grid-template-columns:1fr 1fr 1fr}
+      .toolbar{grid-template-columns:1fr 1fr}
+      .fields-3{grid-template-columns:1fr 1fr}
+    }
+    @media (max-width:780px){
+      .app{padding:14px}
+      .grid-stats{grid-template-columns:1fr 1fr}
+      .toolbar{grid-template-columns:1fr}
+      .fields-2,.fields-3{grid-template-columns:1fr}
+      .topbar{align-items:stretch}
+      .actions{width:100%}
+      .actions .btn{flex:1}
+    }
+    @media (max-width:560px){.grid-stats{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="title">
+        <h1>Superadmin</h1>
+        <p>Controle de clínicas, dados privados, licenças de usuários e suporte administrativo.</p>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" id="btnRefresh">Atualizar</button>
+        <button class="btn btn-primary" id="btnCreateClinic">Criar clínica</button>
+      </div>
+    </div>
+
+    <div class="grid-stats" id="statsGrid"></div>
+
+    <div class="card">
+      <div class="toolbar">
+        <input class="input" id="searchInput" placeholder="Buscar clínica, slug, master, documento ou telefone..." />
+        <select class="select" id="statusFilter">
+          <option value="all">Todos os status</option>
+          <option value="active">Ativa</option>
+          <option value="scheduled">Agendada</option>
+          <option value="blocked">Bloqueada</option>
+          <option value="expired">Vencida</option>
+          <option value="trial">Teste</option>
+          <option value="inactive">Inativa</option>
+        </select>
+        <select class="select" id="limitFilter">
+          <option value="all">Todos os limites</option>
+          <option value="near">Perto do limite</option>
+          <option value="over">Acima do limite</option>
+        </select>
+        <button class="btn btn-ghost" id="btnClearFilters">Limpar filtros</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Clínica</th>
+              <th>Master</th>
+              <th>Status</th>
+              <th>Período</th>
+              <th>Usuários</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="clinicBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="clinicModal">
+    <div class="modal">
+      <div class="modal-head">
+        <strong>Criar clínica</strong>
+        <button class="btn btn-ghost" id="btnCloseCreateHead" type="button">Fechar</button>
+      </div>
+
+      <form id="clinicForm">
+        <div class="modal-body">
+          <div class="fields-2">
+            <div class="field">
+              <label for="clinic_name">Nome da clínica</label>
+              <input class="input" id="clinic_name" name="clinic_name" required />
+            </div>
+
+            <div class="field">
+              <label for="clinic_slug">Slug</label>
+              <input class="input" id="clinic_slug" name="clinic_slug" placeholder="mundo-odonto" />
+            </div>
+
+            <div class="field">
+              <label for="master_name">Nome do master</label>
+              <input class="input" id="master_name" name="master_name" required />
+            </div>
+
+            <div class="field">
+              <label for="master_email">E-mail master</label>
+              <input class="input" id="master_email" name="master_email" type="email" required />
+            </div>
+
+            <div class="field">
+              <label for="master_password">Senha inicial</label>
+              <input class="input" id="master_password" name="master_password" type="text" required />
+            </div>
+
+            <div class="field">
+              <label for="status">Status</label>
+              <select class="select" id="status" name="status">
+                <option value="active">Ativa</option>
+                <option value="trial">Teste</option>
+                <option value="blocked">Bloqueada</option>
+                <option value="inactive">Inativa</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="access_starts_at">Início do acesso</label>
+              <input class="input" id="access_starts_at" name="access_starts_at" type="date" />
+            </div>
+
+            <div class="field">
+              <label for="access_ends_at">Fim do acesso</label>
+              <input class="input" id="access_ends_at" name="access_ends_at" type="date" />
+            </div>
+
+            <div class="field">
+              <label for="included_internal_users">Usuários internos incluídos</label>
+              <input class="input" id="included_internal_users" name="included_internal_users" type="number" min="0" value="5" />
+            </div>
+
+            <div class="field">
+              <label for="extra_user_price">Valor por usuário extra</label>
+              <input class="input" id="extra_user_price" name="extra_user_price" type="number" min="0" step="0.01" value="0" />
+            </div>
+
+            <div class="field">
+              <label for="document_type">Tipo de documento</label>
+              <select class="select" id="document_type" name="document_type">
+                <option value="">Selecione</option>
+                <option value="cpf">CPF do responsável técnico</option>
+                <option value="cnpj">CNPJ da clínica</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="document_number">CPF/CNPJ</label>
+              <input class="input" id="document_number" name="document_number" />
+            </div>
+
+            <div class="field">
+              <label for="owner_phone">Telefone / WhatsApp do dono</label>
+              <input class="input" id="owner_phone" name="owner_phone" />
+            </div>
+
+            <div class="field">
+              <label for="owner_name">Nome do dono / contato principal</label>
+              <input class="input" id="owner_name" name="owner_name" />
+            </div>
+
+            <div class="field full">
+              <label for="notes">Observações internas</label>
+              <textarea class="textarea" id="notes" name="notes" placeholder="Ex.: contrato fundador, cobrança especial, suporte prioritário..."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <button type="button" class="btn btn-ghost" id="btnCloseCreate">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitClinic">Criar clínica</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="detailModal">
+    <div class="modal">
+      <div class="modal-head">
+        <strong>Detalhes da clínica</strong>
+        <button class="btn btn-ghost" id="btnCloseDetailHead" type="button">Fechar</button>
+      </div>
+      <div class="modal-body" id="detailContent"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCloseDetail" type="button">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <script>
+    const CONFIG = {
+      supabaseUrl: "https://nsqpslierpulanxvsxaw.supabase.co",
+      anonKey: "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ",
+      accessToken: "",
+      endpoints: {
+        listClinics: "list-clinics",
+        getClinicDetails: "get-clinic-details",
+        createClinic: "create-clinic",
+        updateClinicSettings: "update-clinic-settings",
+        changeMasterEmail: "change-master-email",
+        resetUserPassword: "reset-user-password",
+        openSupportAccess: "open-support-access"
+      }
+    };
+
+    const state = {
+      clinics: [],
+      selectedClinicId: null,
+      selectedClinicDetails: null,
+      filters: { search: "", status: "all", limit: "all" }
+    };
+
+    const STATUS_LABELS = {
+      active: "Ativa",
+      scheduled: "Agendada",
+      blocked: "Bloqueada",
+      expired: "Vencida",
+      trial: "Teste",
+      inactive: "Inativa"
+    };
+
+    function toast(message, type = "info", ms = 2800) {
+      const wrap = document.getElementById("toastWrap");
+      const el = document.createElement("div");
+      el.className = `toast ${type}`;
+      el.textContent = message;
+      wrap.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = "0";
+        el.style.transform = "translateY(8px)";
+        setTimeout(() => el.remove(), 180);
+      }, ms);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function slugify(text) {
+      return String(text || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return "—";
+      const d = new Date(dateStr);
+      if (Number.isNaN(d.getTime())) return "—";
+      return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(d);
+    }
+
+    function toInputDate(dateStr) {
+      if (!dateStr) return "";
+      const d = new Date(dateStr);
+      if (Number.isNaN(d.getTime())) return "";
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    function currencyBRL(value) {
+      const n = Number(value || 0);
+      return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
+    }
+
+    function todayDateOnly() {
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+
+    function parseDateOnly(dateStr) {
+      if (!dateStr) return null;
+      const d = new Date(dateStr);
+      if (Number.isNaN(d.getTime())) return null;
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    }
+
+    function getComputedStatus(clinic) {
+      const start = parseDateOnly(clinic.access_starts_at);
+      const end = parseDateOnly(clinic.access_ends_at);
+      const today = todayDateOnly();
+      if (clinic.status === "blocked") return "blocked";
+      if (clinic.status === "inactive") return "inactive";
+      if (start && start > today) return "scheduled";
+      if (end && end < today) return "expired";
+      if (clinic.status === "trial") return "trial";
+      return "active";
+    }
+
+    function badgeClass(status) { return `badge badge-${status}`; }
+    function countInternalUsers(clinic) { return Number(clinic.internal_users_count || 0); }
+    function includedUsers(clinic) { return Number(clinic.included_internal_users || 0); }
+    function overageUsers(clinic) { return Math.max(0, countInternalUsers(clinic) - includedUsers(clinic)); }
+
+    function limitState(clinic) {
+      const used = countInternalUsers(clinic);
+      const limit = includedUsers(clinic);
+      if (used > limit) return "over";
+      if (limit > 0 && used >= Math.max(1, limit - 1)) return "near";
+      return "ok";
+    }
+
+    function periodLabel(clinic) { return `${formatDate(clinic.access_starts_at)} até ${formatDate(clinic.access_ends_at)}`; }
+
+    function periodHint(clinic) {
+      const status = getComputedStatus(clinic);
+      if (status === "scheduled") return "Ainda não iniciou";
+      if (status === "expired") return "Período encerrado";
+      return "Dentro do período";
+    }
+
+    async function callEdgeFunction(functionName, payload = {}) {
+      if (!CONFIG.supabaseUrl) throw new Error("CONFIG.supabaseUrl está vazio.");
+      if (!CONFIG.accessToken) throw new Error("CONFIG.accessToken está vazio.");
+      const res = await fetch(`${CONFIG.supabaseUrl}/functions/v1/${functionName}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${CONFIG.accessToken}`,
+          ...(CONFIG.anonKey ? { "apikey": CONFIG.anonKey } : {})
+        },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Erro ao chamar ${functionName}`);
+      return json;
+    }
+
+    function getFilteredClinics() {
+      const q = state.filters.search.trim().toLowerCase();
+      return state.clinics.filter(clinic => {
+        const blob = [
+          clinic.name, clinic.slug, clinic.master_name, clinic.master_email, clinic.document_number, clinic.owner_phone
+        ].filter(Boolean).join(" ").toLowerCase();
+
+        const matchSearch = !q || blob.includes(q);
+        const status = getComputedStatus(clinic);
+        const matchStatus = state.filters.status === "all" || state.filters.status === status;
+        const limit = limitState(clinic);
+        const matchLimit = state.filters.limit === "all" || state.filters.limit === limit;
+        return matchSearch && matchStatus && matchLimit;
+      });
+    }
+
+    function renderStats() {
+      const total = state.clinics.length;
+      let active = 0, blocked = 0, expired = 0, scheduled = 0, over = 0;
+      for (const clinic of state.clinics) {
+        const s = getComputedStatus(clinic);
+        if (s === "active") active++;
+        if (s === "blocked") blocked++;
+        if (s === "expired") expired++;
+        if (s === "scheduled") scheduled++;
+        if (limitState(clinic) === "over") over++;
+      }
+
+      document.getElementById("statsGrid").innerHTML = `
+        <div class="card stat"><small>Total</small><strong>${total}</strong></div>
+        <div class="card stat"><small>Ativas</small><strong>${active}</strong></div>
+        <div class="card stat"><small>Agendadas</small><strong>${scheduled}</strong></div>
+        <div class="card stat"><small>Bloqueadas / Vencidas</small><strong>${blocked + expired}</strong></div>
+        <div class="card stat"><small>Acima do limite</small><strong>${over}</strong></div>
+      `;
+    }
+
+    function renderTable() {
+      const body = document.getElementById("clinicBody");
+      const items = getFilteredClinics();
+
+      if (!items.length) {
+        body.innerHTML = `<tr><td colspan="6"><div class="empty">Nenhuma clínica encontrada.</div></td></tr>`;
+        return;
+      }
+
+      body.innerHTML = items.map(clinic => {
+        const status = getComputedStatus(clinic);
+        const used = countInternalUsers(clinic);
+        const included = includedUsers(clinic);
+        const extra = overageUsers(clinic);
+
+        return `
+          <tr data-clinic-id="${escapeHtml(clinic.id)}">
+            <td>
+              <div class="clinic-block">
+                <strong>${escapeHtml(clinic.name || "Sem nome")}</strong>
+                <span class="muted">slug: ${escapeHtml(clinic.slug || "—")}</span>
+                <span class="muted">${escapeHtml(clinic.document_number || "Sem documento")}</span>
+              </div>
+            </td>
+            <td>
+              <div class="clinic-block">
+                <strong>${escapeHtml(clinic.master_name || "Sem master")}</strong>
+                <span class="muted">${escapeHtml(clinic.master_email || "—")}</span>
+                <span class="muted">${escapeHtml(clinic.owner_phone || "Sem telefone")}</span>
+              </div>
+            </td>
+            <td><span class="${badgeClass(status)}">${escapeHtml(STATUS_LABELS[status] || status)}</span></td>
+            <td>
+              <div class="clinic-block">
+                <strong>${escapeHtml(periodLabel(clinic))}</strong>
+                <span class="muted">${escapeHtml(periodHint(clinic))}</span>
+              </div>
+            </td>
+            <td>
+              <div class="clinic-block">
+                <strong>${used} / ${included}</strong>
+                <span class="muted">${extra > 0 ? `${extra} usuário(s) extra(s)` : "Dentro do limite"}</span>
+              </div>
+            </td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-ghost" data-action="details">Detalhes</button>
+                <button class="btn btn-info" data-action="support">Suporte</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      bindTableActions();
+    }
+
+    async function loadClinics() {
+      const data = await callEdgeFunction(CONFIG.endpoints.listClinics, {});
+      state.clinics = Array.isArray(data?.clinics) ? data.clinics : [];
+      renderStats();
+      renderTable();
+    }
+
+    async function loadClinicDetails(clinicId) {
+      const data = await callEdgeFunction(CONFIG.endpoints.getClinicDetails, { clinic_id: clinicId });
+      state.selectedClinicId = clinicId;
+      state.selectedClinicDetails = {
+        clinic: data?.clinic || {},
+        private: data?.private || {},
+        users: Array.isArray(data?.users) ? data.users : []
+      };
+      renderDetailModal();
+      openDetailModal();
+    }
+
+    function openCreateModal() { document.getElementById("clinicModal").classList.add("show"); }
+    function closeCreateModal() { document.getElementById("clinicModal").classList.remove("show"); }
+    function openDetailModal() { document.getElementById("detailModal").classList.add("show"); }
+    function closeDetailModal() { document.getElementById("detailModal").classList.remove("show"); }
+
+    async function createClinic(payload) {
+      if (payload.access_starts_at && payload.access_ends_at && payload.access_starts_at > payload.access_ends_at) {
+        throw new Error("O início do acesso não pode ser maior que o fim.");
+      }
+
+      await callEdgeFunction(CONFIG.endpoints.createClinic, {
+        clinic_name: payload.clinic_name,
+        clinic_slug: payload.clinic_slug || slugify(payload.clinic_name),
+        master_name: payload.master_name,
+        master_email: payload.master_email,
+        master_password: payload.master_password,
+        status: payload.status,
+        access_starts_at: payload.access_starts_at ? `${payload.access_starts_at}T00:00:00` : null,
+        access_ends_at: payload.access_ends_at ? `${payload.access_ends_at}T23:59:59` : null,
+        included_internal_users: Number(payload.included_internal_users || 0),
+        extra_user_price: Number(payload.extra_user_price || 0),
+        private: {
+          document_type: payload.document_type || null,
+          document_number: payload.document_number || null,
+          owner_phone: payload.owner_phone || null,
+          owner_name: payload.owner_name || null,
+          notes: payload.notes || null
+        }
+      });
+
+      toast("Clínica criada com sucesso.", "success");
+      await loadClinics();
+    }
+
+    function renderDetailModal() {
+      const details = state.selectedClinicDetails;
+      const root = document.getElementById("detailContent");
+      if (!details) {
+        root.innerHTML = `<div class="empty">Nenhum detalhe carregado.</div>`;
+        return;
+      }
+
+      const clinic = details.clinic || {};
+      const privateData = details.private || {};
+      const users = Array.isArray(details.users) ? details.users : [];
+      const status = getComputedStatus(clinic);
+      const included = includedUsers(clinic);
+      const internalUsed = countInternalUsers(clinic);
+      const over = overageUsers(clinic);
+
+      root.innerHTML = `
+        <div class="header-line">
+          <div>
+            <h2>${escapeHtml(clinic.name || "Clínica")}</h2>
+            <div class="header-meta">
+              <span class="${badgeClass(status)}">${escapeHtml(STATUS_LABELS[status] || status)}</span>
+              <span class="chip">${internalUsed} / ${included} usuários internos</span>
+              <span class="chip">${escapeHtml(clinic.slug || "sem-slug")}</span>
+            </div>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-info" id="btnSupportAccess">Entrar na clínica</button>
+            <button class="btn btn-ghost" id="btnSaveSettings">Salvar dados</button>
+          </div>
+        </div>
+
+        <details class="section" open>
+          <summary>Dados da clínica</summary>
+          <div class="section-body">
+            <div class="fields-2">
+              <div class="field">
+                <label>Nome da clínica</label>
+                <input class="input" id="detail_name" value="${escapeHtml(clinic.name || "")}" />
+              </div>
+              <div class="field">
+                <label>Slug</label>
+                <input class="input" id="detail_slug" value="${escapeHtml(clinic.slug || "")}" />
+              </div>
+              <div class="field">
+                <label>Status</label>
+                <select class="select" id="detail_status">
+                  <option value="active" ${clinic.status === "active" ? "selected" : ""}>Ativa</option>
+                  <option value="trial" ${clinic.status === "trial" ? "selected" : ""}>Teste</option>
+                  <option value="blocked" ${clinic.status === "blocked" ? "selected" : ""}>Bloqueada</option>
+                  <option value="inactive" ${clinic.status === "inactive" ? "selected" : ""}>Inativa</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>E-mail master</label>
+                <div class="row-actions">
+                  <input class="input" id="detail_master_email" value="${escapeHtml(clinic.master_email || "")}" />
+                  <button class="btn btn-ghost" type="button" id="btnChangeMasterEmail">Alterar</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Início do acesso</label>
+                <input class="input" id="detail_access_starts_at" type="date" value="${escapeHtml(toInputDate(clinic.access_starts_at))}" />
+              </div>
+              <div class="field">
+                <label>Fim do acesso</label>
+                <input class="input" id="detail_access_ends_at" type="date" value="${escapeHtml(toInputDate(clinic.access_ends_at))}" />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="section">
+          <summary>Dados privados do superadmin</summary>
+          <div class="section-body">
+            <div class="fields-2">
+              <div class="field">
+                <label>Tipo de documento</label>
+                <select class="select" id="detail_document_type">
+                  <option value="">Selecione</option>
+                  <option value="cpf" ${privateData.document_type === "cpf" ? "selected" : ""}>CPF</option>
+                  <option value="cnpj" ${privateData.document_type === "cnpj" ? "selected" : ""}>CNPJ</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>CPF/CNPJ</label>
+                <input class="input" id="detail_document_number" value="${escapeHtml(privateData.document_number || "")}" />
+              </div>
+              <div class="field">
+                <label>Telefone / WhatsApp do dono</label>
+                <input class="input" id="detail_owner_phone" value="${escapeHtml(privateData.owner_phone || "")}" />
+              </div>
+              <div class="field">
+                <label>Nome do dono / contato principal</label>
+                <input class="input" id="detail_owner_name" value="${escapeHtml(privateData.owner_name || "")}" />
+              </div>
+              <div class="field full">
+                <label>Observações internas</label>
+                <textarea class="textarea" id="detail_notes">${escapeHtml(privateData.notes || "")}</textarea>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="section">
+          <summary>Licença e usuários</summary>
+          <div class="section-body">
+            <div class="fields-3">
+              <div class="field">
+                <label>Usuários incluídos</label>
+                <input class="input" id="detail_included_internal_users" type="number" min="0" value="${escapeHtml(included)}" />
+              </div>
+              <div class="field">
+                <label>Usuários internos usados</label>
+                <input class="input" type="number" disabled value="${escapeHtml(internalUsed)}" />
+              </div>
+              <div class="field">
+                <label>Valor por usuário extra</label>
+                <input class="input" id="detail_extra_user_price" type="number" min="0" step="0.01" value="${escapeHtml(Number(clinic.extra_user_price || 0))}" />
+              </div>
+            </div>
+            <div class="kv"><strong>Excedente atual</strong><span>${over} usuário(s)</span></div>
+            <div class="kv"><strong>Valor extra potencial</strong><span>${currencyBRL(over * Number(clinic.extra_user_price || 0))}</span></div>
+          </div>
+        </details>
+
+        <details class="section">
+          <summary>Usuários da clínica</summary>
+          <div class="section-body">
+            <div class="user-list">
+              ${
+                users.length
+                  ? users.map(user => `
+                    <div class="user-item">
+                      <div class="user-meta">
+                        <strong>${escapeHtml(user.name || "Sem nome")}</strong>
+                        <span class="muted">${escapeHtml(user.email || "—")}</span>
+                        <span class="muted">perfil: ${escapeHtml(user.role || "—")}</span>
+                      </div>
+                      <div class="row-actions">
+                        <span class="chip">${user.is_active === false ? "Inativo" : "Ativo"}</span>
+                        <button class="btn btn-ghost" type="button" data-user-action="reset-password" data-user-id="${escapeHtml(user.id)}">Alterar senha</button>
+                      </div>
+                    </div>
+                  `).join("")
+                  : `<div class="empty">Nenhum usuário encontrado para esta clínica.</div>`
+              }
+            </div>
+          </div>
+        </details>
+      `;
+
+      bindDetailActions();
+    }
+
+    async function saveSelectedClinicSettings() {
+      if (!state.selectedClinicId) return;
+
+      const startValue = document.getElementById("detail_access_starts_at").value;
+      const endValue = document.getElementById("detail_access_ends_at").value;
+      if (startValue && endValue && startValue > endValue) {
+        throw new Error("O início do acesso não pode ser maior que o fim.");
+      }
+
+      const payload = {
+        clinic_id: state.selectedClinicId,
+        clinic: {
+          name: document.getElementById("detail_name").value.trim(),
+          slug: document.getElementById("detail_slug").value.trim(),
+          status: document.getElementById("detail_status").value,
+          master_email: document.getElementById("detail_master_email").value.trim(),
+          access_starts_at: startValue ? `${startValue}T00:00:00` : null,
+          access_ends_at: endValue ? `${endValue}T23:59:59` : null,
+          included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
+          extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
+        },
+        private: {
+          document_type: document.getElementById("detail_document_type").value || null,
+          document_number: document.getElementById("detail_document_number").value.trim() || null,
+          owner_phone: document.getElementById("detail_owner_phone").value.trim() || null,
+          owner_name: document.getElementById("detail_owner_name").value.trim() || null,
+          notes: document.getElementById("detail_notes").value.trim() || null
+        }
+      };
+
+      await callEdgeFunction(CONFIG.endpoints.updateClinicSettings, payload);
+      toast("Dados da clínica atualizados com sucesso.", "success");
+      await loadClinics();
+      await loadClinicDetails(state.selectedClinicId);
+    }
+
+    async function changeMasterEmail() {
+      if (!state.selectedClinicId) return;
+      const newEmail = document.getElementById("detail_master_email").value.trim();
+      if (!newEmail) throw new Error("Informe o novo e-mail master.");
+
+      await callEdgeFunction(CONFIG.endpoints.changeMasterEmail, {
+        clinic_id: state.selectedClinicId,
+        new_email: newEmail
+      });
+
+      toast("E-mail master alterado com sucesso.", "success");
+      await loadClinics();
+      await loadClinicDetails(state.selectedClinicId);
+    }
+
+    async function resetUserPassword(userId) {
+      const newPassword = prompt("Nova senha para este usuário:");
+      if (!newPassword) return;
+      await callEdgeFunction(CONFIG.endpoints.resetUserPassword, {
+        user_id: userId,
+        new_password: newPassword
+      });
+      toast("Senha atualizada com sucesso.", "success");
+    }
+
+    async function openSupportAccess() {
+      if (!state.selectedClinicId) return;
+      const data = await callEdgeFunction(CONFIG.endpoints.openSupportAccess, {
+        clinic_id: state.selectedClinicId
+      });
+
+      if (data?.url) {
+        window.open(data.url, "_blank");
+        toast("Acesso de suporte iniciado em nova guia.", "info");
+        return;
+      }
+
+      toast("A ação de suporte foi registrada, mas ainda falta retornar a URL de entrada.", "info", 3600);
+    }
+
+    function bindTableActions() {
+      document.querySelectorAll("tbody [data-action='details']").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          const row = e.currentTarget.closest("tr");
+          try {
+            await loadClinicDetails(row.dataset.clinicId);
+          } catch (err) {
+            console.error(err);
+            toast(err.message || "Erro ao carregar detalhes da clínica.", "error", 3600);
+          }
+        });
+      });
+
+      document.querySelectorAll("tbody [data-action='support']").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          const row = e.currentTarget.closest("tr");
+          try {
+            state.selectedClinicId = row.dataset.clinicId;
+            await openSupportAccess();
+          } catch (err) {
+            console.error(err);
+            toast(err.message || "Erro ao iniciar suporte.", "error", 3600);
+          }
+        });
+      });
+    }
+
+    function bindDetailActions() {
+      document.getElementById("btnSaveSettings")?.addEventListener("click", async () => {
+        const btn = document.getElementById("btnSaveSettings");
+        const oldText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Salvando...";
+        try {
+          await saveSelectedClinicSettings();
+        } catch (err) {
+          console.error(err);
+          toast(err.message || "Erro ao salvar clínica.", "error", 3600);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = oldText;
+        }
+      });
+
+      document.getElementById("btnChangeMasterEmail")?.addEventListener("click", async () => {
+        const btn = document.getElementById("btnChangeMasterEmail");
+        const oldText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Alterando...";
+        try {
+          await changeMasterEmail();
+        } catch (err) {
+          console.error(err);
+          toast(err.message || "Erro ao alterar master.", "error", 3600);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = oldText;
+        }
+      });
+
+      document.getElementById("btnSupportAccess")?.addEventListener("click", async () => {
+        const btn = document.getElementById("btnSupportAccess");
+        const oldText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Abrindo...";
+        try {
+          await openSupportAccess();
+        } catch (err) {
+          console.error(err);
+          toast(err.message || "Erro ao abrir clínica.", "error", 3600);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = oldText;
+        }
+      });
+
+      document.querySelectorAll("[data-user-action='reset-password']").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          try {
+            await resetUserPassword(e.currentTarget.dataset.userId);
+          } catch (err) {
+            console.error(err);
+            toast(err.message || "Erro ao alterar senha.", "error", 3600);
+          }
+        });
+      });
+    }
+
+    function bindGlobalEvents() {
+      document.getElementById("searchInput").addEventListener("input", (e) => {
+        state.filters.search = e.target.value || "";
+        renderTable();
+      });
+
+      document.getElementById("statusFilter").addEventListener("change", (e) => {
+        state.filters.status = e.target.value || "all";
+        renderTable();
+      });
+
+      document.getElementById("limitFilter").addEventListener("change", (e) => {
+        state.filters.limit = e.target.value || "all";
+        renderTable();
+      });
+
+      document.getElementById("btnClearFilters").addEventListener("click", () => {
+        state.filters.search = "";
+        state.filters.status = "all";
+        state.filters.limit = "all";
+        document.getElementById("searchInput").value = "";
+        document.getElementById("statusFilter").value = "all";
+        document.getElementById("limitFilter").value = "all";
+        renderTable();
+      });
+
+      document.getElementById("btnRefresh").addEventListener("click", async () => {
+        try {
+          await loadClinics();
+        } catch (err) {
+          console.error(err);
+          toast(err.message || "Erro ao atualizar dados.", "error", 3600);
+        }
+      });
+
+      document.getElementById("btnCreateClinic").addEventListener("click", openCreateModal);
+      document.getElementById("btnCloseCreate").addEventListener("click", closeCreateModal);
+      document.getElementById("btnCloseCreateHead").addEventListener("click", closeCreateModal);
+      document.getElementById("btnCloseDetail").addEventListener("click", closeDetailModal);
+      document.getElementById("btnCloseDetailHead").addEventListener("click", closeDetailModal);
+
+      document.getElementById("clinicModal").addEventListener("click", (e) => {
+        if (e.target.id === "clinicModal") closeCreateModal();
+      });
+      document.getElementById("detailModal").addEventListener("click", (e) => {
+        if (e.target.id === "detailModal") closeDetailModal();
+      });
+
+      const clinicName = document.getElementById("clinic_name");
+      const clinicSlug = document.getElementById("clinic_slug");
+      clinicName.addEventListener("input", () => {
+        if (!clinicSlug.dataset.manual) clinicSlug.value = slugify(clinicName.value);
+      });
+      clinicSlug.addEventListener("input", () => { clinicSlug.dataset.manual = "1"; });
+
+      document.getElementById("clinicForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const submitBtn = document.getElementById("btnSubmitClinic");
+        const fd = new FormData(e.currentTarget);
+        const payload = {
+          clinic_name: String(fd.get("clinic_name") || "").trim(),
+          clinic_slug: String(fd.get("clinic_slug") || "").trim(),
+          master_name: String(fd.get("master_name") || "").trim(),
+          master_email: String(fd.get("master_email") || "").trim(),
+          master_password: String(fd.get("master_password") || "").trim(),
+          status: String(fd.get("status") || "active").trim(),
+          access_starts_at: String(fd.get("access_starts_at") || "").trim(),
+          access_ends_at: String(fd.get("access_ends_at") || "").trim(),
+          included_internal_users: String(fd.get("included_internal_users") || "0").trim(),
+          extra_user_price: String(fd.get("extra_user_price") || "0").trim(),
+          document_type: String(fd.get("document_type") || "").trim(),
+          document_number: String(fd.get("document_number") || "").trim(),
+          owner_phone: String(fd.get("owner_phone") || "").trim(),
+          owner_name: String(fd.get("owner_name") || "").trim(),
+          notes: String(fd.get("notes") || "").trim()
+        };
+
+        if (!payload.clinic_name || !payload.master_name || !payload.master_email || !payload.master_password) {
+          toast("Preenche os campos obrigatórios antes de criar a clínica.", "error", 3600);
+          return;
+        }
+
+        const oldText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Criando...";
+
+        try {
+          await createClinic(payload);
+          e.currentTarget.reset();
+          clinicSlug.dataset.manual = "";
+          closeCreateModal();
+        } catch (err) {
+          console.error(err);
+          toast(err.message || "Erro ao criar clínica.", "error", 3600);
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = oldText;
+        }
+      });
+    }
+
+    async function init() {
+      bindGlobalEvents();
+      renderStats();
+      renderTable();
+      try {
+        await loadClinics();
+      } catch (err) {
+        console.error(err);
+        toast("Painel carregado, mas ainda falta configurar SUPABASE_URL, ACCESS_TOKEN e as Edge Functions.", "error", 4200);
+        renderStats();
+        renderTable();
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
