@@ -1123,6 +1123,7 @@
     }
 
     function bindDetailModalEvents() {
+      const btnDelete = document.getElementById("btnDeleteClinic");
       const btnSupport = document.getElementById("btnDetailSupport");
       const btnSave = document.getElementById("btnSaveClinicSettings");
       const btnExport = document.getElementById("btnExportCsv");
@@ -1132,6 +1133,7 @@
       const btnCopyPassword = document.getElementById("btnCopyDetailMasterPassword");
       const btnCopyAccess = document.getElementById("btnCopyDetailMasterAccess");
 
+      if (btnDelete) btnDelete.addEventListener("click", () => handleDeleteClinic(btnDelete));
       if (btnSupport) btnSupport.addEventListener("click", () => handleOpenSupport(btnSupport));
       if (btnSave) btnSave.addEventListener("click", () => handleSaveClinicSettings(btnSave));
       if (btnExport) btnExport.addEventListener("click", () => handleExportCsv(btnExport));
