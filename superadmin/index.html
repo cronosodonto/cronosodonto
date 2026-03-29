@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cronos — Superadmin v3</title>
+  <title>Cronos — Superadmin Operacional</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root{
       --bg:#0b0f17;
@@ -27,47 +28,51 @@
       font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     }
     body{min-height:100vh}
-    .app{max-width:1500px;margin:0 auto;padding:22px}
-    .topbar{
-      display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px
-    }
+    .hidden{display:none !important}
+    .app{max-width:1520px;margin:0 auto;padding:22px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
     .title h1{margin:0 0 6px;font-size:30px;line-height:1.05;letter-spacing:-.02em}
     .title p{margin:0;color:var(--muted);font-size:14px}
     .actions{display:flex;gap:10px;flex-wrap:wrap}
     .btn{
-      border:none;outline:none;border-radius:14px;padding:11px 15px;color:#fff;cursor:pointer;font-weight:800;
-      transition:.18s ease;background:rgba(255,255,255,.05);border:1px solid var(--line)
+      border:none;outline:none;border-radius:14px;padding:11px 15px;color:#fff;cursor:pointer;
+      font-weight:800;transition:.18s ease;background:rgba(255,255,255,.05);border:1px solid var(--line)
     }
     .btn:hover{transform:translateY(-1px)}
-    .btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+    .btn:disabled{opacity:.65;cursor:not-allowed;transform:none}
     .btn-primary{background:linear-gradient(180deg,var(--primary),var(--primary-2));border:none;box-shadow:var(--shadow)}
     .btn-ghost{background:rgba(255,255,255,.055)}
     .btn-danger{background:linear-gradient(180deg,#ff849a,#f43f5e);border:none;box-shadow:var(--shadow)}
     .btn-info{background:linear-gradient(180deg,#4f8dfd,#2563eb);border:none;box-shadow:var(--shadow)}
+    .btn-success{background:linear-gradient(180deg,#34d399,#10b981);border:none;box-shadow:var(--shadow)}
+    .btn-warning{background:linear-gradient(180deg,#fbbf24,#f59e0b);border:none;box-shadow:var(--shadow)}
 
-    .grid-stats{
-      display:grid;grid-template-columns:repeat(5,minmax(160px,1fr));gap:12px;margin-bottom:18px
-    }
     .card{
       background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.03));
       border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)
     }
+
+    .grid-stats{display:grid;grid-template-columns:repeat(5,minmax(160px,1fr));gap:12px;margin-bottom:18px}
     .stat{padding:16px}
     .stat small{color:var(--muted);display:block;text-transform:uppercase;letter-spacing:.08em;font-size:11px;margin-bottom:10px}
     .stat strong{font-size:30px;line-height:1}
 
-    .toolbar{
-      display:grid;grid-template-columns:1.5fr 220px 220px auto;gap:12px;padding:16px;border-bottom:1px solid var(--line)
-    }
+    .toolbar{display:grid;grid-template-columns:1.4fr 220px 220px auto;gap:12px;padding:16px;border-bottom:1px solid var(--line)}
     .input,.select,.textarea{
       width:100%;border-radius:14px;border:1px solid var(--line);background:#0c1220;color:#fff;padding:12px 13px;
       outline:none;font:inherit
     }
-    .textarea{min-height:100px;resize:vertical}
+    .textarea{min-height:92px;resize:vertical}
     .input::placeholder,.textarea::placeholder{color:#73809c}
+    .helper{color:#8090ad;font-size:12px}
+    .field{display:flex;flex-direction:column;gap:8px}
+    .field label{font-size:13px;color:#aab4c7;font-weight:700}
+    .fields-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .fields-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    .full{grid-column:1 / -1}
 
     .table-wrap{overflow:auto}
-    table{width:100%;min-width:1120px;border-collapse:collapse}
+    table{width:100%;min-width:1180px;border-collapse:collapse}
     thead th{
       text-align:left;padding:14px 12px;color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase;
       border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)
@@ -89,22 +94,29 @@
     .row-actions{display:flex;flex-wrap:wrap;gap:8px}
     .empty{padding:28px;text-align:center;color:var(--muted)}
 
+    .login-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .login-card{width:min(480px,100%);padding:26px}
+    .login-card h1{margin:0 0 8px;font-size:34px;line-height:1.02;letter-spacing:-.02em}
+    .login-card p{margin:0 0 22px;color:var(--muted)}
+    .login-grid{display:grid;gap:14px}
+    .login-meta{margin-top:14px;color:var(--muted);font-size:12px;line-height:1.5}
+    .status-line{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+    .dot{width:9px;height:9px;border-radius:999px;background:var(--success);display:inline-block}
+
     .modal-backdrop{
       position:fixed;inset:0;background:rgba(5,8,14,.72);display:none;align-items:center;justify-content:center;
       z-index:10000;padding:20px
     }
     .modal-backdrop.show{display:flex}
     .modal{
-      width:min(1120px,100%);background:linear-gradient(180deg,#121a2a,#0e1523);border:1px solid var(--line);
+      width:min(1080px,100%);background:linear-gradient(180deg,#121a2a,#0e1523);border:1px solid var(--line);
       border-radius:22px;box-shadow:0 35px 90px rgba(0,0,0,.5);overflow:hidden
     }
     .modal-head,.modal-foot{
       padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px
     }
     .modal-foot{border-bottom:none;border-top:1px solid var(--line);justify-content:flex-end}
-    .modal-body{
-      padding:18px;max-height:min(78vh,960px);overflow:auto;display:grid;gap:14px
-    }
+    .modal-body{padding:18px;max-height:min(78vh,960px);overflow:auto;display:grid;gap:16px}
 
     details.section{
       background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05);border-radius:16px;overflow:hidden
@@ -114,45 +126,25 @@
       list-style:none;cursor:pointer;padding:14px 16px;font-weight:800;display:flex;align-items:center;justify-content:space-between
     }
     details.section summary::-webkit-details-marker{display:none}
-    details.section summary::after{
-      content:"▾";color:var(--muted);font-size:16px;transition:.18s ease
-    }
+    details.section summary::after{content:"▾";color:var(--muted);font-size:16px;transition:.18s ease}
     details.section[open] summary::after{transform:rotate(180deg)}
     .section-body{padding:0 16px 16px;display:grid;gap:14px}
 
-    .header-line{
-      display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap
-    }
+    .header-line{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
     .header-line h2{margin:0 0 6px;font-size:24px}
     .header-meta{display:flex;gap:8px;flex-wrap:wrap}
-
-    .fields-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .fields-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-    .field{display:flex;flex-direction:column;gap:8px}
-    .field label{font-size:13px;color:#aab4c7;font-weight:700}
-    .full{grid-column:1 / -1}
-
-    .kv{
-      display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)
-    }
-    .kv:last-child{border-bottom:none}
-    .kv strong{font-size:14px}
-    .kv span{color:var(--muted);font-size:13px;text-align:right}
-
-    .user-list{display:grid;gap:10px}
-    .user-item{
-      display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:12px 14px;border-radius:14px;
-      background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)
-    }
-    .user-meta{display:flex;flex-direction:column;gap:4px}
     .chip{
       display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:6px 10px;font-size:12px;
       font-weight:800;background:rgba(255,255,255,.06);color:#d7dded;border:1px solid rgba(255,255,255,.06)
     }
+    .kv{display:grid;grid-template-columns:1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+    .kv:last-child{border-bottom:none}
+    .kv strong{font-size:14px}
+    .kv span{color:var(--muted);font-size:13px;text-align:right}
 
     .toast-wrap{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:10px;z-index:99999}
     .toast{
-      min-width:260px;max-width:360px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);
+      min-width:260px;max-width:420px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);
       background:#131a2a;color:#fff;box-shadow:var(--shadow);animation:fadeIn .18s ease
     }
     .toast.success{border-color:rgba(52,211,153,.3)}
@@ -174,18 +166,49 @@
       .actions{width:100%}
       .actions .btn{flex:1}
     }
-    @media (max-width:560px){.grid-stats{grid-template-columns:1fr}}
+    @media (max-width:560px){
+      .grid-stats{grid-template-columns:1fr}
+      .login-card{padding:18px}
+    }
   </style>
 </head>
 <body>
-  <div class="app">
+  <section id="loginScreen" class="login-shell">
+    <div class="card login-card">
+      <div class="status-line"><span class="dot"></span> Acesso administrativo separado do Cronos principal</div>
+      <h1>Superadmin</h1>
+      <p>Entra com o usuário administrativo. Se não for <strong>superadmin</strong>, o painel barra sem dó.</p>
+
+      <form id="loginForm" class="login-grid">
+        <div class="field">
+          <label for="loginEmail">E-mail</label>
+          <input class="input" id="loginEmail" type="email" placeholder="cronosodonto@gmail.com" required />
+        </div>
+
+        <div class="field">
+          <label for="loginPassword">Senha</label>
+          <input class="input" id="loginPassword" type="password" placeholder="••••••••" required />
+        </div>
+
+        <button class="btn btn-primary" id="btnLogin" type="submit">Entrar no painel</button>
+      </form>
+
+      <div class="login-meta">
+        Essa tela existe justamente pra não encostar no HTML principal do Cronos.
+      </div>
+    </div>
+  </section>
+
+  <div id="panelApp" class="app hidden">
     <div class="topbar">
       <div class="title">
         <h1>Superadmin</h1>
-        <p>Controle de clínicas, dados privados, licenças de usuários e suporte administrativo.</p>
+        <p>Controle de clínicas, validade, suporte, superadmins e dados administrativos.</p>
       </div>
       <div class="actions">
         <button class="btn btn-ghost" id="btnRefresh">Atualizar</button>
+        <button class="btn btn-ghost" id="btnLogout">Sair</button>
+        <button class="btn btn-info" id="btnOpenSuperadminModal">Criar superadmin</button>
         <button class="btn btn-primary" id="btnCreateClinic">Criar clínica</button>
       </div>
     </div>
@@ -248,21 +271,33 @@
             <div class="field">
               <label for="clinic_slug">Slug</label>
               <input class="input" id="clinic_slug" name="clinic_slug" placeholder="mundo-odonto" />
+              <span class="helper">Se ficar vazio, o sistema gera.</span>
             </div>
 
             <div class="field">
               <label for="master_name">Nome do master</label>
-              <input class="input" id="master_name" name="master_name" required />
+              <div class="row-actions">
+                <input class="input" id="master_name" name="master_name" required />
+                <button class="btn btn-ghost" type="button" id="btnCopyMasterName">Copiar</button>
+              </div>
             </div>
 
             <div class="field">
               <label for="master_email">E-mail master</label>
-              <input class="input" id="master_email" name="master_email" type="email" required />
+              <div class="row-actions">
+                <input class="input" id="master_email" name="master_email" type="email" required />
+                <button class="btn btn-ghost" type="button" id="btnCopyMasterEmail">Copiar</button>
+              </div>
             </div>
 
             <div class="field">
-              <label for="master_password">Senha inicial</label>
-              <input class="input" id="master_password" name="master_password" type="text" required />
+              <label for="master_password">Senha temporária</label>
+              <div class="row-actions">
+                <input class="input" id="master_password" name="master_password" type="text" required />
+                <button class="btn btn-info" type="button" id="btnGeneratePassword">Gerar senha</button>
+                <button class="btn btn-ghost" type="button" id="btnCopyMasterPassword">Copiar</button>
+              </div>
+              <span class="helper">Padrão: @ + 5 números aleatórios + cronosodonto</span>
             </div>
 
             <div class="field">
@@ -327,8 +362,56 @@
         </div>
 
         <div class="modal-foot">
+          <button type="button" class="btn btn-ghost" id="btnCopyClinicAccess">Copiar acesso</button>
           <button type="button" class="btn btn-ghost" id="btnCloseCreate">Cancelar</button>
           <button type="submit" class="btn btn-primary" id="btnSubmitClinic">Criar clínica</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="superadminModal">
+    <div class="modal">
+      <div class="modal-head">
+        <strong>Criar superadmin</strong>
+        <button class="btn btn-ghost" id="btnCloseSuperadminHead" type="button">Fechar</button>
+      </div>
+
+      <form id="superadminForm">
+        <div class="modal-body">
+          <div class="fields-2">
+            <div class="field">
+              <label for="sa_name">Nome</label>
+              <div class="row-actions">
+                <input class="input" id="sa_name" name="sa_name" required />
+                <button class="btn btn-ghost" type="button" id="btnCopySaName">Copiar</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="sa_email">E-mail</label>
+              <div class="row-actions">
+                <input class="input" id="sa_email" name="sa_email" type="email" required />
+                <button class="btn btn-ghost" type="button" id="btnCopySaEmail">Copiar</button>
+              </div>
+            </div>
+
+            <div class="field full">
+              <label for="sa_password">Senha temporária</label>
+              <div class="row-actions">
+                <input class="input" id="sa_password" name="sa_password" type="text" required />
+                <button class="btn btn-info" type="button" id="btnGenerateSaPassword">Gerar senha</button>
+                <button class="btn btn-ghost" type="button" id="btnCopySaPassword">Copiar</button>
+              </div>
+              <span class="helper">Padrão temporário: @ + 5 números aleatórios + cronosodonto</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <button type="button" class="btn btn-ghost" id="btnCopySaAccess">Copiar acesso</button>
+          <button type="button" class="btn btn-ghost" id="btnCloseSuperadmin">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitSuperadmin">Criar superadmin</button>
         </div>
       </form>
     </div>
@@ -337,7 +420,7 @@
   <div class="modal-backdrop" id="detailModal">
     <div class="modal">
       <div class="modal-head">
-        <strong>Detalhes da clínica</strong>
+        <strong>Gerenciar clínica</strong>
         <button class="btn btn-ghost" id="btnCloseDetailHead" type="button">Fechar</button>
       </div>
       <div class="modal-body" id="detailContent"></div>
@@ -353,23 +436,31 @@
     const CONFIG = {
       supabaseUrl: "https://nsqpslierpulanxvsxaw.supabase.co",
       anonKey: "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ",
-      accessToken: "",
+      loginLink: "https://cronosodonto.com/superadmin/",
+      clinicLink: "https://cronosodonto.com/",
       endpoints: {
         listClinics: "list-clinics",
-        getClinicDetails: "get-clinic-details",
         createClinic: "create-clinic",
+        createSuperadmin: "create-superadmin",
+        getClinicDetails: "get-clinic-details",
         updateClinicSettings: "update-clinic-settings",
-        changeMasterEmail: "change-master-email",
-        resetUserPassword: "reset-user-password",
-        openSupportAccess: "open-support-access"
+        openSupportAccess: "open-support-access",
+        exportClinicCsv: "export-clinic-csv",
+        importClinicCsv: "import-clinic-csv"
       }
     };
 
+    const supabaseClient = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.anonKey);
+    const importInput = document.createElement('input');
+    importInput.type = 'file';
+    importInput.accept = '.csv,text/csv';
+
     const state = {
       clinics: [],
+      filters: { search: "", status: "all", limit: "all" },
+      session: null,
       selectedClinicId: null,
-      selectedClinicDetails: null,
-      filters: { search: "", status: "all", limit: "all" }
+      selectedClinicDetails: null
     };
 
     const STATUS_LABELS = {
@@ -394,6 +485,20 @@
       }, ms);
     }
 
+    async function copyText(text, okMessage = "Copiado.") {
+      const value = String(text || "").trim();
+      if (!value) {
+        toast("Não tem nada pra copiar ainda.", "error", 2600);
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(value);
+        toast(okMessage, "success");
+      } catch {
+        toast("Falha ao copiar. Tenta de novo.", "error", 3200);
+      }
+    }
+
     function escapeHtml(value) {
       return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -405,12 +510,35 @@
 
     function slugify(text) {
       return String(text || "")
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
         .toLowerCase()
         .trim()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    }
+
+    function generateTemporaryPassword() {
+      const digits = String(Math.floor(Math.random() * 100000)).padStart(5, '0');
+      return `@${digits}cronosodonto`;
+    }
+
+    function clinicAccessText() {
+      return [
+        `Nome: ${document.getElementById("master_name").value.trim() || "—"}`,
+        `E-mail: ${document.getElementById("master_email").value.trim() || "—"}`,
+        `Senha temporária: ${document.getElementById("master_password").value.trim() || "—"}`,
+        `Link: ${CONFIG.clinicLink}`
+      ].join('\n');
+    }
+
+    function superadminAccessText() {
+      return [
+        `Nome: ${document.getElementById("sa_name").value.trim() || "—"}`,
+        `E-mail: ${document.getElementById("sa_email").value.trim() || "—"}`,
+        `Senha temporária: ${document.getElementById("sa_password").value.trim() || "—"}`,
+        `Link: ${CONFIG.loginLink}`
+      ].join('\n');
     }
 
     function formatDate(dateStr) {
@@ -428,11 +556,6 @@
       const m = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
       return `${y}-${m}-${day}`;
-    }
-
-    function currencyBRL(value) {
-      const n = Number(value || 0);
-      return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
     }
 
     function todayDateOnly() {
@@ -481,21 +604,41 @@
       return "Dentro do período";
     }
 
+    async function getAccessToken() {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      state.session = session || null;
+      return session?.access_token || null;
+    }
+
     async function callEdgeFunction(functionName, payload = {}) {
-      if (!CONFIG.supabaseUrl) throw new Error("CONFIG.supabaseUrl está vazio.");
-      if (!CONFIG.accessToken) throw new Error("CONFIG.accessToken está vazio.");
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error("Sessão expirada ou inexistente. Faz login de novo.");
+
       const res = await fetch(`${CONFIG.supabaseUrl}/functions/v1/${functionName}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${CONFIG.accessToken}`,
-          ...(CONFIG.anonKey ? { "apikey": CONFIG.anonKey } : {})
+          "Authorization": `Bearer ${accessToken}`,
+          "apikey": CONFIG.anonKey
         },
         body: JSON.stringify(payload)
       });
+
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || `Erro ao chamar ${functionName}`);
       return json;
+    }
+
+    async function withButtonLoading(button, workingText, fn) {
+      const oldText = button.textContent;
+      button.disabled = true;
+      button.textContent = workingText;
+      try {
+        return await fn();
+      } finally {
+        button.disabled = false;
+        button.textContent = oldText;
+      }
     }
 
     function getFilteredClinics() {
@@ -600,368 +743,320 @@
     }
 
     async function loadClinicDetails(clinicId) {
-      const data = await callEdgeFunction(CONFIG.endpoints.getClinicDetails, { clinic_id: clinicId });
       state.selectedClinicId = clinicId;
-      state.selectedClinicDetails = {
-        clinic: data?.clinic || {},
-        private: data?.private || {},
-        users: Array.isArray(data?.users) ? data.users : []
-      };
-      renderDetailModal();
-      openDetailModal();
-    }
+      let clinic = state.clinics.find(c => c.id === clinicId) || null;
 
-    function openCreateModal() { document.getElementById("clinicModal").classList.add("show"); }
-    function closeCreateModal() { document.getElementById("clinicModal").classList.remove("show"); }
-    function openDetailModal() { document.getElementById("detailModal").classList.add("show"); }
-    function closeDetailModal() { document.getElementById("detailModal").classList.remove("show"); }
-
-    async function createClinic(payload) {
-      if (payload.access_starts_at && payload.access_ends_at && payload.access_starts_at > payload.access_ends_at) {
-        throw new Error("O início do acesso não pode ser maior que o fim.");
+      try {
+        const data = await callEdgeFunction(CONFIG.endpoints.getClinicDetails, { clinic_id: clinicId });
+        state.selectedClinicDetails = {
+          clinic: data?.clinic || clinic || {},
+          private: data?.private || {},
+          users: Array.isArray(data?.users) ? data.users : []
+        };
+      } catch (err) {
+        state.selectedClinicDetails = {
+          clinic: clinic || {},
+          private: {},
+          users: []
+        };
+        toast("Detalhes completos ainda dependem do backend. Mostrando o que já temos.", "info", 3500);
       }
 
-      await callEdgeFunction(CONFIG.endpoints.createClinic, {
-        clinic_name: payload.clinic_name,
-        clinic_slug: payload.clinic_slug || slugify(payload.clinic_name),
-        master_name: payload.master_name,
-        master_email: payload.master_email,
-        master_password: payload.master_password,
-        status: payload.status,
-        access_starts_at: payload.access_starts_at ? `${payload.access_starts_at}T00:00:00` : null,
-        access_ends_at: payload.access_ends_at ? `${payload.access_ends_at}T23:59:59` : null,
-        included_internal_users: Number(payload.included_internal_users || 0),
-        extra_user_price: Number(payload.extra_user_price || 0),
-        private: {
-          document_type: payload.document_type || null,
-          document_number: payload.document_number || null,
-          owner_phone: payload.owner_phone || null,
-          owner_name: payload.owner_name || null,
-          notes: payload.notes || null
-        }
-      });
-
-      toast("Clínica criada com sucesso.", "success");
-      await loadClinics();
+      renderDetailModal();
+      document.getElementById("detailModal").classList.add("show");
     }
 
     function renderDetailModal() {
-      const details = state.selectedClinicDetails;
-      const root = document.getElementById("detailContent");
-      if (!details) {
-        root.innerHTML = `<div class="empty">Nenhum detalhe carregado.</div>`;
+      const payload = state.selectedClinicDetails;
+      const detailRoot = document.getElementById("detailContent");
+      if (!payload) {
+        detailRoot.innerHTML = `<div class="empty">Nenhum detalhe carregado.</div>`;
         return;
       }
 
-      const clinic = details.clinic || {};
-      const privateData = details.private || {};
-      const users = Array.isArray(details.users) ? details.users : [];
+      const clinic = payload.clinic || {};
+      const priv = payload.private || {};
+      const users = payload.users || [];
       const status = getComputedStatus(clinic);
+      const used = countInternalUsers(clinic);
       const included = includedUsers(clinic);
-      const internalUsed = countInternalUsers(clinic);
-      const over = overageUsers(clinic);
+      const extra = overageUsers(clinic);
 
-      root.innerHTML = `
+      detailRoot.innerHTML = `
         <div class="header-line">
           <div>
             <h2>${escapeHtml(clinic.name || "Clínica")}</h2>
             <div class="header-meta">
               <span class="${badgeClass(status)}">${escapeHtml(STATUS_LABELS[status] || status)}</span>
-              <span class="chip">${internalUsed} / ${included} usuários internos</span>
-              <span class="chip">${escapeHtml(clinic.slug || "sem-slug")}</span>
+              <span class="badge">${used} / ${included} usuários</span>
             </div>
           </div>
           <div class="row-actions">
-            <button class="btn btn-info" id="btnSupportAccess">Entrar na clínica</button>
-            <button class="btn btn-ghost" id="btnSaveSettings">Salvar dados</button>
+            <button class="btn btn-info" id="btnDetailSupport">Entrar como suporte</button>
+            <button class="btn btn-success" id="btnSaveClinicSettings">Salvar mudanças</button>
           </div>
         </div>
 
         <details class="section" open>
-          <summary>Dados da clínica</summary>
-          <div class="section-body">
-            <div class="fields-2">
-              <div class="field">
-                <label>Nome da clínica</label>
-                <input class="input" id="detail_name" value="${escapeHtml(clinic.name || "")}" />
-              </div>
-              <div class="field">
-                <label>Slug</label>
-                <input class="input" id="detail_slug" value="${escapeHtml(clinic.slug || "")}" />
-              </div>
-              <div class="field">
-                <label>Status</label>
-                <select class="select" id="detail_status">
-                  <option value="active" ${clinic.status === "active" ? "selected" : ""}>Ativa</option>
-                  <option value="trial" ${clinic.status === "trial" ? "selected" : ""}>Teste</option>
-                  <option value="blocked" ${clinic.status === "blocked" ? "selected" : ""}>Bloqueada</option>
-                  <option value="inactive" ${clinic.status === "inactive" ? "selected" : ""}>Inativa</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>E-mail master</label>
-                <div class="row-actions">
-                  <input class="input" id="detail_master_email" value="${escapeHtml(clinic.master_email || "")}" />
-                  <button class="btn btn-ghost" type="button" id="btnChangeMasterEmail">Alterar</button>
-                </div>
-              </div>
-              <div class="field">
-                <label>Início do acesso</label>
-                <input class="input" id="detail_access_starts_at" type="date" value="${escapeHtml(toInputDate(clinic.access_starts_at))}" />
-              </div>
-              <div class="field">
-                <label>Fim do acesso</label>
-                <input class="input" id="detail_access_ends_at" type="date" value="${escapeHtml(toInputDate(clinic.access_ends_at))}" />
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <details class="section">
-          <summary>Dados privados do superadmin</summary>
-          <div class="section-body">
-            <div class="fields-2">
-              <div class="field">
-                <label>Tipo de documento</label>
-                <select class="select" id="detail_document_type">
-                  <option value="">Selecione</option>
-                  <option value="cpf" ${privateData.document_type === "cpf" ? "selected" : ""}>CPF</option>
-                  <option value="cnpj" ${privateData.document_type === "cnpj" ? "selected" : ""}>CNPJ</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>CPF/CNPJ</label>
-                <input class="input" id="detail_document_number" value="${escapeHtml(privateData.document_number || "")}" />
-              </div>
-              <div class="field">
-                <label>Telefone / WhatsApp do dono</label>
-                <input class="input" id="detail_owner_phone" value="${escapeHtml(privateData.owner_phone || "")}" />
-              </div>
-              <div class="field">
-                <label>Nome do dono / contato principal</label>
-                <input class="input" id="detail_owner_name" value="${escapeHtml(privateData.owner_name || "")}" />
-              </div>
-              <div class="field full">
-                <label>Observações internas</label>
-                <textarea class="textarea" id="detail_notes">${escapeHtml(privateData.notes || "")}</textarea>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <details class="section">
-          <summary>Licença e usuários</summary>
+          <summary>Validade e acesso</summary>
           <div class="section-body">
             <div class="fields-3">
               <div class="field">
-                <label>Usuários incluídos</label>
-                <input class="input" id="detail_included_internal_users" type="number" min="0" value="${escapeHtml(included)}" />
+                <label for="detail_status">Status</label>
+                <select class="select" id="detail_status">
+                  <option value="active" ${clinic.status === 'active' ? 'selected' : ''}>Ativa</option>
+                  <option value="trial" ${clinic.status === 'trial' ? 'selected' : ''}>Teste</option>
+                  <option value="blocked" ${clinic.status === 'blocked' ? 'selected' : ''}>Bloqueada</option>
+                  <option value="inactive" ${clinic.status === 'inactive' ? 'selected' : ''}>Inativa</option>
+                </select>
               </div>
               <div class="field">
-                <label>Usuários internos usados</label>
-                <input class="input" type="number" disabled value="${escapeHtml(internalUsed)}" />
+                <label for="detail_access_starts_at">Início do acesso</label>
+                <input class="input" id="detail_access_starts_at" type="date" value="${escapeHtml(toInputDate(clinic.access_starts_at))}">
               </div>
               <div class="field">
-                <label>Valor por usuário extra</label>
-                <input class="input" id="detail_extra_user_price" type="number" min="0" step="0.01" value="${escapeHtml(Number(clinic.extra_user_price || 0))}" />
+                <label for="detail_access_ends_at">Fim do acesso</label>
+                <input class="input" id="detail_access_ends_at" type="date" value="${escapeHtml(toInputDate(clinic.access_ends_at))}">
               </div>
             </div>
-            <div class="kv"><strong>Excedente atual</strong><span>${over} usuário(s)</span></div>
-            <div class="kv"><strong>Valor extra potencial</strong><span>${currencyBRL(over * Number(clinic.extra_user_price || 0))}</span></div>
+            <div class="kv"><strong>Período atual</strong><span>${escapeHtml(periodLabel(clinic))}</span></div>
+            <div class="kv"><strong>Leitura do sistema</strong><span>${escapeHtml(periodHint(clinic))}</span></div>
+          </div>
+        </details>
+
+        <details class="section" open>
+          <summary>Configurações da clínica</summary>
+          <div class="section-body">
+            <div class="fields-2">
+              <div class="field">
+                <label for="detail_name">Nome da clínica</label>
+                <input class="input" id="detail_name" value="${escapeHtml(clinic.name || '')}">
+              </div>
+              <div class="field">
+                <label for="detail_slug">Slug</label>
+                <input class="input" id="detail_slug" value="${escapeHtml(clinic.slug || '')}">
+              </div>
+              <div class="field">
+                <label for="detail_master_name">Nome do master</label>
+                <input class="input" id="detail_master_name" value="${escapeHtml(clinic.master_name || '')}">
+              </div>
+              <div class="field">
+                <label for="detail_master_email">E-mail do master</label>
+                <input class="input" id="detail_master_email" value="${escapeHtml(clinic.master_email || '')}">
+              </div>
+              <div class="field">
+                <label for="detail_included_internal_users">Usuários internos incluídos</label>
+                <input class="input" id="detail_included_internal_users" type="number" min="0" value="${escapeHtml(included)}">
+              </div>
+              <div class="field">
+                <label for="detail_extra_user_price">Valor por usuário extra</label>
+                <input class="input" id="detail_extra_user_price" type="number" min="0" step="0.01" value="${escapeHtml(clinic.extra_user_price || 0)}">
+              </div>
+              <div class="field">
+                <label for="detail_document_type">Tipo de documento</label>
+                <select class="select" id="detail_document_type">
+                  <option value="" ${!priv.document_type ? 'selected' : ''}>Selecione</option>
+                  <option value="cpf" ${priv.document_type === 'cpf' ? 'selected' : ''}>CPF</option>
+                  <option value="cnpj" ${priv.document_type === 'cnpj' ? 'selected' : ''}>CNPJ</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="detail_document_number">Documento</label>
+                <input class="input" id="detail_document_number" value="${escapeHtml(priv.document_number || clinic.document_number || '')}">
+              </div>
+              <div class="field">
+                <label for="detail_owner_phone">Telefone / WhatsApp</label>
+                <input class="input" id="detail_owner_phone" value="${escapeHtml(priv.owner_phone || clinic.owner_phone || '')}">
+              </div>
+              <div class="field">
+                <label for="detail_owner_name">Nome do dono / contato</label>
+                <input class="input" id="detail_owner_name" value="${escapeHtml(priv.owner_name || clinic.master_name || '')}">
+              </div>
+              <div class="field full">
+                <label for="detail_notes">Observações internas</label>
+                <textarea class="textarea" id="detail_notes">${escapeHtml(priv.notes || clinic.notes || '')}</textarea>
+              </div>
+            </div>
+            <div class="kv"><strong>Usuários internos usados</strong><span>${used}</span></div>
+            <div class="kv"><strong>Usuários extras</strong><span>${extra}</span></div>
+          </div>
+        </details>
+
+        <details class="section">
+          <summary>Dados e contingência</summary>
+          <div class="section-body">
+            <div class="row-actions">
+              <button class="btn btn-success" id="btnExportCsv">Exportar CSV</button>
+              <button class="btn btn-warning" id="btnImportCsv">Importar CSV</button>
+            </div>
+            <div class="helper">A ideia aqui é tirar exportação/importação do Cronos do cliente e centralizar no superadmin. Bem mais sensato.</div>
           </div>
         </details>
 
         <details class="section">
           <summary>Usuários da clínica</summary>
           <div class="section-body">
-            <div class="user-list">
-              ${
-                users.length
-                  ? users.map(user => `
-                    <div class="user-item">
-                      <div class="user-meta">
-                        <strong>${escapeHtml(user.name || "Sem nome")}</strong>
-                        <span class="muted">${escapeHtml(user.email || "—")}</span>
-                        <span class="muted">perfil: ${escapeHtml(user.role || "—")}</span>
-                      </div>
-                      <div class="row-actions">
-                        <span class="chip">${user.is_active === false ? "Inativo" : "Ativo"}</span>
-                        <button class="btn btn-ghost" type="button" data-user-action="reset-password" data-user-id="${escapeHtml(user.id)}">Alterar senha</button>
-                      </div>
-                    </div>
-                  `).join("")
-                  : `<div class="empty">Nenhum usuário encontrado para esta clínica.</div>`
-              }
-            </div>
+            ${
+              users.length
+                ? users.map(user => `
+                  <div class="kv">
+                    <strong>${escapeHtml(user.name || user.display_name || user.email || 'Usuário')}</strong>
+                    <span>${escapeHtml(user.role || '—')}</span>
+                  </div>
+                `).join('')
+                : `<div class="empty">Ainda não temos a listagem completa dos usuários via backend nessa versão.</div>`
+            }
           </div>
         </details>
       `;
 
-      bindDetailActions();
-    }
-
-    async function saveSelectedClinicSettings() {
-      if (!state.selectedClinicId) return;
-
-      const startValue = document.getElementById("detail_access_starts_at").value;
-      const endValue = document.getElementById("detail_access_ends_at").value;
-      if (startValue && endValue && startValue > endValue) {
-        throw new Error("O início do acesso não pode ser maior que o fim.");
-      }
-
-      const payload = {
-        clinic_id: state.selectedClinicId,
-        clinic: {
-          name: document.getElementById("detail_name").value.trim(),
-          slug: document.getElementById("detail_slug").value.trim(),
-          status: document.getElementById("detail_status").value,
-          master_email: document.getElementById("detail_master_email").value.trim(),
-          access_starts_at: startValue ? `${startValue}T00:00:00` : null,
-          access_ends_at: endValue ? `${endValue}T23:59:59` : null,
-          included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
-          extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
-        },
-        private: {
-          document_type: document.getElementById("detail_document_type").value || null,
-          document_number: document.getElementById("detail_document_number").value.trim() || null,
-          owner_phone: document.getElementById("detail_owner_phone").value.trim() || null,
-          owner_name: document.getElementById("detail_owner_name").value.trim() || null,
-          notes: document.getElementById("detail_notes").value.trim() || null
-        }
-      };
-
-      await callEdgeFunction(CONFIG.endpoints.updateClinicSettings, payload);
-      toast("Dados da clínica atualizados com sucesso.", "success");
-      await loadClinics();
-      await loadClinicDetails(state.selectedClinicId);
-    }
-
-    async function changeMasterEmail() {
-      if (!state.selectedClinicId) return;
-      const newEmail = document.getElementById("detail_master_email").value.trim();
-      if (!newEmail) throw new Error("Informe o novo e-mail master.");
-
-      await callEdgeFunction(CONFIG.endpoints.changeMasterEmail, {
-        clinic_id: state.selectedClinicId,
-        new_email: newEmail
-      });
-
-      toast("E-mail master alterado com sucesso.", "success");
-      await loadClinics();
-      await loadClinicDetails(state.selectedClinicId);
-    }
-
-    async function resetUserPassword(userId) {
-      const newPassword = prompt("Nova senha para este usuário:");
-      if (!newPassword) return;
-      await callEdgeFunction(CONFIG.endpoints.resetUserPassword, {
-        user_id: userId,
-        new_password: newPassword
-      });
-      toast("Senha atualizada com sucesso.", "success");
-    }
-
-    async function openSupportAccess() {
-      if (!state.selectedClinicId) return;
-      const data = await callEdgeFunction(CONFIG.endpoints.openSupportAccess, {
-        clinic_id: state.selectedClinicId
-      });
-
-      if (data?.url) {
-        window.open(data.url, "_blank");
-        toast("Acesso de suporte iniciado em nova guia.", "info");
-        return;
-      }
-
-      toast("A ação de suporte foi registrada, mas ainda falta retornar a URL de entrada.", "info", 3600);
+      bindDetailModalEvents();
     }
 
     function bindTableActions() {
       document.querySelectorAll("tbody [data-action='details']").forEach(btn => {
         btn.addEventListener("click", async (e) => {
           const row = e.currentTarget.closest("tr");
-          try {
-            await loadClinicDetails(row.dataset.clinicId);
-          } catch (err) {
-            console.error(err);
-            toast(err.message || "Erro ao carregar detalhes da clínica.", "error", 3600);
-          }
+          await loadClinicDetails(row.dataset.clinicId);
         });
       });
 
       document.querySelectorAll("tbody [data-action='support']").forEach(btn => {
         btn.addEventListener("click", async (e) => {
           const row = e.currentTarget.closest("tr");
-          try {
-            state.selectedClinicId = row.dataset.clinicId;
-            await openSupportAccess();
-          } catch (err) {
-            console.error(err);
-            toast(err.message || "Erro ao iniciar suporte.", "error", 3600);
-          }
+          state.selectedClinicId = row.dataset.clinicId;
+          await handleOpenSupport(btn);
         });
       });
     }
 
-    function bindDetailActions() {
-      document.getElementById("btnSaveSettings")?.addEventListener("click", async () => {
-        const btn = document.getElementById("btnSaveSettings");
-        const oldText = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = "Salvando...";
-        try {
-          await saveSelectedClinicSettings();
-        } catch (err) {
-          console.error(err);
-          toast(err.message || "Erro ao salvar clínica.", "error", 3600);
-        } finally {
-          btn.disabled = false;
-          btn.textContent = oldText;
-        }
-      });
+    async function handleOpenSupport(button) {
+      if (!state.selectedClinicId) {
+        toast("Nenhuma clínica selecionada.", "error");
+        return;
+      }
+      await withButtonLoading(button, "Abrindo...", async () => {
+        const data = await callEdgeFunction(CONFIG.endpoints.openSupportAccess, {
+          clinic_id: state.selectedClinicId
+        });
 
-      document.getElementById("btnChangeMasterEmail")?.addEventListener("click", async () => {
-        const btn = document.getElementById("btnChangeMasterEmail");
-        const oldText = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = "Alterando...";
-        try {
-          await changeMasterEmail();
-        } catch (err) {
-          console.error(err);
-          toast(err.message || "Erro ao alterar master.", "error", 3600);
-        } finally {
-          btn.disabled = false;
-          btn.textContent = oldText;
+        if (data?.url) {
+          window.open(data.url, "_blank");
+          toast("Clínica aberta em modo suporte.", "success");
+          return;
         }
-      });
 
-      document.getElementById("btnSupportAccess")?.addEventListener("click", async () => {
-        const btn = document.getElementById("btnSupportAccess");
-        const oldText = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = "Abrindo...";
-        try {
-          await openSupportAccess();
-        } catch (err) {
-          console.error(err);
-          toast(err.message || "Erro ao abrir clínica.", "error", 3600);
-        } finally {
-          btn.disabled = false;
-          btn.textContent = oldText;
-        }
+        toast("A ação de suporte foi registrada, mas a URL ainda depende do backend.", "info", 3600);
       });
+    }
 
-      document.querySelectorAll("[data-user-action='reset-password']").forEach(btn => {
-        btn.addEventListener("click", async (e) => {
-          try {
-            await resetUserPassword(e.currentTarget.dataset.userId);
-          } catch (err) {
-            console.error(err);
-            toast(err.message || "Erro ao alterar senha.", "error", 3600);
+    async function handleSaveClinicSettings(button) {
+      const start = document.getElementById("detail_access_starts_at").value;
+      const end = document.getElementById("detail_access_ends_at").value;
+      if (start && end && start > end) {
+        toast("O início do acesso não pode ser maior que o fim.", "error", 3600);
+        return;
+      }
+
+      await withButtonLoading(button, "Salvando...", async () => {
+        await callEdgeFunction(CONFIG.endpoints.updateClinicSettings, {
+          clinic_id: state.selectedClinicId,
+          clinic: {
+            name: document.getElementById("detail_name").value.trim(),
+            slug: document.getElementById("detail_slug").value.trim(),
+            master_name: document.getElementById("detail_master_name").value.trim(),
+            master_email: document.getElementById("detail_master_email").value.trim(),
+            status: document.getElementById("detail_status").value,
+            access_starts_at: start ? `${start}T00:00:00` : null,
+            access_ends_at: end ? `${end}T23:59:59` : null,
+            included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
+            extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
+          },
+          private: {
+            document_type: document.getElementById("detail_document_type").value || null,
+            document_number: document.getElementById("detail_document_number").value.trim() || null,
+            owner_phone: document.getElementById("detail_owner_phone").value.trim() || null,
+            owner_name: document.getElementById("detail_owner_name").value.trim() || null,
+            notes: document.getElementById("detail_notes").value.trim() || null
           }
         });
+        toast("Configurações salvas.", "success");
+        await loadClinics();
+        await loadClinicDetails(state.selectedClinicId);
       });
+    }
+
+    async function handleExportCsv(button) {
+      await withButtonLoading(button, "Exportando...", async () => {
+        const data = await callEdgeFunction(CONFIG.endpoints.exportClinicCsv, {
+          clinic_id: state.selectedClinicId
+        });
+
+        if (data?.url) {
+          window.open(data.url, "_blank");
+          toast("Download iniciado.", "success");
+          return;
+        }
+
+        const csv = data?.csv || data?.content || null;
+        if (csv) {
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = data?.filename || `clinica-${state.selectedClinicId}.csv`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          toast("CSV exportado.", "success");
+          return;
+        }
+
+        throw new Error("A função não retornou CSV nem URL de download.");
+      });
+    }
+
+    function handleImportCsv(button) {
+      importInput.onchange = async () => {
+        const file = importInput.files?.[0];
+        importInput.value = "";
+        if (!file) return;
+
+        const text = await file.text();
+        await withButtonLoading(button, "Importando...", async () => {
+          await callEdgeFunction(CONFIG.endpoints.importClinicCsv, {
+            clinic_id: state.selectedClinicId,
+            filename: file.name,
+            csv_content: text
+          });
+          toast("CSV importado com sucesso.", "success", 3600);
+        });
+      };
+      importInput.click();
+    }
+
+    function bindDetailModalEvents() {
+      const btnSupport = document.getElementById("btnDetailSupport");
+      const btnSave = document.getElementById("btnSaveClinicSettings");
+      const btnExport = document.getElementById("btnExportCsv");
+      const btnImport = document.getElementById("btnImportCsv");
+
+      if (btnSupport) btnSupport.addEventListener("click", () => handleOpenSupport(btnSupport));
+      if (btnSave) btnSave.addEventListener("click", () => handleSaveClinicSettings(btnSave));
+      if (btnExport) btnExport.addEventListener("click", () => handleExportCsv(btnExport));
+      if (btnImport) btnImport.addEventListener("click", () => handleImportCsv(btnImport));
+    }
+
+    async function createClinic(payload) {
+      await callEdgeFunction(CONFIG.endpoints.createClinic, payload);
+      toast("Clínica criada com sucesso.", "success");
+      await loadClinics();
+    }
+
+    async function createSuperadmin(payload) {
+      await callEdgeFunction(CONFIG.endpoints.createSuperadmin, payload);
+      toast("Superadmin criado com sucesso.", "success");
     }
 
     function bindGlobalEvents() {
@@ -990,27 +1085,60 @@
         renderTable();
       });
 
-      document.getElementById("btnRefresh").addEventListener("click", async () => {
-        try {
+      document.getElementById("btnRefresh").addEventListener("click", async (e) => {
+        await withButtonLoading(e.currentTarget, "Atualizando...", async () => {
           await loadClinics();
-        } catch (err) {
-          console.error(err);
-          toast(err.message || "Erro ao atualizar dados.", "error", 3600);
-        }
+          toast("Dados atualizados.", "success");
+        });
+      });
+
+      document.getElementById("btnLogout").addEventListener("click", async () => {
+        await supabaseClient.auth.signOut();
+        state.session = null;
+        document.getElementById("panelApp").classList.add("hidden");
+        document.getElementById("loginScreen").classList.remove("hidden");
+        document.getElementById("loginPassword").value = "";
+        toast("Sessão encerrada.", "info");
       });
 
       document.getElementById("btnCreateClinic").addEventListener("click", openCreateModal);
+      document.getElementById("btnOpenSuperadminModal").addEventListener("click", openSuperadminModal);
+
       document.getElementById("btnCloseCreate").addEventListener("click", closeCreateModal);
       document.getElementById("btnCloseCreateHead").addEventListener("click", closeCreateModal);
+      document.getElementById("btnCloseSuperadmin").addEventListener("click", closeSuperadminModal);
+      document.getElementById("btnCloseSuperadminHead").addEventListener("click", closeSuperadminModal);
       document.getElementById("btnCloseDetail").addEventListener("click", closeDetailModal);
       document.getElementById("btnCloseDetailHead").addEventListener("click", closeDetailModal);
 
-      document.getElementById("clinicModal").addEventListener("click", (e) => {
-        if (e.target.id === "clinicModal") closeCreateModal();
-      });
       document.getElementById("detailModal").addEventListener("click", (e) => {
         if (e.target.id === "detailModal") closeDetailModal();
       });
+      document.getElementById("clinicModal").addEventListener("click", (e) => {
+        if (e.target.id === "clinicModal") closeCreateModal();
+      });
+      document.getElementById("superadminModal").addEventListener("click", (e) => {
+        if (e.target.id === "superadminModal") closeSuperadminModal();
+      });
+
+      document.getElementById("btnGeneratePassword").addEventListener("click", () => {
+        document.getElementById("master_password").value = generateTemporaryPassword();
+        toast("Senha temporária gerada.", "info");
+      });
+      document.getElementById("btnGenerateSaPassword").addEventListener("click", () => {
+        document.getElementById("sa_password").value = generateTemporaryPassword();
+        toast("Senha temporária gerada.", "info");
+      });
+
+      document.getElementById("btnCopyMasterName").addEventListener("click", () => copyText(document.getElementById("master_name").value, "Nome copiado."));
+      document.getElementById("btnCopyMasterEmail").addEventListener("click", () => copyText(document.getElementById("master_email").value, "E-mail copiado."));
+      document.getElementById("btnCopyMasterPassword").addEventListener("click", () => copyText(document.getElementById("master_password").value, "Senha copiada."));
+      document.getElementById("btnCopyClinicAccess").addEventListener("click", () => copyText(clinicAccessText(), "Acesso da clínica copiado."));
+
+      document.getElementById("btnCopySaName").addEventListener("click", () => copyText(document.getElementById("sa_name").value, "Nome copiado."));
+      document.getElementById("btnCopySaEmail").addEventListener("click", () => copyText(document.getElementById("sa_email").value, "E-mail copiado."));
+      document.getElementById("btnCopySaPassword").addEventListener("click", () => copyText(document.getElementById("sa_password").value, "Senha copiada."));
+      document.getElementById("btnCopySaAccess").addEventListener("click", () => copyText(superadminAccessText(), "Acesso do superadmin copiado."));
 
       const clinicName = document.getElementById("clinic_name");
       const clinicSlug = document.getElementById("clinic_slug");
@@ -1023,22 +1151,33 @@
         e.preventDefault();
         const submitBtn = document.getElementById("btnSubmitClinic");
         const fd = new FormData(e.currentTarget);
+
+        const accessStartsAt = String(fd.get("access_starts_at") || "").trim();
+        const accessEndsAt = String(fd.get("access_ends_at") || "").trim();
+
+        if (accessStartsAt && accessEndsAt && accessStartsAt > accessEndsAt) {
+          toast("O início do acesso não pode ser maior que o fim.", "error", 3600);
+          return;
+        }
+
         const payload = {
           clinic_name: String(fd.get("clinic_name") || "").trim(),
-          clinic_slug: String(fd.get("clinic_slug") || "").trim(),
+          clinic_slug: String(fd.get("clinic_slug") || "").trim() || slugify(String(fd.get("clinic_name") || "").trim()),
           master_name: String(fd.get("master_name") || "").trim(),
           master_email: String(fd.get("master_email") || "").trim(),
           master_password: String(fd.get("master_password") || "").trim(),
           status: String(fd.get("status") || "active").trim(),
-          access_starts_at: String(fd.get("access_starts_at") || "").trim(),
-          access_ends_at: String(fd.get("access_ends_at") || "").trim(),
-          included_internal_users: String(fd.get("included_internal_users") || "0").trim(),
-          extra_user_price: String(fd.get("extra_user_price") || "0").trim(),
-          document_type: String(fd.get("document_type") || "").trim(),
-          document_number: String(fd.get("document_number") || "").trim(),
-          owner_phone: String(fd.get("owner_phone") || "").trim(),
-          owner_name: String(fd.get("owner_name") || "").trim(),
-          notes: String(fd.get("notes") || "").trim()
+          access_starts_at: accessStartsAt ? `${accessStartsAt}T00:00:00` : null,
+          access_ends_at: accessEndsAt ? `${accessEndsAt}T23:59:59` : null,
+          included_internal_users: Number(String(fd.get("included_internal_users") || "5").trim() || 5),
+          extra_user_price: Number(String(fd.get("extra_user_price") || "0").trim() || 0),
+          private: {
+            document_type: String(fd.get("document_type") || "").trim() || null,
+            document_number: String(fd.get("document_number") || "").trim() || null,
+            owner_phone: String(fd.get("owner_phone") || "").trim() || null,
+            owner_name: String(fd.get("owner_name") || "").trim() || null,
+            notes: String(fd.get("notes") || "").trim() || null
+          }
         };
 
         if (!payload.clinic_name || !payload.master_name || !payload.master_email || !payload.master_password) {
@@ -1046,37 +1185,106 @@
           return;
         }
 
-        const oldText = submitBtn.textContent;
-        submitBtn.disabled = true;
-        submitBtn.textContent = "Criando...";
-
-        try {
+        await withButtonLoading(submitBtn, "Criando...", async () => {
           await createClinic(payload);
           e.currentTarget.reset();
           clinicSlug.dataset.manual = "";
+          document.getElementById("master_password").value = generateTemporaryPassword();
           closeCreateModal();
+        });
+      });
+
+      document.getElementById("superadminForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const submitBtn = document.getElementById("btnSubmitSuperadmin");
+        const fd = new FormData(e.currentTarget);
+
+        const payload = {
+          display_name: String(fd.get("sa_name") || "").trim(),
+          email: String(fd.get("sa_email") || "").trim(),
+          password: String(fd.get("sa_password") || "").trim()
+        };
+
+        if (!payload.display_name || !payload.email || !payload.password) {
+          toast("Preenche nome, e-mail e senha do superadmin.", "error", 3600);
+          return;
+        }
+
+        await withButtonLoading(submitBtn, "Criando...", async () => {
+          await createSuperadmin(payload);
+          e.currentTarget.reset();
+          document.getElementById("sa_password").value = generateTemporaryPassword();
+          closeSuperadminModal();
+        });
+      });
+
+      document.getElementById("loginForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById("btnLogin");
+        const oldText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Entrando...";
+
+        try {
+          const email = document.getElementById("loginEmail").value.trim();
+          const password = document.getElementById("loginPassword").value;
+          const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+
+          if (error) throw error;
+          if (!data?.session) throw new Error("Sessão não criada.");
+
+          state.session = data.session;
+          document.getElementById("loginScreen").classList.add("hidden");
+          document.getElementById("panelApp").classList.remove("hidden");
+
+          await loadClinics();
+          toast("Login realizado com sucesso.", "success");
         } catch (err) {
           console.error(err);
-          toast(err.message || "Erro ao criar clínica.", "error", 3600);
+          toast(err.message || "Erro ao fazer login.", "error", 4000);
         } finally {
-          submitBtn.disabled = false;
-          submitBtn.textContent = oldText;
+          btn.disabled = false;
+          btn.textContent = oldText;
         }
       });
+    }
+
+    function openCreateModal() {
+      document.getElementById("clinicModal").classList.add("show");
+      if (!document.getElementById("master_password").value.trim()) {
+        document.getElementById("master_password").value = generateTemporaryPassword();
+      }
+    }
+    function closeCreateModal() { document.getElementById("clinicModal").classList.remove("show"); }
+    function openSuperadminModal() {
+      document.getElementById("superadminModal").classList.add("show");
+      if (!document.getElementById("sa_password").value.trim()) {
+        document.getElementById("sa_password").value = generateTemporaryPassword();
+      }
+    }
+    function closeSuperadminModal() { document.getElementById("superadminModal").classList.remove("show"); }
+    function closeDetailModal() { document.getElementById("detailModal").classList.remove("show"); }
+
+    async function restoreSessionIfAny() {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (!session) return false;
+      state.session = session;
+      document.getElementById("loginScreen").classList.add("hidden");
+      document.getElementById("panelApp").classList.remove("hidden");
+      try {
+        await loadClinics();
+      } catch (err) {
+        console.error(err);
+        toast(err.message || "Erro ao carregar clínicas.", "error", 4000);
+      }
+      return true;
     }
 
     async function init() {
       bindGlobalEvents();
       renderStats();
       renderTable();
-      try {
-        await loadClinics();
-      } catch (err) {
-        console.error(err);
-        toast("Painel carregado, mas ainda falta configurar SUPABASE_URL, ACCESS_TOKEN e as Edge Functions.", "error", 4200);
-        renderStats();
-        renderTable();
-      }
+      await restoreSessionIfAny();
     }
 
     init();
