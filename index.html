@@ -1369,16 +1369,15 @@ function debounce(fn, delay){
     handleErr(r && (r.message || r) );
   });
 
-  // If nothing shows after a few seconds, force auth visible (only if not booted and not in startup).
+  // If nothing shows after 1s, force auth visible (only if not booted).
   setTimeout(function(){
     if(window.__CRONOS_BOOTED) return;
-    if(window.__CRONOS_STARTUP_IN_PROGRESS__) return;
     var a=document.getElementById('authView');
     var b=document.getElementById('appView');
     if(a && b && a.classList.contains('hidden') && b.classList.contains('hidden')){
       fallbackBeforeBoot('Boot não exibiu nenhuma tela (fallback automático).');
     }
-  }, 4000);
+  }, 1000);
 })();
 
 /* =========================
@@ -1986,7 +1985,7 @@ function getSmallLogoDataURI(){
 </script>
 
 <!-- AUTH VIEW -->
-<section id="authView" class="auth hidden">
+<section id="authView" class="auth">
   <div class="authCard">
     <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px">
       
@@ -2374,6 +2373,7 @@ fill="currentColor" stroke="none">
       <div><strong>Logado</strong></div>
       <div class="muted" id="whoami">—</div>
       <div class="row">
+        <button id="btnNewLeadSide" class="btn primary">➕ Lead</button>
         <button id="btnRefreshNow" class="btn" data-label="Atualizar">Atualizar</button>
       </div>
       <div class="row" style="margin-top:8px">
@@ -2920,7 +2920,7 @@ function applyRoleVisibility(actor=currentActor()){
   const canUsers = canAccessView("users", actor) && !!actor?.perms?.manageUsers;
   const canSettings = canAccessView("settings", actor);
 
-  ["btnNewLeadTop","btnNewLeadList","btnNewLeadKanban","btnNewTask"].forEach(id=>{
+  ["btnNewLeadSide","btnNewLeadTop","btnNewLeadList","btnNewLeadKanban","btnNewTask"].forEach(id=>{
     const node = el(id);
     if(node) node.classList.toggle("hidden", !canEdit);
   });
@@ -7542,7 +7542,7 @@ if (authSelect) authSelect.parentElement.classList.add("hidden");
   bindAuth();
   bindLoginEnterSubmit();
 
-  window.__CRONOS_STARTUP_DONE__ = false;
+boot();
 })();
 
 function setupLeadsTopScrollbar(){
@@ -7897,15 +7897,16 @@ async function finalizeCloudLogin(){
       try{ await supabaseClient.auth.signOut(); }catch(_){}
       clearSession();
       showAuth();
-      return false;
+      return;
     }
   }catch(err){
     console.error("Erro ao preparar dados da nuvem:", err);
     toast("Falha ao abrir o sistema", "A autenticação ocorreu, mas a clínica não carregou direito.");
-    try{ showAuth(); }catch(_){}
-    return false;
+    return;
   }
 
+  document.getElementById("authView").classList.add("hidden");
+  document.getElementById("appView").classList.remove("hidden");
   await boot();
 
   const actor = currentActor();
@@ -7917,7 +7918,6 @@ async function finalizeCloudLogin(){
     }, 220);
   }
   window.__CRONOS_EXPLICIT_LOGIN__ = false;
-  return true;
 }
 
 document.getElementById("btnLogin").addEventListener("click", async () => {
@@ -7966,40 +7966,16 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
 });
 
 async function verificarSessao() {
-  try{
-    const { data } = await supabaseClient.auth.getSession();
-    if (data.session) {
-      window.__CRONOS_EXPLICIT_LOGIN__ = false;
-      return await finalizeCloudLogin();
-    }
-  }catch(err){
-    console.error("Falha ao verificar sessão:", err);
-  }
-  return false;
-}
+  const { data } = await supabaseClient.auth.getSession();
 
-async function startupCronos(){
-  if(window.__CRONOS_STARTUP_DONE__) return;
-  window.__CRONOS_STARTUP_DONE__ = true;
-  window.__CRONOS_STARTUP_IN_PROGRESS__ = true;
-  const authView = document.getElementById("authView");
-  const appView = document.getElementById("appView");
-  try{
-    if(authView) authView.classList.add("hidden");
-    if(appView) appView.classList.add("hidden");
-    const hasSession = await verificarSessao();
-    if(!hasSession){
-      await boot();
-    }
-  }catch(err){
-    console.error("Falha no startup:", err);
-    try{ showAuth(); }catch(_){ }
-  }finally{
-    window.__CRONOS_STARTUP_IN_PROGRESS__ = false;
+  if (data.session) {
+    window.__CRONOS_EXPLICIT_LOGIN__ = false;
+    await finalizeCloudLogin();
+    showView("dashboard");
   }
 }
 
-window.addEventListener("DOMContentLoaded", startupCronos);
+window.addEventListener("load", verificarSessao);
 document.addEventListener("DOMContentLoaded", () => {
   const btnKanban = document.querySelector('[data-view="kanban"]');
 
@@ -8015,6 +7991,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 });
+</script>
+  <script>
+  setTimeout(() => {
+    renderTasks();
+    renderUsers();
+  }, 200);
 </script>
 </body>
 </html>
