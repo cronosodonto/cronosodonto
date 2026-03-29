@@ -1027,34 +1027,39 @@
 
 
     async function handleDeleteClinic(button) {
-      if (!state.selectedClinicId || !state.selectedClinicDetails?.clinic) {
-        toast("Nenhuma clínica selecionada.", "error");
-        return;
-      }
+  if (!state.selectedClinicId || !state.selectedClinicDetails?.clinic) {
+    toast("Nenhuma clínica selecionada.", "error");
+    return;
+  }
 
-      const clinic = state.selectedClinicDetails.clinic;
-      const clinicSlug = String(clinic.slug || slugify(clinic.name || "")).trim() || "sem-slug";
-      const confirmation = prompt(`Para excluir de vez, digita exatamente o slug da clínica:\n\n${clinicSlug}`);
+  const clinic = state.selectedClinicDetails.clinic;
+  const clinicSlug = String(clinic.slug || slugify(clinic.name || "")).trim() || "sem-slug";
+  const confirmation = prompt(`Para excluir de vez, digita exatamente o slug da clínica:\n\n${clinicSlug}`);
 
-      if (confirmation === null) return;
+  if (confirmation === null) return;
 
-      if (confirmation.trim() !== clinicSlug) {
-        toast("Slug digitado não confere. Exclusão cancelada.", "error", 3600);
-        return;
-      }
+  if (confirmation.trim() !== clinicSlug) {
+    toast("Slug digitado não confere. Exclusão cancelada.", "error", 3600);
+    return;
+  }
 
-      await withButtonLoading(button, "Excluindo...", async () => {
-        await callEdgeFunction(CONFIG.endpoints.deleteClinic, {
-          clinic_id: state.selectedClinicId
-        });
-
-        toast("Clínica excluída com sucesso.", "success", 3600);
-        state.selectedClinicId = null;
-        state.selectedClinicDetails = null;
-        closeDetailModal();
-        await loadClinics();
+  try {
+    await withButtonLoading(button, "Excluindo...", async () => {
+      await callEdgeFunction(CONFIG.endpoints.deleteClinic, {
+        clinic_id: state.selectedClinicId
       });
-    }
+
+      toast("Clínica excluída com sucesso.", "success", 3600);
+      state.selectedClinicId = null;
+      state.selectedClinicDetails = null;
+      closeDetailModal();
+      await loadClinics();
+    });
+  } catch (err) {
+    console.error(err);
+    toast(err.message || "Erro ao excluir clínica.", "error", 4000);
+  }
+}
 
     async function handleExportCsv(button) {
       await withButtonLoading(button, "Exportando...", async () => {
