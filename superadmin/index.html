@@ -446,7 +446,8 @@
         updateClinicSettings: "update-clinic-settings",
         openSupportAccess: "open-support-access",
         exportClinicCsv: "export-clinic-csv",
-        importClinicCsv: "import-clinic-csv"
+        importClinicCsv: "import-clinic-csv",
+        resetMasterPassword: "reset-master-password"
       }
     };
 
@@ -538,6 +539,15 @@
         `E-mail: ${document.getElementById("sa_email").value.trim() || "—"}`,
         `Senha temporária: ${document.getElementById("sa_password").value.trim() || "—"}`,
         `Link: ${CONFIG.loginLink}`
+      ].join('\n');
+    }
+
+    function detailMasterAccessText() {
+      return [
+        `Nome: ${document.getElementById("detail_master_name")?.value.trim() || "—"}`,
+        `E-mail: ${document.getElementById("detail_master_email")?.value.trim() || "—"}`,
+        `Senha temporária: ${document.getElementById("detail_master_new_password")?.value.trim() || "—"}`,
+        `Link: ${CONFIG.clinicLink}`
       ].join('\n');
     }
 
@@ -883,6 +893,31 @@
         </details>
 
         <details class="section">
+          <summary>Acesso do master</summary>
+          <div class="section-body">
+            <div class="fields-2">
+              <div class="field">
+                <label for="detail_master_new_password">Nova senha temporária</label>
+                <div class="row-actions">
+                  <input class="input" id="detail_master_new_password" value="${escapeHtml(generateTemporaryPassword())}">
+                  <button class="btn btn-info" type="button" id="btnGenerateDetailMasterPassword">Gerar senha</button>
+                  <button class="btn btn-ghost" type="button" id="btnCopyDetailMasterPassword">Copiar</button>
+                </div>
+                <span class="helper">Padrão temporário: @ + 5 números aleatórios + cronosodonto</span>
+              </div>
+              <div class="field">
+                <label>Ações do master</label>
+                <div class="row-actions">
+                  <button class="btn btn-warning" type="button" id="btnResetMasterPassword">Redefinir senha</button>
+                  <button class="btn btn-ghost" type="button" id="btnCopyDetailMasterAccess">Copiar acesso</button>
+                </div>
+                <span class="helper">Muito melhor do que apagar usuário e criar fantasma administrativo sem querer.</span>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="section">
           <summary>Dados e contingência</summary>
           <div class="section-body">
             <div class="row-actions">
@@ -1036,22 +1071,49 @@
       importInput.click();
     }
 
+    async function handleResetMasterPassword(button) {
+      const password = document.getElementById("detail_master_new_password").value.trim();
+      if (!password) {
+        toast("Gera ou digita uma senha antes de redefinir.", "error", 3200);
+        return;
+      }
+
+      await withButtonLoading(button, "Redefinindo...", async () => {
+        await callEdgeFunction(CONFIG.endpoints.resetMasterPassword, {
+          clinic_id: state.selectedClinicId,
+          new_password: password
+        });
+        toast("Senha do master redefinida com sucesso.", "success");
+      });
+    }
+
     function bindDetailModalEvents() {
       const btnSupport = document.getElementById("btnDetailSupport");
       const btnSave = document.getElementById("btnSaveClinicSettings");
       const btnExport = document.getElementById("btnExportCsv");
       const btnImport = document.getElementById("btnImportCsv");
+      const btnResetPassword = document.getElementById("btnResetMasterPassword");
+      const btnGeneratePassword = document.getElementById("btnGenerateDetailMasterPassword");
+      const btnCopyPassword = document.getElementById("btnCopyDetailMasterPassword");
+      const btnCopyAccess = document.getElementById("btnCopyDetailMasterAccess");
 
       if (btnSupport) btnSupport.addEventListener("click", () => handleOpenSupport(btnSupport));
       if (btnSave) btnSave.addEventListener("click", () => handleSaveClinicSettings(btnSave));
       if (btnExport) btnExport.addEventListener("click", () => handleExportCsv(btnExport));
       if (btnImport) btnImport.addEventListener("click", () => handleImportCsv(btnImport));
+      if (btnResetPassword) btnResetPassword.addEventListener("click", () => handleResetMasterPassword(btnResetPassword));
+      if (btnGeneratePassword) btnGeneratePassword.addEventListener("click", () => {
+        document.getElementById("detail_master_new_password").value = generateTemporaryPassword();
+        toast("Senha temporária gerada.", "info");
+      });
+      if (btnCopyPassword) btnCopyPassword.addEventListener("click", () => copyText(document.getElementById("detail_master_new_password").value, "Senha copiada."));
+      if (btnCopyAccess) btnCopyAccess.addEventListener("click", () => copyText(detailMasterAccessText(), "Acesso copiado."));
     }
 
     async function createClinic(payload) {
-      await callEdgeFunction(CONFIG.endpoints.createClinic, payload);
+      const data = await callEdgeFunction(CONFIG.endpoints.createClinic, payload);
       toast("Clínica criada com sucesso.", "success");
-      await loadClinics();
+      return data;
     }
 
     async function createSuperadmin(payload) {
@@ -1185,13 +1247,26 @@
           return;
         }
 
-        await withButtonLoading(submitBtn, "Criando...", async () => {
-          await createClinic(payload);
+        try {
+          await withButtonLoading(submitBtn, "Criando...", async () => {
+            await createClinic(payload);
+          });
+
           e.currentTarget.reset();
           clinicSlug.dataset.manual = "";
           document.getElementById("master_password").value = generateTemporaryPassword();
           closeCreateModal();
-        });
+
+          try {
+            await loadClinics();
+          } catch (err) {
+            console.error(err);
+            toast("Clínica criada, mas a lista não atualizou automaticamente.", "info", 4000);
+          }
+        } catch (err) {
+          console.error(err);
+          toast(err.message || "Erro ao criar clínica.", "error", 4200);
+        }
       });
 
       document.getElementById("superadminForm").addEventListener("submit", async (e) => {
