@@ -65,6 +65,17 @@
     .textarea{min-height:92px;resize:vertical}
     .input::placeholder,.textarea::placeholder{color:#73809c}
     .helper{color:#8090ad;font-size:12px}
+    .section-gap{margin-top:20px}
+    .pagination-bar{
+      display:flex;align-items:center;justify-content:space-between;gap:12px;
+      padding:14px 16px;border-top:1px solid var(--line);flex-wrap:wrap
+    }
+    .pagination-meta{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
+    .pagination-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .section-intro{display:grid;gap:6px;padding:4px 0 2px}
+    .section-intro strong{font-size:20px;line-height:1.2}
+    .modal.modal-wide{width:min(1240px,100%)}
+
     .field{display:flex;flex-direction:column;gap:8px}
     .field label{font-size:13px;color:#aab4c7;font-weight:700}
     .fields-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -299,7 +310,7 @@
       <form id="loginForm" class="login-grid">
         <div class="field">
           <label for="loginEmail">E-mail</label>
-          <input class="input" id="loginEmail" type="email" placeholder="e-mail administrativo" required />
+          <input class="input" id="loginEmail" type="email" placeholder="cronosodonto@gmail.com" required />
         </div>
 
         <div class="field">
@@ -323,6 +334,7 @@
       <div class="actions">
         <button class="btn btn-ghost" id="btnRefresh">Atualizar</button>
         <button class="btn btn-ghost" id="btnLogout">Sair</button>
+        <button class="btn btn-ghost" id="btnManageSuperadmins">Superadmins</button>
         <button class="btn btn-info" id="btnOpenSuperadminModal">Criar superadmin</button>
         <button class="btn btn-primary" id="btnCreateClinic">Criar clínica</button>
       </div>
@@ -364,6 +376,16 @@
           </thead>
           <tbody id="clinicBody"></tbody>
         </table>
+      </div>
+      <div class="pagination-bar">
+        <div class="pagination-meta">
+          <strong id="clinicPageInfo">Página 1 de 1</strong>
+          <span id="clinicPageSummary">0 clínicas</span>
+        </div>
+        <div class="pagination-actions">
+          <button class="btn btn-ghost" id="btnClinicPrev" type="button">Anterior</button>
+          <button class="btn btn-ghost" id="btnClinicNext" type="button">Próxima</button>
+        </div>
       </div>
     </div>
   </div>
@@ -545,7 +567,77 @@
     </div>
   </div>
 
+    <div class="modal-backdrop" id="resetSuperadminModal">
+    <div class="modal">
+      <div class="modal-head">
+        <strong>Redefinir senha do superadmin</strong>
+        <button class="btn btn-ghost" id="btnCloseResetSuperadminHead" type="button">Fechar</button>
+      </div>
+      <div class="modal-body">
+        <div class="fields-2">
+          <div class="field">
+            <label>Nome</label>
+            <input class="input" id="reset_sa_name" disabled>
+          </div>
+          <div class="field">
+            <label>E-mail</label>
+            <input class="input" id="reset_sa_email" disabled>
+          </div>
+          <div class="field" style="grid-column:1 / -1;">
+            <label for="reset_sa_password">Nova senha temporária</label>
+            <div class="row-actions">
+              <input class="input" id="reset_sa_password" type="text">
+              <button class="btn btn-info" id="btnGenerateResetSaPassword" type="button">Gerar senha</button>
+              <button class="btn btn-ghost" id="btnCopyResetSaPassword" type="button">Copiar</button>
+            </div>
+            <span class="helper">Padrão temporário: @ + 5 números aleatórios + cronosodonto</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCloseResetSuperadmin" type="button">Fechar</button>
+        <button class="btn btn-warning" id="btnSubmitResetSuperadmin" type="button">Redefinir senha</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast-wrap" id="toastWrap"></div>
+
+  <div class="modal-backdrop" id="superadminsListModal">
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <div class="section-intro">
+          <strong>Superadmins cadastrados</strong>
+          <div class="helper">Quem foi criado no Olimpo precisa aparecer no mapa. E daqui tu também redefine senha sem caçar usuário no escuro.</div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-ghost" id="btnRefreshSuperadmins" type="button">Atualizar superadmins</button>
+          <button class="btn btn-ghost" id="btnCloseSuperadminsHead" type="button">Fechar</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>E-mail</th>
+                <th>Status</th>
+                <th>Criado em</th>
+                <th>Último acesso</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="superadminBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCloseSuperadmins" type="button">Fechar</button>
+      </div>
+    </div>
+  </div>
+
 
   <script>
     const CONFIG = {
@@ -557,6 +649,8 @@
         listClinics: "list-clinics",
         createClinic: "create-clinic",
         createSuperadmin: "create-superadmin",
+        listSuperadmins: "list-superadmins",
+        resetSuperadminPassword: "reset-superadmin-password",
         getClinicDetails: "get-clinic-details",
         updateClinicSettings: "update-clinic-settings",
         openSupportAccess: "open-support-access",
@@ -586,9 +680,15 @@
       session: null,
       selectedClinicId: null,
       selectedClinicDetails: null,
+      superadmins: [],
+      selectedSuperadmin: null,
       loadingClinics: false,
       loadingClinicDetails: false,
-      hasLoadedClinics: false
+      loadingSuperadmins: false,
+      hasLoadedClinics: false,
+      hasLoadedSuperadmins: false,
+      clinicPage: 1,
+      clinicPageSize: 8
     };
 
     const STATUS_LABELS = {
@@ -683,6 +783,13 @@
       const d = new Date(dateStr);
       if (Number.isNaN(d.getTime())) return "—";
       return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(d);
+    }
+
+    function formatDateTime(dateStr) {
+      if (!dateStr) return "—";
+      const d = new Date(dateStr);
+      if (Number.isNaN(d.getTime())) return "—";
+      return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(d);
     }
 
     function toInputDate(dateStr) {
@@ -794,6 +901,40 @@
       });
     }
 
+
+    function getClinicPagination(items = getFilteredClinics()) {
+      const totalItems = items.length;
+      const perPage = Math.max(1, Number(state.clinicPageSize) || 8);
+      const totalPages = Math.max(1, Math.ceil(totalItems / perPage));
+      const page = Math.min(Math.max(1, Number(state.clinicPage) || 1), totalPages);
+      const start = (page - 1) * perPage;
+      const end = start + perPage;
+      return {
+        items,
+        totalItems,
+        perPage,
+        totalPages,
+        page,
+        pageItems: items.slice(start, end)
+      };
+    }
+
+    function renderClinicPagination(items = getFilteredClinics()) {
+      const info = document.getElementById("clinicPageInfo");
+      const summary = document.getElementById("clinicPageSummary");
+      const prev = document.getElementById("btnClinicPrev");
+      const next = document.getElementById("btnClinicNext");
+      if (!info || !summary || !prev || !next) return;
+
+      const pagination = getClinicPagination(items);
+      state.clinicPage = pagination.page;
+
+      info.textContent = `Página ${pagination.page} de ${pagination.totalPages}`;
+      summary.textContent = `${pagination.totalItems} clínica(s) filtrada(s)`;
+      prev.disabled = pagination.page <= 1;
+      next.disabled = pagination.page >= pagination.totalPages;
+    }
+
     function renderStats() {
       if (!state.hasLoadedClinics && state.loadingClinics) {
         document.getElementById("statsGrid").innerHTML = `
@@ -831,17 +972,20 @@
 
       if (!state.hasLoadedClinics && state.loadingClinics) {
         body.innerHTML = `<tr><td colspan="6"><div class="empty">Carregando clínicas...</div></td></tr>`;
+        renderClinicPagination([]);
         return;
       }
 
       const items = getFilteredClinics();
+      const pagination = getClinicPagination(items);
+      renderClinicPagination(items);
 
       if (!items.length) {
         body.innerHTML = `<tr><td colspan="6"><div class="empty">Nenhuma clínica encontrada.</div></td></tr>`;
         return;
       }
 
-      body.innerHTML = items.map(clinic => {
+      body.innerHTML = pagination.pageItems.map(clinic => {
         const status = getComputedStatus(clinic);
         const used = countInternalUsers(clinic);
         const included = includedUsers(clinic);
@@ -901,6 +1045,70 @@
         state.loadingClinics = false;
         renderStats();
         renderTable();
+      }
+    }
+
+    function renderSuperadmins() {
+      const body = document.getElementById("superadminBody");
+      if (!body) return;
+
+      if (!state.hasLoadedSuperadmins && state.loadingSuperadmins) {
+        body.innerHTML = `<tr><td colspan="6"><div class="empty">Carregando superadmins...</div></td></tr>`;
+        return;
+      }
+
+      if (!state.superadmins.length) {
+        body.innerHTML = `<tr><td colspan="6"><div class="empty">Nenhum superadmin listado ainda.</div></td></tr>`;
+        return;
+      }
+
+      body.innerHTML = state.superadmins.map(sa => {
+        const active = sa.is_active === false ? false : true;
+        return `
+          <tr data-superadmin-id="${escapeHtml(sa.user_id || '')}">
+            <td>
+              <div class="clinic-block">
+                <strong>${escapeHtml(sa.display_name || sa.name || 'Superadmin')}</strong>
+                <span class="muted">ID: ${escapeHtml((sa.user_id || '—').slice(0, 8))}</span>
+              </div>
+            </td>
+            <td>
+              <div class="clinic-block">
+                <strong>${escapeHtml(sa.email || '—')}</strong>
+              </div>
+            </td>
+            <td><span class="${badgeClass(active ? 'active' : 'inactive')}">${active ? 'Ativo' : 'Inativo'}</span></td>
+            <td>${escapeHtml(formatDateTime(sa.created_at))}</td>
+            <td>${escapeHtml(formatDateTime(sa.last_sign_in_at))}</td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-warning" data-action="reset-superadmin">Redefinir senha</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      body.querySelectorAll('button[data-action="reset-superadmin"]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const tr = button.closest('tr');
+          const id = tr?.dataset?.superadminId;
+          const target = state.superadmins.find(item => item.user_id === id);
+          if (target) openResetSuperadminModal(target);
+        });
+      });
+    }
+
+    async function loadSuperadmins() {
+      state.loadingSuperadmins = true;
+      renderSuperadmins();
+      try {
+        const data = await callEdgeFunction(CONFIG.endpoints.listSuperadmins, {});
+        state.superadmins = Array.isArray(data?.superadmins) ? data.superadmins : [];
+        state.hasLoadedSuperadmins = true;
+      } finally {
+        state.loadingSuperadmins = false;
+        renderSuperadmins();
       }
     }
 
@@ -1341,6 +1549,41 @@
       if (btnCopyAccess) btnCopyAccess.addEventListener("click", () => copyText(detailMasterAccessText(), "Acesso copiado."));
     }
 
+    async function handleResetSuperadminPassword(button) {
+      const target = state.selectedSuperadmin;
+      const password = document.getElementById("reset_sa_password").value.trim();
+      if (!target?.user_id) {
+        toast("Nenhum superadmin selecionado.", "error", 3200);
+        return;
+      }
+      if (!password) {
+        toast("Gera ou digita uma senha antes de redefinir.", "error", 3200);
+        return;
+      }
+
+      await withButtonLoading(button, "Redefinindo...", async () => {
+        await callEdgeFunction(CONFIG.endpoints.resetSuperadminPassword, {
+          user_id: target.user_id,
+          new_password: password
+        });
+        toast("Senha do superadmin redefinida com sucesso.", "success");
+        closeResetSuperadminModal();
+      });
+    }
+
+    function openResetSuperadminModal(superadmin) {
+      state.selectedSuperadmin = superadmin || null;
+      document.getElementById("reset_sa_name").value = superadmin?.display_name || superadmin?.name || "Superadmin";
+      document.getElementById("reset_sa_email").value = superadmin?.email || "";
+      document.getElementById("reset_sa_password").value = generateTemporaryPassword();
+      document.getElementById("resetSuperadminModal").classList.add("show");
+    }
+
+    function closeResetSuperadminModal() {
+      state.selectedSuperadmin = null;
+      document.getElementById("resetSuperadminModal").classList.remove("show");
+    }
+
     async function createClinic(payload) {
       const data = await callEdgeFunction(CONFIG.endpoints.createClinic, payload);
       toast("Clínica criada com sucesso.", "success");
@@ -1396,11 +1639,29 @@
 
       document.getElementById("btnCreateClinic").addEventListener("click", openCreateModal);
       document.getElementById("btnOpenSuperadminModal").addEventListener("click", openSuperadminModal);
+      document.getElementById("btnManageSuperadmins").addEventListener("click", openSuperadminsListModal);
+
+      document.getElementById("btnClinicPrev").addEventListener("click", () => {
+        if (state.clinicPage > 1) {
+          state.clinicPage -= 1;
+          renderTable();
+        }
+      });
+
+      document.getElementById("btnClinicNext").addEventListener("click", () => {
+        const pagination = getClinicPagination();
+        if (state.clinicPage < pagination.totalPages) {
+          state.clinicPage += 1;
+          renderTable();
+        }
+      });
 
       document.getElementById("btnCloseCreate").addEventListener("click", closeCreateModal);
       document.getElementById("btnCloseCreateHead").addEventListener("click", closeCreateModal);
       document.getElementById("btnCloseSuperadmin").addEventListener("click", closeSuperadminModal);
       document.getElementById("btnCloseSuperadminHead").addEventListener("click", closeSuperadminModal);
+      document.getElementById("btnCloseSuperadmins").addEventListener("click", closeSuperadminsListModal);
+      document.getElementById("btnCloseSuperadminsHead").addEventListener("click", closeSuperadminsListModal);
       document.getElementById("btnCloseDetail").addEventListener("click", closeDetailModal);
       document.getElementById("btnCloseDetailHead").addEventListener("click", closeDetailModal);
 
@@ -1412,6 +1673,9 @@
       });
       document.getElementById("superadminModal").addEventListener("click", (e) => {
         if (e.target.id === "superadminModal") closeSuperadminModal();
+      });
+      document.getElementById("resetSuperadminModal").addEventListener("click", (e) => {
+        if (e.target.id === "resetSuperadminModal") closeResetSuperadminModal();
       });
 
       document.getElementById("btnGeneratePassword").addEventListener("click", () => {
@@ -1432,6 +1696,21 @@
       document.getElementById("btnCopySaEmail").addEventListener("click", () => copyText(document.getElementById("sa_email").value, "E-mail copiado."));
       document.getElementById("btnCopySaPassword").addEventListener("click", () => copyText(document.getElementById("sa_password").value, "Senha copiada."));
       document.getElementById("btnCopySaAccess").addEventListener("click", () => copyText(superadminAccessText(), "Acesso do superadmin copiado."));
+      document.getElementById("btnRefreshSuperadmins").addEventListener("click", async (e) => {
+        const button = e.currentTarget;
+        await withButtonLoading(button, "Atualizando...", async () => {
+          await loadSuperadmins();
+          toast("Lista de superadmins atualizada.", "success", 2400);
+        });
+      });
+      document.getElementById("btnCloseResetSuperadmin").addEventListener("click", closeResetSuperadminModal);
+      document.getElementById("btnCloseResetSuperadminHead").addEventListener("click", closeResetSuperadminModal);
+      document.getElementById("btnGenerateResetSaPassword").addEventListener("click", () => {
+        document.getElementById("reset_sa_password").value = generateTemporaryPassword();
+        toast("Senha temporária gerada.", "info");
+      });
+      document.getElementById("btnCopyResetSaPassword").addEventListener("click", () => copyText(document.getElementById("reset_sa_password").value, "Senha copiada."));
+      document.getElementById("btnSubmitResetSuperadmin").addEventListener("click", () => handleResetSuperadminPassword(document.getElementById("btnSubmitResetSuperadmin")));
 
       const clinicName = document.getElementById("clinic_name");
       const clinicSlug = document.getElementById("clinic_slug");
@@ -1521,6 +1800,7 @@
           e.currentTarget.reset();
           document.getElementById("sa_password").value = generateTemporaryPassword();
           closeSuperadminModal();
+          await loadSuperadmins();
         });
       });
 
@@ -1546,7 +1826,7 @@
           renderStats();
           renderTable();
 
-          await loadClinics();
+          await Promise.all([loadClinics(), loadSuperadmins()]);
           toast("Login realizado com sucesso.", "success");
         } catch (err) {
           console.error(err);
@@ -1572,6 +1852,18 @@
       }
     }
     function closeSuperadminModal() { document.getElementById("superadminModal").classList.remove("show"); }
+    function openSuperadminsListModal() {
+      document.getElementById("superadminsListModal").classList.add("show");
+      if (!state.hasLoadedSuperadmins) {
+        loadSuperadmins().catch(err => {
+          console.error(err);
+          toast(err.message || "Erro ao carregar superadmins.", "error", 3600);
+        });
+      } else {
+        renderSuperadmins();
+      }
+    }
+    function closeSuperadminsListModal() { document.getElementById("superadminsListModal").classList.remove("show"); }
     function closeDetailModal() { document.getElementById("detailModal").classList.remove("show"); }
 
     async function restoreSessionIfAny() {
@@ -1584,10 +1876,10 @@
       renderStats();
       renderTable();
       try {
-        await loadClinics();
+        await Promise.all([loadClinics(), loadSuperadmins()]);
       } catch (err) {
         console.error(err);
-        toast(err.message || "Erro ao carregar clínicas.", "error", 4000);
+        toast(err.message || "Erro ao carregar dados do painel.", "error", 4000);
       }
       return true;
     }
