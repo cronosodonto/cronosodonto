@@ -93,6 +93,17 @@
     .badge-scheduled{background:rgba(168,85,247,.16);color:#d8b4fe}
     .row-actions{display:flex;flex-wrap:wrap;gap:8px}
     .empty{padding:28px;text-align:center;color:var(--muted)}
+    .detail-loading{display:grid;gap:14px;padding:8px 0}
+    .detail-loading-title{font-size:18px;font-weight:800;color:var(--text)}
+    .detail-loading-sub{color:var(--muted);font-size:14px}
+    .detail-loading-card{border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:18px}
+    .detail-loading-bars{display:grid;gap:10px;margin-top:10px}
+    .detail-loading-bar{height:12px;border-radius:999px;background:linear-gradient(90deg, rgba(255,255,255,.06), rgba(255,255,255,.14), rgba(255,255,255,.06));background-size:200% 100%;animation:detailShimmer 1.1s linear infinite}
+    .detail-loading-bar.w40{width:40%}
+    .detail-loading-bar.w55{width:55%}
+    .detail-loading-bar.w70{width:70%}
+    .detail-loading-bar.w85{width:85%}
+    @keyframes detailShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
     .login-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
     .login-card{width:min(480px,100%);padding:26px}
@@ -576,6 +587,7 @@
       selectedClinicId: null,
       selectedClinicDetails: null,
       loadingClinics: false,
+      loadingClinicDetails: false,
       hasLoadedClinics: false
     };
 
@@ -892,24 +904,49 @@
       }
     }
 
+    function openDetailLoadingModal(clinicId) {
+      state.selectedClinicId = clinicId;
+      const preview = state.clinics.find(c => c.id === clinicId) || {};
+      state.selectedClinicDetails = {
+        clinic: preview,
+        private: {},
+        users: [],
+        __loading: true
+      };
+      renderDetailModal();
+      document.getElementById("detailModal").classList.add("show");
+    }
+
+    async function handleOpenDetails(button, clinicId) {
+      openDetailLoadingModal(clinicId);
+      await withButtonLoading(button, "Abrindo...", async () => {
+        await loadClinicDetails(clinicId);
+      });
+    }
+
     async function loadClinicDetails(clinicId) {
       state.selectedClinicId = clinicId;
-      let clinic = state.clinics.find(c => c.id === clinicId) || null;
+      const clinic = state.clinics.find(c => c.id === clinicId) || null;
+      state.loadingClinicDetails = true;
 
       try {
         const data = await callEdgeFunction(CONFIG.endpoints.getClinicDetails, { clinic_id: clinicId });
         state.selectedClinicDetails = {
           clinic: data?.clinic || clinic || {},
           private: data?.private || {},
-          users: Array.isArray(data?.users) ? data.users : []
+          users: Array.isArray(data?.users) ? data.users : [],
+          __loading: false
         };
       } catch (err) {
         state.selectedClinicDetails = {
           clinic: clinic || {},
           private: {},
-          users: []
+          users: [],
+          __loading: false
         };
         toast("Detalhes completos ainda dependem do backend. Mostrando o que já temos.", "info", 3500);
+      } finally {
+        state.loadingClinicDetails = false;
       }
 
       renderDetailModal();
@@ -931,6 +968,24 @@
       const used = countInternalUsers(clinic);
       const included = includedUsers(clinic);
       const extra = overageUsers(clinic);
+
+      if (payload.__loading) {
+        detailRoot.innerHTML = `
+          <div class="detail-loading">
+            <div class="detail-loading-title">Carregando detalhes da clínica...</div>
+            <div class="detail-loading-sub">${escapeHtml(clinic.name ? `Abrindo ${clinic.name}` : 'Buscando dados mais completos no backend...')}</div>
+            <div class="detail-loading-card">
+              <div class="detail-loading-bars">
+                <div class="detail-loading-bar w55"></div>
+                <div class="detail-loading-bar w85"></div>
+                <div class="detail-loading-bar w70"></div>
+                <div class="detail-loading-bar w40"></div>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
 
       detailRoot.innerHTML = `
         <div class="header-line">
@@ -1095,7 +1150,7 @@
       document.querySelectorAll("tbody [data-action='details']").forEach(btn => {
         btn.addEventListener("click", async (e) => {
           const row = e.currentTarget.closest("tr");
-          await loadClinicDetails(row.dataset.clinicId);
+          await handleOpenDetails(e.currentTarget, row.dataset.clinicId);
         });
       });
 
@@ -1128,48 +1183,41 @@
       });
     }
 
-   async function handleSaveClinicSettings(button) {
-  const start = document.getElementById("detail_access_starts_at").value;
-  const end = document.getElementById("detail_access_ends_at").value;
+    async function handleSaveClinicSettings(button) {
+      const start = document.getElementById("detail_access_starts_at").value;
+      const end = document.getElementById("detail_access_ends_at").value;
+      if (start && end && start > end) {
+        toast("O início do acesso não pode ser maior que o fim.", "error", 3600);
+        return;
+      }
 
-  if (start && end && start > end) {
-    toast("O início do acesso não pode ser maior que o fim.", "error", 3600);
-    return;
-  }
-
-  try {
-    await withButtonLoading(button, "Salvando...", async () => {
-      await callEdgeFunction(CONFIG.endpoints.updateClinicSettings, {
-        clinic_id: state.selectedClinicId,
-        clinic: {
-          name: document.getElementById("detail_name").value.trim(),
-          slug: document.getElementById("detail_slug").value.trim(),
-          master_name: document.getElementById("detail_master_name").value.trim(),
-          master_email: document.getElementById("detail_master_email").value.trim(),
-          status: document.getElementById("detail_status").value,
-          access_starts_at: start ? `${start}T00:00:00` : null,
-          access_ends_at: end ? `${end}T23:59:59` : null,
-          included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
-          extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
-        },
-        private: {
-          document_type: document.getElementById("detail_document_type").value || null,
-          document_number: document.getElementById("detail_document_number").value.trim() || null,
-          owner_phone: document.getElementById("detail_owner_phone").value.trim() || null,
-          owner_name: document.getElementById("detail_owner_name").value.trim() || null,
-          notes: document.getElementById("detail_notes").value.trim() || null
-        }
+      await withButtonLoading(button, "Salvando...", async () => {
+        await callEdgeFunction(CONFIG.endpoints.updateClinicSettings, {
+          clinic_id: state.selectedClinicId,
+          clinic: {
+            name: document.getElementById("detail_name").value.trim(),
+            slug: document.getElementById("detail_slug").value.trim(),
+            master_name: document.getElementById("detail_master_name").value.trim(),
+            master_email: document.getElementById("detail_master_email").value.trim(),
+            status: document.getElementById("detail_status").value,
+            access_starts_at: start ? `${start}T00:00:00` : null,
+            access_ends_at: end ? `${end}T23:59:59` : null,
+            included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
+            extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
+          },
+          private: {
+            document_type: document.getElementById("detail_document_type").value || null,
+            document_number: document.getElementById("detail_document_number").value.trim() || null,
+            owner_phone: document.getElementById("detail_owner_phone").value.trim() || null,
+            owner_name: document.getElementById("detail_owner_name").value.trim() || null,
+            notes: document.getElementById("detail_notes").value.trim() || null
+          }
+        });
+        toast("Configurações salvas.", "success");
+        await loadClinics();
+        await loadClinicDetails(state.selectedClinicId);
       });
-    });
-
-    toast("Configurações salvas.", "success");
-    await loadClinics();
-    await loadClinicDetails(state.selectedClinicId);
-  } catch (err) {
-    console.error("Erro ao salvar clínica:", err);
-    toast(err?.message || "Erro ao salvar mudanças.", "error", 5000);
-  }
-}
+    }
 
 
     async function handleDeleteClinic(button) {
