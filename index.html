@@ -8064,7 +8064,15 @@ function __bindKpiClicks(){
 const supabaseUrl = "https://nsqpslierpulanxvsxaw.supabase.co";
 const supabaseKey = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
 
-const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+const CRONOS_MAIN_AUTH_STORAGE_KEY = "cronos-main-auth";
+const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    storageKey: CRONOS_MAIN_AUTH_STORAGE_KEY,
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: false
+  }
+});
 window.__SUPABASE_CLOUD_LOGIN__ = true;
 window.__SUPABASE_MASTER_LOGIN__ = false;
 window.__CRONOS_LOGIN_BUSY__ = false;
