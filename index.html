@@ -8913,6 +8913,184 @@ document.addEventListener("DOMContentLoaded", () => {
     renderUsers();
   }, 200);
 </script>
+
+<style id="feature-access-safe-style">
+.nav button.feature-locked{
+  opacity:.48 !important;
+  filter:saturate(.65);
+  border-style:dashed !important;
+}
+.nav button.feature-locked:hover{
+  transform:none !important;
+  background: rgba(255,255,255,.03) !important;
+}
+.nav button.feature-locked .featureLockTag{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:42px;
+  height:24px;
+  padding:0 8px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.14);
+  font-size:11px;
+  color:#ffe8a3;
+  background:rgba(255,204,0,.10);
+  margin-left:8px;
+}
+.nav button.feature-hidden{
+  display:none !important;
+}
+</style>
+<script id="feature-access-safe-patch">
+(function(){
+  const FEATURE_ACCESS_ENDPOINT = 'get-clinic-feature-access';
+  const featureStateMap = new Map();
+  const VIEW_TO_FEATURE = {
+    dashboard: 'dashboard',
+    leads: 'leads',
+    kanban: 'funil',
+    tasks: 'tarefas',
+    installments: 'parcelamentos',
+    users: 'usuarios',
+    settings: 'configuracoes'
+  };
+
+  function normalizeFeatureKey(value){
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function getFeatureState(view){
+    const key = VIEW_TO_FEATURE[view];
+    if(!key) return { visibility_mode:'enabled', enabled:true };
+    return featureStateMap.get(key) || { visibility_mode:'enabled', enabled:true };
+  }
+
+  function isFeatureHidden(view){
+    const state = getFeatureState(view);
+    return String(state.visibility_mode || '').toLowerCase() === 'hidden';
+  }
+
+  function isFeatureLocked(view){
+    const state = getFeatureState(view);
+    const visibility = String(state.visibility_mode || '').toLowerCase();
+    if(visibility === 'hidden') return false;
+    if(visibility === 'locked') return true;
+    return state.enabled === false;
+  }
+
+  function showPlanMessage(){
+    try{
+      if(typeof toast === 'function'){
+        toast('Plano contratado', 'Este módulo não faz parte do plano contratado.');
+        return;
+      }
+    }catch(_err){}
+    try{ alert('Este módulo não faz parte do plano contratado.'); }catch(_err){}
+  }
+
+  function getFirstVisibleAndEnabledView(){
+    const buttons = Array.from(document.querySelectorAll('.nav button[data-view]'));
+    for(const btn of buttons){
+      const view = btn.getAttribute('data-view');
+      if(!view) continue;
+      const hiddenByRole = btn.classList.contains('hidden');
+      if(hiddenByRole) continue;
+      if(isFeatureHidden(view)) continue;
+      if(isFeatureLocked(view)) continue;
+      return view;
+    }
+    return null;
+  }
+
+  function applyFeatureStatesToMenu(){
+    try{
+      const buttons = Array.from(document.querySelectorAll('.nav button[data-view]'));
+      buttons.forEach(btn => {
+        const view = btn.getAttribute('data-view');
+        if(!view) return;
+        const hiddenByRole = btn.classList.contains('hidden');
+        const hiddenByFeature = isFeatureHidden(view);
+        const lockedByFeature = isFeatureLocked(view);
+        btn.classList.toggle('feature-hidden', !hiddenByRole && hiddenByFeature);
+        btn.classList.toggle('feature-locked', !hiddenByRole && !hiddenByFeature && lockedByFeature);
+        let tag = btn.querySelector('.featureLockTag');
+        if(!hiddenByRole && !hiddenByFeature && lockedByFeature){
+          if(!tag){
+            tag = document.createElement('span');
+            tag.className = 'featureLockTag';
+            tag.textContent = 'Bloq.';
+            btn.appendChild(tag);
+          }
+        }else if(tag){
+          tag.remove();
+        }
+      });
+    }catch(err){ console.error('Falha ao aplicar botões de feature:', err); }
+  }
+
+  function guardShowView(){
+    if(typeof window.showView !== 'function' || window.__featureGuardWrapped) return;
+    const originalShowView = window.showView;
+    window.showView = function(view){
+      if(isFeatureHidden(view) || isFeatureLocked(view)){
+        showPlanMessage();
+        const fallback = getFirstVisibleAndEnabledView();
+        if(fallback && fallback !== view) return originalShowView.call(this, fallback);
+        return;
+      }
+      return originalShowView.apply(this, arguments);
+    };
+    window.__featureGuardWrapped = true;
+  }
+
+  async function fetchFeatureAccess(){
+    try{
+      const actor = (typeof currentActor === 'function') ? currentActor() : null;
+      const ownerUid = actor?.masterId || actor?.userId || actor?.id || null;
+      if(!ownerUid) return;
+
+      const authToken = localStorage.getItem('cronos_token') || localStorage.getItem('authToken') || '';
+      const headers = { 'Content-Type':'application/json' };
+      if(authToken) headers['Authorization'] = 'Bearer ' + authToken;
+
+      const res = await fetch('https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/' + FEATURE_ACCESS_ENDPOINT, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ owner_uid: ownerUid })
+      });
+
+      if(!res.ok) throw new Error('feature access unavailable');
+      const data = await res.json().catch(() => ({}));
+      featureStateMap.clear();
+      (Array.isArray(data?.features) ? data.features : []).forEach(item => {
+        const key = normalizeFeatureKey(item?.feature_key);
+        if(!key) return;
+        featureStateMap.set(key, {
+          enabled: item?.enabled !== false,
+          visibility_mode: normalizeFeatureKey(item?.visibility_mode || 'enabled') || 'enabled'
+        });
+      });
+    }catch(err){
+      console.warn('Feature access em modo seguro:', err?.message || err);
+    }
+  }
+
+  async function bootFeatureAccess(){
+    guardShowView();
+    applyFeatureStatesToMenu();
+    await fetchFeatureAccess();
+    applyFeatureStatesToMenu();
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', bootFeatureAccess, { once:true });
+  }else{
+    bootFeatureAccess();
+  }
+})();
+</script>
+
 </body>
 </html>
 <!-- update -->
