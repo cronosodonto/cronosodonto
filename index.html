@@ -2251,12 +2251,8 @@ style="width:344px; height:auto; display:block; margin:0 auto; color:inherit;">
 </svg>
 
 
-<div id="authAccessLabel" style="text-align:center; margin:12px 0 18px 0; font-size:14px; font-weight:500; opacity:0.75;">
+<div style="text-align:center; margin:12px 0 28px 0; font-size:14px; font-weight:500; opacity:0.75;">
   Acesso da Clínica
-</div>
-<div id="supportEntryHint" class="authStatus hidden" aria-live="polite" aria-atomic="true" style="margin:0 0 18px 0;">
-  <span class="spinner sm" aria-hidden="true"></span>
-  <span id="supportEntryText">Modo suporte • Validando acesso e carregando a clínica...</span>
 </div>
     <div class="twoCol">
       <div id="authModeWrap">
@@ -3265,6 +3261,7 @@ async function maybeInitSupportMode(){
 
 
 const ACCESS_STATUS_ENDPOINT = "get-clinic-access-state";
+const CREATE_CLINIC_USER_ENDPOINT = "create-clinic-user";
 const DEFAULT_RENEWAL_MESSAGE = "Olá! Meu acesso ao Cronos expirou e quero renovar.";
 let CLINIC_ACCESS_STATE = null;
 
@@ -3623,9 +3620,8 @@ async function getClinicMembershipByAuthUid(authUid){
 
   const { data, error } = await supabaseClient
     .from(CLOUD_MEMBERS_TABLE)
-    .select("id, owner_uid, auth_uid, email, username, name, role, active, created_at, updated_at")
+    .select("id, owner_uid, auth_uid, email, username, name, role, active, pending_approval, blocked_reason, created_at, updated_at")
     .eq("auth_uid", authUid)
-    .eq("active", true)
     .maybeSingle();
 
   if(error && error.code !== "PGRST116"){
@@ -3675,10 +3671,22 @@ async function resolveClinicAccessContext(user){
       throw rowResp.error;
     }
 
+    const memberOwnerEmail = String(rowResp.data?.owner_email || "").trim().toLowerCase();
+
+    if(membership.active === false){
+      return {
+        kind: membership.pending_approval ? "member_pending" : "member_inactive",
+        ownerUid: membership.owner_uid,
+        ownerEmail: memberOwnerEmail,
+        row: rowResp.data || null,
+        member: membership
+      };
+    }
+
     return {
       kind: "member",
       ownerUid: membership.owner_uid,
-      ownerEmail: String(rowResp.data?.owner_email || "").trim().toLowerCase(),
+      ownerEmail: memberOwnerEmail,
       row: rowResp.data || null,
       member: membership
     };
@@ -4051,7 +4059,7 @@ async function syncCurrentCloudActor(){
 
   if(CLOUD_MEMBER_INFO){
     db = ensureMemberMirror(db, CLOUD_MEMBER_INFO);
-  } else if(CLOUD_ACCESS_KIND === "member_orphan"){
+  } else if(CLOUD_ACCESS_KIND === "member_orphan" || CLOUD_ACCESS_KIND === "member_pending" || CLOUD_ACCESS_KIND === "member_inactive"){
     return null;
   }
 
@@ -4246,37 +4254,6 @@ function setLoginLoading(isLoading, message="Entrando no Cronos..."){
   }
 }
 
-
-function setSupportEntryLoading(isLoading, message="Modo suporte • Validando acesso e carregando a clínica..."){
-  const authLabel = el("authAccessLabel");
-  const supportHint = el("supportEntryHint");
-  const supportText = el("supportEntryText");
-  const authModeWrap = el("authModeWrap");
-  const authMasterWrap = el("authMasterNameWrap");
-  const authLogin = el("authLogin")?.parentElement;
-  const authPass = el("authPass")?.parentElement;
-  const authButtons = el("btnLogin")?.parentElement;
-
-  if(authLabel){
-    authLabel.textContent = isLoading ? "Modo suporte" : "Acesso da Clínica";
-  }
-  if(supportHint){
-    supportHint.classList.toggle("hidden", !isLoading);
-  }
-  if(supportText && message){
-    supportText.textContent = message;
-  }
-
-  [authModeWrap, authMasterWrap, authLogin, authPass, authButtons].forEach(node=>{
-    if(!node) return;
-    node.classList.toggle("hidden", !!isLoading);
-  });
-
-  if(isLoading){
-    setLoginLoading(false);
-  }
-}
-
 function triggerLoginSubmit(){
   if(window.__CRONOS_LOGIN_BUSY__) return;
   const btn = el("btnLogin");
@@ -4312,17 +4289,7 @@ function showAuth(){
   el("appView").classList.add("hidden");
   hideAccessGate();
   hideAccessNotice();
-
-  const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
-  const supportPending = supportTokenPresent || (!currentActor() && isSupportMode());
-
-  if(supportPending){
-    setSupportEntryLoading(true, "Modo suporte • Validando acesso e carregando a clínica...");
-  }else{
-    setSupportEntryLoading(false);
-    setLoginLoading(false);
-  }
-
+  setLoginLoading(false);
   const exitBtn = el("btnExitSupport");
   if(exitBtn) exitBtn.classList.add("hidden");
   // refreshAuthMasters();
@@ -4331,7 +4298,6 @@ function showAuth(){
 }
 
 function showApp(actor){
-  setSupportEntryLoading(false);
   el("authView").classList.add("hidden");
   el("appView").classList.remove("hidden");
   hideAccessGate();
@@ -7131,6 +7097,31 @@ function userFormHTML(user){
   `;
 }
 
+
+async function createClinicUserViaEdge({ name, username, email, password, role }){
+  const sessionResp = await supabaseClient.auth.getSession();
+  const session = sessionResp?.data?.session;
+  if(!session?.access_token){
+    throw new Error("Sessão expirada. Faça login novamente.");
+  }
+
+  const res = await fetch(`${supabaseUrl}/functions/v1/${CREATE_CLINIC_USER_ENDPOINT}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${session.access_token}`,
+      "apikey": supabaseKey
+    },
+    body: JSON.stringify({ name, username, email, password, role })
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if(!res.ok){
+    throw new Error(json?.error || "Não foi possível criar o usuário.");
+  }
+  return json || {};
+}
+
 function openNewUser(){
   const actor = currentActor();
   if(!actor.perms.manageUsers) return toast("Sem permissão", "Somente Master pode gerenciar usuários.");
@@ -7160,31 +7151,40 @@ function openNewUser(){
         if(email && db.users.some(u=>u.masterId===actor.masterId && String(u.email||"").toLowerCase()===email)) return toast("E-mail já existe");
 
         try{
-          const identity = await createCloudUserIdentity({ name, username, email, password: pass });
-          await insertClinicMemberRecord({
-            authUid: identity.authUid,
-            loginEmail: identity.loginEmail,
-            username: identity.username,
+          const result = await createClinicUserViaEdge({
             name,
+            username,
+            email,
+            password: pass,
             role
           });
 
+          const authUid = result?.user?.auth_uid || result?.auth_uid || null;
+          const loginEmail = result?.user?.login_email || (username ? usernameToSyntheticEmail(username) : email);
+          const explicitEmail = result?.user?.email || email || "";
+          const pendingApproval = result?.pending_approval === true;
+
           db.users.push({
             id: uid("u"),
-            authUid: identity.authUid,
+            authUid,
             masterId: actor.masterId,
             name,
-            username: identity.username || "",
-            email: identity.explicitEmail || "",
-            loginEmail: identity.loginEmail,
+            username: username || "",
+            email: explicitEmail || "",
+            loginEmail: loginEmail || "",
             role,
-            active: true,
+            active: !pendingApproval,
             createdAt: new Date().toISOString()
           });
 
           saveDB(db, { immediate:true });
           closeModal();
-          toast("Usuário criado ✅", `${name} já pode entrar no sistema.`);
+
+          if(pendingApproval){
+            toast("Usuário enviado para aprovação ⏳", `${name} foi criado, mas ficará bloqueado até liberação do superadmin.`);
+          }else{
+            toast("Usuário criado ✅", `${name} já pode entrar no sistema.`);
+          }
           renderAll();
         }catch(err){
           console.error("Erro ao criar usuário cloud:", err);
@@ -8296,11 +8296,6 @@ function renderAll(){
 async function boot(){
   const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
 
-  if(supportTokenPresent || isSupportMode()){
-    showAuth();
-    setSupportEntryLoading(true, "Modo suporte • Validando acesso e carregando a clínica...");
-  }
-
   try{
     await maybeInitSupportMode();
   }catch(error){
@@ -8732,7 +8727,18 @@ async function finalizeCloudLogin(){
     await ensureCloudDBLoaded(true);
     const actorInfo = await syncCurrentCloudActor();
     if(!actorInfo){
-      toast("Acesso sem vínculo", "Esse login autenticou, mas não está ligado a nenhuma clínica.");
+      let title = "Acesso sem vínculo";
+      let message = "Esse login autenticou, mas não está ligado a nenhuma clínica.";
+
+      if(CLOUD_ACCESS_KIND === "member_pending"){
+        title = "Aguardando liberação";
+        message = String(CLOUD_MEMBER_INFO?.blocked_reason || "Seu acesso foi criado, mas ainda depende da liberação do superadmin.");
+      }else if(CLOUD_ACCESS_KIND === "member_inactive"){
+        title = "Acesso bloqueado";
+        message = String(CLOUD_MEMBER_INFO?.blocked_reason || "Esse usuário está inativo e precisa ser liberado pelo superadmin.");
+      }
+
+      toast(title, message);
       try{ await supabaseClient.auth.signOut(); }catch(_){}
       clearClinicAccessState();
       clearSession();
