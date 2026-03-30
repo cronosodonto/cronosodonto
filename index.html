@@ -1416,6 +1416,27 @@ html, body{ overflow-x: hidden; }
   font-weight:700;
 }
 
+
+/* ===== Feature flags / premium modules ===== */
+.nav button.locked-feature{
+  opacity:.68;
+  filter:saturate(.9);
+}
+.nav button.locked-feature .pill{
+  border-color: rgba(251,191,36,.35);
+  color:#ffd76b;
+}
+.featureLockNote{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:12px 14px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  color:var(--muted);
+}
+
 </style>
 </head>
 <body>
@@ -2815,6 +2836,28 @@ fill="currentColor" stroke="none">
 </section>
 
 
+
+<!-- AGENDA -->
+<section id="view-agenda" class="hidden">
+  <div class="topbar">
+    <div class="titleBlock">
+      <h2>🗓 Agenda</h2>
+      <p>Módulo de agenda e calendário da clínica.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="featureLockNote">
+      <span>⏳</span>
+      <div>
+        <strong>Agenda em preparação.</strong>
+        <div class="muted">Quando este recurso estiver liberado no seu plano, ele vai aparecer aqui com acesso normal.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
 <!-- INSTALLMENTS -->
 <section id="view-installments" class="hidden">
   <div class="topbar">
@@ -3031,13 +3074,13 @@ const TREATMENTS = [
 const POSITIVE = new Set(["Agendado","Compareceu","Fechou","Remarcou","Conversando","Concluído"]);
 const DISQUALIFIED = new Set(["Número incorreto","Achou caro","Não tem interesse","Mora longe","Mora em outra cidade","Fechou em outro lugar","Msg não entregue","Mensagem não entregue"]);
 // Permissions
-const APP_VIEWS = ["dashboard","leads","kanban","tasks","installments","users","settings"];
+const APP_VIEWS = ["dashboard","leads","kanban","tasks","agenda","installments","users","settings"];
 
 const PERMS = {
   // MASTER (secundário): acesso alto, mas NÃO pode criar/remover outros masters
   MASTER:     {viewAll:true, edit:true, delete:true, manageUsers:true, manageMasters:false, views:[...APP_VIEWS]},
   GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban","tasks","installments"]},
-  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban","tasks","installments"]},
+  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban","tasks","agenda","installments"]},
   DENTISTA:   {viewAll:true, edit:false, delete:false, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban"]},
 };
 
@@ -5874,7 +5917,15 @@ function setActiveView(view){
     targetView = fallback;
   }
 
+  const featureGuard = featureGuardForView(targetView);
+  if(!featureGuard.allowed){
+    toast(featureGuard.label || "Recurso bloqueado", featureGuard.description || "Recurso indisponível no seu plano atual.");
+    const fallback = firstAllowedView(actor);
+    if(targetView !== fallback) targetView = fallback;
+  }
+
   applyRoleVisibility(actor);
+  applyFeatureVisibility(actor);
   qsa(".nav button").forEach(b=> b.classList.toggle("active", b.dataset.view===targetView));
   APP_VIEWS.forEach(v=>{
     el(`view-${v}`).classList.toggle("hidden", v!==targetView);
@@ -8110,12 +8161,124 @@ renderKanban();
 }
 
 /* -------- Boot & bindings -------- */
+
+const FEATURE_FLAGS = { loaded:false, map:{} };
+
+function getFeatureState(featureKey){
+  return FEATURE_FLAGS.map?.[featureKey] || null;
+}
+
+function getFeatureLookupPayload(){
+  const support = getSupportContext();
+  return {
+    clinic_id: String(support?.clinic_id || "").trim() || null,
+    owner_uid: String(CLOUD_CLINIC_OWNER_UID || support?.owner_uid || "").trim() || null,
+  };
+}
+
+async function loadFeatureFlags(){
+  try{
+    const payload = getFeatureLookupPayload();
+    if(!payload.clinic_id && !payload.owner_uid){
+      FEATURE_FLAGS.loaded = true;
+      FEATURE_FLAGS.map = {};
+      return FEATURE_FLAGS.map;
+    }
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/${FEATURE_ACCESS_ENDPOINT}`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey": supabaseKey
+      },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      throw new Error(data?.error || "Falha ao buscar recursos da clínica.");
+    }
+
+    const map = {};
+    for(const row of (data?.features || [])){
+      map[row.feature_key] = row;
+    }
+    FEATURE_FLAGS.loaded = true;
+    FEATURE_FLAGS.map = map;
+    return map;
+  }catch(error){
+    console.error("Falha ao carregar recursos da clínica:", error);
+    FEATURE_FLAGS.loaded = true;
+    FEATURE_FLAGS.map = {};
+    return FEATURE_FLAGS.map;
+  }
+}
+
+function applyFeatureVisibility(actor=currentActor()){
+  qsa(".nav button[data-feature-key]").forEach(btn=>{
+    const featureKey = btn.dataset.featureKey;
+    const feature = getFeatureState(featureKey);
+    const roleCanSee = canAccessView(btn.dataset.view, actor);
+
+    if(!roleCanSee){
+      btn.classList.add("hidden");
+      return;
+    }
+
+    if(!feature){
+      btn.classList.remove("hidden","locked-feature");
+      btn.dataset.locked = "false";
+      return;
+    }
+
+    const enabled = !!feature.enabled;
+    const visibility = feature.visibility_mode || (enabled ? "enabled" : "locked");
+
+    if(!enabled && visibility === "hidden"){
+      btn.classList.add("hidden");
+      return;
+    }
+
+    btn.classList.remove("hidden");
+    btn.classList.toggle("locked-feature", !enabled);
+    btn.dataset.locked = enabled ? "false" : "true";
+
+    const pill = btn.querySelector(".pill");
+    if(pill){
+      pill.textContent = enabled ? "ativo" : "upgrade";
+    }
+  });
+}
+
+function featureGuardForView(view){
+  const btn = qs(`.nav button[data-view="${view}"]`);
+  const featureKey = btn?.dataset?.featureKey;
+  if(!featureKey) return { allowed:true };
+
+  const feature = getFeatureState(featureKey);
+  if(!feature) return { allowed:true };
+
+  if(feature.enabled) return { allowed:true };
+
+  return {
+    allowed:false,
+    label: feature.label || "Recurso",
+    description: feature.description || "Recurso indisponível no seu plano atual."
+  };
+}
+
 function bindNav(){
   if(window.__navBound) return;
   window.__navBound = true;
 
   qsa(".nav button").forEach(b=>{
-    b.addEventListener("click", ()=>setActiveView(b.dataset.view));
+    b.addEventListener("click", ()=>{
+      if(b.dataset.locked === "true"){
+        const fg = featureGuardForView(b.dataset.view);
+        toast(fg.label || "Recurso bloqueado", fg.description || "Recurso indisponível no seu plano atual.");
+        return;
+      }
+      setActiveView(b.dataset.view);
+    });
   });
 
 const bKan = el("btnNewLeadKanban"); if(bKan) bKan.addEventListener("click", openNewLead);
@@ -8404,6 +8567,8 @@ async function boot(){
 
   showApp(actor);
   applyRoleVisibility(actor);
+  await loadFeatureFlags();
+  applyFeatureVisibility(actor);
 
   bindNav();
   setActiveView(firstAllowedView(actor));
@@ -8757,6 +8922,7 @@ function __bindKpiClicks(){
 
 const supabaseUrl = "https://nsqpslierpulanxvsxaw.supabase.co";
 const supabaseKey = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
+const FEATURE_ACCESS_ENDPOINT = "get-clinic-feature-access";
 
 const CRONOS_MAIN_AUTH_STORAGE_KEY = "cronos-main-auth";
 const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey, {
