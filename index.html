@@ -544,6 +544,19 @@ to { transform: rotate(360deg); }
       padding: 16px 16px 16px 16px;
     }
 
+    .authLoginGrid{
+      display:grid;
+      grid-template-columns:1fr;
+      gap:12px;
+      align-items:start;
+    }
+    .authLoginGrid .authFullRow{
+      grid-column:1 / -1;
+    }
+    @media(min-width: 900px){
+      .authLoginGrid{grid-template-columns: 1fr 1fr;}
+    }
+
     /* Toast */
     .toast{
       position:fixed; right:16px; bottom:16px;
@@ -2258,8 +2271,8 @@ style="width:344px; height:auto; display:block; margin:0 auto; color:inherit;">
   <span class="spinner sm" aria-hidden="true"></span>
   <span id="supportEntryText">Modo suporte • Validando acesso e carregando a clínica...</span>
 </div>
-    <div class="twoCol">
-      <div id="authModeWrap">
+    <div class="twoCol authLoginGrid">
+      <div id="authModeWrap" class="authFullRow">
         <label>Modo de acesso</label>
         <select id="authMode">
           <option value="master">Master (Clínica)</option>
@@ -4260,7 +4273,6 @@ function setSupportEntryLoading(isLoading, message="Modo suporte • Validando a
   const supportHint = el("supportEntryHint");
   const supportText = el("supportEntryText");
   const authModeWrap = el("authModeWrap");
-  const authMasterWrap = el("authMasterNameWrap");
   const authLogin = el("authLogin")?.parentElement;
   const authPass = el("authPass")?.parentElement;
   const authButtons = el("btnLogin")?.parentElement;
@@ -4275,7 +4287,7 @@ function setSupportEntryLoading(isLoading, message="Modo suporte • Validando a
     supportText.textContent = message;
   }
 
-  [authModeWrap, authMasterWrap, authLogin, authPass, authButtons].forEach(node=>{
+  [authModeWrap, authLogin, authPass, authButtons].forEach(node=>{
     if(!node) return;
     node.classList.toggle("hidden", !!isLoading);
   });
