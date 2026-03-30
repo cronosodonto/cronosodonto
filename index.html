@@ -4149,24 +4149,37 @@ function currentActor(){
 
   if(isSupportMode()){
     const support = getSupportContext();
-    const supportEmail = String(support?.owner_email || "").trim().toLowerCase();
+    const supportEmail = String(support?.owner_email || support?.master_email || "").trim().toLowerCase();
     const fallbackName = String(support?.clinic_name || "").trim();
-    let master = getMasterRecordByEmail(db, supportEmail);
-    if(!master && supportEmail){
+    let master = getMasterRecordByEmail(db, supportEmail) || db.masters?.[0];
+
+    if(!master){
+      const syntheticId = supportEmail || `support:${String(support?.clinic_id || "clinic")}`;
       master = {
-        id: supportEmail,
-        name: fallbackName || supportEmail.split("@")[0],
-        email: supportEmail,
+        id: syntheticId,
+        name: fallbackName || "Modo suporte",
+        email: supportEmail || "",
         createdAt: new Date().toISOString()
       };
       db.masters.unshift(master);
       setSupportDB(db);
       DB = db;
     }
-    if(master){
-      if(fallbackName) master.name = fallbackName;
-      return {kind:"master", id:master.id, masterId:master.id, name:master.name, email:master.email, role:"MASTER", isPrimaryMaster:true, isSupport:true, perms: {...PERMS.MASTER, manageMasters:true} };
-    }
+
+    if(fallbackName) master.name = fallbackName;
+    if(supportEmail && !master.email) master.email = supportEmail;
+
+    return {
+      kind:"master",
+      id:master.id,
+      masterId:master.id,
+      name:master.name,
+      email:master.email || supportEmail || "",
+      role:"MASTER",
+      isPrimaryMaster:true,
+      isSupport:true,
+      perms: {...PERMS.MASTER, manageMasters:true}
+    };
   }
 
   const s = loadSession();
