@@ -1128,41 +1128,48 @@
       });
     }
 
-    async function handleSaveClinicSettings(button) {
-      const start = document.getElementById("detail_access_starts_at").value;
-      const end = document.getElementById("detail_access_ends_at").value;
-      if (start && end && start > end) {
-        toast("O início do acesso não pode ser maior que o fim.", "error", 3600);
-        return;
-      }
+   async function handleSaveClinicSettings(button) {
+  const start = document.getElementById("detail_access_starts_at").value;
+  const end = document.getElementById("detail_access_ends_at").value;
 
-      await withButtonLoading(button, "Salvando...", async () => {
-        await callEdgeFunction(CONFIG.endpoints.updateClinicSettings, {
-          clinic_id: state.selectedClinicId,
-          clinic: {
-            name: document.getElementById("detail_name").value.trim(),
-            slug: document.getElementById("detail_slug").value.trim(),
-            master_name: document.getElementById("detail_master_name").value.trim(),
-            master_email: document.getElementById("detail_master_email").value.trim(),
-            status: document.getElementById("detail_status").value,
-            access_starts_at: start ? `${start}T00:00:00` : null,
-            access_ends_at: end ? `${end}T23:59:59` : null,
-            included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
-            extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
-          },
-          private: {
-            document_type: document.getElementById("detail_document_type").value || null,
-            document_number: document.getElementById("detail_document_number").value.trim() || null,
-            owner_phone: document.getElementById("detail_owner_phone").value.trim() || null,
-            owner_name: document.getElementById("detail_owner_name").value.trim() || null,
-            notes: document.getElementById("detail_notes").value.trim() || null
-          }
-        });
-        toast("Configurações salvas.", "success");
-        await loadClinics();
-        await loadClinicDetails(state.selectedClinicId);
+  if (start && end && start > end) {
+    toast("O início do acesso não pode ser maior que o fim.", "error", 3600);
+    return;
+  }
+
+  try {
+    await withButtonLoading(button, "Salvando...", async () => {
+      await callEdgeFunction(CONFIG.endpoints.updateClinicSettings, {
+        clinic_id: state.selectedClinicId,
+        clinic: {
+          name: document.getElementById("detail_name").value.trim(),
+          slug: document.getElementById("detail_slug").value.trim(),
+          master_name: document.getElementById("detail_master_name").value.trim(),
+          master_email: document.getElementById("detail_master_email").value.trim(),
+          status: document.getElementById("detail_status").value,
+          access_starts_at: start ? `${start}T00:00:00` : null,
+          access_ends_at: end ? `${end}T23:59:59` : null,
+          included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
+          extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
+        },
+        private: {
+          document_type: document.getElementById("detail_document_type").value || null,
+          document_number: document.getElementById("detail_document_number").value.trim() || null,
+          owner_phone: document.getElementById("detail_owner_phone").value.trim() || null,
+          owner_name: document.getElementById("detail_owner_name").value.trim() || null,
+          notes: document.getElementById("detail_notes").value.trim() || null
+        }
       });
-    }
+    });
+
+    toast("Configurações salvas.", "success");
+    await loadClinics();
+    await loadClinicDetails(state.selectedClinicId);
+  } catch (err) {
+    console.error("Erro ao salvar clínica:", err);
+    toast(err?.message || "Erro ao salvar mudanças.", "error", 5000);
+  }
+}
 
 
     async function handleDeleteClinic(button) {
