@@ -2375,6 +2375,7 @@ fill="currentColor" stroke="none">
       <div class="row">
         <button id="btnNewLeadSide" class="btn primary">➕ Lead</button>
         <button id="btnRefreshNow" class="btn" data-label="Atualizar">Atualizar</button>
+        <button id="btnExitSupport" class="btn hidden" data-label="Voltar ao superadmin">↩️ Voltar</button>
       </div>
       <div class="row" style="margin-top:8px">
         <button id="btnMyPasswordSide" class="btn">🔐 Minha senha</button>
@@ -3054,6 +3055,81 @@ let CLOUD_MEMBER_INFO = null;
 let __cloudSaveTimer = null;
 let __cloudSavePromise = null;
 
+const SUPPORT_STORAGE_KEY = "cronos_support_context";
+const SUPPORT_DBKEY = "cronos_support_db";
+
+function getSupportContext(){
+  try{
+    return JSON.parse(sessionStorage.getItem(SUPPORT_STORAGE_KEY) || "null");
+  }catch(_){
+    return null;
+  }
+}
+function setSupportContext(ctx){
+  if(!ctx){
+    sessionStorage.removeItem(SUPPORT_STORAGE_KEY);
+    return;
+  }
+  sessionStorage.setItem(SUPPORT_STORAGE_KEY, JSON.stringify(ctx));
+}
+function getSupportDB(){
+  try{
+    return normalizeDBShape(JSON.parse(sessionStorage.getItem(SUPPORT_DBKEY) || "null"));
+  }catch(_){
+    return null;
+  }
+}
+function setSupportDB(db){
+  if(!db){
+    sessionStorage.removeItem(SUPPORT_DBKEY);
+    return;
+  }
+  sessionStorage.setItem(SUPPORT_DBKEY, JSON.stringify(normalizeDBShape(db)));
+}
+function clearSupportContext(){
+  sessionStorage.removeItem(SUPPORT_STORAGE_KEY);
+  sessionStorage.removeItem(SUPPORT_DBKEY);
+}
+function isSupportMode(){
+  return !!getSupportContext();
+}
+
+async function maybeInitSupportMode(){
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return getSupportContext();
+
+  const params = new URLSearchParams(location.search);
+  const supportToken = params.get("support_token");
+  if(!supportToken) return getSupportContext();
+
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if(!session?.access_token){
+    throw new Error("Faça login no superadmin antes de usar o suporte.");
+  }
+
+  const res = await fetch(`${supabaseUrl}/functions/v1/resolve-support-access`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${session.access_token}`,
+      "apikey": supabaseKey
+    },
+    body: JSON.stringify({ support_token: supportToken })
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if(!res.ok){
+    throw new Error(json?.error || "Falha ao validar o acesso de suporte.");
+  }
+
+  setSupportContext(json.support || null);
+  if(json?.support?.data){
+    setSupportDB(json.support.data);
+  }
+
+  history.replaceState({}, "", location.pathname);
+  return json.support || null;
+}
+
 function resetCloudContext(){
   CLOUD_DB_READY = false;
   CLOUD_ROW_ID = null;
@@ -3375,6 +3451,36 @@ function scheduleCloudSave(immediate=false){
 async function ensureCloudDBLoaded(force=false){
   if(DB && CLOUD_DB_READY && !force) return DB;
 
+  if(isSupportMode()){
+    const support = getSupportContext();
+    if(!support){
+      DB = normalizeDBShape(freshDB());
+      return DB;
+    }
+
+    let loaded = normalizeDBShape(getSupportDB() || support.data || freshDB());
+    const supportEmail = String(support.owner_email || "").trim().toLowerCase();
+    if(supportEmail){
+      loaded = ensureMasterRecordByEmail(loaded, supportEmail, support.clinic_name || "");
+      const master = getMasterRecordByEmail(loaded, supportEmail) || loaded.masters?.[0];
+      if(master && support.clinic_name){
+        master.name = support.clinic_name;
+      }
+    }
+
+    DB = loaded;
+    setSupportDB(DB);
+    CLOUD_DB_READY = true;
+    CLOUD_ROW_ID = support.clinic_id || null;
+    CLOUD_OWNER_UID = null;
+    CLOUD_OWNER_EMAIL = "";
+    CLOUD_CLINIC_OWNER_UID = support.owner_uid || null;
+    CLOUD_CLINIC_OWNER_EMAIL = String(support.owner_email || "").trim().toLowerCase();
+    CLOUD_ACCESS_KIND = "support";
+    CLOUD_MEMBER_INFO = null;
+    return DB;
+  }
+
   const user = await getCurrentSupabaseUser();
   if(!user){
     resetCloudContext();
@@ -3428,11 +3534,24 @@ async function ensureCloudDBLoaded(force=false){
 
 function loadDB(){
   if(DB) return DB;
+  if(isSupportMode()){
+    DB = normalizeDBShape(getSupportDB() || freshDB());
+    return DB;
+  }
   DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
   return DB;
 }
 function saveDB(db, options={}){
   DB = normalizeDBShape(db);
+
+  if(isSupportMode()){
+    setSupportDB(DB);
+    try{
+      updateSidebarPills();
+    }catch(e){}
+    return;
+  }
+
   localStorage.setItem(DBKEY, JSON.stringify(DB));
 
   try{
@@ -3550,6 +3669,19 @@ async function syncCurrentCloudActor(){
   }
 
   const user = await getCurrentSupabaseUser();
+  if(isSupportMode()){
+    let db = await ensureCloudDBLoaded(true);
+    const support = getSupportContext();
+    if(!support) return null;
+    const supportEmail = String(support.owner_email || "").trim().toLowerCase();
+    db = ensureMasterRecordByEmail(db, supportEmail, support.clinic_name || "");
+    const master = getMasterRecordByEmail(db, supportEmail) || db.masters[0];
+    if(master && support.clinic_name) master.name = support.clinic_name;
+    DB = db;
+    setSupportDB(DB);
+    return { kind: "support", id: support.owner_uid || supportEmail };
+  }
+
   if(!user) return null;
 
   let db = await ensureCloudDBLoaded(true);
@@ -3666,18 +3798,41 @@ async function hashPass(p){
 
 /* -------- Auth -------- */
 function currentActor(){
+  const db = loadDB();
+
+  if(isSupportMode()){
+    const support = getSupportContext();
+    const supportEmail = String(support?.owner_email || "").trim().toLowerCase();
+    const fallbackName = String(support?.clinic_name || "").trim();
+    let master = getMasterRecordByEmail(db, supportEmail);
+    if(!master && supportEmail){
+      master = {
+        id: supportEmail,
+        name: fallbackName || supportEmail.split("@")[0],
+        email: supportEmail,
+        createdAt: new Date().toISOString()
+      };
+      db.masters.unshift(master);
+      setSupportDB(db);
+      DB = db;
+    }
+    if(master){
+      if(fallbackName) master.name = fallbackName;
+      return {kind:"master", id:master.id, masterId:master.id, name:master.name, email:master.email, role:"MASTER", isPrimaryMaster:true, isSupport:true, perms: {...PERMS.MASTER, manageMasters:true} };
+    }
+  }
+
   const s = loadSession();
   if(!s) return null;
-  const db = loadDB();
   if(s.kind==="master"){
     const m = db.masters.find(x=>x.id===s.id);
     if(!m) return null;
-    return {kind:"master", id:m.id, masterId:m.id, name:m.name, email:m.email, role:"MASTER", isPrimaryMaster:true, perms: {...PERMS.MASTER, manageMasters:true} };
+    return {kind:"master", id:m.id, masterId:m.id, name:m.name, email:m.email, role:"MASTER", isPrimaryMaster:true, isSupport:false, perms: {...PERMS.MASTER, manageMasters:true} };
   }
   if(s.kind==="user"){
     const u = db.users.find(x=>x.id===s.id);
     if(!u) return null;
-    return {kind:"user", id:u.id, masterId:u.masterId, name:u.name, email:(u.email || u.loginEmail || ""), username:u.username, role:u.role, isPrimaryMaster:false, perms: (PERMS[u.role] || PERMS.DENTISTA)};
+    return {kind:"user", id:u.id, masterId:u.masterId, name:u.name, email:(u.email || u.loginEmail || ""), username:u.username, role:u.role, isPrimaryMaster:false, isSupport:false, perms: (PERMS[u.role] || PERMS.DENTISTA)};
   }
   return null;
 }
@@ -3761,6 +3916,8 @@ function showAuth(){
   el("authView").classList.remove("hidden");
   el("appView").classList.add("hidden");
   setLoginLoading(false);
+  const exitBtn = el("btnExitSupport");
+  if(exitBtn) exitBtn.classList.add("hidden");
   // refreshAuthMasters();
   syncThemeButtons();
   window.__CRONOS_BOOTED = true;
@@ -3770,8 +3927,16 @@ function showApp(actor){
   el("authView").classList.add("hidden");
   el("appView").classList.remove("hidden");
   el("brandName").textContent = "CRONOS ODONTO";
-  el("brandSub").textContent = `Clínica: ${actor.kind==="master" ? actor.name : masterName(actor.masterId)}`;
-  el("whoami").textContent = `Bem-vindo, ${actor.name} • ${roleLabelPt(actor.role)}`;
+  const support = getSupportContext();
+  const clinicLabel = actor?.isSupport
+    ? (support?.clinic_name || actor.name || "Clínica")
+    : (actor.kind==="master" ? actor.name : masterName(actor.masterId));
+  el("brandSub").textContent = actor?.isSupport ? `Clínica: ${clinicLabel} • Modo suporte` : `Clínica: ${clinicLabel}`;
+  el("whoami").textContent = actor?.isSupport
+    ? `Modo suporte ativo • ${support?.owner_email || actor.email || "sem e-mail"}`
+    : `Bem-vindo, ${actor.name} • ${roleLabelPt(actor.role)}`;
+  const exitBtn = el("btnExitSupport");
+  if(exitBtn) exitBtn.classList.toggle("hidden", !actor?.isSupport);
   syncThemeButtons();
   applyRoleVisibility(actor);
   window.__CRONOS_BOOTED = true;
@@ -7321,9 +7486,19 @@ function bindActions(){
     try{ if(typeof supabaseClient !== "undefined" && supabaseClient?.auth) await supabaseClient.auth.signOut(); }catch(_){}
     DB = null;
     resetCloudContext();
+    clearSupportContext();
     clearSession();
     toast("Saiu");
     showAuth();
+  };
+  const btnExitSupport = el("btnExitSupport");
+  if(btnExitSupport) btnExitSupport.onclick = ()=>{
+    clearSupportContext();
+    DB = null;
+    resetCloudContext();
+    clearSession();
+    toast("Modo suporte encerrado");
+    window.location.href = "/superadmin/";
   };
   const btnRefreshNow = el("btnRefreshNow");
   if(btnRefreshNow) btnRefreshNow.onclick = ()=>runManualCloudRefresh(btnRefreshNow);
@@ -7494,8 +7669,15 @@ function renderAll(){
 }
 
 async function boot(){
-  await ensureCloudDBLoaded();
+  try{
+    await maybeInitSupportMode();
+  }catch(error){
+    console.error("Falha ao iniciar suporte:", error);
+    clearSupportContext();
+    toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
+  }
 
+  await ensureCloudDBLoaded();
 
   await syncCurrentCloudActor();
 
