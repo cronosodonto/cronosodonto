@@ -2251,8 +2251,12 @@ style="width:344px; height:auto; display:block; margin:0 auto; color:inherit;">
 </svg>
 
 
-<div style="text-align:center; margin:12px 0 28px 0; font-size:14px; font-weight:500; opacity:0.75;">
+<div id="authAccessLabel" style="text-align:center; margin:12px 0 18px 0; font-size:14px; font-weight:500; opacity:0.75;">
   Acesso da Clínica
+</div>
+<div id="supportEntryHint" class="authStatus hidden" aria-live="polite" aria-atomic="true" style="margin:0 0 18px 0;">
+  <span class="spinner sm" aria-hidden="true"></span>
+  <span id="supportEntryText">Modo suporte • Validando acesso e carregando a clínica...</span>
 </div>
     <div class="twoCol">
       <div id="authModeWrap">
@@ -4242,6 +4246,37 @@ function setLoginLoading(isLoading, message="Entrando no Cronos..."){
   }
 }
 
+
+function setSupportEntryLoading(isLoading, message="Modo suporte • Validando acesso e carregando a clínica..."){
+  const authLabel = el("authAccessLabel");
+  const supportHint = el("supportEntryHint");
+  const supportText = el("supportEntryText");
+  const authModeWrap = el("authModeWrap");
+  const authMasterWrap = el("authMasterNameWrap");
+  const authLogin = el("authLogin")?.parentElement;
+  const authPass = el("authPass")?.parentElement;
+  const authButtons = el("btnLogin")?.parentElement;
+
+  if(authLabel){
+    authLabel.textContent = isLoading ? "Modo suporte" : "Acesso da Clínica";
+  }
+  if(supportHint){
+    supportHint.classList.toggle("hidden", !isLoading);
+  }
+  if(supportText && message){
+    supportText.textContent = message;
+  }
+
+  [authModeWrap, authMasterWrap, authLogin, authPass, authButtons].forEach(node=>{
+    if(!node) return;
+    node.classList.toggle("hidden", !!isLoading);
+  });
+
+  if(isLoading){
+    setLoginLoading(false);
+  }
+}
+
 function triggerLoginSubmit(){
   if(window.__CRONOS_LOGIN_BUSY__) return;
   const btn = el("btnLogin");
@@ -4277,7 +4312,17 @@ function showAuth(){
   el("appView").classList.add("hidden");
   hideAccessGate();
   hideAccessNotice();
-  setLoginLoading(false);
+
+  const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
+  const supportPending = supportTokenPresent || (!currentActor() && isSupportMode());
+
+  if(supportPending){
+    setSupportEntryLoading(true, "Modo suporte • Validando acesso e carregando a clínica...");
+  }else{
+    setSupportEntryLoading(false);
+    setLoginLoading(false);
+  }
+
   const exitBtn = el("btnExitSupport");
   if(exitBtn) exitBtn.classList.add("hidden");
   // refreshAuthMasters();
@@ -4286,6 +4331,7 @@ function showAuth(){
 }
 
 function showApp(actor){
+  setSupportEntryLoading(false);
   el("authView").classList.add("hidden");
   el("appView").classList.remove("hidden");
   hideAccessGate();
@@ -8249,6 +8295,11 @@ function renderAll(){
 
 async function boot(){
   const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
+
+  if(supportTokenPresent || isSupportMode()){
+    showAuth();
+    setSupportEntryLoading(true, "Modo suporte • Validando acesso e carregando a clínica...");
+  }
 
   try{
     await maybeInitSupportMode();
