@@ -1316,6 +1316,106 @@ html, body{ overflow-x: hidden; }
 
 
 .chart-inline-value{margin-left:10px;font-weight:800;letter-spacing:0.2px;color:rgba(235,240,255,0.95);} 
+
+/* ===== Access guard / renewal ===== */
+.accessGateCard{
+  width:min(560px, 100%);
+  border:1px solid var(--line);
+  border-radius:26px;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 42%), var(--panel);
+  box-shadow: var(--shadow);
+  padding:20px 18px;
+}
+.accessGateHeader{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:12px;
+}
+.accessGateBadge{
+  width:44px;
+  height:44px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  font-size:20px;
+  background: rgba(255,255,255,.05);
+  border:1px solid var(--line);
+}
+.accessGateTitle{
+  margin:0;
+  font-size:26px;
+  line-height:1.02;
+  letter-spacing:-.02em;
+}
+.accessGateText{
+  margin:10px 0 0;
+  color:var(--muted);
+  line-height:1.5;
+}
+.accessGateMeta{
+  margin-top:14px;
+  padding:12px 14px;
+  border-radius:16px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  color:var(--text);
+  display:grid;
+  gap:8px;
+}
+.accessGateActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top:16px;
+}
+.accessGateActions .btn{
+  flex:1 1 220px;
+  justify-content:center;
+}
+.accessNotice{
+  width:min(560px, 100%);
+  border:1px solid var(--line);
+  border-radius:22px;
+  background: var(--panel2);
+  box-shadow: 0 20px 60px rgba(17,24,39,.15);
+  padding:18px 16px;
+}
+.accessNoticeHead{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+.accessNoticeHead h3{
+  margin:0;
+  font-size:20px;
+}
+.accessNoticeText{
+  color:var(--muted);
+  line-height:1.5;
+  margin:0 0 14px;
+}
+.accessNoticeActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  justify-content:flex-end;
+}
+.accessNoticeDays{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.04);
+  color:var(--text);
+  font-size:12px;
+  font-weight:700;
+}
+
 </style>
 </head>
 <body>
@@ -2192,7 +2292,44 @@ style="width:344px; height:auto; display:block; margin:0 auto; color:inherit;">
   </div>
 </section>
 
+
+<section id="accessGateView" class="auth hidden">
+  <div class="accessGateCard">
+    <div class="accessGateHeader">
+      <div class="accessGateBadge" id="accessGateBadge">⏳</div>
+      <div>
+        <h2 class="accessGateTitle" id="accessGateTitle">Acesso indisponível</h2>
+        <div class="muted" id="accessGateSubtitle">Verifique o período de acesso da clínica.</div>
+      </div>
+    </div>
+    <p class="accessGateText" id="accessGateText">Seu acesso ao Cronos está temporariamente indisponível.</p>
+    <div class="accessGateMeta" id="accessGateMeta"></div>
+    <div class="accessGateActions">
+      <a class="btn ok hidden" id="btnRenewAccessWhatsapp" href="#" target="_blank" rel="noopener noreferrer">Renovar acesso via WhatsApp</a>
+      <button class="btn" id="btnGateLogout" type="button">Sair</button>
+    </div>
+  </div>
+</section>
+
+<div class="modalBg" id="accessNoticeModal">
+  <div class="accessNotice">
+    <div class="accessNoticeHead">
+      <div>
+        <div class="accessNoticeDays" id="accessNoticeDays">⏳ Acesso</div>
+        <h3 id="accessNoticeTitle">Seu acesso está perto de expirar</h3>
+      </div>
+      <button class="x" id="btnCloseAccessNotice" type="button">×</button>
+    </div>
+    <p class="accessNoticeText" id="accessNoticeText">Renove com antecedência para evitar bloqueio.</p>
+    <div class="accessNoticeActions">
+      <a class="btn ok hidden" id="btnAccessNoticeWhatsapp" href="#" target="_blank" rel="noopener noreferrer">Renovar via WhatsApp</a>
+      <button class="btn" id="btnAccessNoticeContinue" type="button">Continuar</button>
+    </div>
+  </div>
+</div>
+
 <!-- APP VIEW -->
+
 <section id="appView" class="app hidden">
   <aside class="sidebar">
     <div class="brand">
@@ -3130,6 +3267,224 @@ async function maybeInitSupportMode(){
   return json.support || null;
 }
 
+
+const ACCESS_STATUS_ENDPOINT = "get-clinic-access-state";
+const DEFAULT_RENEWAL_MESSAGE = "Olá! Meu acesso ao Cronos expirou e quero renovar.";
+let CLINIC_ACCESS_STATE = null;
+
+function parseAccessDate(value){
+  if(!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function startOfLocalDay(date){
+  if(!date) return null;
+  const copy = new Date(date);
+  copy.setHours(0,0,0,0);
+  return copy;
+}
+function daysUntilCalendar(endDate){
+  if(!endDate) return null;
+  const today = startOfLocalDay(new Date());
+  const endDay = startOfLocalDay(endDate);
+  return Math.round((endDay.getTime() - today.getTime()) / 86400000);
+}
+function normalizeAccessStatus(value){
+  return String(value || "active").trim().toLowerCase();
+}
+function buildRenewalWhatsappUrl(access){
+  const phone = String(access?.renewal_phone || "").replace(/\D/g, "");
+  if(!phone) return "";
+  const clinicName = String(access?.clinic_name || "").trim();
+  const slug = String(access?.slug || "").trim();
+  const template = String(access?.renewal_message || DEFAULT_RENEWAL_MESSAGE);
+  const message = template
+    .replaceAll("{clinica}", clinicName)
+    .replaceAll("{slug}", slug)
+    .replaceAll("{clinic_name}", clinicName);
+  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+function clearClinicAccessState(){
+  CLINIC_ACCESS_STATE = null;
+}
+async function fetchClinicAccessState(force=false){
+  if(isSupportMode()) return null;
+  const cachedAccess = CLINIC_ACCESS_STATE;
+  if(cachedAccess && !force){
+    return cachedAccess;
+  }
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
+  const sessionResp = await supabaseClient.auth.getSession();
+  const session = sessionResp?.data?.session;
+  if(!session?.access_token) return null;
+
+  try{
+    const res = await fetch(`${supabaseUrl}/functions/v1/${ACCESS_STATUS_ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session.access_token}`,
+        "apikey": supabaseKey
+      },
+      body: JSON.stringify({})
+    });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){
+      throw new Error(json?.error || "Falha ao validar o período de acesso.");
+    }
+    CLINIC_ACCESS_STATE = json?.access || null;
+    return CLINIC_ACCESS_STATE;
+  }catch(error){
+    console.error("Falha ao consultar período de acesso:", error);
+    toast("Aviso", "Não foi possível validar o período de acesso agora.");
+    return null;
+  }
+}
+function evaluateClinicAccessState(access){
+  if(!access) return { mode: "allow", warn: false, daysLeft: null, access: null };
+  const now = new Date();
+  const status = normalizeAccessStatus(access.status);
+  const startsAt = parseAccessDate(access.access_starts_at);
+  const endsAt = parseAccessDate(access.access_ends_at);
+
+  if(status === "blocked" || status === "inactive"){
+    return { mode: "blocked", warn: false, daysLeft: null, access, startsAt, endsAt };
+  }
+  if(startsAt && now < startsAt){
+    return { mode: "scheduled", warn: false, daysLeft: null, access, startsAt, endsAt };
+  }
+  if(endsAt && now > endsAt){
+    return { mode: "expired", warn: false, daysLeft: -1, access, startsAt, endsAt };
+  }
+
+  const daysLeft = endsAt ? daysUntilCalendar(endsAt) : null;
+  if(daysLeft !== null && [3,2,1,0].includes(daysLeft)){
+    return { mode: "allow", warn: true, daysLeft, access, startsAt, endsAt };
+  }
+
+  return { mode: "allow", warn: false, daysLeft, access, startsAt, endsAt };
+}
+function fmtDateTimeLocal(value){
+  if(!value) return "—";
+  const date = value instanceof Date ? value : new Date(value);
+  if(Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("pt-BR", {
+    day:"2-digit", month:"2-digit", year:"numeric",
+    hour:"2-digit", minute:"2-digit"
+  });
+}
+function renderAccessMeta(decision){
+  const rows = [];
+  const access = decision?.access || {};
+  if(access?.clinic_name){
+    rows.push(`<div><strong>Clínica:</strong> ${escapeHTML(String(access.clinic_name))}</div>`);
+  }
+  if(decision?.startsAt){
+    rows.push(`<div><strong>Início:</strong> ${fmtDateTimeLocal(decision.startsAt)}</div>`);
+  }
+  if(decision?.endsAt){
+    rows.push(`<div><strong>Validade:</strong> ${fmtDateTimeLocal(decision.endsAt)}</div>`);
+  }
+  return rows.join("") || `<div>Nenhuma informação adicional disponível.</div>`;
+}
+function hideAccessNotice(){
+  el("accessNoticeModal")?.classList.remove("show");
+}
+function showAccessNotice(decision){
+  if(!decision?.warn) return;
+  const access = decision.access || {};
+  const daysLeft = Number(decision.daysLeft);
+  const title = daysLeft === 0
+    ? "Seu acesso expira hoje"
+    : `Seu acesso expira em ${daysLeft} ${daysLeft === 1 ? "dia" : "dias"}`;
+  const text = daysLeft === 0
+    ? "Renove hoje para evitar o bloqueio do sistema."
+    : "Renove com antecedência para evitar interrupções no uso do Cronos.";
+
+  el("accessNoticeTitle").textContent = title;
+  el("accessNoticeText").textContent = text;
+  el("accessNoticeDays").textContent = daysLeft === 0
+    ? "⏳ Expira hoje"
+    : `⏳ Faltam ${daysLeft} ${daysLeft === 1 ? "dia" : "dias"}`;
+
+  const waUrl = buildRenewalWhatsappUrl(access);
+  const waBtn = el("btnAccessNoticeWhatsapp");
+  if(waBtn){
+    if(waUrl){
+      waBtn.href = waUrl;
+      waBtn.classList.remove("hidden");
+    }else{
+      waBtn.classList.add("hidden");
+      waBtn.removeAttribute("href");
+    }
+  }
+
+  el("accessNoticeModal").classList.add("show");
+}
+function showAccessGate(decision){
+  const access = decision?.access || {};
+  const mode = decision?.mode || "blocked";
+
+  el("authView").classList.add("hidden");
+  el("appView").classList.add("hidden");
+  el("accessGateView").classList.remove("hidden");
+  hideAccessNotice();
+
+  const badgeMap = { expired: "⛔", blocked: "🔒", scheduled: "⏳" };
+  const titleMap = {
+    expired: "Seu acesso expirou",
+    blocked: "Seu acesso está bloqueado",
+    scheduled: "Seu acesso ainda não iniciou"
+  };
+  const textMap = {
+    expired: "Para voltar a usar o Cronos, renove seu acesso com nossa equipe e envie o comprovante de pagamento.",
+    blocked: "Entre em contato com nossa equipe para regularizar e reativar seu acesso ao Cronos.",
+    scheduled: "Seu período de acesso ainda não começou. Fale com nossa equipe se precisar antecipar ou confirmar a liberação."
+  };
+
+  el("accessGateBadge").textContent = badgeMap[mode] || "⏳";
+  el("accessGateTitle").textContent = titleMap[mode] || "Acesso indisponível";
+  el("accessGateSubtitle").textContent = access?.clinic_name ? `Clínica: ${access.clinic_name}` : "Verifique o período de acesso da clínica.";
+  el("accessGateText").textContent = textMap[mode] || "Seu acesso está temporariamente indisponível.";
+  el("accessGateMeta").innerHTML = renderAccessMeta(decision);
+
+  const renewBtn = el("btnRenewAccessWhatsapp");
+  const waUrl = buildRenewalWhatsappUrl(access);
+  if(renewBtn){
+    if(waUrl){
+      renewBtn.href = waUrl;
+      renewBtn.classList.remove("hidden");
+    }else{
+      renewBtn.classList.add("hidden");
+      renewBtn.removeAttribute("href");
+    }
+  }
+}
+function hideAccessGate(){
+  el("accessGateView")?.classList.add("hidden");
+}
+async function applyClinicAccessRules(){
+  if(isSupportMode()){
+    hideAccessGate();
+    hideAccessNotice();
+    clearClinicAccessState();
+    return { mode:"allow", warn:false, support:true };
+  }
+  const access = await fetchClinicAccessState(true);
+  const decision = evaluateClinicAccessState(access);
+  if(decision.mode !== "allow"){
+    showAccessGate(decision);
+    return decision;
+  }
+  hideAccessGate();
+  if(decision.warn){
+    showAccessNotice(decision);
+  }else{
+    hideAccessNotice();
+  }
+  return decision;
+}
+
 function resetCloudContext(){
   CLOUD_DB_READY = false;
   CLOUD_ROW_ID = null;
@@ -3915,6 +4270,8 @@ function refreshAuthMasters(){
 function showAuth(){
   el("authView").classList.remove("hidden");
   el("appView").classList.add("hidden");
+  hideAccessGate();
+  hideAccessNotice();
   setLoginLoading(false);
   const exitBtn = el("btnExitSupport");
   if(exitBtn) exitBtn.classList.add("hidden");
@@ -3926,6 +4283,7 @@ function showAuth(){
 function showApp(actor){
   el("authView").classList.add("hidden");
   el("appView").classList.remove("hidden");
+  hideAccessGate();
   el("brandName").textContent = "CRONOS ODONTO";
   const support = getSupportContext();
   const clinicLabel = actor?.isSupport
@@ -5805,6 +6163,106 @@ function printLeadEntry(entryId){
   th{color:#444;}
   .muted{color:#666;}
   @media print{ body{margin: 16mm;} }
+
+/* ===== Access guard / renewal ===== */
+.accessGateCard{
+  width:min(560px, 100%);
+  border:1px solid var(--line);
+  border-radius:26px;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 42%), var(--panel);
+  box-shadow: var(--shadow);
+  padding:20px 18px;
+}
+.accessGateHeader{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:12px;
+}
+.accessGateBadge{
+  width:44px;
+  height:44px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  font-size:20px;
+  background: rgba(255,255,255,.05);
+  border:1px solid var(--line);
+}
+.accessGateTitle{
+  margin:0;
+  font-size:26px;
+  line-height:1.02;
+  letter-spacing:-.02em;
+}
+.accessGateText{
+  margin:10px 0 0;
+  color:var(--muted);
+  line-height:1.5;
+}
+.accessGateMeta{
+  margin-top:14px;
+  padding:12px 14px;
+  border-radius:16px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  color:var(--text);
+  display:grid;
+  gap:8px;
+}
+.accessGateActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top:16px;
+}
+.accessGateActions .btn{
+  flex:1 1 220px;
+  justify-content:center;
+}
+.accessNotice{
+  width:min(560px, 100%);
+  border:1px solid var(--line);
+  border-radius:22px;
+  background: var(--panel2);
+  box-shadow: 0 20px 60px rgba(17,24,39,.15);
+  padding:18px 16px;
+}
+.accessNoticeHead{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+.accessNoticeHead h3{
+  margin:0;
+  font-size:20px;
+}
+.accessNoticeText{
+  color:var(--muted);
+  line-height:1.5;
+  margin:0 0 14px;
+}
+.accessNoticeActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  justify-content:flex-end;
+}
+.accessNoticeDays{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.04);
+  color:var(--text);
+  font-size:12px;
+  font-weight:700;
+}
+
 </style>
 </head>
 <body>
@@ -6881,6 +7339,106 @@ function exportPDFFiltered(){
   .mono{font-variant-numeric: tabular-nums;}
   .footer{margin-top:10px; font-size:12px; color:#444;}
   @media print{ body{margin: 14mm;} }
+
+/* ===== Access guard / renewal ===== */
+.accessGateCard{
+  width:min(560px, 100%);
+  border:1px solid var(--line);
+  border-radius:26px;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 42%), var(--panel);
+  box-shadow: var(--shadow);
+  padding:20px 18px;
+}
+.accessGateHeader{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:12px;
+}
+.accessGateBadge{
+  width:44px;
+  height:44px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  font-size:20px;
+  background: rgba(255,255,255,.05);
+  border:1px solid var(--line);
+}
+.accessGateTitle{
+  margin:0;
+  font-size:26px;
+  line-height:1.02;
+  letter-spacing:-.02em;
+}
+.accessGateText{
+  margin:10px 0 0;
+  color:var(--muted);
+  line-height:1.5;
+}
+.accessGateMeta{
+  margin-top:14px;
+  padding:12px 14px;
+  border-radius:16px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  color:var(--text);
+  display:grid;
+  gap:8px;
+}
+.accessGateActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top:16px;
+}
+.accessGateActions .btn{
+  flex:1 1 220px;
+  justify-content:center;
+}
+.accessNotice{
+  width:min(560px, 100%);
+  border:1px solid var(--line);
+  border-radius:22px;
+  background: var(--panel2);
+  box-shadow: 0 20px 60px rgba(17,24,39,.15);
+  padding:18px 16px;
+}
+.accessNoticeHead{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+.accessNoticeHead h3{
+  margin:0;
+  font-size:20px;
+}
+.accessNoticeText{
+  color:var(--muted);
+  line-height:1.5;
+  margin:0 0 14px;
+}
+.accessNoticeActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  justify-content:flex-end;
+}
+.accessNoticeDays{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.04);
+  color:var(--text);
+  font-size:12px;
+  font-weight:700;
+}
+
 </style>
 </head>
 <body>
@@ -7487,13 +8045,29 @@ function bindActions(){
     DB = null;
     resetCloudContext();
     clearSupportContext();
+    clearClinicAccessState();
     clearSession();
     toast("Saiu");
     showAuth();
   };
+  const btnGateLogout = el("btnGateLogout");
+  if(btnGateLogout) btnGateLogout.onclick = async ()=>{
+    try{ if(typeof supabaseClient !== "undefined" && supabaseClient?.auth) await supabaseClient.auth.signOut(); }catch(_){}
+    DB = null;
+    resetCloudContext();
+    clearSupportContext();
+    clearClinicAccessState();
+    clearSession();
+    showAuth();
+  };
+  const btnCloseAccessNotice = el("btnCloseAccessNotice");
+  if(btnCloseAccessNotice) btnCloseAccessNotice.onclick = hideAccessNotice;
+  const btnAccessNoticeContinue = el("btnAccessNoticeContinue");
+  if(btnAccessNoticeContinue) btnAccessNoticeContinue.onclick = hideAccessNotice;
   const btnExitSupport = el("btnExitSupport");
   if(btnExitSupport) btnExitSupport.onclick = ()=>{
     clearSupportContext();
+    clearClinicAccessState();
     DB = null;
     resetCloudContext();
     clearSession();
@@ -7705,6 +8279,11 @@ if (authSelect) authSelect.parentElement.classList.add("hidden");
     // refreshAuthMasters();
   
 // el("authMasterNameWrap").classList.remove("hidden");
+    return;
+  }
+
+  const accessDecision = await applyClinicAccessRules();
+  if(accessDecision?.mode && accessDecision.mode !== "allow"){
     return;
   }
 
@@ -8085,6 +8664,7 @@ async function finalizeCloudLogin(){
     if(!actorInfo){
       toast("Acesso sem vínculo", "Esse login autenticou, mas não está ligado a nenhuma clínica.");
       try{ await supabaseClient.auth.signOut(); }catch(_){}
+      clearClinicAccessState();
       clearSession();
       showAuth();
       return;
