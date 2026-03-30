@@ -170,14 +170,120 @@
       .grid-stats{grid-template-columns:1fr}
       .login-card{padding:18px}
     }
+  
+    .logo-cronos{width:92px;max-width:100%;height:auto;display:block;color:inherit;margin:0;filter:drop-shadow(0 6px 18px rgba(255,255,255,.05));flex:0 0 auto;}
+    .login-card{
+      width:min(520px,100%);
+      padding:16px 16px 16px 16px;
+    }
+    .login-card p{margin:0 0 18px;color:var(--muted)}
+    .login-grid{gap:12px}
+    .login-brand{
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:12px;
+      justify-content:center;
+      margin:8px 0 24px 0;
+      text-align:center;
+    }
+    .login-brand-copy{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      min-width:0;
+      align-items:center;
+      text-align:center;
+      width:100%;
+    }
+    .login-status{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      font-size:14px;
+      font-weight:500;
+      color:var(--muted);
+      line-height:1;
+      text-align:center;
+    }
+    .login-hero{
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      width:100%;
+      margin-top:2px;
+    }
+    .login-status-dot{
+      width:14px;
+      height:14px;
+      border-radius:999px;
+      background:#34d399;
+      box-shadow:0 0 0 4px rgba(52,211,153,.14);
+      flex:0 0 auto;
+    }
+    .login-title{
+      font-size:44px;
+      line-height:.95;
+      font-weight:900;
+      letter-spacing:-.04em;
+      margin:0;
+      color:var(--text);
+      transform:none;
+      text-align:left;
+    }
+    .login-subtitle{
+      font-size:16px;
+      font-weight:600;
+      color:var(--muted);
+      margin:2px 0 0 0;
+      letter-spacing:.01em;
+      text-align:center;
+    }
+    @media (max-width: 640px){
+      .login-brand{gap:12px; align-items:center; justify-content:center; text-align:center;}
+      .logo-cronos{width:76px; margin:0;}
+      .login-hero{gap:8px;}
+      .login-title{font-size:34px; transform:none; text-align:left;}
+      .login-subtitle{font-size:14px;}
+      .login-status{font-size:13px; justify-content:center;}
+      .login-status-dot{width:12px;height:12px;}
+    }
+
+
   </style>
 </head>
 <body>
   <section id="loginScreen" class="login-shell">
     <div class="card login-card">
-      <div class="status-line"><span class="dot"></span> Acesso administrativo separado do Cronos principal</div>
-      <h1>Superadmin</h1>
-      <p>Entra com o usuário administrativo. Se não for <strong>superadmin</strong>, o painel barra sem dó.</p>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px">
+        <div style="margin-left:auto"></div>
+      </div>
+
+<div class="login-brand">
+        <div class="login-brand-copy">
+          <div class="login-status"><span class="login-status-dot"></span><span>Acesso administrativo</span></div>
+          <div class="login-hero">
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1120 1000"
+     preserveAspectRatio="xMidYMid meet"
+     class="logo-cronos">
+
+  <g transform="translate(0,1000) scale(0.1,-0.1)"
+     fill="currentColor"
+     stroke="none">
+<path d="M4690 9333 c-89 -8 -368 -46 -485 -65 -491 -78 -1088 -325 -1575 -651 -125 -84 -320 -232 -410 -312 -128 -115 -445 -453 -553 -590 -311 -395 -574 -885 -700 -1305 -77 -254 -135 -542 -157 -785 -6 -60 -15 -148 -20 -195 -12 -107 -12 -502 0 -595 5 -38 16 -135 24 -215 8 -80 21 -163 30 -185 8 -22 15 -52 16 -66 1 -66 139 -516 190 -624 33 -67 37 -55 20 50 -29 166 -47 633 -31 788 7 62 16 171 21 242 10 141 39 298 104 553 50 196 189 558 298 777 146 290 519 833 736 1070 152 165 403 394 577 527 151 115 507 329 700 422 303 146 721 277 1020 320 460 66 968 43 1388 -64 567 -144 962 -334 1422 -685 66 -50 127 -94 136 -97 27 -10 86 23 367 212 323 217 313 202 200 302 -74 64 -140 118 -212 173 -22 17 -76 58 -120 93 -286 222 -690 456 -1006 584 -331 133 -805 258 -1095 288 -55 5 -161 17 -235 25 -122 13 -545 19 -650 8z"/>
+<path d="M3336 7798 c-20 -33 -42 -108 -71 -240 -57 -265 -17 -546 121 -872 98 -229 375 -623 668 -950 89 -99 425 -419 543 -517 48 -40 127 -107 174 -149 47 -41 141 -120 210 -175 375 -303 771 -692 966 -950 155 -206 296 -455 352 -623 22 -65 29 -154 11 -136 -5 5 -38 59 -73 119 -156 272 -251 408 -435 623 -124 145 -309 324 -330 320 -9 -2 -86 -103 -171 -225 -211 -300 -277 -383 -307 -383 -34 0 -136 133 -362 472 -62 92 -117 170 -122 173 -38 23 -321 -272 -541 -565 -97 -128 -173 -257 -260 -435 -89 -184 -114 -204 -80 -64 50 212 224 544 395 755 115 141 259 294 366 387 63 56 171 155 240 222 69 66 148 140 177 164 70 58 72 75 20 124 -91 86 -220 187 -237 187 -28 0 -127 -79 -291 -234 -83 -77 -160 -147 -170 -155 -11 -7 -72 -75 -136 -150 -65 -75 -151 -174 -193 -221 -209 -235 -438 -610 -520 -850 -81 -238 -102 -559 -51 -795 35 -162 129 -395 166 -409 9 -3 717 -6 1574 -6 1230 0 1561 3 1573 13 25 18 107 189 144 299 57 170 69 244 69 433 0 184 -10 237 -84 463 -91 277 -271 571 -560 917 -114 137 -633 652 -832 826 -245 215 -583 532 -718 674 -110 116 -150 161 -336 385 -186 222 -421 619 -475 801 -6 19 -4 26 7 26 18 0 28 -15 148 -211 53 -88 120 -194 148 -235 60 -90 217 -289 295 -375 147 -161 478 -498 566 -577 122 -109 133 -111 214 -37 148 135 364 355 455 463 56 66 134 157 173 202 92 106 185 230 318 425 119 173 141 199 131 152 -29 -124 -250 -484 -419 -682 -111 -128 -339 -360 -528 -537 -76 -70 -138 -135 -138 -144 0 -9 63 -76 140 -149 130 -124 141 -132 162 -121 78 41 534 490 683 672 296 363 478 709 581 1107 25 95 27 122 28 285 0 157 -3 190 -22 259 -32 112 -81 225 -102 236 -12 6 -595 10 -1629 10 l-1611 0 -14 -22z m2683 -414 c23 -5 31 -12 31 -28 0 -27 -64 -136 -111 -190 l-37 -41 -738 -5 c-730 -5 -739 -5 -742 -25 -1 -12 39 -83 100 -175 l103 -155 487 -5 c374 -4 490 -8 500 -18 19 -19 -9 -62 -140 -213 -172 -199 -395 -419 -423 -419 -55 0 -524 528 -711 800 -73 106 -191 305 -234 391 -47 98 -142 89 934 89 522 0 964 -3 981 -6z m-1494 -3816 c39 -45 114 -136 169 -203 155 -189 276 -325 289 -325 16 0 111 103 209 225 322 404 326 408 370 369 29 -27 126 -154 188 -249 136 -209 331 -662 300 -700 -11 -13 -130 -15 -1080 -15 -1199 0 -1098 -7 -1085 77 7 50 66 221 108 314 53 121 279 447 377 547 24 23 52 42 64 42 14 0 44 -27 91 -82z"/>
+<path d="M2600 7374 c-220 -183 -537 -541 -717 -809 -125 -186 -342 -603 -408 -782 -19 -54 -42 -114 -50 -133 -27 -67 -83 -226 -109 -312 -35 -115 -94 -445 -116 -648 -15 -133 -15 -477 0 -565 5 -33 10 -90 10 -127 0 -116 61 -439 115 -609 109 -342 291 -709 513 -1034 340 -498 926 -998 1477 -1260 416 -197 654 -276 1070 -354 287 -54 312 -56 670 -55 351 0 421 6 775 65 211 36 576 141 798 230 165 66 497 230 642 317 211 125 498 351 719 567 190 186 409 440 457 529 15 26 14 30 -3 47 -10 10 -88 49 -173 88 -85 38 -191 86 -235 106 -182 84 -427 185 -449 185 -18 0 -47 -25 -113 -97 -314 -346 -614 -573 -1011 -765 -255 -124 -339 -156 -551 -213 -313 -83 -519 -115 -788 -122 -419 -11 -854 71 -1263 239 -170 69 -489 244 -624 341 -244 175 -481 406 -700 681 -92 117 -294 432 -359 561 -127 253 -280 676 -303 835 -3 25 -12 71 -20 103 -40 158 -57 797 -30 1060 45 424 141 745 358 1187 130 267 218 408 412 665 50 65 97 127 104 137 28 38 -10 15 -98 -58z"/>
+</g>
+</svg>
+          </div>
+          <h1 class="login-title">SuperADMIN</h1>
+          <p class="login-subtitle">Cronos Odonto</p>
+        </div>
+      </div>
 
       <form id="loginForm" class="login-grid">
         <div class="field">
@@ -190,12 +296,10 @@
           <input class="input" id="loginPassword" type="password" placeholder="••••••••" required />
         </div>
 
-        <button class="btn btn-primary" id="btnLogin" type="submit">Entrar no painel</button>
+        <button class="btn btn-primary" id="btnLogin" type="submit">Acessar painel</button>
       </form>
 
-      <div class="login-meta">
-        Essa tela existe justamente pra não encostar no HTML principal do Cronos.
-      </div>
+      <div class="login-meta">Ambiente restrito para administração do sistema.</div>
     </div>
   </section>
 
@@ -462,7 +566,9 @@
       filters: { search: "", status: "all", limit: "all" },
       session: null,
       selectedClinicId: null,
-      selectedClinicDetails: null
+      selectedClinicDetails: null,
+      loadingClinics: false,
+      hasLoadedClinics: false
     };
 
     const STATUS_LABELS = {
@@ -669,6 +775,17 @@
     }
 
     function renderStats() {
+      if (!state.hasLoadedClinics && state.loadingClinics) {
+        document.getElementById("statsGrid").innerHTML = `
+          <div class="card stat"><small>Total</small><strong>—</strong></div>
+          <div class="card stat"><small>Ativas</small><strong>—</strong></div>
+          <div class="card stat"><small>Agendadas</small><strong>—</strong></div>
+          <div class="card stat"><small>Bloqueadas / Vencidas</small><strong>—</strong></div>
+          <div class="card stat"><small>Acima do limite</small><strong>—</strong></div>
+        `;
+        return;
+      }
+
       const total = state.clinics.length;
       let active = 0, blocked = 0, expired = 0, scheduled = 0, over = 0;
       for (const clinic of state.clinics) {
@@ -691,6 +808,12 @@
 
     function renderTable() {
       const body = document.getElementById("clinicBody");
+
+      if (!state.hasLoadedClinics && state.loadingClinics) {
+        body.innerHTML = `<tr><td colspan="6"><div class="empty">Carregando clínicas...</div></td></tr>`;
+        return;
+      }
+
       const items = getFilteredClinics();
 
       if (!items.length) {
@@ -747,10 +870,18 @@
     }
 
     async function loadClinics() {
-      const data = await callEdgeFunction(CONFIG.endpoints.listClinics, {});
-      state.clinics = Array.isArray(data?.clinics) ? data.clinics : [];
+      state.loadingClinics = true;
       renderStats();
       renderTable();
+      try {
+        const data = await callEdgeFunction(CONFIG.endpoints.listClinics, {});
+        state.clinics = Array.isArray(data?.clinics) ? data.clinics : [];
+        state.hasLoadedClinics = true;
+      } finally {
+        state.loadingClinics = false;
+        renderStats();
+        renderTable();
+      }
     }
 
     async function loadClinicDetails(clinicId) {
@@ -1027,39 +1158,34 @@
 
 
     async function handleDeleteClinic(button) {
-  if (!state.selectedClinicId || !state.selectedClinicDetails?.clinic) {
-    toast("Nenhuma clínica selecionada.", "error");
-    return;
-  }
+      if (!state.selectedClinicId || !state.selectedClinicDetails?.clinic) {
+        toast("Nenhuma clínica selecionada.", "error");
+        return;
+      }
 
-  const clinic = state.selectedClinicDetails.clinic;
-  const clinicSlug = String(clinic.slug || slugify(clinic.name || "")).trim() || "sem-slug";
-  const confirmation = prompt(`Para excluir de vez, digita exatamente o slug da clínica:\n\n${clinicSlug}`);
+      const clinic = state.selectedClinicDetails.clinic;
+      const clinicSlug = String(clinic.slug || slugify(clinic.name || "")).trim() || "sem-slug";
+      const confirmation = prompt(`Para excluir de vez, digita exatamente o slug da clínica:\n\n${clinicSlug}`);
 
-  if (confirmation === null) return;
+      if (confirmation === null) return;
 
-  if (confirmation.trim() !== clinicSlug) {
-    toast("Slug digitado não confere. Exclusão cancelada.", "error", 3600);
-    return;
-  }
+      if (confirmation.trim() !== clinicSlug) {
+        toast("Slug digitado não confere. Exclusão cancelada.", "error", 3600);
+        return;
+      }
 
-  try {
-    await withButtonLoading(button, "Excluindo...", async () => {
-      await callEdgeFunction(CONFIG.endpoints.deleteClinic, {
-        clinic_id: state.selectedClinicId
+      await withButtonLoading(button, "Excluindo...", async () => {
+        await callEdgeFunction(CONFIG.endpoints.deleteClinic, {
+          clinic_id: state.selectedClinicId
+        });
+
+        toast("Clínica excluída com sucesso.", "success", 3600);
+        state.selectedClinicId = null;
+        state.selectedClinicDetails = null;
+        closeDetailModal();
+        await loadClinics();
       });
-
-      toast("Clínica excluída com sucesso.", "success", 3600);
-      state.selectedClinicId = null;
-      state.selectedClinicDetails = null;
-      closeDetailModal();
-      await loadClinics();
-    });
-  } catch (err) {
-    console.error(err);
-    toast(err.message || "Erro ao excluir clínica.", "error", 4000);
-  }
-}
+    }
 
     async function handleExportCsv(button) {
       await withButtonLoading(button, "Exportando...", async () => {
@@ -1351,8 +1477,11 @@
           if (!data?.session) throw new Error("Sessão não criada.");
 
           state.session = data.session;
+          state.loadingClinics = true;
           document.getElementById("loginScreen").classList.add("hidden");
           document.getElementById("panelApp").classList.remove("hidden");
+          renderStats();
+          renderTable();
 
           await loadClinics();
           toast("Login realizado com sucesso.", "success");
@@ -1386,8 +1515,11 @@
       const { data: { session } } = await supabaseClient.auth.getSession();
       if (!session) return false;
       state.session = session;
+      state.loadingClinics = true;
       document.getElementById("loginScreen").classList.add("hidden");
       document.getElementById("panelApp").classList.remove("hidden");
+      renderStats();
+      renderTable();
       try {
         await loadClinics();
       } catch (err) {
@@ -1399,8 +1531,6 @@
 
     async function init() {
       bindGlobalEvents();
-      renderStats();
-      renderTable();
       await restoreSessionIfAny();
     }
 
