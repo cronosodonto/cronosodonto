@@ -8949,11 +8949,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const VIEW_TO_FEATURE = {
     dashboard: 'dashboard',
     leads: 'leads',
-    kanban: 'funil',
-    tasks: 'tarefas',
-    installments: 'parcelamentos',
-    users: 'usuarios',
-    settings: 'configuracoes'
+    kanban: 'kanban',
+    tasks: 'tasks',
+    installments: 'installments',
+    users: 'users',
+    settings: 'settings'
   };
 
   function normalizeFeatureKey(value){
@@ -9047,7 +9047,10 @@ document.addEventListener("DOMContentLoaded", () => {
   async function fetchFeatureAccess(){
     try{
       const actor = (typeof currentActor === 'function') ? currentActor() : null;
-      const ownerUid = actor?.masterId || actor?.userId || actor?.id || null;
+      const ownerUid =
+        (typeof CLOUD_CLINIC_OWNER_UID !== 'undefined' && CLOUD_CLINIC_OWNER_UID) ||
+        (typeof CLOUD_OWNER_UID !== 'undefined' && CLOUD_OWNER_UID) ||
+        actor?.masterId || actor?.userId || actor?.id || null;
       if(!ownerUid) return;
 
       const authToken = localStorage.getItem('cronos_token') || localStorage.getItem('authToken') || '';
