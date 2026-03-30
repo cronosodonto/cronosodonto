@@ -8945,7 +8945,10 @@ document.addEventListener("DOMContentLoaded", () => {
 <script id="feature-access-safe-patch">
 (function(){
   const FEATURE_ACCESS_ENDPOINT = 'get-clinic-feature-access';
+  const SUPABASE_FN_BASE = 'https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/';
   const featureStateMap = new Map();
+  let lastResolvedContextKey = null;
+
   const VIEW_TO_FEATURE = {
     dashboard: 'dashboard',
     leads: 'leads',
@@ -8986,7 +8989,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
     }catch(_err){}
-    try{ alert('Este módulo não faz parte do plano contratado.'); }catch(_err){}
+    try{
+      alert('Este módulo não faz parte do plano contratado.');
+    }catch(_err){}
   }
 
   function getFirstVisibleAndEnabledView(){
@@ -9009,11 +9014,14 @@ document.addEventListener("DOMContentLoaded", () => {
       buttons.forEach(btn => {
         const view = btn.getAttribute('data-view');
         if(!view) return;
+
         const hiddenByRole = btn.classList.contains('hidden');
         const hiddenByFeature = isFeatureHidden(view);
         const lockedByFeature = isFeatureLocked(view);
+
         btn.classList.toggle('feature-hidden', !hiddenByRole && hiddenByFeature);
         btn.classList.toggle('feature-locked', !hiddenByRole && !hiddenByFeature && lockedByFeature);
+
         let tag = btn.querySelector('.featureLockTag');
         if(!hiddenByRole && !hiddenByFeature && lockedByFeature){
           if(!tag){
@@ -9022,74 +9030,152 @@ document.addEventListener("DOMContentLoaded", () => {
             tag.textContent = 'Bloq.';
             btn.appendChild(tag);
           }
-        }else if(tag){
+        } else if(tag){
           tag.remove();
         }
       });
-    }catch(err){ console.error('Falha ao aplicar botões de feature:', err); }
+    }catch(err){
+      console.error('Falha ao aplicar botões de feature:', err);
+    }
   }
 
   function guardShowView(){
     if(typeof window.showView !== 'function' || window.__featureGuardWrapped) return;
+
     const originalShowView = window.showView;
     window.showView = function(view){
       if(isFeatureHidden(view) || isFeatureLocked(view)){
         showPlanMessage();
         const fallback = getFirstVisibleAndEnabledView();
-        if(fallback && fallback !== view) return originalShowView.call(this, fallback);
+        if(fallback && fallback !== view){
+          return originalShowView.call(this, fallback);
+        }
         return;
       }
       return originalShowView.apply(this, arguments);
     };
+
     window.__featureGuardWrapped = true;
   }
 
-  async function fetchFeatureAccess(){
+  function resolveOwnerContext(){
+    const actor = (typeof currentActor === 'function') ? currentActor() : null;
+    const ownerUid =
+      (typeof CLOUD_CLINIC_OWNER_UID !== 'undefined' && CLOUD_CLINIC_OWNER_UID) ||
+      (typeof CLOUD_OWNER_UID !== 'undefined' && CLOUD_OWNER_UID) ||
+      (actor && actor.kind === 'support' && actor.id ? actor.id : null) ||
+      null;
+
+    const ownerEmail =
+      (typeof CLOUD_CLINIC_OWNER_EMAIL !== 'undefined' && CLOUD_CLINIC_OWNER_EMAIL) ||
+      (typeof CLOUD_OWNER_EMAIL !== 'undefined' && CLOUD_OWNER_EMAIL) ||
+      ((actor && actor.kind === 'master') ? actor.email : null) ||
+      ((actor && actor.kind === 'support' && actor.email) ? actor.email : null) ||
+      null;
+
+    return {
+      owner_uid: ownerUid || null,
+      owner_email: ownerEmail || null
+    };
+  }
+
+  async function fetchFeatureAccess(force){
     try{
-      const actor = (typeof currentActor === 'function') ? currentActor() : null;
-      const ownerUid =
-        (typeof CLOUD_CLINIC_OWNER_UID !== 'undefined' && CLOUD_CLINIC_OWNER_UID) ||
-        (typeof CLOUD_OWNER_UID !== 'undefined' && CLOUD_OWNER_UID) ||
-        actor?.masterId || actor?.userId || actor?.id || null;
-      if(!ownerUid) return;
+      const ctx = resolveOwnerContext();
+      if(!ctx.owner_uid && !ctx.owner_email){
+        console.warn('Feature access: contexto da clínica ainda não resolvido.');
+        return false;
+      }
 
-      const authToken = localStorage.getItem('cronos_token') || localStorage.getItem('authToken') || '';
+      const ctxKey = JSON.stringify(ctx);
+      if(!force && lastResolvedContextKey === ctxKey && featureStateMap.size){
+        return true;
+      }
+
+      const authToken =
+        localStorage.getItem('cronos_token') ||
+        localStorage.getItem('authToken') ||
+        '';
+
       const headers = { 'Content-Type':'application/json' };
-      if(authToken) headers['Authorization'] = 'Bearer ' + authToken;
+      if(authToken){
+        headers['Authorization'] = 'Bearer ' + authToken;
+      }
 
-      const res = await fetch('https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/' + FEATURE_ACCESS_ENDPOINT, {
+      const res = await fetch(SUPABASE_FN_BASE + FEATURE_ACCESS_ENDPOINT, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ owner_uid: ownerUid })
+        body: JSON.stringify({
+          owner_uid: ctx.owner_uid,
+          owner_email: ctx.owner_email
+        })
       });
 
-      if(!res.ok) throw new Error('feature access unavailable');
+      if(!res.ok){
+        throw new Error('feature access unavailable');
+      }
+
       const data = await res.json().catch(() => ({}));
       featureStateMap.clear();
+
       (Array.isArray(data?.features) ? data.features : []).forEach(item => {
         const key = normalizeFeatureKey(item?.feature_key);
         if(!key) return;
+
         featureStateMap.set(key, {
           enabled: item?.enabled !== false,
           visibility_mode: normalizeFeatureKey(item?.visibility_mode || 'enabled') || 'enabled'
         });
       });
+
+      lastResolvedContextKey = ctxKey;
+      return true;
     }catch(err){
       console.warn('Feature access em modo seguro:', err?.message || err);
+      return false;
     }
   }
 
-  async function bootFeatureAccess(){
+  async function refreshFeatureAccess(force){
     guardShowView();
     applyFeatureStatesToMenu();
-    await fetchFeatureAccess();
+    await fetchFeatureAccess(!!force);
     applyFeatureStatesToMenu();
   }
 
+  function wrapBoot(){
+    if(typeof window.boot !== 'function' || window.__featureBootWrapped) return;
+
+    const originalBoot = window.boot;
+    window.boot = async function(){
+      const result = await originalBoot.apply(this, arguments);
+      setTimeout(() => { refreshFeatureAccess(true); }, 300);
+      setTimeout(() => { refreshFeatureAccess(true); }, 1200);
+      return result;
+    };
+
+    window.__featureBootWrapped = true;
+  }
+
+  function install(){
+    wrapBoot();
+    guardShowView();
+    refreshFeatureAccess(false);
+
+    window.addEventListener('focus', () => refreshFeatureAccess(true));
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible'){
+        refreshFeatureAccess(true);
+      }
+    });
+  }
+
+  window.__refreshFeatureAccess = refreshFeatureAccess;
+
   if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', bootFeatureAccess, { once:true });
+    document.addEventListener('DOMContentLoaded', install, { once:true });
   }else{
-    bootFeatureAccess();
+    install();
   }
 })();
 </script>
