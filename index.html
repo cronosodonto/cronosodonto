@@ -8257,13 +8257,10 @@ async function boot(){
 
     const supportCtx = getSupportContext();
 
-    // Se o suporte acabou entrando, não assusta o usuário com toast fantasma.
     if(!supportCtx){
-      clearSupportContext();
-
-      // Quando existe support_token, deixa o fluxo terminar antes de qualquer alarde.
-      // O modo suporte pode ser resolvido em seguida pelo boot/sync.
+      // Só limpa e avisa quando não for fluxo de suporte.
       if(!supportTokenPresent){
+        clearSupportContext();
         toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
       }
     }
@@ -8754,6 +8751,12 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
 });
 
 async function verificarSessao() {
+  // Não deixa o auto-login normal atropelar o fluxo de suporte.
+  const hasSupportToken = new URLSearchParams(location.search).has("support_token");
+  if (hasSupportToken || isSupportMode()) {
+    return;
+  }
+
   const { data } = await supabaseClient.auth.getSession();
 
   if (data.session) {
