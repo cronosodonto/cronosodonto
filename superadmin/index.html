@@ -275,23 +275,7 @@
     }
 
 
-  
-    .feature-grid{display:grid;gap:12px}
-    .feature-row{
-      display:grid;
-      grid-template-columns:minmax(180px,1.2fr) minmax(200px,.8fr);
-      gap:12px;
-      align-items:start;
-      padding:12px 0;
-      border-bottom:1px solid rgba(255,255,255,.06);
-    }
-    .feature-row:last-child{border-bottom:none}
-    .feature-title{font-weight:800}
-    .feature-desc{font-size:12px;color:var(--muted);margin-top:4px}
-    .feature-hint{font-size:12px;color:var(--muted);margin-top:6px}
-    .badge-root{background:rgba(96,165,250,.16);color:#9ec8ff}
-
-</style>
+  </style>
 </head>
 <body>
   <section id="loginScreen" class="login-shell">
@@ -350,8 +334,8 @@
       <div class="actions">
         <button class="btn btn-ghost" id="btnRefresh">Atualizar</button>
         <button class="btn btn-ghost" id="btnLogout">Sair</button>
+        <button class="btn btn-ghost" id="btnManageNotifications">Notificações</button>
         <button class="btn btn-ghost" id="btnManageSuperadmins">Superadmins</button>
-        <button class="btn btn-ghost" id="btnOpenGlobalFeatures">Recursos globais</button>
         <button class="btn btn-info" id="btnOpenSuperadminModal">Criar superadmin</button>
         <button class="btn btn-primary" id="btnCreateClinic">Criar clínica</button>
       </div>
@@ -618,22 +602,6 @@
     </div>
   </div>
 
-  
-  <div class="modal-backdrop" id="globalFeaturesModal">
-    <div class="modal">
-      <div class="modal-head">
-        <strong>Recursos globais</strong>
-        <button class="btn btn-ghost" id="btnCloseGlobalFeaturesHead" type="button">Fechar</button>
-      </div>
-      <div class="modal-body" id="globalFeaturesContent"></div>
-      <div class="modal-foot">
-        <button class="btn btn-ghost" id="btnCloseGlobalFeatures" type="button">Cancelar</button>
-        <button class="btn btn-primary" id="btnSaveGlobalFeatures" type="button">Salvar recursos</button>
-      </div>
-    </div>
-  </div>
-
-
   <div class="toast-wrap" id="toastWrap"></div>
 
   <div class="modal-backdrop" id="superadminsListModal">
@@ -671,7 +639,40 @@
   </div>
 
 
-  <script>
+  
+  <div class="modal-backdrop" id="notificationsModal">
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <div class="section-intro">
+          <strong>Notificações operacionais</strong>
+          <div class="helper">Solicitações de usuário extra e alertas que precisam da tua bênção divina.</div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-ghost" id="btnRefreshNotifications" type="button">Atualizar notificações</button>
+          <button class="btn btn-ghost" id="btnCloseNotificationsHead" type="button">Fechar</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Tipo</th>
+                <th>Clínica</th>
+                <th>Usuário</th>
+                <th>Status</th>
+                <th>Solicitado em</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="notificationBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
     const CONFIG = {
       supabaseUrl: "https://nsqpslierpulanxvsxaw.supabase.co",
       anonKey: "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ",
@@ -685,15 +686,15 @@
         resetSuperadminPassword: "reset-superadmin-password",
         deactivateSuperadmin: "deactivate-superadmin",
         deleteSuperadmin: "delete-superadmin",
+        listUserRequests: "list-user-requests",
+        reviewUserRequest: "review-user-request",
         getClinicDetails: "get-clinic-details",
         updateClinicSettings: "update-clinic-settings",
         openSupportAccess: "open-support-access",
         exportClinicCsv: "export-clinic-csv",
         importClinicCsv: "import-clinic-csv",
         resetMasterPassword: "reset-master-password",
-        deleteClinic: "delete-clinic",
-        listFeatureAccess: "list-feature-access",
-        saveFeatureAccess: "save-feature-access"
+        deleteClinic: "delete-clinic"
       }
     };
 
@@ -721,15 +722,16 @@
       currentSuperadminId: null,
       currentSuperadminEmail: null,
       currentSuperadminIsRoot: false,
+      notifications: [],
+      loadingNotifications: false,
+      hasLoadedNotifications: false,
       loadingClinics: false,
       loadingClinicDetails: false,
       loadingSuperadmins: false,
       hasLoadedClinics: false,
       hasLoadedSuperadmins: false,
       clinicPage: 1,
-      clinicPageSize: 8,
-      globalFeatures: [],
-      clinicFeatures: []
+      clinicPageSize: 8
     };
 
     const STATUS_LABELS = {
@@ -891,6 +893,18 @@
     }
 
     function periodLabel(clinic) { return `${formatDate(clinic.access_starts_at)} até ${formatDate(clinic.access_ends_at)}`; }
+
+    function notificationTypeLabel(item){
+      if(String(item.kind || "") === "extra_user_request") return "Usuário extra";
+      return item.kind || "Notificação";
+    }
+
+    function updateNotificationsButton(){
+      const button = document.getElementById("btnManageNotifications");
+      if(!button) return;
+      const pending = (state.notifications || []).filter(item => String(item.status || "pending") === "pending").length;
+      button.textContent = pending > 0 ? `Notificações (${pending})` : "Notificações";
+    }
 
     function periodHint(clinic) {
       const status = getComputedStatus(clinic);
@@ -1201,6 +1215,91 @@
       }
     }
 
+
+    function renderNotifications() {
+      const body = document.getElementById("notificationBody");
+      if (!body) return;
+
+      updateNotificationsButton();
+
+      if (!state.hasLoadedNotifications && state.loadingNotifications) {
+        body.innerHTML = `<tr><td colspan="6"><div class="empty">Carregando notificações...</div></td></tr>`;
+        return;
+      }
+
+      if (!state.notifications.length) {
+        body.innerHTML = `<tr><td colspan="6"><div class="empty">Nenhuma notificação pendente por enquanto.</div></td></tr>`;
+        return;
+      }
+
+      body.innerHTML = state.notifications.map(item => {
+        const pending = String(item.status || "pending") === "pending";
+        return `
+          <tr data-request-id="${escapeHtml(item.id || "")}">
+            <td>
+              <div class="clinic-block">
+                <strong>${escapeHtml(notificationTypeLabel(item))}</strong>
+                <span class="muted">${escapeHtml(item.user_role || "Usuário")}</span>
+              </div>
+            </td>
+            <td>
+              <div class="clinic-block">
+                <strong>${escapeHtml(item.clinic_name || "Clínica")}</strong>
+                <span class="muted">${escapeHtml(item.slug || "—")}</span>
+              </div>
+            </td>
+            <td>
+              <div class="clinic-block">
+                <strong>${escapeHtml(item.user_name || "Usuário")}</strong>
+                <span class="muted">${escapeHtml(item.user_email || "—")}</span>
+              </div>
+            </td>
+            <td><span class="${badgeClass(pending ? 'scheduled' : 'inactive')}">${escapeHtml(pending ? 'Pendente' : (item.status || 'Resolvido'))}</span></td>
+            <td>${escapeHtml(formatDateTime(item.created_at))}</td>
+            <td>
+              <div class="row-actions">
+                ${pending ? '<button class="btn btn-success" data-action="approve-request">Liberar</button><button class="btn btn-danger" data-action="reject-request">Negar</button>' : '<span class="muted">Resolvido</span>'}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      body.querySelectorAll('button[data-action="approve-request"],button[data-action="reject-request"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const tr = button.closest('tr');
+          const id = tr?.dataset?.requestId;
+          const target = state.notifications.find(item => item.id === id);
+          if (!target) return;
+          const decision = button.dataset.action === 'approve-request' ? 'approve' : 'reject';
+          const ok = confirm(decision === 'approve'
+            ? `Liberar o usuário ${target.user_name || ''} da clínica ${target.clinic_name || ''}?`
+            : `Negar a solicitação do usuário ${target.user_name || ''}?`);
+          if (!ok) return;
+
+          await withButtonLoading(button, decision === 'approve' ? 'Liberando...' : 'Negando...', async () => {
+            await callEdgeFunction(CONFIG.endpoints.reviewUserRequest, { request_id: target.id, decision });
+            await Promise.all([loadNotifications(), loadClinics()]);
+          });
+
+          toast(decision === 'approve' ? 'Usuário liberado.' : 'Solicitação negada.', 'success', 2600);
+        });
+      });
+    }
+
+    async function loadNotifications() {
+      state.loadingNotifications = true;
+      renderNotifications();
+      try {
+        const data = await callEdgeFunction(CONFIG.endpoints.listUserRequests, {});
+        state.notifications = Array.isArray(data?.notifications) ? data.notifications : [];
+        state.hasLoadedNotifications = true;
+      } finally {
+        state.loadingNotifications = false;
+        renderNotifications();
+      }
+    }
+
     function openDetailLoadingModal(clinicId) {
       state.selectedClinicId = clinicId;
       const preview = state.clinics.find(c => c.id === clinicId) || {};
@@ -1228,12 +1327,10 @@
 
       try {
         const data = await callEdgeFunction(CONFIG.endpoints.getClinicDetails, { clinic_id: clinicId });
-        const featureData = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, { clinic_id: clinicId }).catch(() => ({ features: [] }));
         state.selectedClinicDetails = {
           clinic: data?.clinic || clinic || {},
           private: data?.private || {},
           users: Array.isArray(data?.users) ? data.users : [],
-          features: Array.isArray(featureData?.features) ? featureData.features : [],
           __loading: false
         };
       } catch (err) {
@@ -1241,7 +1338,6 @@
           clinic: clinic || {},
           private: {},
           users: [],
-          features: [],
           __loading: false
         };
         toast("Detalhes completos ainda dependem do backend. Mostrando o que já temos.", "info", 3500);
@@ -1264,7 +1360,6 @@
       const clinic = payload.clinic || {};
       const priv = payload.private || {};
       const users = payload.users || [];
-      const features = payload.features || [];
       const status = getComputedStatus(clinic);
       const used = countInternalUsers(clinic);
       const included = includedUsers(clinic);
@@ -1389,52 +1484,6 @@
             <div class="kv"><strong>Usuários extras</strong><span>${extra}</span></div>
           </div>
         </details>
-
-        <details class="section">
-          <summary>Recursos premium</summary>
-          <div class="section-body">
-            <div class="feature-grid">
-              ${
-                features.length
-                  ? features.map(feature => {
-                      const clinicMode =
-                        feature?.clinic?.visibility_mode
-                          ? feature.clinic.visibility_mode
-                          : (typeof feature?.clinic?.enabled === 'boolean'
-                              ? (feature.clinic.enabled ? 'enabled' : 'locked')
-                              : 'inherit');
-                      const globalLabel = feature?.global?.enabled
-                        ? 'Liberado'
-                        : (feature?.global?.visibility_mode === 'hidden' ? 'Oculto' : 'Bloqueado visível');
-                      return `
-                        <div class="feature-row">
-                          <div>
-                            <div class="feature-title">${escapeHtml(feature.label || feature.feature_key)}</div>
-                            <div class="feature-desc">${escapeHtml(feature.description || 'Recurso controlado comercialmente pelo superadmin.')}</div>
-                            <div class="feature-hint">Global: ${escapeHtml(globalLabel)}</div>
-                          </div>
-                          <div class="field">
-                            <label>Disponibilidade</label>
-                            <select class="select clinic-feature-select" data-feature-key="${escapeHtml(feature.feature_key)}">
-                              <option value="inherit" ${clinicMode === 'inherit' ? 'selected' : ''}>Herdar regra global</option>
-                              <option value="enabled" ${clinicMode === 'enabled' ? 'selected' : ''}>Liberado</option>
-                              <option value="locked" ${clinicMode === 'locked' ? 'selected' : ''}>Bloqueado visível</option>
-                              <option value="hidden" ${clinicMode === 'hidden' ? 'selected' : ''}>Oculto</option>
-                            </select>
-                          </div>
-                        </div>
-                      `;
-                    }).join('')
-                  : `<div class="empty">Nenhum recurso configurado ainda.</div>`
-              }
-            </div>
-            <div class="row-actions">
-              <button class="btn btn-primary" type="button" id="btnSaveClinicFeatures">Salvar recursos desta clínica</button>
-              <button class="btn btn-ghost" type="button" id="btnOpenGlobalFeaturesFromClinic">Recursos globais</button>
-            </div>
-          </div>
-        </details>
-
 
         <details class="section">
           <summary>Acesso do master</summary>
@@ -1663,98 +1712,6 @@
       });
     }
 
-
-    function renderGlobalFeaturesContent(features) {
-      return `
-        <div class="feature-grid">
-          ${
-            features.length
-              ? features.map(feature => {
-                  const mode = feature?.global?.enabled
-                    ? 'enabled'
-                    : (feature?.global?.visibility_mode || 'locked');
-                  return `
-                    <div class="feature-row">
-                      <div>
-                        <div class="feature-title">${escapeHtml(feature.label || feature.feature_key)}</div>
-                        <div class="feature-desc">${escapeHtml(feature.description || 'Recurso comercial controlado pelo superadmin.')}</div>
-                      </div>
-                      <div class="field">
-                        <label>Regra global</label>
-                        <select class="select global-feature-select" data-feature-key="${escapeHtml(feature.feature_key)}">
-                          <option value="enabled" ${mode === 'enabled' ? 'selected' : ''}>Liberado</option>
-                          <option value="locked" ${mode === 'locked' ? 'selected' : ''}>Bloqueado visível</option>
-                          <option value="hidden" ${mode === 'hidden' ? 'selected' : ''}>Oculto</option>
-                        </select>
-                      </div>
-                    </div>
-                  `;
-                }).join('')
-              : `<div class="empty">Nenhum recurso cadastrado.</div>`
-          }
-        </div>
-      `;
-    }
-
-    async function openGlobalFeaturesModal() {
-      const modal = document.getElementById("globalFeaturesModal");
-      const content = document.getElementById("globalFeaturesContent");
-      content.innerHTML = `<div class="empty">Carregando recursos...</div>`;
-      modal.classList.add("show");
-
-      const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, {}).catch(() => ({ features: [] }));
-      state.globalFeatures = Array.isArray(data?.features) ? data.features : [];
-      content.innerHTML = renderGlobalFeaturesContent(state.globalFeatures);
-    }
-
-    function closeGlobalFeaturesModal() {
-      document.getElementById("globalFeaturesModal").classList.remove("show");
-    }
-
-    async function handleSaveGlobalFeatures(button) {
-      const selects = Array.from(document.querySelectorAll(".global-feature-select"));
-      if (!selects.length) {
-        toast("Nenhum recurso global para salvar.", "info");
-        return;
-      }
-
-      await withButtonLoading(button, "Salvando...", async () => {
-        for (const select of selects) {
-          await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, {
-            scope: "global",
-            feature_key: select.dataset.featureKey,
-            mode: select.value
-          });
-        }
-      });
-
-      toast("Recursos globais salvos.", "success");
-      closeGlobalFeaturesModal();
-    }
-
-    async function handleSaveClinicFeatures(button) {
-      const selects = Array.from(document.querySelectorAll(".clinic-feature-select"));
-      if (!state.selectedClinicId || !selects.length) {
-        toast("Nenhum recurso da clínica para salvar.", "info");
-        return;
-      }
-
-      await withButtonLoading(button, "Salvando...", async () => {
-        for (const select of selects) {
-          await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, {
-            scope: "clinic",
-            clinic_id: state.selectedClinicId,
-            feature_key: select.dataset.featureKey,
-            mode: select.value
-          });
-        }
-      });
-
-      toast("Recursos da clínica salvos.", "success");
-      await loadClinicDetails(state.selectedClinicId);
-    }
-
-
     function bindDetailModalEvents() {
       const btnDelete = document.getElementById("btnDeleteClinic");
       const btnSupport = document.getElementById("btnDetailSupport");
@@ -1765,8 +1722,6 @@
       const btnGeneratePassword = document.getElementById("btnGenerateDetailMasterPassword");
       const btnCopyPassword = document.getElementById("btnCopyDetailMasterPassword");
       const btnCopyAccess = document.getElementById("btnCopyDetailMasterAccess");
-      const btnSaveClinicFeatures = document.getElementById("btnSaveClinicFeatures");
-      const btnOpenGlobalFeaturesFromClinic = document.getElementById("btnOpenGlobalFeaturesFromClinic");
 
       if (btnDelete) btnDelete.addEventListener("click", () => handleDeleteClinic(btnDelete));
       if (btnSupport) btnSupport.addEventListener("click", () => handleOpenSupport(btnSupport));
@@ -1780,8 +1735,6 @@
       });
       if (btnCopyPassword) btnCopyPassword.addEventListener("click", () => copyText(document.getElementById("detail_master_new_password").value, "Senha copiada."));
       if (btnCopyAccess) btnCopyAccess.addEventListener("click", () => copyText(detailMasterAccessText(), "Acesso copiado."));
-      if (btnSaveClinicFeatures) btnSaveClinicFeatures.addEventListener("click", () => handleSaveClinicFeatures(btnSaveClinicFeatures));
-      if (btnOpenGlobalFeaturesFromClinic) btnOpenGlobalFeaturesFromClinic.addEventListener("click", openGlobalFeaturesModal);
     }
 
     async function handleResetSuperadminPassword(button) {
@@ -1858,7 +1811,7 @@
 
       document.getElementById("btnRefresh").addEventListener("click", async (e) => {
         await withButtonLoading(e.currentTarget, "Atualizando...", async () => {
-          await loadClinics();
+          await Promise.all([loadClinics(), loadNotifications()]);
           toast("Dados atualizados.", "success");
         });
       });
@@ -1874,11 +1827,8 @@
 
       document.getElementById("btnCreateClinic").addEventListener("click", openCreateModal);
       document.getElementById("btnOpenSuperadminModal").addEventListener("click", openSuperadminModal);
+      document.getElementById("btnManageNotifications").addEventListener("click", openNotificationsModal);
       document.getElementById("btnManageSuperadmins").addEventListener("click", openSuperadminsListModal);
-      document.getElementById("btnOpenGlobalFeatures").addEventListener("click", openGlobalFeaturesModal);
-      document.getElementById("btnCloseGlobalFeatures").addEventListener("click", closeGlobalFeaturesModal);
-      document.getElementById("btnCloseGlobalFeaturesHead").addEventListener("click", closeGlobalFeaturesModal);
-      document.getElementById("btnSaveGlobalFeatures").addEventListener("click", () => handleSaveGlobalFeatures(document.getElementById("btnSaveGlobalFeatures")));
 
       document.getElementById("btnClinicPrev").addEventListener("click", () => {
         if (state.clinicPage > 1) {
@@ -1900,6 +1850,7 @@
       document.getElementById("btnCloseSuperadmin").addEventListener("click", closeSuperadminModal);
       document.getElementById("btnCloseSuperadminHead").addEventListener("click", closeSuperadminModal);
       document.getElementById("btnCloseSuperadminsHead").addEventListener("click", closeSuperadminsListModal);
+      document.getElementById("btnCloseNotificationsHead").addEventListener("click", closeNotificationsModal);
       document.getElementById("btnCloseDetail").addEventListener("click", closeDetailModal);
       document.getElementById("btnCloseDetailHead").addEventListener("click", closeDetailModal);
 
@@ -1914,6 +1865,9 @@
       });
       document.getElementById("resetSuperadminModal").addEventListener("click", (e) => {
         if (e.target.id === "resetSuperadminModal") closeResetSuperadminModal();
+      });
+      document.getElementById("notificationsModal").addEventListener("click", (e) => {
+        if (e.target.id === "notificationsModal") closeNotificationsModal();
       });
 
       document.getElementById("btnGeneratePassword").addEventListener("click", () => {
@@ -1939,6 +1893,13 @@
         await withButtonLoading(button, "Atualizando...", async () => {
           await loadSuperadmins();
           toast("Lista de superadmins atualizada.", "success", 2400);
+        });
+      });
+      document.getElementById("btnRefreshNotifications").addEventListener("click", async (e) => {
+        const button = e.currentTarget;
+        await withButtonLoading(button, "Atualizando...", async () => {
+          await loadNotifications();
+          toast("Lista de notificações atualizada.", "success", 2400);
         });
       });
       document.getElementById("btnCloseResetSuperadmin").addEventListener("click", closeResetSuperadminModal);
@@ -2064,7 +2025,7 @@
           renderStats();
           renderTable();
 
-          await Promise.all([loadClinics(), loadSuperadmins()]);
+          await Promise.all([loadClinics(), loadSuperadmins(), loadNotifications()]);
           toast("Login realizado com sucesso.", "success");
         } catch (err) {
           console.error(err);
@@ -2102,6 +2063,18 @@
       }
     }
     function closeSuperadminsListModal() { document.getElementById("superadminsListModal").classList.remove("show"); }
+    function openNotificationsModal() {
+      document.getElementById("notificationsModal").classList.add("show");
+      if (!state.hasLoadedNotifications) {
+        loadNotifications().catch(err => {
+          console.error(err);
+          toast(err.message || "Erro ao carregar notificações.", "error", 3600);
+        });
+      } else {
+        renderNotifications();
+      }
+    }
+    function closeNotificationsModal() { document.getElementById("notificationsModal").classList.remove("show"); }
     function closeDetailModal() { document.getElementById("detailModal").classList.remove("show"); }
 
     async function restoreSessionIfAny() {
@@ -2114,7 +2087,7 @@
       renderStats();
       renderTable();
       try {
-        await Promise.all([loadClinics(), loadSuperadmins()]);
+        await Promise.all([loadClinics(), loadSuperadmins(), loadNotifications()]);
       } catch (err) {
         console.error(err);
         toast(err.message || "Erro ao carregar dados do painel.", "error", 4000);
