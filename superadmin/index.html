@@ -556,7 +556,15 @@
       }
     };
 
-    const supabaseClient = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.anonKey);
+    const SUPERADMIN_AUTH_STORAGE_KEY = "cronos-superadmin-auth";
+    const supabaseClient = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.anonKey, {
+      auth: {
+        storageKey: SUPERADMIN_AUTH_STORAGE_KEY,
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false
+      }
+    });
     const importInput = document.createElement('input');
     importInput.type = 'file';
     importInput.accept = '.csv,text/csv';
