@@ -3232,22 +3232,14 @@ function isSupportMode(){
 }
 
 async function maybeInitSupportMode(){
-  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return getSupportContext();
-
   const params = new URLSearchParams(location.search);
   const supportToken = params.get("support_token");
   if(!supportToken) return getSupportContext();
-
-  const { data: { session } } = await supabaseClient.auth.getSession();
-  if(!session?.access_token){
-    throw new Error("Faça login no superadmin antes de usar o suporte.");
-  }
 
   const res = await fetch(`${supabaseUrl}/functions/v1/resolve-support-access`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${session.access_token}`,
       "apikey": supabaseKey
     },
     body: JSON.stringify({ support_token: supportToken })
