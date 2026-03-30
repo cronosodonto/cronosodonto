@@ -8257,17 +8257,14 @@ async function boot(){
 
     const supportCtx = getSupportContext();
 
-    if(!supportCtx){
-      // Só limpa e avisa quando não for fluxo de suporte.
-      if(!supportTokenPresent){
-        clearSupportContext();
-        toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
-      }
+    // Em fluxo de suporte, não mostra toast antes do fluxo terminar.
+    if(!supportCtx && !supportTokenPresent){
+      clearSupportContext();
+      toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
     }
   }
 
   await ensureCloudDBLoaded();
-
   await syncCurrentCloudActor();
 
   fillSelectOptions();
@@ -8285,17 +8282,24 @@ async function boot(){
   saveFilters(getUIFilters());
 
   const actor = currentActor();
+
   if(!actor){
+    // Evita jogar o suporte na tela de login por causa de corrida de inicialização.
+    if((supportTokenPresent || isSupportMode()) && (window.__SUPPORT_BOOT_RETRIES__ || 0) < 6){
+      window.__SUPPORT_BOOT_RETRIES__ = (window.__SUPPORT_BOOT_RETRIES__ || 0) + 1;
+      setTimeout(()=>boot(), 180);
+      return;
+    }
+
+    window.__SUPPORT_BOOT_RETRIES__ = 0;
     showAuth();
-const authSelect = el("authMasterSelect");
-if (authSelect) authSelect.parentElement.classList.add("hidden");
-    // auth defaults
+    const authSelect = el("authMasterSelect");
+    if (authSelect) authSelect.parentElement.classList.add("hidden");
     el("authMode").value = "master";
-    // refreshAuthMasters();
-  
-// el("authMasterNameWrap").classList.remove("hidden");
     return;
   }
+
+  window.__SUPPORT_BOOT_RETRIES__ = 0;
 
   const accessDecision = await applyClinicAccessRules();
   if(accessDecision?.mode && accessDecision.mode !== "allow"){
@@ -8751,9 +8755,11 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
 });
 
 async function verificarSessao() {
-  // Não deixa o auto-login normal atropelar o fluxo de suporte.
   const hasSupportToken = new URLSearchParams(location.search).has("support_token");
+
+  // Em suporte, deixa o próprio boot resolver tudo — inclusive sem login.
   if (hasSupportToken || isSupportMode()) {
+    await boot();
     return;
   }
 
@@ -8762,8 +8768,11 @@ async function verificarSessao() {
   if (data.session) {
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
     await finalizeCloudLogin();
-    showView("dashboard");
+    return;
   }
+
+  // Sem sessão, ainda assim roda o boot para checar estado inicial corretamente.
+  await boot();
 }
 
 window.addEventListener("load", verificarSessao);
