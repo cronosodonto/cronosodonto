@@ -275,7 +275,25 @@
     }
 
 
-  </style>
+  
+
+    /* ===== Feature access / módulos laterais ===== */
+    .feature-access-card{padding:16px;border-top:1px solid var(--line)}
+    .feature-access-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .feature-box{border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:14px;background:rgba(255,255,255,.03)}
+    .feature-box h4{margin:0 0 6px;font-size:16px;line-height:1.15}
+    .feature-box .helper{margin-top:8px}
+    .feature-box-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
+    .feature-save-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:14px}
+    .feature-inline-meta{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 10px}
+    .feature-chip{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.05);color:#d7dded}
+    .feature-chip.ok{background:rgba(52,211,153,.14);color:#92f3c7}
+    .feature-chip.locked{background:rgba(251,191,36,.16);color:#ffd76b}
+    .feature-chip.hidden{background:rgba(148,163,184,.16);color:#d0d8e6}
+    .feature-message{padding:14px;border:1px dashed rgba(255,255,255,.12);border-radius:14px;color:var(--muted)}
+    @media (max-width: 920px){ .feature-access-grid{grid-template-columns:1fr} }
+
+</style>
 </head>
 <body>
   <section id="loginScreen" class="login-shell">
@@ -2102,5 +2120,369 @@
 
     init();
   </script>
+
+<script>
+(function(){
+  const FEATURE_META = [
+    { key: 'dashboard', label: 'Dashboard', description: 'Visão geral da clínica.' },
+    { key: 'leads', label: 'Leads', description: 'Cadastro e listagem de leads.' },
+    { key: 'funil', label: 'Funil', description: 'Kanban do andamento comercial.' },
+    { key: 'tarefas', label: 'Tarefas', description: 'Pendências e lembretes da equipe.' },
+    { key: 'parcelamentos', label: 'Parcelamentos', description: 'Parcelas, cobrança e previsões.' },
+    { key: 'usuarios', label: 'Usuários', description: 'Usuários internos da clínica.' },
+    { key: 'configuracoes', label: 'Configurações', description: 'Parâmetros e preferências da clínica.' }
+  ];
+
+  let globalFeatureDraft = {};
+  let clinicFeatureDraft = {};
+
+  function ensureFeatureEndpoints(){
+    CONFIG.endpoints.listFeatureAccess = CONFIG.endpoints.listFeatureAccess || 'list-feature-access';
+    CONFIG.endpoints.saveFeatureAccess = CONFIG.endpoints.saveFeatureAccess || 'save-feature-access';
+    CONFIG.endpoints.exportClinicData = CONFIG.endpoints.exportClinicData || 'export-clinic-data';
+  }
+
+  function featureModeLabel(mode){
+    if(mode === 'enabled') return 'Liberado';
+    if(mode === 'locked') return 'Bloqueado';
+    if(mode === 'hidden') return 'Oculto';
+    return 'Padrão global';
+  }
+
+  function featureModeClass(mode){
+    if(mode === 'enabled') return 'ok';
+    if(mode === 'locked') return 'locked';
+    if(mode === 'hidden') return 'hidden';
+    return '';
+  }
+
+  function mergeFeatureRows(rows){
+    const map = new Map((Array.isArray(rows) ? rows : []).map((row) => [String(row.feature_key || '').trim(), row]));
+    return FEATURE_META.map((meta) => {
+      const row = map.get(meta.key) || {};
+      const globalVisibility = String(row.global?.visibility_mode || row.visibility_mode || 'enabled').trim().toLowerCase();
+      const clinicVisibility = row.clinic?.visibility_mode == null ? null : String(row.clinic.visibility_mode || '').trim().toLowerCase();
+      const effectiveVisibility = String(row.effective?.visibility_mode || clinicVisibility || globalVisibility || 'enabled').trim().toLowerCase();
+      return {
+        ...meta,
+        global: {
+          enabled: typeof row.global?.enabled === 'boolean' ? row.global.enabled : globalVisibility === 'enabled',
+          visibility_mode: globalVisibility || 'enabled'
+        },
+        clinic: {
+          enabled: typeof row.clinic?.enabled === 'boolean' ? row.clinic.enabled : null,
+          visibility_mode: clinicVisibility
+        },
+        effective: {
+          enabled: typeof row.effective?.enabled === 'boolean' ? row.effective.enabled : effectiveVisibility === 'enabled',
+          visibility_mode: effectiveVisibility || 'enabled'
+        }
+      };
+    });
+  }
+
+  function globalFeatureCard(row){
+    return `
+      <div class="feature-box">
+        <div class="feature-box-top">
+          <div>
+            <h4>${escapeHtml(row.label)}</h4>
+            <div class="helper">${escapeHtml(row.description)}</div>
+          </div>
+          <span class="feature-chip ${featureModeClass(row.global.visibility_mode)}">${featureModeLabel(row.global.visibility_mode)}</span>
+        </div>
+        <label for="global_feature_${row.key}">Padrão global</label>
+        <select class="select" id="global_feature_${row.key}" data-feature-key="${row.key}" data-feature-scope="global">
+          <option value="enabled" ${row.global.visibility_mode === 'enabled' ? 'selected' : ''}>Liberado</option>
+          <option value="locked" ${row.global.visibility_mode === 'locked' ? 'selected' : ''}>Bloqueado</option>
+          <option value="hidden" ${row.global.visibility_mode === 'hidden' ? 'selected' : ''}>Oculto</option>
+        </select>
+      </div>`;
+  }
+
+  function clinicFeatureCard(row){
+    const clinicMode = row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode;
+    return `
+      <div class="feature-box">
+        <div class="feature-box-top">
+          <div>
+            <h4>${escapeHtml(row.label)}</h4>
+            <div class="helper">${escapeHtml(row.description)}</div>
+          </div>
+          <span class="feature-chip ${featureModeClass(row.effective.visibility_mode)}">${featureModeLabel(row.effective.visibility_mode)}</span>
+        </div>
+        <div class="feature-inline-meta">
+          <span class="feature-chip">Global: ${featureModeLabel(row.global.visibility_mode)}</span>
+          <span class="feature-chip ${featureModeClass(row.effective.visibility_mode)}">Efetivo: ${featureModeLabel(row.effective.visibility_mode)}</span>
+        </div>
+        <label for="clinic_feature_${row.key}">Regra da clínica</label>
+        <select class="select" id="clinic_feature_${row.key}" data-feature-key="${row.key}" data-feature-scope="clinic">
+          <option value="inherit" ${clinicMode === 'inherit' ? 'selected' : ''}>Usar padrão global</option>
+          <option value="enabled" ${clinicMode === 'enabled' ? 'selected' : ''}>Liberado</option>
+          <option value="locked" ${clinicMode === 'locked' ? 'selected' : ''}>Bloqueado</option>
+          <option value="hidden" ${clinicMode === 'hidden' ? 'selected' : ''}>Oculto</option>
+        </select>
+      </div>`;
+  }
+
+  function ensureGlobalFeaturePanel(){
+    if(document.getElementById('globalFeatureCard')) return;
+    const statsGrid = document.getElementById('statsGrid');
+    if(!statsGrid || !statsGrid.parentNode) return;
+
+    const card = document.createElement('div');
+    card.className = 'card section-gap';
+    card.id = 'globalFeatureCard';
+    card.innerHTML = `
+      <div class="feature-access-card">
+        <div class="section-intro">
+          <strong>Padrão global dos módulos</strong>
+          <div class="helper">Essas regras valem para todas as clínicas que estiverem usando o padrão global.</div>
+        </div>
+        <div id="globalFeatureBody" class="feature-access-grid" style="margin-top:14px"></div>
+        <div class="feature-save-actions">
+          <button class="btn btn-ghost" id="btnRefreshGlobalFeatures" type="button">Atualizar módulos</button>
+          <button class="btn btn-primary" id="btnSaveGlobalFeatures" type="button">Salvar padrão global</button>
+        </div>
+      </div>`;
+
+    statsGrid.parentNode.insertBefore(card, statsGrid.nextSibling);
+
+    document.getElementById('btnRefreshGlobalFeatures')?.addEventListener('click', async (e) => {
+      const button = e.currentTarget;
+      await withButtonLoading(button, 'Atualizando...', async () => {
+        await loadGlobalFeatures();
+        toast('Padrão global atualizado.', 'success', 2200);
+      });
+    });
+
+    document.getElementById('btnSaveGlobalFeatures')?.addEventListener('click', async (e) => {
+      const button = e.currentTarget;
+      const entries = Object.entries(globalFeatureDraft);
+      if(!entries.length){
+        toast('Nada para salvar.', 'info', 2200);
+        return;
+      }
+      await withButtonLoading(button, 'Salvando...', async () => {
+        for(const [featureKey, mode] of entries){
+          await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, {
+            scope: 'global',
+            feature_key: featureKey,
+            mode,
+            enabled: mode === 'enabled'
+          });
+        }
+        await loadGlobalFeatures();
+        if(state.selectedClinicId) await loadClinicFeatureAccess(state.selectedClinicId);
+        toast('Padrão global salvo.', 'success', 2600);
+      });
+    });
+  }
+
+  async function loadGlobalFeatures(){
+    ensureFeatureEndpoints();
+    ensureGlobalFeaturePanel();
+    const target = document.getElementById('globalFeatureBody');
+    if(!target) return;
+    target.innerHTML = `<div class="feature-message">Carregando módulos globais...</div>`;
+    try{
+      const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, {});
+      const rows = mergeFeatureRows(data?.features);
+      globalFeatureDraft = Object.fromEntries(rows.map((row) => [row.key, row.global.visibility_mode]));
+      target.innerHTML = rows.map(globalFeatureCard).join('');
+      target.querySelectorAll('select[data-feature-scope="global"]').forEach((select) => {
+        select.addEventListener('change', (event) => {
+          const node = event.currentTarget;
+          globalFeatureDraft[node.dataset.featureKey] = node.value;
+        });
+      });
+    }catch(error){
+      console.error(error);
+      target.innerHTML = `<div class="feature-message">Não foi possível carregar os módulos globais agora. O restante do painel continua funcionando.</div>`;
+    }
+  }
+
+  function ensureClinicFeatureSection(){
+    const detailRoot = document.getElementById('detailContent');
+    if(!detailRoot || !state.selectedClinicId) return null;
+    if(document.getElementById('detailFeatureAccessSection')) return document.getElementById('detailFeatureAccessSection');
+
+    const section = document.createElement('details');
+    section.className = 'section';
+    section.id = 'detailFeatureAccessSection';
+    section.open = true;
+    section.innerHTML = `
+      <summary>Módulos laterais da clínica</summary>
+      <div class="section-body">
+        <div class="helper">Use “Usar padrão global” para herdar o que foi definido no topo do superadmin.</div>
+        <div id="detailFeatureAccessBody" class="feature-access-grid"></div>
+        <div class="feature-save-actions">
+          <button class="btn btn-ghost" id="btnRefreshClinicFeatures" type="button">Atualizar módulos</button>
+          <button class="btn btn-primary" id="btnSaveClinicFeatures" type="button">Salvar módulos</button>
+        </div>
+      </div>`;
+
+    const dataSection = Array.from(detailRoot.querySelectorAll('details.section')).find((node) => {
+      const summary = node.querySelector('summary');
+      return summary && summary.textContent.trim() === 'Dados e contingência';
+    });
+
+    if(dataSection && dataSection.parentNode){
+      dataSection.parentNode.insertBefore(section, dataSection);
+    }else{
+      detailRoot.appendChild(section);
+    }
+
+    document.getElementById('btnRefreshClinicFeatures')?.addEventListener('click', async (e) => {
+      const button = e.currentTarget;
+      await withButtonLoading(button, 'Atualizando...', async () => {
+        await loadClinicFeatureAccess(state.selectedClinicId);
+        toast('Módulos da clínica atualizados.', 'success', 2200);
+      });
+    });
+
+    document.getElementById('btnSaveClinicFeatures')?.addEventListener('click', async (e) => {
+      const button = e.currentTarget;
+      const clinicId = state.selectedClinicId;
+      const entries = Object.entries(clinicFeatureDraft);
+      if(!clinicId || !entries.length){
+        toast('Nada para salvar.', 'info', 2200);
+        return;
+      }
+      await withButtonLoading(button, 'Salvando...', async () => {
+        for(const [featureKey, mode] of entries){
+          const payload = {
+            scope: 'clinic',
+            clinic_id: clinicId,
+            feature_key: featureKey,
+            mode,
+          };
+          if(mode !== 'inherit') payload.enabled = mode === 'enabled';
+          await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, payload);
+        }
+        await loadClinicFeatureAccess(clinicId);
+        toast('Módulos da clínica salvos.', 'success', 2600);
+      });
+    });
+
+    return section;
+  }
+
+  async function loadClinicFeatureAccess(clinicId){
+    ensureFeatureEndpoints();
+    const section = ensureClinicFeatureSection();
+    const target = document.getElementById('detailFeatureAccessBody');
+    if(!section || !target || !clinicId) return;
+    target.innerHTML = `<div class="feature-message">Carregando módulos da clínica...</div>`;
+    try{
+      const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, { clinic_id: clinicId });
+      const rows = mergeFeatureRows(data?.features);
+      clinicFeatureDraft = Object.fromEntries(rows.map((row) => [row.key, row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode]));
+      target.innerHTML = rows.map(clinicFeatureCard).join('');
+      target.querySelectorAll('select[data-feature-scope="clinic"]').forEach((select) => {
+        select.addEventListener('change', (event) => {
+          const node = event.currentTarget;
+          clinicFeatureDraft[node.dataset.featureKey] = node.value;
+        });
+      });
+    }catch(error){
+      console.error(error);
+      target.innerHTML = `<div class="feature-message">Não foi possível carregar os módulos da clínica agora. O restante do detalhe continua funcionando.</div>`;
+    }
+  }
+
+  async function handleExportClinicData(button){
+    ensureFeatureEndpoints();
+    if(!state.selectedClinicId){
+      toast('Nenhuma clínica selecionada.', 'error', 2800);
+      return;
+    }
+    await withButtonLoading(button, 'Preparando...', async () => {
+      try{
+        const data = await callEdgeFunction(CONFIG.endpoints.exportClinicData, {
+          clinic_id: state.selectedClinicId,
+          export_kind: 'contacts'
+        });
+
+        if(data?.url){
+          window.open(data.url, '_blank');
+          toast('Download iniciado.', 'success', 2600);
+          return;
+        }
+
+        const content = data?.csv || data?.content || null;
+        if(content){
+          const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = data?.filename || `clinica-${state.selectedClinicId}-dados.csv`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+          toast('Dados exportados.', 'success', 2600);
+          return;
+        }
+
+        toast('Esse download ainda depende da function export-clinic-data.', 'info', 3600);
+      }catch(error){
+        console.error(error);
+        toast('Esse download ainda depende da function export-clinic-data.', 'info', 3600);
+      }
+    });
+  }
+
+  function injectClinicContingencyExtras(){
+    const dataSection = Array.from(document.querySelectorAll('#detailContent details.section')).find((node) => {
+      const summary = node.querySelector('summary');
+      return summary && summary.textContent.trim() === 'Dados e contingência';
+    });
+    if(!dataSection) return;
+    const body = dataSection.querySelector('.section-body');
+    if(!body || body.querySelector('#btnExportClinicData')) return;
+
+    const row = body.querySelector('.row-actions');
+    if(row){
+      const button = document.createElement('button');
+      button.className = 'btn btn-info';
+      button.id = 'btnExportClinicData';
+      button.type = 'button';
+      button.textContent = 'Baixar dados da clínica';
+      row.appendChild(button);
+      button.addEventListener('click', () => handleExportClinicData(button));
+    }
+
+    const helper = document.createElement('div');
+    helper.className = 'helper';
+    helper.textContent = 'Use essa opção quando a clínica pedir um arquivo com dados preenchidos no sistema, como nome e contato dos leads.';
+    body.appendChild(helper);
+  }
+
+  const __featureAccess_originalRenderDetailModal = renderDetailModal;
+  window.renderDetailModal = function(){
+    const result = __featureAccess_originalRenderDetailModal.apply(this, arguments);
+    injectClinicContingencyExtras();
+    if(state.selectedClinicId) loadClinicFeatureAccess(state.selectedClinicId);
+    return result;
+  };
+
+  const __featureAccess_originalInit = init;
+  window.init = async function(){
+    ensureFeatureEndpoints();
+    const result = await __featureAccess_originalInit.apply(this, arguments);
+    ensureGlobalFeaturePanel();
+    await loadGlobalFeatures();
+    return result;
+  };
+
+  ensureFeatureEndpoints();
+  setTimeout(() => {
+    ensureGlobalFeaturePanel();
+    loadGlobalFeatures().catch((error) => console.error('Falha ao carregar módulos globais:', error));
+  }, 120);
+})();
+</script>
+
 </body>
 </html>
