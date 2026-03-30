@@ -622,6 +622,7 @@
               <tr>
                 <th>Nome</th>
                 <th>E-mail</th>
+                <th>Tipo</th>
                 <th>Status</th>
                 <th>Criado em</th>
                 <th>Último acesso</th>
@@ -632,9 +633,7 @@
           </table>
         </div>
       </div>
-      <div class="modal-foot">
-        <button class="btn btn-ghost" id="btnCloseSuperadmins" type="button">Fechar</button>
-      </div>
+
     </div>
   </div>
 
@@ -651,6 +650,8 @@
         createSuperadmin: "create-superadmin",
         listSuperadmins: "list-superadmins",
         resetSuperadminPassword: "reset-superadmin-password",
+        deactivateSuperadmin: "deactivate-superadmin",
+        deleteSuperadmin: "delete-superadmin",
         getClinicDetails: "get-clinic-details",
         updateClinicSettings: "update-clinic-settings",
         openSupportAccess: "open-support-access",
@@ -682,6 +683,9 @@
       selectedClinicDetails: null,
       superadmins: [],
       selectedSuperadmin: null,
+      currentSuperadminId: null,
+      currentSuperadminEmail: null,
+      currentSuperadminIsRoot: false,
       loadingClinics: false,
       loadingClinicDetails: false,
       loadingSuperadmins: false,
@@ -837,6 +841,16 @@
       if (used > limit) return "over";
       if (limit > 0 && used >= Math.max(1, limit - 1)) return "near";
       return "ok";
+    }
+
+    function superadminTypeBadge(sa){
+      return sa?.is_root ? '<span class="badge chip">Principal</span>' : '<span class="badge chip">Secundário</span>';
+    }
+
+    function superadminActionNote(sa){
+      if(sa?.is_root) return '<span class="muted">Principal protegido</span>';
+      if(!state.currentSuperadminIsRoot) return '<span class="muted">Gerenciado pelo principal</span>';
+      return '';
     }
 
     function periodLabel(clinic) { return `${formatDate(clinic.access_starts_at)} até ${formatDate(clinic.access_ends_at)}`; }
@@ -1053,17 +1067,19 @@
       if (!body) return;
 
       if (!state.hasLoadedSuperadmins && state.loadingSuperadmins) {
-        body.innerHTML = `<tr><td colspan="6"><div class="empty">Carregando superadmins...</div></td></tr>`;
+        body.innerHTML = `<tr><td colspan="7"><div class="empty">Carregando superadmins...</div></td></tr>`;
         return;
       }
 
       if (!state.superadmins.length) {
-        body.innerHTML = `<tr><td colspan="6"><div class="empty">Nenhum superadmin listado ainda.</div></td></tr>`;
+        body.innerHTML = `<tr><td colspan="7"><div class="empty">Nenhum superadmin listado ainda.</div></td></tr>`;
         return;
       }
 
       body.innerHTML = state.superadmins.map(sa => {
         const active = sa.is_active === false ? false : true;
+        const canReset = state.currentSuperadminIsRoot || sa.is_self;
+        const canManage = state.currentSuperadminIsRoot && !sa.is_root;
         return `
           <tr data-superadmin-id="${escapeHtml(sa.user_id || '')}">
             <td>
@@ -1072,17 +1088,18 @@
                 <span class="muted">ID: ${escapeHtml((sa.user_id || '—').slice(0, 8))}</span>
               </div>
             </td>
-            <td>
-              <div class="clinic-block">
-                <strong>${escapeHtml(sa.email || '—')}</strong>
-              </div>
-            </td>
+            <td><div class="clinic-block"><strong>${escapeHtml(sa.email || '—')}</strong></div></td>
+            <td>${superadminTypeBadge(sa)}</td>
             <td><span class="${badgeClass(active ? 'active' : 'inactive')}">${active ? 'Ativo' : 'Inativo'}</span></td>
             <td>${escapeHtml(formatDateTime(sa.created_at))}</td>
             <td>${escapeHtml(formatDateTime(sa.last_sign_in_at))}</td>
             <td>
               <div class="row-actions">
-                <button class="btn btn-warning" data-action="reset-superadmin">Redefinir senha</button>
+                ${canReset ? '<button class="btn btn-warning" data-action="reset-superadmin">Redefinir senha</button>' : ''}
+                ${canManage && active ? '<button class="btn btn-ghost" data-action="deactivate-superadmin">Desativar</button>' : ''}
+                ${canManage && !active ? '<button class="btn btn-success" data-action="reactivate-superadmin">Reativar</button>' : ''}
+                ${canManage ? '<button class="btn btn-danger" data-action="delete-superadmin">Excluir</button>' : ''}
+                ${(!canReset && !canManage) || sa.is_root ? superadminActionNote(sa) : ''}
               </div>
             </td>
           </tr>
@@ -1095,6 +1112,41 @@
           const id = tr?.dataset?.superadminId;
           const target = state.superadmins.find(item => item.user_id === id);
           if (target) openResetSuperadminModal(target);
+        });
+      });
+
+      body.querySelectorAll('button[data-action="deactivate-superadmin"],button[data-action="reactivate-superadmin"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const tr = button.closest('tr');
+          const id = tr?.dataset?.superadminId;
+          const target = state.superadmins.find(item => item.user_id === id);
+          if (!target) return;
+          const nextActive = button.dataset.action === 'reactivate-superadmin';
+          const ok = confirm(nextActive
+            ? `Reativar o superadmin ${target.display_name || target.email || ''}?`
+            : `Desativar o superadmin ${target.display_name || target.email || ''}?`);
+          if (!ok) return;
+          await withButtonLoading(button, nextActive ? 'Reativando...' : 'Desativando...', async () => {
+            await callEdgeFunction(CONFIG.endpoints.deactivateSuperadmin, { user_id: target.user_id, is_active: nextActive });
+            await loadSuperadmins();
+          });
+          toast(nextActive ? 'Superadmin reativado.' : 'Superadmin desativado.', 'success', 2600);
+        });
+      });
+
+      body.querySelectorAll('button[data-action="delete-superadmin"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const tr = button.closest('tr');
+          const id = tr?.dataset?.superadminId;
+          const target = state.superadmins.find(item => item.user_id === id);
+          if (!target) return;
+          const ok = confirm(`Excluir o superadmin ${target.display_name || target.email || ''}? Essa ação remove o acesso dele.`);
+          if (!ok) return;
+          await withButtonLoading(button, 'Excluindo...', async () => {
+            await callEdgeFunction(CONFIG.endpoints.deleteSuperadmin, { user_id: target.user_id });
+            await loadSuperadmins();
+          });
+          toast('Superadmin excluído.', 'success', 2600);
         });
       });
     }
@@ -1660,7 +1712,6 @@
       document.getElementById("btnCloseCreateHead").addEventListener("click", closeCreateModal);
       document.getElementById("btnCloseSuperadmin").addEventListener("click", closeSuperadminModal);
       document.getElementById("btnCloseSuperadminHead").addEventListener("click", closeSuperadminModal);
-      document.getElementById("btnCloseSuperadmins").addEventListener("click", closeSuperadminsListModal);
       document.getElementById("btnCloseSuperadminsHead").addEventListener("click", closeSuperadminsListModal);
       document.getElementById("btnCloseDetail").addEventListener("click", closeDetailModal);
       document.getElementById("btnCloseDetailHead").addEventListener("click", closeDetailModal);
