@@ -4288,9 +4288,16 @@ function setSupportEntryLoading(isLoading, message="Modo suporte • Validando a
   const supportHint = el("supportEntryHint");
   const supportText = el("supportEntryText");
   const authModeWrap = el("authModeWrap");
+  const authMasterWrap = el("authMasterNameWrap");
   const authLogin = el("authLogin")?.parentElement;
   const authPass = el("authPass")?.parentElement;
   const authButtons = el("btnLogin")?.parentElement;
+
+  if(isLoading){
+    // Reseta qualquer loading de login antes de esconder os campos,
+    // para não reexibir a UI logo em seguida.
+    setLoginLoading(false);
+  }
 
   if(authLabel){
     authLabel.textContent = isLoading ? "Modo suporte" : "Acesso da Clínica";
@@ -4302,14 +4309,10 @@ function setSupportEntryLoading(isLoading, message="Modo suporte • Validando a
     supportText.textContent = message;
   }
 
-  [authModeWrap, authLogin, authPass, authButtons].forEach(node=>{
+  [authModeWrap, authMasterWrap, authLogin, authPass, authButtons].forEach(node=>{
     if(!node) return;
     node.classList.toggle("hidden", !!isLoading);
   });
-
-  if(isLoading){
-    setLoginLoading(false);
-  }
 }
 
 function triggerLoginSubmit(){
