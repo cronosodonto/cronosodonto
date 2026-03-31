@@ -9085,13 +9085,19 @@ html.feature-lock-active{
     return overlay;
   }
 
+  function getAppViewsList(){
+    try{
+      if(typeof APP_VIEWS !== 'undefined' && Array.isArray(APP_VIEWS)) return APP_VIEWS;
+    }catch(_err){}
+    if(Array.isArray(window.APP_VIEWS)) return window.APP_VIEWS;
+    return ['dashboard','leads','kanban','tasks','installments','users','settings'];
+  }
+
   function hideAllNativeViews(){
-    if(Array.isArray(window.APP_VIEWS)){
-      window.APP_VIEWS.forEach(v => {
-        const node = document.getElementById(`view-${v}`);
-        if(node) node.classList.add('hidden');
-      });
-    }
+    getAppViewsList().forEach(v => {
+      const node = document.getElementById(`view-${v}`);
+      if(node) node.classList.add('hidden');
+    });
   }
 
   function positionBlockedOverlay(){
