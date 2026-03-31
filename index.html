@@ -9032,6 +9032,9 @@ html.feature-lock-active{
 (function(){
   const FEATURE_ACCESS_ENDPOINT = 'get-clinic-feature-access';
   const SUPABASE_FN_BASE = 'https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/';
+  const FEATURE_CACHE_PREFIX = 'cronos_feature_access_cache::';
+  const SUPPORT_SPLASH_MIN_MS = 900;
+
   const featureStateMap = new Map();
   let lastResolvedContextKey = null;
   let overlayMounted = false;
@@ -9267,17 +9270,21 @@ html.feature-lock-active{
     window.__featureSetActiveWrapped = true;
   }
 
-  function resolveOwnerContext(){
-    const actor = (typeof currentActor === 'function') ? currentActor() : null;
+  function resolveOwnerContext(actorOverride){
+    const actor = actorOverride || ((typeof currentActor === 'function') ? currentActor() : null);
+    const support = (typeof getSupportContext === 'function') ? getSupportContext() : null;
+
     const ownerUid =
       (typeof CLOUD_CLINIC_OWNER_UID !== 'undefined' && CLOUD_CLINIC_OWNER_UID) ||
       (typeof CLOUD_OWNER_UID !== 'undefined' && CLOUD_OWNER_UID) ||
+      (support && support.owner_uid) ||
       (actor && actor.kind === 'support' && actor.id ? actor.id : null) ||
       null;
 
     const ownerEmail =
       (typeof CLOUD_CLINIC_OWNER_EMAIL !== 'undefined' && CLOUD_CLINIC_OWNER_EMAIL) ||
       (typeof CLOUD_OWNER_EMAIL !== 'undefined' && CLOUD_OWNER_EMAIL) ||
+      (support && (support.owner_email || support.master_email)) ||
       ((actor && actor.kind === 'master') ? actor.email : null) ||
       ((actor && actor.kind === 'support' && actor.email) ? actor.email : null) ||
       null;
@@ -9288,15 +9295,67 @@ html.feature-lock-active{
     };
   }
 
-  async function fetchFeatureAccess(force){
+  function getContextCacheKey(ctx){
+    if(!ctx || (!ctx.owner_uid && !ctx.owner_email)) return null;
+    return FEATURE_CACHE_PREFIX + (ctx.owner_uid || ctx.owner_email || 'default');
+  }
+
+  function applyFeaturePayload(items){
+    featureStateMap.clear();
+    (Array.isArray(items) ? items : []).forEach(item => {
+      const key = normalizeFeatureKey(item && item.feature_key);
+      if(!key) return;
+      featureStateMap.set(key, {
+        enabled: item && item.enabled !== false,
+        visibility_mode: normalizeFeatureKey(item && item.visibility_mode || 'enabled') || 'enabled'
+      });
+    });
+  }
+
+  function readFeatureCache(ctx){
     try{
-      const ctx = resolveOwnerContext();
+      const key = getContextCacheKey(ctx);
+      if(!key) return false;
+      const raw = localStorage.getItem(key);
+      if(!raw) return false;
+      const parsed = JSON.parse(raw);
+      if(!Array.isArray(parsed && parsed.features)) return false;
+      applyFeaturePayload(parsed.features);
+      lastResolvedContextKey = JSON.stringify(ctx);
+      return true;
+    }catch(err){
+      console.warn('Falha ao ler cache de módulos:', err);
+      return false;
+    }
+  }
+
+  function writeFeatureCache(ctx, features){
+    try{
+      const key = getContextCacheKey(ctx);
+      if(!key) return;
+      localStorage.setItem(key, JSON.stringify({
+        saved_at: Date.now(),
+        features: Array.isArray(features) ? features : []
+      }));
+    }catch(err){
+      console.warn('Falha ao gravar cache de módulos:', err);
+    }
+  }
+
+  async function fetchFeatureAccess(force, actorOverride){
+    try{
+      const ctx = resolveOwnerContext(actorOverride);
       if(!ctx.owner_uid && !ctx.owner_email){
         console.warn('Feature access: contexto da clínica ainda não resolvido.');
         return false;
       }
 
       const ctxKey = JSON.stringify(ctx);
+
+      if(!force && !featureStateMap.size){
+        readFeatureCache(ctx);
+      }
+
       if(!force && lastResolvedContextKey === ctxKey && featureStateMap.size){
         return true;
       }
@@ -9325,38 +9384,87 @@ html.feature-lock-active{
       }
 
       const data = await res.json().catch(() => ({}));
-      featureStateMap.clear();
-
-      (Array.isArray(data?.features) ? data.features : []).forEach(item => {
-        const key = normalizeFeatureKey(item?.feature_key);
-        if(!key) return;
-
-        featureStateMap.set(key, {
-          enabled: item?.enabled !== false,
-          visibility_mode: normalizeFeatureKey(item?.visibility_mode || 'enabled') || 'enabled'
-        });
-      });
-
+      const features = Array.isArray(data && data.features) ? data.features : [];
+      applyFeaturePayload(features);
+      writeFeatureCache(ctx, features);
       lastResolvedContextKey = ctxKey;
       return true;
     }catch(err){
-      console.warn('Feature access em modo seguro:', err?.message || err);
+      console.warn('Feature access em modo seguro:', err && err.message || err);
       return false;
     }
   }
 
-  async function refreshFeatureAccess(force){
+  async function refreshFeatureAccess(force, actorOverride){
     wrapSetActiveView();
-    applyFeatureStatesToMenu();
-    await fetchFeatureAccess(!!force);
+    const ctx = resolveOwnerContext(actorOverride);
+    if(featureStateMap.size === 0){
+      readFeatureCache(ctx);
+    }
     applyFeatureStatesToMenu();
     syncCurrentViewState();
+    await fetchFeatureAccess(!!force, actorOverride);
+    applyFeatureStatesToMenu();
+    syncCurrentViewState();
+  }
+
+  function wrapSetSupportEntryLoading(){
+    if(typeof window.setSupportEntryLoading !== 'function' || window.__supportEntryWrapped) return;
+    const original = window.setSupportEntryLoading;
+    window.setSupportEntryLoading = function(isLoading, message){
+      if(isLoading){
+        window.__supportEntryStartedAt = Date.now();
+      }else{
+        window.__supportEntryStartedAt = 0;
+      }
+      return original.apply(this, arguments);
+    };
+    window.__supportEntryWrapped = true;
+  }
+
+  function wrapShowApp(){
+    if(typeof window.showApp !== 'function' || window.__featureShowAppWrapped) return;
+    const originalShowApp = window.showApp;
+
+    window.showApp = function(actor){
+      const ctx = resolveOwnerContext(actor);
+      readFeatureCache(ctx);
+
+      const supportMode = !!(actor && actor.isSupport);
+      const authVisible = !!(document.getElementById('authView') && !document.getElementById('authView').classList.contains('hidden'));
+      const elapsed = Date.now() - Number(window.__supportEntryStartedAt || 0);
+      const waitMs = (supportMode && authVisible) ? Math.max(0, SUPPORT_SPLASH_MIN_MS - elapsed) : 0;
+
+      const run = () => {
+        originalShowApp.apply(this, arguments);
+        applyFeatureStatesToMenu();
+        syncCurrentViewState();
+        setTimeout(() => { refreshFeatureAccess(true, actor); }, 40);
+        setTimeout(() => { refreshFeatureAccess(true, actor); }, 900);
+      };
+
+      if(waitMs > 0){
+        setTimeout(run, waitMs);
+        return;
+      }
+
+      return run();
+    };
+
+    window.__featureShowAppWrapped = true;
   }
 
   function wrapBoot(){
     if(typeof window.boot !== 'function' || window.__featureBootWrapped) return;
     const originalBoot = window.boot;
     window.boot = async function(){
+      const supportPending = new URLSearchParams(location.search).has('support_token') ||
+        (typeof isSupportMode === 'function' && isSupportMode());
+
+      if(supportPending && !window.__supportEntryStartedAt){
+        window.__supportEntryStartedAt = Date.now();
+      }
+
       const result = await originalBoot.apply(this, arguments);
       setTimeout(() => { refreshFeatureAccess(true); }, 300);
       setTimeout(() => { refreshFeatureAccess(true); }, 1200);
@@ -9367,6 +9475,8 @@ html.feature-lock-active{
 
   function install(){
     ensureOverlay();
+    wrapSetSupportEntryLoading();
+    wrapShowApp();
     wrapBoot();
     wrapSetActiveView();
     refreshFeatureAccess(false);
