@@ -8942,22 +8942,36 @@ document.addEventListener("DOMContentLoaded", () => {
 .nav button.feature-hidden{
   display:none !important;
 }
+body.feature-lock-active,
+html.feature-lock-active{
+  overflow:hidden !important;
+}
 #featureBlockedOverlay{
-  position:absolute;
-  inset:18px;
+  position:fixed;
   display:none;
   align-items:center;
   justify-content:center;
-  z-index:35;
+  z-index:9999;
+  background:rgba(5,8,14,.84);
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.05);
+  border-radius:24px;
+  inset:24px 24px 24px 324px;
 }
 #featureBlockedOverlay.show{display:flex;}
+@media(max-width:980px){
+  #featureBlockedOverlay{
+    inset:16px;
+  }
+}
 #featureBlockedOverlay .featureBlockedCard{
   width:min(760px, calc(100% - 24px));
-  border:1px solid var(--line);
+  border:1px solid rgba(255,255,255,.10);
   border-radius:22px;
-  background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02)), var(--panel);
-  box-shadow: var(--shadow);
-  padding:28px 26px;
+  background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03)), var(--panel);
+  box-shadow:0 24px 60px rgba(0,0,0,.50);
+  padding:30px 28px;
   text-align:center;
 }
 #featureBlockedOverlay .featureBlockedEyebrow{
@@ -9080,6 +9094,30 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function positionBlockedOverlay(){
+    const overlay = document.getElementById('featureBlockedOverlay');
+    const main = document.querySelector('.main');
+    if(!overlay || !main) return;
+
+    if(window.innerWidth <= 980){
+      overlay.style.inset = '16px';
+      overlay.style.left = '';
+      overlay.style.top = '';
+      overlay.style.width = '';
+      overlay.style.height = '';
+      return;
+    }
+
+    const rect = main.getBoundingClientRect();
+    overlay.style.top = Math.max(16, rect.top + 12) + 'px';
+    overlay.style.left = Math.max(16, rect.left + 12) + 'px';
+    overlay.style.width = Math.max(320, rect.width - 24) + 'px';
+    overlay.style.height = Math.max(240, rect.height - 24) + 'px';
+    overlay.style.right = 'auto';
+    overlay.style.bottom = 'auto';
+    overlay.style.inset = 'auto';
+  }
+
   function showBlockedOverlay(view){
     const overlay = ensureOverlay();
     if(!overlay) return;
@@ -9094,16 +9132,26 @@ document.addEventListener("DOMContentLoaded", () => {
     const sticky = document.getElementById('stickyFilters');
     if(sticky) sticky.classList.add('hidden');
 
+    const main = document.querySelector('.main');
+    if(main) main.style.overflow = 'hidden';
+    document.documentElement.classList.add('feature-lock-active');
+    document.body.classList.add('feature-lock-active');
+
     document.querySelectorAll('.nav button[data-view]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.view === view);
     });
 
     overlay.classList.add('show');
+    positionBlockedOverlay();
   }
 
   function hideBlockedOverlay(){
     const overlay = document.getElementById('featureBlockedOverlay');
     if(overlay) overlay.classList.remove('show');
+    const main = document.querySelector('.main');
+    if(main) main.style.overflow = '';
+    document.documentElement.classList.remove('feature-lock-active');
+    document.body.classList.remove('feature-lock-active');
   }
 
   function getFirstVisibleAndEnabledView(){
@@ -9298,6 +9346,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   window.__refreshFeatureAccess = refreshFeatureAccess;
+  window.addEventListener('resize', positionBlockedOverlay);
+  window.addEventListener('scroll', positionBlockedOverlay, true);
 
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', install, { once:true });
