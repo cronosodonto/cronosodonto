@@ -9002,6 +9002,31 @@ html.feature-lock-active{
   margin-top:10px;
   color:var(--muted);
 }
+:root.light #featureBlockedOverlay{
+  background:rgba(255,255,255,.82);
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+}
+:root.light #featureBlockedOverlay .featureBlockedCard{
+  background:rgba(255,255,255,.92);
+  border-color:rgba(15,23,42,.12);
+  box-shadow:0 24px 70px rgba(15,23,42,.14);
+}
+:root.light #featureBlockedOverlay .featureBlockedBadge{
+  background:rgba(245,158,11,.22);
+  color:#7c3e00;
+  border-color:rgba(180,83,9,.32);
+  font-weight:800;
+}
+:root.light #featureBlockedOverlay .featureBlockedTitle{
+  color:#0f172a;
+}
+:root.light #featureBlockedOverlay .featureBlockedText{
+  color:rgba(15,23,42,.82);
+}
+:root.light #featureBlockedOverlay .featureBlockedText + .featureBlockedText{
+  color:rgba(15,23,42,.68);
+}
 </style>
 <script id="feature-access-safe-patch">
 (function(){
