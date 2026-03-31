@@ -2794,6 +2794,7 @@ fill="currentColor" stroke="none">
       <label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Filtro</label>
       <select id="taskFilter" class="input">
         <option value="Todos">Todos</option>
+        <option value="PendentesEAtraso">Pendentes e em atraso</option>
         <option value="Atrasado">Atrasado</option>
         <option value="Pendente">Pendente</option>
         <option value="Feito">Feito</option>
@@ -4631,8 +4632,10 @@ function updateSidebarPills(){
   el("pillHot").textContent = `${hotCount} hot`;
   el("pillUsers").textContent = String(usersCount);
 
-const tasksOpen = (db.tasks||[]).filter(t=>t.masterId===actor.masterId && t.done!==true).length;
-const overdue = (db.tasks||[]).filter(t=>t.masterId===actor.masterId && t.done!==true && t.dueDate && (new Date(t.dueDate+"T00:00:00") < new Date(new Date().toISOString().slice(0,10)+"T00:00:00"))).length;
+const currentMonth = new Date().toISOString().slice(0,7);
+const currentMonthTasks = (db.tasks||[]).filter(t=>t.masterId===actor.masterId && t.done!==true && String(t.dueDate||"").slice(0,7)===currentMonth);
+const tasksOpen = currentMonthTasks.length;
+const overdue = currentMonthTasks.filter(t=>t.dueDate && (new Date(t.dueDate+"T00:00:00") < new Date(new Date().toISOString().slice(0,10)+"T00:00:00"))).length;
 const pillK = el("pillKanban"); if(pillK) pillK.textContent = String(total);
 const pillT = el("pillTasks"); if(pillT) pillT.textContent = overdue ? `${overdue} ⚠️` : String(tasksOpen);
 
@@ -7888,61 +7891,75 @@ function renderTasks(){
   if(!tbody) return;
 
   const monthEl = el("taskMonth");
-const searchEl = el("taskSearch");
-const filterEl = el("taskFilter");
+  const searchEl = el("taskSearch");
+  const filterEl = el("taskFilter");
 
-const currentMonth = new Date().toISOString().slice(0,7);
+  const currentMonth = new Date().toISOString().slice(0,7);
 
-if(monthEl && !monthEl.value){
-  monthEl.value = currentMonth;
-}
-
-[monthEl, searchEl, filterEl].forEach(ctrl => {
-  if(ctrl && !ctrl.dataset.bound){
-    ctrl.addEventListener(
-      ctrl.tagName === "INPUT" && ctrl.type === "text" ? "input" : "change",
-      () => renderTasks()
-    );
-    ctrl.dataset.bound = "1";
+  if(monthEl && !monthEl.value){
+    monthEl.value = currentMonth;
   }
-});
 
-const taskMonth = monthEl?.value || currentMonth;
-const taskSearch = (searchEl?.value || "").trim().toLowerCase();
-const taskFilter = filterEl?.value || "Todos";
+  [monthEl, searchEl, filterEl].forEach(ctrl => {
+    if(ctrl && !ctrl.dataset.bound){
+      ctrl.addEventListener(
+        ctrl.tagName === "INPUT" && ctrl.type === "text" ? "input" : "change",
+        () => renderTasks()
+      );
+      ctrl.dataset.bound = "1";
+    }
+  });
 
-const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
+  const taskMonth = monthEl?.value || currentMonth;
+  const taskSearch = (searchEl?.value || "").trim().toLowerCase();
+  const taskFilter = filterEl?.value || "Todos";
+  const allOpenMode = taskFilter === "PendentesEAtraso";
 
-const tasks = (db.tasks||[])
-  .filter(t => !t.masterId || t.masterId === actor.masterId)
-  .filter(t => {
-    if(!taskMonth) return true;
-    return String(t.dueDate || "").slice(0,7) === taskMonth;
-  })
-  .filter(t => {
-    const e = db.entries.find(x => x.id === t.entryId);
-    const c = e ? db.contacts.find(x => x.id === e.contactId) : null;
-    const hay = `${c?.name || ""} ${c?.phone || ""}`.toLowerCase();
-    return !taskSearch || hay.includes(taskSearch);
-  })
-  .filter(t => {
-    const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
-    const overdue = due && due < today && !t.done;
-    const pending = !t.done && !overdue;
+  const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
 
-    if(taskFilter === "Atrasado") return !!overdue;
-    if(taskFilter === "Pendente") return !!pending;
-    if(taskFilter === "Feito") return !!t.done;
-    return true;
-  })
-  .sort((a,b)=> String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31")));
+  const tasks = (db.tasks||[])
+    .filter(t => !t.masterId || t.masterId === actor.masterId)
+    .filter(t => {
+      if(allOpenMode) return t.done !== true;
+      if(!taskMonth) return true;
+      return String(t.dueDate || "").slice(0,7) === taskMonth;
+    })
+    .filter(t => {
+      const e = db.entries.find(x => x.id === t.entryId);
+      const c = e ? db.contacts.find(x => x.id === e.contactId) : null;
+      const hay = `${c?.name || ""} ${c?.phone || ""}`.toLowerCase();
+      return !taskSearch || hay.includes(taskSearch);
+    })
+    .filter(t => {
+      const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
+      const overdue = due && due < today && !t.done;
+      const pending = !t.done && !overdue;
 
-if(!tasks.length){
-  tbody.innerHTML = `<tr><td colspan="6" class="muted">Nenhuma tarefa encontrada para este filtro.</td></tr>`;
-  return;
-}
+      if(taskFilter === "PendentesEAtraso") return t.done !== true;
+      if(taskFilter === "Atrasado") return !!overdue;
+      if(taskFilter === "Pendente") return !!pending;
+      if(taskFilter === "Feito") return !!t.done;
+      return true;
+    })
+    .sort((a,b)=> {
+      const aDue = String(a.dueDate||"9999-12-31");
+      const bDue = String(b.dueDate||"9999-12-31");
+      if(allOpenMode){
+        const aDate = a.dueDate ? new Date(a.dueDate+"T00:00:00") : null;
+        const bDate = b.dueDate ? new Date(b.dueDate+"T00:00:00") : null;
+        const aOver = aDate && aDate < today && a.done !== true ? 0 : 1;
+        const bOver = bDate && bDate < today && b.done !== true ? 0 : 1;
+        if(aOver !== bOver) return aOver - bOver;
+      }
+      return aDue.localeCompare(bDue);
+    });
 
-tbody.innerHTML = tasks.map(t=>{
+  if(!tasks.length){
+    tbody.innerHTML = `<tr><td colspan="6" class="muted">Nenhuma tarefa encontrada para este filtro.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = tasks.map(t=>{
   const e = db.entries.find(x=>x.id===t.entryId);
   const c = e ? db.contacts.find(x=>x.id===e.contactId) : null;
   const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
