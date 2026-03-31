@@ -9321,7 +9321,8 @@ html.feature-lock-active{
       const parsed = JSON.parse(raw);
       if(!Array.isArray(parsed && parsed.features)) return false;
       applyFeaturePayload(parsed.features);
-      lastResolvedContextKey = JSON.stringify(ctx);
+      // Cache local é apenas rascunho visual.
+      // O contexto só deve ser marcado como resolvido depois que a nuvem responder.
       return true;
     }catch(err){
       console.warn('Falha ao ler cache de módulos:', err);
