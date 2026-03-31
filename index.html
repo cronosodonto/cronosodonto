@@ -8948,6 +8948,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const SUPABASE_FN_BASE = 'https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/';
   const featureStateMap = new Map();
   let lastResolvedContextKey = null;
+  let blockScreenMounted = false;
 
   const VIEW_TO_FEATURE = {
     dashboard: 'dashboard',
@@ -8957,6 +8958,16 @@ document.addEventListener("DOMContentLoaded", () => {
     installments: 'installments',
     users: 'users',
     settings: 'settings'
+  };
+
+  const FEATURE_TITLES = {
+    dashboard: 'Dashboard',
+    leads: 'Leads',
+    kanban: 'Funil',
+    tasks: 'Tarefas',
+    installments: 'Parcelamentos',
+    users: 'Usuários',
+    settings: 'Configurações'
   };
 
   function normalizeFeatureKey(value){
@@ -9008,6 +9019,126 @@ document.addEventListener("DOMContentLoaded", () => {
     return null;
   }
 
+  function ensureBlockedStyles(){
+    if(document.getElementById('featureBlockStyles')) return;
+    const style = document.createElement('style');
+    style.id = 'featureBlockStyles';
+    style.textContent = `
+      .nav button.feature-locked{
+        opacity:.48;
+        filter:saturate(.6);
+        border-style:dashed;
+      }
+      .nav button.feature-locked:hover{
+        transform:none;
+        background:rgba(255,255,255,.03);
+      }
+      .nav button.feature-locked .featureLockTag{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        padding:3px 8px;
+        min-width:50px;
+        height:24px;
+        border-radius:999px;
+        border:1px solid rgba(255,255,255,.12);
+        font-size:11px;
+        color:#ffe8a3;
+        background:rgba(255,204,0,.10);
+      }
+      .nav button.feature-hidden{ display:none !important; }
+      #view-feature-blocked{ display:none; }
+      #view-feature-blocked.show{ display:block; }
+      .featureBlockedCard{
+        border:1px solid var(--line);
+        border-radius:var(--radius);
+        background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 45%), var(--panel);
+        box-shadow:var(--shadow);
+        padding:22px;
+      }
+      .featureBlockedCard h3{ margin:0 0 10px; font-size:22px; }
+      .featureBlockedCard p{ margin:0 0 10px; color:var(--muted); line-height:1.5; }
+      .featureBlockedBadge{
+        display:inline-flex; align-items:center; gap:8px;
+        padding:7px 12px; border-radius:999px;
+        border:1px solid rgba(255,255,255,.12);
+        background:rgba(255,204,0,.10); color:#ffe8a3;
+        font-size:12px; font-weight:800; margin-bottom:14px;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function ensureBlockedView(){
+    ensureBlockedStyles();
+    let blocked = document.getElementById('view-feature-blocked');
+    if(blocked) return blocked;
+    const main = document.querySelector('.main');
+    if(!main) return null;
+    blocked = document.createElement('section');
+    blocked.id = 'view-feature-blocked';
+    blocked.className = 'hidden';
+    blocked.innerHTML = `
+      <div class="featureBlockedCard">
+        <div class="featureBlockedBadge">Bloqueado no plano</div>
+        <h3 id="featureBlockedTitle">Módulo indisponível</h3>
+        <p id="featureBlockedText">Este módulo não faz parte do plano contratado para esta clínica.</p>
+        <p>Para liberar este recurso, ajuste o plano no Superadmin.</p>
+      </div>
+    `;
+    main.appendChild(blocked);
+    return blocked;
+  }
+
+  function getCurrentVisibleView(){
+    if(Array.isArray(window.APP_VIEWS)){
+      for(const view of window.APP_VIEWS){
+        const section = document.getElementById('view-' + view);
+        if(section && !section.classList.contains('hidden')) return view;
+      }
+    }
+    return null;
+  }
+
+  function markActiveButton(view){
+    document.querySelectorAll('.nav button[data-view]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.view === view);
+    });
+  }
+
+  function hideAllViews(){
+    if(Array.isArray(window.APP_VIEWS)){
+      window.APP_VIEWS.forEach(v => {
+        const sec = document.getElementById('view-' + v);
+        if(sec) sec.classList.add('hidden');
+      });
+    }
+    const blocked = ensureBlockedView();
+    if(blocked) blocked.classList.remove('hidden');
+    const sticky = document.getElementById('stickyFilters');
+    if(sticky) sticky.classList.add('hidden');
+  }
+
+  function showBlockedView(view){
+    const blocked = ensureBlockedView();
+    if(!blocked) return;
+    hideAllViews();
+    blocked.classList.add('show');
+    const title = document.getElementById('featureBlockedTitle');
+    const text = document.getElementById('featureBlockedText');
+    if(title) title.textContent = `${FEATURE_TITLES[view] || 'Este módulo'} indisponível`;
+    if(text) text.textContent = `O módulo ${FEATURE_TITLES[view] || view} não faz parte do plano contratado para esta clínica.`;
+    markActiveButton(view);
+  }
+
+  function hideBlockedView(){
+    const blocked = document.getElementById('view-feature-blocked');
+    if(blocked){
+      blocked.classList.remove('show');
+      blocked.classList.add('hidden');
+    }
+  }
+
   function applyFeatureStatesToMenu(){
     try{
       const buttons = Array.from(document.querySelectorAll('.nav button[data-view]'));
@@ -9039,6 +9170,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function guardSetActiveView(){
+    if(typeof window.setActiveView !== 'function' || window.__featureSetActiveGuardWrapped) return;
+    const originalSetActiveView = window.setActiveView;
+    window.setActiveView = function(view){
+      if(isFeatureHidden(view) || isFeatureLocked(view)){
+        showPlanMessage();
+        showBlockedView(view);
+        return;
+      }
+      hideBlockedView();
+      return originalSetActiveView.apply(this, arguments);
+    };
+    window.__featureSetActiveGuardWrapped = true;
+  }
+
   function guardShowView(){
     if(typeof window.showView !== 'function' || window.__featureGuardWrapped) return;
 
@@ -9046,12 +9192,10 @@ document.addEventListener("DOMContentLoaded", () => {
     window.showView = function(view){
       if(isFeatureHidden(view) || isFeatureLocked(view)){
         showPlanMessage();
-        const fallback = getFirstVisibleAndEnabledView();
-        if(fallback && fallback !== view){
-          return originalShowView.call(this, fallback);
-        }
+        showBlockedView(view);
         return;
       }
+      hideBlockedView();
       return originalShowView.apply(this, arguments);
     };
 
@@ -9136,11 +9280,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function syncCurrentViewAfterFeatureLoad(){
+    const currentView = getCurrentVisibleView() || 'dashboard';
+    if(isFeatureHidden(currentView) || isFeatureLocked(currentView)){
+      showBlockedView(currentView);
+    }else{
+      hideBlockedView();
+      markActiveButton(currentView);
+    }
+  }
+
   async function refreshFeatureAccess(force){
+    guardSetActiveView();
     guardShowView();
+    ensureBlockedView();
     applyFeatureStatesToMenu();
     await fetchFeatureAccess(!!force);
     applyFeatureStatesToMenu();
+    syncCurrentViewAfterFeatureLoad();
   }
 
   function wrapBoot(){
@@ -9159,7 +9316,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function install(){
     wrapBoot();
+    guardSetActiveView();
     guardShowView();
+    ensureBlockedView();
     refreshFeatureAccess(false);
 
     window.addEventListener('focus', () => refreshFeatureAccess(true));
@@ -9183,3 +9342,5 @@ document.addEventListener("DOMContentLoaded", () => {
 </body>
 </html>
 <!-- update -->
+
+  
