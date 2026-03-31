@@ -8915,6 +8915,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 
 <style id="feature-access-safe-style">
+.main{position:relative;}
 .nav button.feature-locked{
   opacity:.48 !important;
   filter:saturate(.65);
@@ -8941,6 +8942,52 @@ document.addEventListener("DOMContentLoaded", () => {
 .nav button.feature-hidden{
   display:none !important;
 }
+#featureBlockedOverlay{
+  position:absolute;
+  inset:18px;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:35;
+}
+#featureBlockedOverlay.show{display:flex;}
+#featureBlockedOverlay .featureBlockedCard{
+  width:min(760px, calc(100% - 24px));
+  border:1px solid var(--line);
+  border-radius:22px;
+  background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02)), var(--panel);
+  box-shadow: var(--shadow);
+  padding:28px 26px;
+  text-align:center;
+}
+#featureBlockedOverlay .featureBlockedEyebrow{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:6px 12px;
+  border-radius:999px;
+  border:1px solid rgba(255,204,0,.22);
+  background:rgba(255,204,0,.10);
+  color:#ffe8a3;
+  font-size:12px;
+  font-weight:800;
+  margin-bottom:14px;
+}
+#featureBlockedOverlay .featureBlockedTitle{
+  margin:0 0 10px;
+  font-size:34px;
+  line-height:1.04;
+}
+#featureBlockedOverlay .featureBlockedText{
+  margin:0;
+  color:var(--text);
+  font-size:18px;
+  line-height:1.55;
+}
+#featureBlockedOverlay .featureBlockedText + .featureBlockedText{
+  margin-top:10px;
+  color:var(--muted);
+}
 </style>
 <script id="feature-access-safe-patch">
 (function(){
@@ -8948,7 +8995,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const SUPABASE_FN_BASE = 'https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/';
   const featureStateMap = new Map();
   let lastResolvedContextKey = null;
-  let blockScreenMounted = false;
+  let overlayMounted = false;
 
   const VIEW_TO_FEATURE = {
     dashboard: 'dashboard',
@@ -8960,7 +9007,7 @@ document.addEventListener("DOMContentLoaded", () => {
     settings: 'settings'
   };
 
-  const FEATURE_TITLES = {
+  const VIEW_LABELS = {
     dashboard: 'Dashboard',
     leads: 'Leads',
     kanban: 'Funil',
@@ -8993,16 +9040,70 @@ document.addEventListener("DOMContentLoaded", () => {
     return state.enabled === false;
   }
 
-  function showPlanMessage(){
+  function showPlanToast(){
     try{
       if(typeof toast === 'function'){
-        toast('Plano contratado', 'Este módulo não faz parte do plano contratado.');
+        toast('Módulo indisponível', 'Este módulo não está disponível para esta clínica.');
         return;
       }
     }catch(_err){}
-    try{
-      alert('Este módulo não faz parte do plano contratado.');
-    }catch(_err){}
+  }
+
+  function ensureOverlay(){
+    if(overlayMounted && document.getElementById('featureBlockedOverlay')) return document.getElementById('featureBlockedOverlay');
+    const main = document.querySelector('.main');
+    if(!main) return null;
+    let overlay = document.getElementById('featureBlockedOverlay');
+    if(!overlay){
+      overlay = document.createElement('section');
+      overlay.id = 'featureBlockedOverlay';
+      overlay.innerHTML = `
+        <div class="featureBlockedCard">
+          <div class="featureBlockedEyebrow">Bloqueado no momento</div>
+          <h2 class="featureBlockedTitle">Módulo indisponível</h2>
+          <p class="featureBlockedText">Este módulo não está disponível para esta clínica.</p>
+          <p class="featureBlockedText">Para liberar este recurso, entre em contato com o suporte.</p>
+        </div>
+      `;
+      main.appendChild(overlay);
+    }
+    overlayMounted = true;
+    return overlay;
+  }
+
+  function hideAllNativeViews(){
+    if(Array.isArray(window.APP_VIEWS)){
+      window.APP_VIEWS.forEach(v => {
+        const node = document.getElementById(`view-${v}`);
+        if(node) node.classList.add('hidden');
+      });
+    }
+  }
+
+  function showBlockedOverlay(view){
+    const overlay = ensureOverlay();
+    if(!overlay) return;
+    const label = VIEW_LABELS[view] || 'Módulo';
+    const title = overlay.querySelector('.featureBlockedTitle');
+    const texts = overlay.querySelectorAll('.featureBlockedText');
+    if(title) title.textContent = `${label} indisponível`;
+    if(texts[0]) texts[0].textContent = `O módulo ${label} não está disponível para esta clínica.`;
+    if(texts[1]) texts[1].textContent = 'Para liberar este recurso, entre em contato com o suporte.';
+
+    hideAllNativeViews();
+    const sticky = document.getElementById('stickyFilters');
+    if(sticky) sticky.classList.add('hidden');
+
+    document.querySelectorAll('.nav button[data-view]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.view === view);
+    });
+
+    overlay.classList.add('show');
+  }
+
+  function hideBlockedOverlay(){
+    const overlay = document.getElementById('featureBlockedOverlay');
+    if(overlay) overlay.classList.remove('show');
   }
 
   function getFirstVisibleAndEnabledView(){
@@ -9010,133 +9111,12 @@ document.addEventListener("DOMContentLoaded", () => {
     for(const btn of buttons){
       const view = btn.getAttribute('data-view');
       if(!view) continue;
-      const hiddenByRole = btn.classList.contains('hidden');
-      if(hiddenByRole) continue;
+      if(btn.classList.contains('hidden')) continue;
       if(isFeatureHidden(view)) continue;
       if(isFeatureLocked(view)) continue;
       return view;
     }
     return null;
-  }
-
-  function ensureBlockedStyles(){
-    if(document.getElementById('featureBlockStyles')) return;
-    const style = document.createElement('style');
-    style.id = 'featureBlockStyles';
-    style.textContent = `
-      .nav button.feature-locked{
-        opacity:.48;
-        filter:saturate(.6);
-        border-style:dashed;
-      }
-      .nav button.feature-locked:hover{
-        transform:none;
-        background:rgba(255,255,255,.03);
-      }
-      .nav button.feature-locked .featureLockTag{
-        display:inline-flex;
-        align-items:center;
-        justify-content:center;
-        padding:3px 8px;
-        min-width:50px;
-        height:24px;
-        border-radius:999px;
-        border:1px solid rgba(255,255,255,.12);
-        font-size:11px;
-        color:#ffe8a3;
-        background:rgba(255,204,0,.10);
-      }
-      .nav button.feature-hidden{ display:none !important; }
-      #view-feature-blocked{ display:none; }
-      #view-feature-blocked.show{ display:block; }
-      .featureBlockedCard{
-        border:1px solid var(--line);
-        border-radius:var(--radius);
-        background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 45%), var(--panel);
-        box-shadow:var(--shadow);
-        padding:22px;
-      }
-      .featureBlockedCard h3{ margin:0 0 10px; font-size:22px; }
-      .featureBlockedCard p{ margin:0 0 10px; color:var(--muted); line-height:1.5; }
-      .featureBlockedBadge{
-        display:inline-flex; align-items:center; gap:8px;
-        padding:7px 12px; border-radius:999px;
-        border:1px solid rgba(255,255,255,.12);
-        background:rgba(255,204,0,.10); color:#ffe8a3;
-        font-size:12px; font-weight:800; margin-bottom:14px;
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  function ensureBlockedView(){
-    ensureBlockedStyles();
-    let blocked = document.getElementById('view-feature-blocked');
-    if(blocked) return blocked;
-    const main = document.querySelector('.main');
-    if(!main) return null;
-    blocked = document.createElement('section');
-    blocked.id = 'view-feature-blocked';
-    blocked.className = 'hidden';
-    blocked.innerHTML = `
-      <div class="featureBlockedCard">
-        <div class="featureBlockedBadge">Bloqueado no plano</div>
-        <h3 id="featureBlockedTitle">Módulo indisponível</h3>
-        <p id="featureBlockedText">Este módulo não faz parte do plano contratado para esta clínica.</p>
-        <p>Para liberar este recurso, ajuste o plano no Superadmin.</p>
-      </div>
-    `;
-    main.appendChild(blocked);
-    return blocked;
-  }
-
-  function getCurrentVisibleView(){
-    if(Array.isArray(window.APP_VIEWS)){
-      for(const view of window.APP_VIEWS){
-        const section = document.getElementById('view-' + view);
-        if(section && !section.classList.contains('hidden')) return view;
-      }
-    }
-    return null;
-  }
-
-  function markActiveButton(view){
-    document.querySelectorAll('.nav button[data-view]').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.view === view);
-    });
-  }
-
-  function hideAllViews(){
-    if(Array.isArray(window.APP_VIEWS)){
-      window.APP_VIEWS.forEach(v => {
-        const sec = document.getElementById('view-' + v);
-        if(sec) sec.classList.add('hidden');
-      });
-    }
-    const blocked = ensureBlockedView();
-    if(blocked) blocked.classList.remove('hidden');
-    const sticky = document.getElementById('stickyFilters');
-    if(sticky) sticky.classList.add('hidden');
-  }
-
-  function showBlockedView(view){
-    const blocked = ensureBlockedView();
-    if(!blocked) return;
-    hideAllViews();
-    blocked.classList.add('show');
-    const title = document.getElementById('featureBlockedTitle');
-    const text = document.getElementById('featureBlockedText');
-    if(title) title.textContent = `${FEATURE_TITLES[view] || 'Este módulo'} indisponível`;
-    if(text) text.textContent = `O módulo ${FEATURE_TITLES[view] || view} não faz parte do plano contratado para esta clínica.`;
-    markActiveButton(view);
-  }
-
-  function hideBlockedView(){
-    const blocked = document.getElementById('view-feature-blocked');
-    if(blocked){
-      blocked.classList.remove('show');
-      blocked.classList.add('hidden');
-    }
   }
 
   function applyFeatureStatesToMenu(){
@@ -9170,36 +9150,42 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function guardSetActiveView(){
-    if(typeof window.setActiveView !== 'function' || window.__featureSetActiveGuardWrapped) return;
-    const originalSetActiveView = window.setActiveView;
-    window.setActiveView = function(view){
-      if(isFeatureHidden(view) || isFeatureLocked(view)){
-        showPlanMessage();
-        showBlockedView(view);
-        return;
-      }
-      hideBlockedView();
-      return originalSetActiveView.apply(this, arguments);
-    };
-    window.__featureSetActiveGuardWrapped = true;
+  function syncCurrentViewState(){
+    const activeBtn = document.querySelector('.nav button.active[data-view]');
+    const activeView = activeBtn ? activeBtn.dataset.view : null;
+    if(activeView && isFeatureLocked(activeView)){
+      showBlockedOverlay(activeView);
+      return;
+    }
+    hideBlockedOverlay();
   }
 
-  function guardShowView(){
-    if(typeof window.showView !== 'function' || window.__featureGuardWrapped) return;
+  function wrapSetActiveView(){
+    if(typeof window.setActiveView !== 'function' || window.__featureSetActiveWrapped) return;
+    const originalSetActiveView = window.setActiveView;
 
-    const originalShowView = window.showView;
-    window.showView = function(view){
-      if(isFeatureHidden(view) || isFeatureLocked(view)){
-        showPlanMessage();
-        showBlockedView(view);
+    window.setActiveView = function(view){
+      if(isFeatureHidden(view)){
+        const fallback = getFirstVisibleAndEnabledView();
+        if(fallback && fallback !== view){
+          return originalSetActiveView.call(this, fallback);
+        }
+        hideAllNativeViews();
+        hideBlockedOverlay();
         return;
       }
-      hideBlockedView();
-      return originalShowView.apply(this, arguments);
+
+      if(isFeatureLocked(view)){
+        showPlanToast();
+        showBlockedOverlay(view);
+        return;
+      }
+
+      hideBlockedOverlay();
+      return originalSetActiveView.apply(this, arguments);
     };
 
-    window.__featureGuardWrapped = true;
+    window.__featureSetActiveWrapped = true;
   }
 
   function resolveOwnerContext(){
@@ -9280,29 +9266,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function syncCurrentViewAfterFeatureLoad(){
-    const currentView = getCurrentVisibleView() || 'dashboard';
-    if(isFeatureHidden(currentView) || isFeatureLocked(currentView)){
-      showBlockedView(currentView);
-    }else{
-      hideBlockedView();
-      markActiveButton(currentView);
-    }
-  }
-
   async function refreshFeatureAccess(force){
-    guardSetActiveView();
-    guardShowView();
-    ensureBlockedView();
+    wrapSetActiveView();
     applyFeatureStatesToMenu();
     await fetchFeatureAccess(!!force);
     applyFeatureStatesToMenu();
-    syncCurrentViewAfterFeatureLoad();
+    syncCurrentViewState();
   }
 
   function wrapBoot(){
     if(typeof window.boot !== 'function' || window.__featureBootWrapped) return;
-
     const originalBoot = window.boot;
     window.boot = async function(){
       const result = await originalBoot.apply(this, arguments);
@@ -9310,22 +9283,17 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(() => { refreshFeatureAccess(true); }, 1200);
       return result;
     };
-
     window.__featureBootWrapped = true;
   }
 
   function install(){
+    ensureOverlay();
     wrapBoot();
-    guardSetActiveView();
-    guardShowView();
-    ensureBlockedView();
+    wrapSetActiveView();
     refreshFeatureAccess(false);
-
     window.addEventListener('focus', () => refreshFeatureAccess(true));
     document.addEventListener('visibilitychange', () => {
-      if(document.visibilityState === 'visible'){
-        refreshFeatureAccess(true);
-      }
+      if(document.visibilityState === 'visible') refreshFeatureAccess(true);
     });
   }
 
@@ -9342,5 +9310,3 @@ document.addEventListener("DOMContentLoaded", () => {
 </body>
 </html>
 <!-- update -->
-
-  
