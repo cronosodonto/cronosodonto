@@ -293,10 +293,26 @@
     .feature-message{padding:14px;border:1px dashed rgba(255,255,255,.12);border-radius:14px;color:var(--muted)}
     @media (max-width: 920px){ .feature-access-grid{grid-template-columns:1fr} }
 
+
+    .boot-shell{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(180deg,var(--bg),#0f1522 50%, #0d1420);z-index:120000}
+    .boot-card{width:min(520px,100%);padding:26px 24px;text-align:center}
+    .boot-title{margin:0 0 10px;font-size:28px;line-height:1.05;letter-spacing:-.02em}
+    .boot-subtitle{margin:0;color:var(--muted);font-size:14px}
+    .boot-spinner{width:42px;height:42px;border-radius:999px;border:3px solid rgba(255,255,255,.12);border-top-color:var(--primary);margin:0 auto 16px;animation:bootSpin .9s linear infinite}
+    @keyframes bootSpin{to{transform:rotate(360deg)}}
+
 </style>
 </head>
 <body>
-  <section id="loginScreen" class="login-shell">
+  <div id="bootOverlay" class="boot-shell">
+    <div class="card boot-card">
+      <div class="boot-spinner"></div>
+      <h2 id="bootTitle" class="boot-title">Reconectando ao painel...</h2>
+      <p id="bootSubtitle" class="boot-subtitle">Segura um instante enquanto o Superadmin confirma a sessão.</p>
+    </div>
+  </div>
+
+  <section id="loginScreen" class="login-shell hidden">
     <div class="card login-card">
       <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px">
         <div style="margin-left:auto"></div>
@@ -328,7 +344,7 @@
       <form id="loginForm" class="login-grid">
         <div class="field">
           <label for="loginEmail">E-mail</label>
-          <input class="input" id="loginEmail" type="email" placeholder="cronosodonto@gmail.com" required />
+          <input class="input" id="loginEmail" type="email" placeholder="E-mail administrativo" required />
         </div>
 
         <div class="field">
@@ -752,6 +768,26 @@
       clinicPageSize: 8
     };
 
+    function setBootOverlay(visible, title = 'Reconectando ao painel...', subtitle = 'Segura um instante enquanto o Superadmin confirma a sessão.') {
+      const overlay = document.getElementById('bootOverlay');
+      const titleEl = document.getElementById('bootTitle');
+      const subtitleEl = document.getElementById('bootSubtitle');
+      if (titleEl) titleEl.textContent = title;
+      if (subtitleEl) subtitleEl.textContent = subtitle;
+      if (overlay) overlay.classList.toggle('hidden', !visible);
+    }
+
+    function showLoginScreen() {
+      document.getElementById('panelApp').classList.add('hidden');
+      document.getElementById('loginScreen').classList.remove('hidden');
+    }
+
+    function showPanelApp() {
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('panelApp').classList.remove('hidden');
+    }
+
+
     const STATUS_LABELS = {
       active: "Ativa",
       scheduled: "Agendada",
@@ -760,76 +796,6 @@
       trial: "Teste",
       inactive: "Inativa"
     };
-
-    function setPanelVisible(show) {
-      document.getElementById("loginScreen").classList.toggle("hidden", !!show);
-      document.getElementById("panelApp").classList.toggle("hidden", !show);
-    }
-
-    function resetPanelState() {
-      state.clinics = [];
-      state.filters = { search: "", status: "all", limit: "all" };
-      state.session = null;
-      state.selectedClinicId = null;
-      state.selectedClinicDetails = null;
-      state.superadmins = [];
-      state.selectedSuperadmin = null;
-      state.currentSuperadminId = null;
-      state.currentSuperadminEmail = null;
-      state.currentSuperadminIsRoot = false;
-      state.notifications = [];
-      state.loadingNotifications = false;
-      state.hasLoadedNotifications = false;
-      state.loadingClinics = false;
-      state.loadingClinicDetails = false;
-      state.loadingSuperadmins = false;
-      state.hasLoadedClinics = false;
-      state.hasLoadedSuperadmins = false;
-      state.clinicPage = 1;
-      state.clinicPageSize = 8;
-    }
-
-    async function fetchMySuperadminProfile() {
-      const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
-      if (userError || !user?.id) throw new Error("Sessão inválida.");
-
-      const { data: profile, error: profileError } = await supabaseClient
-        .from("profiles")
-        .select("user_id, role, display_name")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
-      if (!profile || profile.role !== "superadmin") throw new Error("FORBIDDEN_SUPERADMIN");
-
-      state.currentSuperadminId = user.id;
-      state.currentSuperadminEmail = user.email || null;
-      return { user, profile };
-    }
-
-    async function validateSuperadminAccessOrThrow() {
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      if (!session) throw new Error("NO_SESSION");
-      state.session = session;
-      await fetchMySuperadminProfile();
-      return session;
-    }
-
-    async function openPanelAfterValidation() {
-      state.loadingClinics = true;
-      setPanelVisible(true);
-      renderStats();
-      renderTable();
-      await Promise.all([loadClinics(), loadSuperadmins(), loadNotifications()]);
-    }
-
-    async function forceBackToLogin(message) {
-      try { await supabaseClient.auth.signOut(); } catch (_) {}
-      resetPanelState();
-      setPanelVisible(false);
-      document.getElementById("loginPassword").value = "";
-      toast(message || "Acesso restrito ao painel administrativo.", "error", 4200);
-    }
 
     function toast(message, type = "info", ms = 2800) {
       const wrap = document.getElementById("toastWrap");
@@ -1906,8 +1872,9 @@
 
       document.getElementById("btnLogout").addEventListener("click", async () => {
         await supabaseClient.auth.signOut();
-        resetPanelState();
-        setPanelVisible(false);
+        state.session = null;
+        showLoginScreen();
+        setBootOverlay(false);
         document.getElementById("loginPassword").value = "";
         toast("Sessão encerrada.", "info");
       });
@@ -2100,29 +2067,27 @@
         try {
           const email = document.getElementById("loginEmail").value.trim();
           const password = document.getElementById("loginPassword").value;
+          setBootOverlay(true, 'Validando acesso...', 'Entrando no Superadmin e carregando o ambiente.');
+          document.getElementById("loginScreen").classList.add("hidden");
           const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
 
           if (error) throw error;
           if (!data?.session) throw new Error("Sessão não criada.");
 
           state.session = data.session;
+          state.loadingClinics = true;
+          showPanelApp();
+          renderStats();
+          renderTable();
 
-          try {
-            await validateSuperadminAccessOrThrow();
-          } catch (err) {
-            if (String(err?.message || "") === "FORBIDDEN_SUPERADMIN") {
-              await forceBackToLogin("Esse login não tem permissão para acessar o Superadmin.");
-              return;
-            }
-            throw err;
-          }
-
-          await openPanelAfterValidation();
+          await Promise.all([loadClinics(), loadSuperadmins(), loadNotifications()]);
+          setBootOverlay(false);
           toast("Login realizado com sucesso.", "success");
         } catch (err) {
           console.error(err);
+          setBootOverlay(false);
+          showLoginScreen();
           toast(err.message || "Erro ao fazer login.", "error", 4000);
-          setPanelVisible(false);
         } finally {
           btn.disabled = false;
           btn.textContent = oldText;
@@ -2173,27 +2138,31 @@
     async function restoreSessionIfAny() {
       const { data: { session } } = await supabaseClient.auth.getSession();
       if (!session) {
-        setPanelVisible(false);
+        showLoginScreen();
+        setBootOverlay(false);
         return false;
       }
-
+      state.session = session;
+      state.loadingClinics = true;
+      setBootOverlay(true, 'Reconectando ao painel...', 'Confirmando sua sessão e carregando os dados administrativos.');
+      showPanelApp();
+      renderStats();
+      renderTable();
       try {
-        await validateSuperadminAccessOrThrow();
-        await openPanelAfterValidation();
-        return true;
+        await Promise.all([loadClinics(), loadSuperadmins(), loadNotifications()]);
+        setBootOverlay(false);
       } catch (err) {
         console.error(err);
-        await forceBackToLogin(
-          err?.message === "FORBIDDEN_SUPERADMIN"
-            ? "Esse login não tem permissão para acessar o Superadmin."
-            : "Não foi possível validar essa sessão."
-        );
-        return false;
+        setBootOverlay(false);
+        showLoginScreen();
+        toast(err.message || "Erro ao carregar dados do painel.", "error", 4000);
       }
+      return true;
     }
 
     async function init() {
       bindGlobalEvents();
+      setBootOverlay(true, 'Reconectando ao painel...', 'Confirmando sua sessão e preparando o ambiente.');
       await restoreSessionIfAny();
     }
 
