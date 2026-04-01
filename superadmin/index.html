@@ -344,7 +344,7 @@
       <form id="loginForm" class="login-grid">
         <div class="field">
           <label for="loginEmail">E-mail</label>
-          <input class="input" id="loginEmail" type="email" placeholder="E-mail administrativo" required />
+          <input class="input" id="loginEmail" type="email" placeholder="cronosodonto@gmail.com" required />
         </div>
 
         <div class="field">
@@ -1701,34 +1701,44 @@
     }
 
     async function handleExportCsv(button) {
-      await withButtonLoading(button, "Exportando...", async () => {
-        const data = await callEdgeFunction(CONFIG.endpoints.exportClinicCsv, {
-          clinic_id: state.selectedClinicId
+      if (!state.selectedClinicId) {
+        toast("Nenhuma clínica selecionada.", "error", 3200);
+        return;
+      }
+
+      try {
+        await withButtonLoading(button, "Exportando...", async () => {
+          const data = await callEdgeFunction(CONFIG.endpoints.exportClinicCsv, {
+            clinic_id: state.selectedClinicId
+          });
+
+          if (data?.url) {
+            window.open(data.url, "_blank");
+            toast("Download iniciado.", "success");
+            return;
+          }
+
+          const csv = data?.csv || data?.content || null;
+          if (csv) {
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = data?.filename || `clinica-${state.selectedClinicId}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            toast("CSV exportado.", "success");
+            return;
+          }
+
+          throw new Error("A função não retornou CSV nem URL de download.");
         });
-
-        if (data?.url) {
-          window.open(data.url, "_blank");
-          toast("Download iniciado.", "success");
-          return;
-        }
-
-        const csv = data?.csv || data?.content || null;
-        if (csv) {
-          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = data?.filename || `clinica-${state.selectedClinicId}.csv`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-          toast("CSV exportado.", "success");
-          return;
-        }
-
-        throw new Error("A função não retornou CSV nem URL de download.");
-      });
+      } catch (err) {
+        console.error(err);
+        toast(err?.message || "Falha ao exportar CSV.", "error", 4200);
+      }
     }
 
     function handleImportCsv(button) {
@@ -1737,15 +1747,20 @@
         importInput.value = "";
         if (!file) return;
 
-        const text = await file.text();
-        await withButtonLoading(button, "Importando...", async () => {
-          await callEdgeFunction(CONFIG.endpoints.importClinicCsv, {
-            clinic_id: state.selectedClinicId,
-            filename: file.name,
-            csv_content: text
+        try {
+          const text = await file.text();
+          await withButtonLoading(button, "Importando...", async () => {
+            await callEdgeFunction(CONFIG.endpoints.importClinicCsv, {
+              clinic_id: state.selectedClinicId,
+              filename: file.name,
+              csv_content: text
+            });
+            toast("CSV importado com sucesso.", "success", 3600);
           });
-          toast("CSV importado com sucesso.", "success", 3600);
-        });
+        } catch (err) {
+          console.error(err);
+          toast(err?.message || "Falha ao importar CSV.", "error", 4200);
+        }
       };
       importInput.click();
     }
