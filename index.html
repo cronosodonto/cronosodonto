@@ -557,6 +557,30 @@ to { transform: rotate(360deg); }
       .authLoginGrid{grid-template-columns: 1fr 1fr;}
     }
 
+    .authPassField{position:relative;}
+    .authPassField input{padding-right:60px;}
+    .authPassToggle{
+      position:absolute;
+      right:16px;
+      bottom:8px;
+      width:28px;
+      height:28px;
+      border:none;
+      background:transparent;
+      color:var(--muted);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      padding:0;
+      margin:0;
+      z-index:3;
+      pointer-events:auto;
+    }
+    .authPassToggle:hover{background:transparent; color:var(--text);}
+    .authPassToggle svg{width:22px; height:22px; display:block; pointer-events:none;}
+    :root.light .authPassToggle:hover{background:transparent;}
+
     /* Toast */
     .toast{
       position:fixed; right:16px; bottom:16px;
@@ -1675,33 +1699,34 @@ function renderInstallmentsView(){
   if(!actor){ showAuth(); return; }
   const db = loadDB();
 
-    // normalize legacy tasks/payments (compat)
-    (db.tasks||[]).forEach(t=>{
-      if(!t.masterId) t.masterId = actor.masterId;
-      if(!t.entryId && typeof t.key==="string" && t.key.startsWith("INST:")){
-        const parts = t.key.split(":");
-        if(parts.length>=3) t.entryId = parts[1];
-      }
-      if(!t.title && t.name) t.title = t.name;
-      if(!t.notes && t.desc) t.notes = t.desc;
-      if(!t.action && t.wa) t.action = "WhatsApp";
-      if(t.done==null && t.status!=null){
-        t.done = (String(t.status).toLowerCase().includes("feito") || String(t.status).toLowerCase().includes("done") || String(t.status).toLowerCase().includes("concl"));
-      }
-      if(t.done==null) t.done = false;
-    });
-    (db.payments||[]).forEach(p=>{
-      if(!p.masterId) p.masterId = actor.masterId;
-      if(!p.date && p.at) p.date = String(p.at).slice(0,10);
-    });
+  (db.tasks||[]).forEach(t=>{
+    if(!t.masterId) t.masterId = actor.masterId;
+    if(!t.entryId && typeof t.key==="string" && t.key.startsWith("INST:")){
+      const parts = t.key.split(":");
+      if(parts.length>=3) t.entryId = parts[1];
+    }
+    if(!t.title && t.name) t.title = t.name;
+    if(!t.notes && t.desc) t.notes = t.desc;
+    if(!t.action && t.wa) t.action = "WhatsApp";
+    if(t.done==null && t.status!=null){
+      t.done = (String(t.status).toLowerCase().includes("feito") || String(t.status).toLowerCase().includes("done") || String(t.status).toLowerCase().includes("concl"));
+    }
+    if(t.done==null) t.done = false;
+  });
+  (db.payments||[]).forEach(p=>{
+    if(!p.masterId) p.masterId = actor.masterId;
+    if(!p.date && p.at) p.date = String(p.at).slice(0,10);
+  });
 
-  // default month
   const mm = el("instMonth");
   const nowMK = new Date().toISOString().slice(0,7);
   if(mm && !mm.value) mm.value = nowMK;
 
-  // KPIs
   const mk = mm?.value || nowMK;
+  const q = (el("instSearch")?.value||"").trim().toLowerCase();
+  const filter = (el("instFilter")?.value||"all");
+  const today = todayISO();
+
   const k = installmentsKPIs(db, actor, mk);
   el("kpiInstMonth").textContent = moneyBR(k.monthSum);
   el("kpiInstMonthN").textContent = `${k.monthN} parcelas`;
@@ -1710,18 +1735,19 @@ function renderInstallmentsView(){
   el("kpiInstFuture").textContent = moneyBR(k.futureSum);
   el("kpiInstFutureN").textContent = `${k.futureN} parcelas`;
 
-  // pills
   const pill = el("pillInst");
   if(pill) pill.textContent = String(k.lateN || 0);
-
-  const q = (el("instSearch")?.value||"").trim().toLowerCase();
-  const filter = (el("instFilter")?.value||"all");
-  const today = todayISO();
 
   const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===actor.masterId).map(c=>[c.id,c]));
   const entries = (db.entries||[]).filter(e=>e.masterId===actor.masterId && e.installPlan);
 
-  // group by contact (show one row per lead entry; if multiple months exist, show most recent with plan)
+  window.__instHistoryState = window.__instHistoryState || { page:1, sig:"" };
+  const stateSig = `${mk}|${filter}|${q}`;
+  if(window.__instHistoryState.sig !== stateSig){
+    window.__instHistoryState.sig = stateSig;
+    window.__instHistoryState.page = 1;
+  }
+
   const rows = [];
   entries.forEach(e=>{
     ensureInstallmentsForEntry(e);
@@ -1729,60 +1755,113 @@ function renderInstallmentsView(){
     const hay = `${c.name} ${c.phone}`.toLowerCase();
     if(q && !hay.includes(q)) return;
 
-    const sum = entryInstallmentSummary(e);
-    // compute per lead for month/late/future (pending only)
-    let mSum=0, lSum=0, fSum=0;
-    (e.installments||[]).forEach(p=>{
-      const paid = !!p.paidAt || p.status==="PAGA";
-      if(paid) return;
-      if(p.dueDate && monthKeyOf(p.dueDate)===mk) mSum += p.amount;
-      if(p.dueDate && p.dueDate < today) lSum += p.amount;
-      if(p.dueDate && p.dueDate > today) fSum += p.amount;
+    const monthInstallments = (e.installments||[]).filter(p=>p?.dueDate && monthKeyOf(p.dueDate)===mk);
+    if(!monthInstallments.length) return;
+
+    let monthPaidSum=0, monthPendingSum=0, monthLateSum=0, monthFutureSum=0;
+    let monthPaidCount=0, monthPendingCount=0, monthLateCount=0, monthFutureCount=0;
+
+    monthInstallments.forEach(p=>{
+      const paid = !!p.paidAt || p.status === "PAGA";
+      if(paid){
+        monthPaidSum += parseMoney(p.amount);
+        monthPaidCount++;
+        return;
+      }
+      monthPendingSum += parseMoney(p.amount);
+      monthPendingCount++;
+      if(p.dueDate && p.dueDate < today){
+        monthLateSum += parseMoney(p.amount);
+        monthLateCount++;
+      } else {
+        monthFutureSum += parseMoney(p.amount);
+        monthFutureCount++;
+      }
     });
 
-    if(filter==="dueMonth" && mSum<=0) return;
-    if(filter==="late" && lSum<=0) return;
-    if(filter==="open" && fSum<=0) return;
+    if(filter === "paid" && monthPaidCount <= 0) return;
+    if(filter === "dueMonth" && monthPendingCount <= 0) return;
+    if(filter === "late" && monthLateCount <= 0) return;
+    if(filter === "open" && monthFutureCount <= 0) return;
 
-    rows.push({e,c,sum,mSum,lSum,fSum});
+    const overall = entryInstallmentSummary(e);
+    rows.push({
+      e, c, overall,
+      monthInstallments,
+      monthPaidSum, monthPendingSum, monthLateSum, monthFutureSum,
+      monthPaidCount, monthPendingCount, monthLateCount, monthFutureCount,
+    });
   });
 
-  // sort: late first, boleto first, next due soon
   rows.sort((A,B)=>{
-    const aLate = A.sum.lateCount>0 ? 1:0;
-    const bLate = B.sum.lateCount>0 ? 1:0;
-    if(aLate!==bLate) return bLate-aLate;
+    const aRank = A.monthLateCount>0 ? 3 : A.monthPendingCount>0 ? 2 : A.monthPaidCount>0 ? 1 : 0;
+    const bRank = B.monthLateCount>0 ? 3 : B.monthPendingCount>0 ? 2 : B.monthPaidCount>0 ? 1 : 0;
+    if(aRank !== bRank) return bRank - aRank;
     const aBol = ((A.e.installPlan?.payMethod||"")==="Boleto")?1:0;
     const bBol = ((B.e.installPlan?.payMethod||"")==="Boleto")?1:0;
     if(aBol!==bBol) return bBol-aBol;
-    return (A.sum.nextDue||"9999").localeCompare(B.sum.nextDue||"9999");
+    const aDate = (A.monthInstallments[0]?.dueDate || "9999-99-99");
+    const bDate = (B.monthInstallments[0]?.dueDate || "9999-99-99");
+    return aDate.localeCompare(bDate);
   });
+
+  const pageSize = 10;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(totalPages, Math.max(1, window.__instHistoryState.page || 1));
+  window.__instHistoryState.page = currentPage;
+  const start = (currentPage - 1) * pageSize;
+  const pagedRows = rows.slice(start, start + pageSize);
 
   const list = el("instList");
   if(!list) return;
-  list.innerHTML = rows.map(({e,c,sum,mSum,lSum,fSum})=>{
+
+  if(!rows.length){
+    list.innerHTML = `<div class="muted">Nenhum parcelamento encontrado para o mês e filtro selecionados.</div>`;
+    return;
+  }
+
+  const cardsHtml = pagedRows.map(({e,c,overall,monthInstallments,monthPaidSum,monthPendingSum,monthLateSum,monthFutureSum,monthPaidCount,monthPendingCount,monthLateCount,monthFutureCount})=>{
     const pm = e.installPlan?.payMethod || "—";
     const each = e.installPlan?.each ? moneyBR(e.installPlan.each) : moneyBR((parseMoney(e.installPlan.amount)||0)/Math.max(1,parseInt(e.installPlan.n||1,10)));
-    const next = sum.nextDue ? fmtBR(sum.nextDue) : "—";
-    const lateBadge = sum.lateCount>0 ? `<span class="badge late">⚠️ ${sum.lateCount} atraso</span>` : `<span class="badge ok">✅ em dia</span>`;
+    const next = overall.nextDue ? fmtBR(overall.nextDue) : "—";
     const rowId = `instrow_${e.id}`;
+
+    const badges = [];
+    if(monthPaidCount > 0) badges.push(`<span class="badge ok">✅ ${monthPaidCount} paga(s)</span>`);
+    if(monthLateCount > 0) badges.push(`<span class="badge late">⚠️ ${monthLateCount} atrasada(s)</span>`);
+    if(monthFutureCount > 0) badges.push(`<span class="badge pending">🕒 ${monthFutureCount} pendente(s)</span>`);
+    if(!badges.length && monthPendingCount > 0) badges.push(`<span class="badge pending">🕒 ${monthPendingCount} pendente(s)</span>`);
+
+    const periodDetails = monthInstallments.map(p=>{
+      const paid = !!p.paidAt || p.status === "PAGA";
+      const late = !paid && p.dueDate && p.dueDate < today;
+      const statusChip = paid
+        ? `<span class="badge ok">PAGA</span>`
+        : late
+          ? `<span class="badge late">ATRASADA</span>`
+          : `<span class="badge pending">PENDENTE</span>`;
+      return `<div class="chip">${p.number}/${p.total} • ${fmtBR(p.dueDate)} • <b>${moneyBR(p.amount)}</b> ${statusChip}</div>`;
+    }).join("");
+
     return `
       <div class="instRow" id="${rowId}">
         <div class="instHead">
           <div style="min-width:0">
             <div class="instName">${escapeHTML(c.name)} <span class="muted" style="font-weight:600">• ${escapeHTML(c.phone||"")}</span></div>
             <div class="instMeta">
-              <span class="chip">Parcelas: <b>${sum.paidCount}/${sum.total}</b></span>
+              <span class="chip">Parcelas gerais: <b>${overall.paidCount}/${overall.total}</b></span>
               <span class="chip">Forma: <b>${escapeHTML(pm)}</b></span>
               <span class="chip">Próx.: <b>${escapeHTML(next)}</b></span>
               <span class="chip">Parcela: <b>${each}</b></span>
-              ${lateBadge}
+              ${badges.join(" ")}
             </div>
             <div class="instMeta">
-              <span class="chip">Mês: <b>${moneyBR(mSum)}</b></span>
-              <span class="chip">Atrasado: <b>${moneyBR(lSum)}</b></span>
-              <span class="chip">Futuro: <b>${moneyBR(fSum)}</b></span>
+              <span class="chip">Pagas no mês: <b>${moneyBR(monthPaidSum)}</b></span>
+              <span class="chip">Pendentes no mês: <b>${moneyBR(monthPendingSum)}</b></span>
+              <span class="chip">Atrasado no mês: <b>${moneyBR(monthLateSum)}</b></span>
+              <span class="chip">Futuro no mês: <b>${moneyBR(monthFutureSum)}</b></span>
             </div>
+            <div class="instMeta" style="margin-top:8px">${periodDetails}</div>
           </div>
           <div class="instBtns">
             <button class="btn" onclick="openLeadEntry('${e.id}')">Abrir lead</button>
@@ -1797,7 +1876,18 @@ function renderInstallmentsView(){
     `;
   }).join("");
 
-  // restore open states
+  const pagerHtml = totalPages > 1 ? `
+    <div class="instPager" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;">
+      <div class="muted">Página ${currentPage} de ${totalPages} • ${rows.length} registro(s)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn small" ${currentPage<=1 ? 'disabled' : ''} onclick="window.__instHistoryState.page=Math.max(1,(window.__instHistoryState.page||1)-1);renderInstallmentsView();">Anterior</button>
+        <button class="btn small" ${currentPage>=totalPages ? 'disabled' : ''} onclick="window.__instHistoryState.page=Math.min(${totalPages},(window.__instHistoryState.page||1)+1);renderInstallmentsView();">Próxima</button>
+      </div>
+    </div>
+  ` : '';
+
+  list.innerHTML = cardsHtml + pagerHtml;
+
   try{
     window.__instOpen = window.__instOpen || {};
     Object.keys(window.__instOpen).forEach(id=>{
@@ -1805,11 +1895,7 @@ function renderInstallmentsView(){
       if(rr && window.__instOpen[id]) rr.classList.add("open");
       updateInstallmentToggleLabel(id);
     });
-  }catch(e){} 
-
-  if(!rows.length){
-    list.innerHTML = `<div class="muted">Nenhum parcelamento encontrado. Cadastre no lead (Entrada / Valor para parcelar / Vezes / 1º vencimento).</div>`;
-  }
+  }catch(e){}
 }
 
 function updateInstallmentToggleLabel(entryId){
@@ -2284,9 +2370,12 @@ style="width:344px; height:auto; display:block; margin:0 auto; color:inherit;">
         <label>Login</label>
         <input id="authLogin" placeholder="E-mail ou usuário"/>
       </div>
-      <div>
+      <div class="authPassField">
         <label>Senha</label>
         <input id="authPass" type="password" placeholder="••••••••"/>
+        <button type="button" class="authPassToggle" id="authPassToggle" aria-label="Mostrar senha" title="Mostrar senha">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>
+        </button>
       </div>
     </div>
 
@@ -2844,9 +2933,10 @@ fill="currentColor" stroke="none">
       <div style="min-width:180px">
         <label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Filtro</label>
         <select id="instFilter" class="input">
-          <option value="all">Todos</option>
-          <option value="dueMonth">Vencendo no mês</option>
-          <option value="late">Atrasados</option>
+          <option value="all">Todos do mês</option>
+          <option value="paid">Pagas</option>
+          <option value="dueMonth">Pendentes</option>
+          <option value="late">Atrasadas</option>
           <option value="open">Futuro</option>
         </select>
       </div>
@@ -8272,6 +8362,27 @@ function bindActions(){
 
   el("themeToggle").onclick = toggleTheme;
   el("themeToggleAuth").onclick = toggleTheme;
+
+  const passToggle = el("authPassToggle");
+  const passInput = el("authPass");
+  if(passToggle && passInput){
+    const eyeOpen = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>';
+    const eyeOff = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10.58 10.58A2 2 0 0012 16a2 2 0 001.42-.58" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.88 5.09A10.94 10.94 0 0112 5c6.5 0 10.5 7 10.5 7a21.76 21.76 0 01-4.13 4.77" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.61 6.61C3.73 8.55 1.5 12 1.5 12A21.78 21.78 0 006.27 16.87" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const syncPassIcon = ()=>{
+      const hidden = passInput.type === 'password';
+      passToggle.innerHTML = hidden ? eyeOpen : eyeOff;
+      passToggle.setAttribute('aria-label', hidden ? 'Mostrar senha' : 'Ocultar senha');
+      passToggle.setAttribute('title', hidden ? 'Mostrar senha' : 'Ocultar senha');
+    };
+    syncPassIcon();
+    passToggle.addEventListener('click', ()=>{
+      passInput.type = passInput.type === 'password' ? 'text' : 'password';
+      syncPassIcon();
+      try{ passInput.focus({preventScroll:true}); }catch(_){ passInput.focus(); }
+      const end = String(passInput.value || '').length;
+      try{ passInput.setSelectionRange(end, end); }catch(_){ }
+    });
+  }
 
   el("btnClearFilters").onclick = ()=>{
     const f = loadFilters();
