@@ -5071,54 +5071,53 @@ const prev = previewSource.slice(0, previewLimit);
 const box = el("dashPreview");
 if(!prev.length){
   box.innerHTML = `<div class="muted">Nenhum lead encontrado${dashStatusActivePreview ? ` para <b>${escapeHTML(dashStatusLabel(dashStatusActivePreview))}</b>` : ""}.</div>`;
-  return;
-}
-
-box.innerHTML =
-  prev.map(e=>{
-    const c = db.contacts.find(x=>x.id===e.contactId);
-    const tagRes = e.tags?.includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : "";
-    return `
-      <div class="card" style="padding:10px; margin-bottom:10px">
-        <div style="display:flex; justify-content:space-between; gap:10px">
-          <div>
-            <div style="font-weight:800">${escapeHTML(c?.name||"—")}</div>
-            <div class="muted" style="font-size:12px; margin-top:2px">
-              ${escapeHTML(c?.phone||"—")} • ${escapeHTML(e.status||"—")}
+} else {
+  box.innerHTML =
+    prev.map(e=>{
+      const c = db.contacts.find(x=>x.id===e.contactId);
+      const tagRes = e.tags?.includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : "";
+      return `
+        <div class="card" style="padding:10px; margin-bottom:10px">
+          <div style="display:flex; justify-content:space-between; gap:10px">
+            <div>
+              <div style="font-weight:800">${escapeHTML(c?.name||"—")}</div>
+              <div class="muted" style="font-size:12px; margin-top:2px">
+                ${escapeHTML(c?.phone||"—")} • ${escapeHTML(e.status||"—")}
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:start">
+              ${tagRes}
+              <button class="miniBtn" onclick="openLeadEntry('${e.id}')">Abrir</button>
             </div>
           </div>
-          <div style="display:flex; gap:8px; align-items:start">
-            ${tagRes}
-            <button class="miniBtn" onclick="openLeadEntry('${e.id}')">Abrir</button>
-          </div>
         </div>
+      `;
+    }).join("")
+    +
+    `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px">
+        <div class="muted" style="font-size:12px">
+          Mostrando ${prev.length} de ${totalPrev} leads${dashStatusActivePreview ? ` • Status: ${escapeHTML(dashStatusLabel(dashStatusActivePreview))}` : ""}
+        </div>
+        ${
+          totalPrev > previewLimit
+            ? `<button id="btnDashPreviewMore" class="miniBtn">Ver mais</button>`
+            : `<div class="muted" style="font-size:12px">Todos os leads exibidos</div>`
+        }
       </div>
     `;
-  }).join("")
-  +
-  `
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px">
-      <div class="muted" style="font-size:12px">
-        Mostrando ${prev.length} de ${totalPrev} leads${dashStatusActivePreview ? ` • Status: ${escapeHTML(dashStatusLabel(dashStatusActivePreview))}` : ""}
-      </div>
-      ${
-        totalPrev > previewLimit
-          ? `<button id="btnDashPreviewMore" class="miniBtn">Ver mais</button>`
-          : `<div class="muted" style="font-size:12px">Todos os leads exibidos</div>`
-      }
-    </div>
-  `;
 
-const btnMore = el("btnDashPreviewMore");
-if(btnMore){
-  btnMore.onclick = () => {
-    window.DASH_PREVIEW_LIMIT = (window.DASH_PREVIEW_LIMIT || 10) + 10;
-    renderAll();
-  };
+  const btnMore = el("btnDashPreviewMore");
+  if(btnMore){
+    btnMore.onclick = () => {
+      window.DASH_PREVIEW_LIMIT = (window.DASH_PREVIEW_LIMIT || 10) + 10;
+      renderAll();
+    };
+  }
 }
 
-  // charts
-  requestAnimationFrame(()=>renderDashboardCharts(rows));
+// charts
+requestAnimationFrame(()=>renderDashboardCharts(rows));
 }
 function statusDotClass(status){
   const s = (status||"").trim();
