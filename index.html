@@ -3205,6 +3205,25 @@ let CLOUD_ACCESS_KIND = "guest"; // owner | member | guest
 let CLOUD_MEMBER_INFO = null;
 let __cloudSaveTimer = null;
 let __cloudSavePromise = null;
+let __cloudToastSuppressedUntil = 0;
+
+function suppressCloudFailureToasts(ms=6000){
+  __cloudToastSuppressedUntil = Math.max(__cloudToastSuppressedUntil || 0, Date.now() + Number(ms || 0));
+}
+
+function shouldSuppressCloudFailureToast(){
+  return Date.now() < (__cloudToastSuppressedUntil || 0)
+    || CLOUD_ACCESS_KIND === "member_pending"
+    || CLOUD_ACCESS_KIND === "member_inactive"
+    || window.__CRONOS_LOGIN_BUSY__ === true;
+}
+
+function cancelPendingCloudSync(){
+  if(__cloudSaveTimer){
+    clearTimeout(__cloudSaveTimer);
+    __cloudSaveTimer = null;
+  }
+}
 
 const SUPPORT_STORAGE_KEY = "cronos_support_context";
 const SUPPORT_DBKEY = "cronos_support_db";
@@ -3611,6 +3630,8 @@ function ensureMemberMirror(db, membership){
       loginEmail: String(membership.email || "").trim().toLowerCase(),
       role: membership.role || "SECRETARIA",
       active: membership.active !== false,
+      pendingApproval: membership.pending_approval === true,
+      blockedReason: membership.blocked_reason || null,
       createdAt: new Date().toISOString()
     };
     db.users.push(userRow);
@@ -3623,6 +3644,8 @@ function ensureMemberMirror(db, membership){
     userRow.loginEmail = String(membership.email || userRow.loginEmail || userRow.email || "").trim().toLowerCase();
     userRow.role = membership.role || userRow.role || "SECRETARIA";
     userRow.active = membership.active !== false;
+    userRow.pendingApproval = membership.pending_approval === true;
+    userRow.blockedReason = membership.blocked_reason || null;
   }
 
   return db;
@@ -3792,7 +3815,9 @@ async function flushCloudSave(dbToSave){
 
   if(error){
     console.error("Erro ao salvar no Supabase:", error);
-    toast("Falha ao salvar na nuvem", "Os dados ficaram no navegador e podem ser sincronizados depois.");
+    if(!shouldSuppressCloudFailureToast()){
+      toast("Falha ao salvar na nuvem", "Os dados ficaram no navegador e podem ser sincronizados depois.");
+    }
     return false;
   }
 
@@ -4218,6 +4243,16 @@ function currentActor(){
   if(s.kind==="user"){
     const u = db.users.find(x=>x.id===s.id);
     if(!u) return null;
+    if(u.pendingApproval === true || u.active === false){
+      window.__CRONOS_ACCESS_BLOCK__ = {
+        title: u.pendingApproval ? "Aguardando liberação" : "Acesso bloqueado",
+        message: String(u.blockedReason || (u.pendingApproval
+          ? "Seu usuário foi criado, mas ainda depende da aprovação do superadmin."
+          : "Esse usuário está inativo e precisa ser liberado pelo superadmin."))
+      };
+      return null;
+    }
+    window.__CRONOS_ACCESS_BLOCK__ = null;
     return {kind:"user", id:u.id, masterId:u.masterId, name:u.name, email:(u.email || u.loginEmail || ""), username:u.username, role:u.role, isPrimaryMaster:false, isSupport:false, perms: (PERMS[u.role] || PERMS.DENTISTA)};
   }
   return null;
@@ -4369,6 +4404,7 @@ function showAuth(){
 }
 
 function showApp(actor){
+  window.__CRONOS_ACCESS_BLOCK__ = null;
   setSupportEntryLoading(false);
   el("authView").classList.add("hidden");
   el("appView").classList.remove("hidden");
@@ -5785,7 +5821,10 @@ function renderUsers(){
       login: master?.email || "—",
       role: "MASTER",
       master: master?.name || "—",
-      createdAt: master?.createdAt || ""
+      createdAt: master?.createdAt || "",
+      active: true,
+      pendingApproval: false,
+      blockedReason: null
     },
     ...users.map(u=>({
       kind:"USER",
@@ -5794,17 +5833,28 @@ function renderUsers(){
       login: u.username ? `${u.username} / ${u.email||""}` : (u.email||""),
       role: u.role,
       master: master?.name || "—",
-      createdAt: u.createdAt
+      createdAt: u.createdAt,
+      active: u.active !== false,
+      pendingApproval: u.pendingApproval === true,
+      blockedReason: u.blockedReason || null
     }))
   ];
 
   tbody.innerHTML = rows.map(r=>{
     const canManage = actor.perms.manageUsers;
+    const isPending = r.kind === "USER" && r.pendingApproval === true;
+    const isInactive = r.kind === "USER" && !isPending && r.active === false;
+    const rowClass = isPending ? "userRowPending" : (isInactive ? "userRowInactive" : "");
+    const statusChip = isPending
+      ? `<span class="chip chipWarn">Aguardando aprovação</span>${r.blockedReason ? `<div class="muted" style="margin-top:6px">${escapeHTML(r.blockedReason)}</div>` : ``}`
+      : (isInactive
+          ? `<span class="chip chipDanger">Bloqueado</span>${r.blockedReason ? `<div class="muted" style="margin-top:6px">${escapeHTML(r.blockedReason)}</div>` : ``}`
+          : `<span class="chip"><span class="dot ${r.role==="MASTER"?"ok":"warm"}"></span>${r.role}</span>`);
     return `
-      <tr>
+      <tr class="${rowClass}">
         <td><b>${escapeHTML(r.name)}</b></td>
         <td class="mono">${escapeHTML(r.login)}</td>
-        <td><span class="chip"><span class="dot ${r.role==="MASTER"?"ok":"warm"}"></span>${r.role}</span></td>
+        <td>${statusChip}</td>
         <td>${escapeHTML(r.master)}</td>
         <td class="nowrap">${r.createdAt ? new Date(r.createdAt).toLocaleString("pt-BR") : "—"}</td>
         <td class="nowrap">
@@ -7248,6 +7298,8 @@ function openNewUser(){
             loginEmail: loginEmail || "",
             role,
             active: !pendingApproval,
+            pendingApproval,
+            blockedReason: result?.blocked_reason || null,
             createdAt: new Date().toISOString()
           });
 
@@ -8434,6 +8486,9 @@ async function boot(){
     const authSelect = el("authMasterSelect");
     if (authSelect) authSelect.parentElement.classList.add("hidden");
     el("authMode").value = "master";
+    if(window.__CRONOS_ACCESS_BLOCK__?.title){
+      toast(window.__CRONOS_ACCESS_BLOCK__.title, window.__CRONOS_ACCESS_BLOCK__.message || "");
+    }
     return;
   }
 
@@ -8813,9 +8868,12 @@ window.__SUPABASE_CLOUD_LOGIN__ = true;
 window.__SUPABASE_MASTER_LOGIN__ = false;
 window.__CRONOS_LOGIN_BUSY__ = false;
 window.__CRONOS_EXPLICIT_LOGIN__ = false;
+window.__CRONOS_ACCESS_BLOCK__ = null;
 
 async function finalizeCloudLogin(){
   try{
+    cancelPendingCloudSync();
+    suppressCloudFailureToasts(12000);
     setSupportEntryLoading(false);
     setLoginLoading(true, window.__CRONOS_EXPLICIT_LOGIN__
       ? "Validando acesso e carregando seu ambiente..."
@@ -8839,6 +8897,8 @@ async function finalizeCloudLogin(){
       }
 
       toast(title, message);
+      cancelPendingCloudSync();
+      suppressCloudFailureToasts(4000);
       try{ await supabaseClient.auth.signOut(); }catch(_){}
       clearClinicAccessState();
       clearSession();
@@ -8867,6 +8927,9 @@ async function finalizeCloudLogin(){
 
 document.getElementById("btnLogin").addEventListener("click", async () => {
   if(window.__CRONOS_LOGIN_BUSY__) return;
+
+  cancelPendingCloudSync();
+  suppressCloudFailureToasts(12000);
 
   const mode = String(document.getElementById("authMode")?.value || "master");
   const rawLogin = String(document.getElementById("authLogin").value || "").trim();
@@ -8959,6 +9022,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
 <style id="feature-access-safe-style">
 .main{position:relative;}
+.userRowPending{opacity:.56;filter:saturate(.72);}
+.userRowInactive{opacity:.45;filter:saturate(.6);}
+.chipWarn{background:rgba(251,191,36,.16);border:1px dashed rgba(251,191,36,.35);color:#ffd76b;}
+.chipDanger{background:rgba(251,113,133,.16);border:1px dashed rgba(251,113,133,.35);color:#ff9aac;}
 .nav button.feature-locked{
   opacity:.48 !important;
   filter:saturate(.65);
