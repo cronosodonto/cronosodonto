@@ -2460,11 +2460,10 @@
       toast('Nenhuma clínica selecionada.', 'error', 2800);
       return;
     }
-    await withButtonLoading(button, 'Preparando...', async () => {
-      try{
+    try{
+      await withButtonLoading(button, 'Preparando...', async () => {
         const data = await callEdgeFunction(CONFIG.endpoints.exportClinicData, {
-          clinic_id: state.selectedClinicId,
-          export_kind: 'contacts'
+          clinic_id: state.selectedClinicId
         });
 
         if(data?.url){
@@ -2473,27 +2472,42 @@
           return;
         }
 
-        const content = data?.csv || data?.content || null;
-        if(content){
-          const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+        if(data?.data && typeof data.data === 'object'){
+          const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json;charset=utf-8;' });
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = data?.filename || `clinica-${state.selectedClinicId}-dados.csv`;
+          link.download = data?.filename || `clinica-${state.selectedClinicId}-backup.json`;
           document.body.appendChild(link);
           link.click();
           link.remove();
           URL.revokeObjectURL(url);
-          toast('Dados exportados.', 'success', 2600);
+          toast('Backup da clínica exportado.', 'success', 2600);
           return;
         }
 
-        toast('Esse download ainda depende da function export-clinic-data.', 'info', 3600);
-      }catch(error){
-        console.error(error);
-        toast('Esse download ainda depende da function export-clinic-data.', 'info', 3600);
-      }
-    });
+        const content = data?.json || data?.content || null;
+        if(content){
+          const serialized = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+          const blob = new Blob([serialized], { type: 'application/json;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = data?.filename || `clinica-${state.selectedClinicId}-backup.json`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+          toast('Backup da clínica exportado.', 'success', 2600);
+          return;
+        }
+
+        throw new Error('A função não retornou dados exportáveis.');
+      });
+    }catch(error){
+      console.error(error);
+      toast(error?.message || 'Falha ao baixar dados da clínica.', 'error', 4200);
+    }
   }
 
   function injectClinicContingencyExtras(){
