@@ -143,62 +143,73 @@ function buildInstallments(entry){
 }
 
 function syncInstallmentTasks(db, actor){
-  // cria/atualiza tarefas de inadimplência (apenas para atrasos)
+  // cria/atualiza tarefas automáticas de parcelamento (pendentes e atrasadas)
   const today = todayISO();
   const masterId = actor?.masterId;
   if(!masterId) return;
 
   const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===masterId).map(c=>[c.id,c]));
   const entries = (db.entries||[]).filter(e=>e.masterId===masterId);
-db.tasks = (db.tasks || []).filter(t => {
-  return !(
-    t.id?.includes("INST") ||
-    t.type === "installment" ||
-    t.desc?.includes("Parcela")
-  );
-});
 
-const tasks = db.tasks;
-  
+  function isInstallmentTask(t){
+    const key = String(t?.key || "");
+    const type = String(t?.type || "");
+    const title = String(t?.title || "");
+    const notes = String(t?.notes || t?.desc || "");
+    return key.startsWith("INST:") || type === "installment" || /Parcela\s+\d+\//i.test(title) || /Parcela\s+\d+\//i.test(notes);
+  }
+
+  db.tasks = (db.tasks || []).filter(t => !isInstallmentTask(t));
+  const tasks = db.tasks;
+
   function taskKey(entryId, dueDate, number){
     return `INST:${entryId}:${dueDate}:${number}`;
   }
-
-  // mark all existing installment tasks as not seen; we'll reconcile
-  const seen = new Set();
 
   entries.forEach(e=>{
     if(!e.installPlan) return;
     ensureInstallmentsForEntry(e);
     (e.installments||[]).forEach(p=>{
       const due = p.dueDate;
-      const isPaid = !!p.paidAt || p.status==="PAGA";
-      const isLate = due && new Date(due) < new Date(today) && !isPaid;
-      if(!isLate && !isPaid) return;
+      const isPaid = !!p.paidAt || p.status === "PAGA";
+      if(isPaid) return;
 
+      const isLate = !!due && String(due) < String(today);
       const key = taskKey(e.id, due, p.number);
-      seen.add(key);
-
       let t = tasks.find(x=>x.masterId===masterId && x.key===key);
       const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
-      const title = `Inadimplente: ${c.name} • Parcela ${p.number}/${p.total}`;
-      const desc = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod||e.installPlan.payMethod||"—"}`;
+      const title = `${isLate ? "Inadimplente" : "Parcela pendente"}: ${c.name} • Parcela ${p.number}/${p.total}`;
+      const desc = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod || e.installPlan?.payMethod || "—"}`;
+
       if(!t){
-        t = { id: uid("t"), masterId, key, entryId: e.id, title, action:"WhatsApp", notes: desc, done:false, createdAt:new Date().toISOString(), dueDate: due, phone:c.phone, wa: true };
+        t = {
+          id: uid("t"),
+          type: "installment",
+          masterId,
+          key,
+          entryId: e.id,
+          title,
+          action: "WhatsApp",
+          notes: desc,
+          done: false,
+          createdAt: new Date().toISOString(),
+          dueDate: due,
+          phone: c.phone,
+          wa: true
+        };
         tasks.push(t);
       }else{
+        t.type = "installment";
         t.title = title;
         t.notes = desc;
         if(!t.action) t.action = "WhatsApp";
         if(!t.entryId) t.entryId = e.id;
         t.dueDate = due;
         t.phone = c.phone;
-        t.done = isPaid;
+        t.done = false;
       }
     });
   });
-
-  // optional: we don't delete tasks, just keep.
 }
 
 function installmentsKPIs(db, actor, monthKey){
@@ -1535,7 +1546,7 @@ async function flushCloudSave(dbToSave){
 }
 
 function scheduleCloudSave(immediate=false){
-  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return Promise.resolve(true);
   if(__cloudSaveTimer){
     clearTimeout(__cloudSaveTimer);
     __cloudSaveTimer = null;
@@ -1548,10 +1559,10 @@ function scheduleCloudSave(immediate=false){
     return __cloudSavePromise;
   };
   if(immediate){
-    run();
-    return;
+    return run();
   }
   __cloudSaveTimer = setTimeout(run, 650);
+  return Promise.resolve(true);
 }
 
 async function ensureCloudDBLoaded(force=false){
@@ -1655,7 +1666,7 @@ function saveDB(db, options={}){
     try{
       updateSidebarPills();
     }catch(e){}
-    return;
+    return Promise.resolve(true);
   }
 
   localStorage.setItem(DBKEY, JSON.stringify(DB));
@@ -1664,8 +1675,8 @@ function saveDB(db, options={}){
     updateSidebarPills();
   }catch(e){}
 
-  if(options.skipCloud) return;
-  scheduleCloudSave(!!options.immediate);
+  if(options.skipCloud) return Promise.resolve(true);
+  return scheduleCloudSave(!!options.immediate);
 }
 
 function createIsolatedSupabaseClient(){
@@ -4665,11 +4676,15 @@ if (existingIndex >= 0) {
       entry.installments = [];
     }
 
-    saveDB(db);
+    const cloudSaveOk = await Promise.resolve(saveDB(db, { immediate:true }));
     closeModal();
     ensureMonthOptions(); // in case new month
     const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
-    toast("Lead salvo ✅", `${name} • ${savedMonthLabel}`);
+    if(cloudSaveOk === false){
+      toast("Lead salvo localmente ⚠️", `${name} • a nuvem não confirmou agora. Evita atualizar a página até sincronizar.`);
+    }else{
+      toast("Lead salvo ✅", `${name} • ${savedMonthLabel}`);
+    }
     renderAll();
   });
 }
