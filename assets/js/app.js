@@ -7254,9 +7254,9 @@ document.addEventListener("DOMContentLoaded", () => {
         .toothBtn.sel{outline:2px solid rgba(124,92,255,.7);background:rgba(124,92,255,.12)}
         .toothChipRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
         .toothChip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:rgba(255,255,255,.04);padding:6px 10px;border-radius:999px;font-size:12px}
-        .fichaLayout{display:grid;grid-template-columns:1.2fr .9fr;gap:14px;align-items:start}
+        .fichaLayout{display:block}
         .fichaTableWrap{overflow:auto;border:1px solid var(--line);border-radius:16px}
-        .fichaTable{width:100%;border-collapse:collapse;min-width:980px;background:rgba(255,255,255,.02)}
+        .fichaTable{width:100%;border-collapse:collapse;min-width:1040px;background:rgba(255,255,255,.02)}
         .fichaTable th,.fichaTable td{padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
         .fichaTable th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;background:color-mix(in srgb, var(--panel2) 92%, transparent)}
         .fichaTable input[type="number"], .fichaTable select, .fichaTable input[type="text"], .fichaTable textarea{padding:8px 10px;border-radius:12px;font-size:13px}
@@ -7266,7 +7266,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .totalBox{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
         .totalBox .label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
         .totalBox .value{font-size:19px;font-weight:800}
-        .odontoSide{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03)}
+        .odontoFull{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03);margin-bottom:14px}.odontoGrid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;align-items:start}.odontoPanel{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.02)}.odontoPanel textarea{min-height:100px}
         .odontoRefStage{position:relative; width:100%; aspect-ratio:1536/740; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--panel2)}
         .odontoRefStage img{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; user-select:none}
         .odontoBaseDark{opacity:0}
@@ -7284,7 +7284,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .legendDot{width:10px;height:10px;border-radius:999px;display:inline-block}
         .lp-plan .legendDot{background:#facc15}.lp-closed .legendDot{background:#4c6edb}.lp-done .legendDot{background:#2ee59d}
         .fichaEmpty{padding:18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}
-        @media(max-width:1100px){.fichaLayout,.fichaHead,.procGrid,.fichaAddGrid,.totalsGrid{grid-template-columns:1fr}.fichaTable{min-width:860px}}
+        @media(max-width:1100px){.fichaHead,.procGrid,.fichaAddGrid,.totalsGrid,.odontoGrid{grid-template-columns:1fr}.fichaTable{min-width:860px}}
       `;
       document.head.appendChild(style);
     }
@@ -7497,7 +7497,7 @@ document.addEventListener("DOMContentLoaded", () => {
         bodyHTML:'<div id="procCatalogApp"></div>',
         footHTML:'<button class="btn" onclick="closeModal()">Fechar</button>',
         onMount: renderProcedureCatalogApp,
-        maxWidth:'1320px'
+        maxWidth:'min(96vw, 1560px)'
       });
     }
 
@@ -7717,10 +7717,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if(!entry){ box.innerHTML = `<div class="fichaEmpty">Lead não encontrado.</div>`; return; }
       const contact = getContactForEntry(entry);
       const ficha = ensureFicha(entry);
-      const branding = getClinicBranding(db, actor);
-      const clinicName = escapeHTML(getClinicDisplayName(db, actor));
-      const catalogAll = getProcedureCatalog(db).filter(x=>x.ativo !== false);
       const selectedProc = getSelectedProc(state, db);
+      const catalogAll = getProcedureCatalog(db).filter(x=>x.ativo !== false);
       const catalog = catalogAll.filter(item=>{
         const q = String(state.procSearch||'').trim().toLowerCase();
         if(!q) return true;
@@ -7735,8 +7733,50 @@ document.addEventListener("DOMContentLoaded", () => {
       function overlayBoxes(list, y){
         return list.map((tooth, i)=>`<button type="button" class="toothOverlayBox ${getToothVisualState(entry, tooth)} ${state.selectedTooth===tooth ? 'active' : ''}" style="left:${5.5 + i * 6.0}%; top:${y}%" onclick="CRONOS_FICHA_UI.pickTooth('${tooth}')">${tooth}</button>`).join('');
       }
+
       box.innerHTML = `
         ${buildFichaHeader(entry, contact)}
+
+        <div class="odontoFull">
+          <div class="sectionTitle">Odontograma</div>
+          <div class="odontoGrid">
+            <div>
+              <div class="odontoRefStage">
+                <img class="odontoBaseLight" src="${ODONTO_BASE_LIGHT}" alt="Arcada clara">
+                <img class="odontoBaseDark" src="${ODONTO_BASE_DARK}" alt="Arcada escura">
+                <div class="odontoOverlay">${overlayBoxes(upper, 8.5)}${overlayBoxes(lower, 82.5)}</div>
+              </div>
+              <div class="odontoLegend">
+                <span class="legendPill"><span class="legendDot" style="background:transparent;border:1px solid var(--line)"></span>Neutro</span>
+                <span class="legendPill lp-plan"><span class="legendDot"></span>Planejado</span>
+                <span class="legendPill lp-closed"><span class="legendDot"></span>Fechado</span>
+                <span class="legendPill lp-done"><span class="legendDot"></span>Concluído</span>
+              </div>
+              <div style="margin-top:12px" class="small">O odontograma agora fica dentro da ficha, logo abaixo do cabeçalho do paciente, como guia visual integrado ao prontuário.</div>
+            </div>
+
+            <div class="odontoPanel">
+              <div style="font-size:16px; font-weight:800">${state.selectedTooth ? `Dente ${state.selectedTooth} • ${deriveToothType(state.selectedTooth)}` : 'Seleciona um dente no odontograma'}</div>
+              ${state.selectedTooth ? `
+                <div class="small" style="margin:6px 0 10px">${selectedToothPlan.length ? `${selectedToothPlan.length} item(ns) do plano ligado(s) a este dente.` : 'Sem itens do plano ligados a este dente.'}</div>
+                <label>Status manual</label>
+                <select id="odontoStatusSel">
+                  <option value="" ${!selectedToothMeta.status ? 'selected' : ''}>Sem marcação manual</option>
+                  <option value="plan" ${selectedToothMeta.status==='plan' ? 'selected' : ''}>Planejado</option>
+                  <option value="closed" ${selectedToothMeta.status==='closed' ? 'selected' : ''}>Fechado</option>
+                  <option value="done" ${selectedToothMeta.status==='done' ? 'selected' : ''}>Concluído</option>
+                </select>
+                <label style="margin-top:10px">Observação</label>
+                <textarea id="odontoNoteTxt">${escapeHTML(selectedToothMeta.note || '')}</textarea>
+                <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap">
+                  <button class="btn ok" onclick="CRONOS_FICHA_UI.saveToothMeta()">Salvar marcação</button>
+                  <button class="btn" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
+                </div>
+              ` : `<div class="muted" style="margin-top:8px">Clica num quadrinho do odontograma para editar a observação clínica ou destacar algo.</div>`}
+            </div>
+          </div>
+        </div>
+
         <div class="fichaAddWrap">
           <div class="muted" style="margin-bottom:10px">Plano de tratamento — escolhe o procedimento, ajusta o valor do paciente se precisar e adiciona ao plano.</div>
           <div class="fichaAddGrid">
@@ -7784,95 +7824,47 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
 
         <div class="fichaLayout">
-          <div>
-            <div class="fichaTableWrap">
-              <table class="fichaTable">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Procedimento</th>
-                    <th>Dente</th>
-                    <th>Face</th>
-                    <th>Valor base</th>
-                    <th>Valor fechado</th>
-                    <th>Desconto</th>
-                    <th>Feito</th>
-                    <th>Pago</th>
-                    <th>Ações</th>
+          <div class="fichaTableWrap">
+            <table class="fichaTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Procedimento</th>
+                  <th>Dente</th>
+                  <th>Face</th>
+                  <th>Valor base</th>
+                  <th>Valor fechado</th>
+                  <th>Desconto</th>
+                  <th>Feito</th>
+                  <th>Pago</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${ficha.plano.length ? ficha.plano.map((item, idx)=>`
+                  <tr class="${item.feito ? 'fichaDone' : ''}">
+                    <td>${idx+1}</td>
+                    <td>${escapeHTML(item.procedimento || '—')}</td>
+                    <td>${escapeHTML(item.dente || '—')}</td>
+                    <td><select onchange="CRONOS_FICHA_UI.updateFace('${escapeHTML(item.id)}', this.value)">${getFaceOptionsHTML(item.face || '')}</select></td>
+                    <td>${moneyBR(item.valorBase || 0)}</td>
+                    <td><input type="number" step="0.01" value="${escapeHTML(String(Number(item.valorFechado||0)))}" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value)"></td>
+                    <td>${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span></td>
+                    <td><button class="btn small ${item.feito ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.toggleDone('${escapeHTML(item.id)}')">${item.feito ? 'Feito' : 'Pendente'}</button></td>
+                    <td><button class="btn small ${item.pago ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.togglePaid('${escapeHTML(item.id)}')">${item.pago ? 'Pago' : 'Aberto'}</button></td>
+                    <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="miniBtn danger" onclick="CRONOS_FICHA_UI.removeItem('${escapeHTML(item.id)}')">Excluir</button></div></td>
                   </tr>
-                </thead>
-                <tbody>
-                  ${ficha.plano.length ? ficha.plano.map((item, idx)=>`
-                    <tr class="${item.feito ? 'fichaDone' : ''}">
-                      <td>${idx+1}</td>
-                      <td>${escapeHTML(item.procedimento || '—')}</td>
-                      <td>${escapeHTML(item.dente || '—')}</td>
-                      <td><select onchange="CRONOS_FICHA_UI.updateFace('${escapeHTML(item.id)}', this.value)">${getFaceOptionsHTML(item.face || '')}</select></td>
-                      <td>${moneyBR(item.valorBase || 0)}</td>
-                      <td><input type="number" step="0.01" value="${escapeHTML(String(Number(item.valorFechado||0)))}" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value)"></td>
-                      <td>${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span></td>
-                      <td><button class="btn small ${item.feito ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.toggleDone('${escapeHTML(item.id)}')">${item.feito ? 'Feito' : 'Pendente'}</button></td>
-                      <td><button class="btn small ${item.pago ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.togglePaid('${escapeHTML(item.id)}')">${item.pago ? 'Pago' : 'Aberto'}</button></td>
-                      <td><button class="miniBtn danger" onclick="CRONOS_FICHA_UI.removeItem('${escapeHTML(item.id)}')">Excluir</button></td>
-                    </tr>
-                  `).join('') : `<tr><td colspan="10"><div class="fichaEmpty">Nenhum item no plano ainda.</div></td></tr>`}
-                </tbody>
-              </table>
-            </div>
-            <div class="totalsGrid">
-              <div class="totalBox"><span class="label">Total pela tabela</span><div class="value">${moneyBR(totals.totalBase)}</div></div>
-              <div class="totalBox"><span class="label">Total fechado</span><div class="value">${moneyBR(totals.totalFechado)}</div></div>
-              <div class="totalBox"><span class="label">Desconto total</span><div class="value">${moneyBR(totals.totalDesconto)}</div><div class="small">${totals.descontoPct.toFixed(2)}%</div></div>
-              <div class="totalBox"><span class="label">Total feito</span><div class="value">${moneyBR(totals.totalFeito)}</div></div>
-              <div class="totalBox"><span class="label">Total pago</span><div class="value">${moneyBR(totals.totalPago)}</div></div>
-              <div class="totalBox"><span class="label">Em aberto</span><div class="value">${moneyBR(totals.emAberto)}</div></div>
-            </div>
+                `).join('') : `<tr><td colspan="10"><div class="fichaEmpty">Nenhum item no plano ainda.</div></td></tr>`}
+              </tbody>
+            </table>
           </div>
-
-          <div class="odontoSide">
-            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:10px">
-              <div>
-                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
-                  ${branding?.logoDataUri ? `<img src="${branding.logoDataUri}" alt="${clinicName}" style="width:44px;height:44px;object-fit:contain;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.03)">` : ''}
-                  <div>
-                    <div style="font-size:18px; font-weight:800">Odontograma</div>
-                    <div class="muted" style="margin-top:4px">${clinicName}</div>
-                  </div>
-                </div>
-              </div>
-              <button class="btn small" onclick="printFicha('${escapeHTML(String(entry.id))}')">🖨️ Imprimir ficha</button>
-            </div>
-            <div class="odontoRefStage">
-              <img class="odontoBaseLight" src="${ODONTO_BASE_LIGHT}" alt="Arcada clara">
-              <img class="odontoBaseDark" src="${ODONTO_BASE_DARK}" alt="Arcada escura">
-              <div class="odontoOverlay">${overlayBoxes(upper, 8.5)}${overlayBoxes(lower, 82.5)}</div>
-            </div>
-            <div class="odontoLegend">
-              <span class="legendPill"><span class="legendDot" style="background:transparent;border:1px solid var(--line)"></span>Neutro</span>
-              <span class="legendPill lp-plan"><span class="legendDot"></span>Planejado</span>
-              <span class="legendPill lp-closed"><span class="legendDot"></span>Fechado</span>
-              <span class="legendPill lp-done"><span class="legendDot"></span>Concluído</span>
-            </div>
-            <div style="margin-top:12px" class="small">A base do odontograma serve como guia visual. Os quadrinhos por cima podem ser sincronizados com o plano e também receber observação manual.</div>
-            <div style="margin-top:14px; border-top:1px solid var(--line); padding-top:14px">
-              <div style="font-size:16px; font-weight:800">${state.selectedTooth ? `Dente ${state.selectedTooth} • ${deriveToothType(state.selectedTooth)}` : 'Seleciona um dente'}</div>
-              ${state.selectedTooth ? `
-                <div class="small" style="margin:6px 0 10px">${selectedToothPlan.length ? `${selectedToothPlan.length} item(ns) do plano ligado(s) a este dente.` : 'Sem itens do plano ligados a este dente.'}</div>
-                <label>Status manual</label>
-                <select id="odontoStatusSel">
-                  <option value="" ${!selectedToothMeta.status ? 'selected' : ''}>Sem marcação manual</option>
-                  <option value="plan" ${selectedToothMeta.status==='plan' ? 'selected' : ''}>Planejado</option>
-                  <option value="closed" ${selectedToothMeta.status==='closed' ? 'selected' : ''}>Fechado</option>
-                  <option value="done" ${selectedToothMeta.status==='done' ? 'selected' : ''}>Concluído</option>
-                </select>
-                <label style="margin-top:10px">Observação</label>
-                <textarea id="odontoNoteTxt" style="min-height:84px">${escapeHTML(selectedToothMeta.note || '')}</textarea>
-                <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap">
-                  <button class="btn ok" onclick="CRONOS_FICHA_UI.saveToothMeta()">Salvar marcação</button>
-                  <button class="btn" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
-                </div>
-              ` : `<div class="muted" style="margin-top:8px">Clica num quadrinho do odontograma para editar a observação clínica ou destacar algo.</div>`}
-            </div>
+          <div class="totalsGrid">
+            <div class="totalBox"><span class="label">Total pela tabela</span><div class="value">${moneyBR(totals.totalBase)}</div></div>
+            <div class="totalBox"><span class="label">Valor fechado</span><div class="value">${moneyBR(totals.totalFechado)}</div></div>
+            <div class="totalBox"><span class="label">Desconto total</span><div class="value">${moneyBR(totals.totalDesconto)}</div><div class="small">${totals.descontoPct.toFixed(2)}%</div></div>
+            <div class="totalBox"><span class="label">Total feito</span><div class="value">${moneyBR(totals.totalFeito)}</div></div>
+            <div class="totalBox"><span class="label">Total pago</span><div class="value">${moneyBR(totals.totalPago)}</div></div>
+            <div class="totalBox"><span class="label">Em aberto</span><div class="value">${moneyBR(totals.emAberto)}</div></div>
           </div>
         </div>
       `;
@@ -8050,7 +8042,7 @@ document.addEventListener("DOMContentLoaded", () => {
         bodyHTML:'<div id="fichaApp"></div>',
         footHTML:`<button class="btn" onclick="printFicha('${escapeHTML(String(entryId))}')">🖨️ Imprimir ficha</button><button class="btn" onclick="closeModal()">Fechar</button>`,
         onMount: renderFichaApp,
-        maxWidth:'1380px'
+        maxWidth:'min(96vw, 1680px)'
       });
     };
 
@@ -8069,12 +8061,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const patientCity = escapeHTML(entry?.city || '—');
       const patientTreatment = escapeHTML(entry?.treatment || '—');
       const obs = escapeHTML(String(ficha?.observacoes || entry?.obs || '').trim() || '');
-      const win = window.open('', '_blank', 'width=1180,height=900');
-      if(!win) return toast('Impressão', 'Não foi possível abrir a janela de impressão.');
+      const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
+      const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
       function overlayBoxes(list, y){
         return list.map((tooth, i)=>`<div class="box ${getToothVisualState(entry, tooth)}" style="left:${5.5 + i * 6.0}%; top:${y}%">${tooth}</div>`).join('');
       }
-      win.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha - ${patientName}</title>
+
+      const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha - ${patientName}</title>
         <style>
           body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0}
           .sheet{border:1px solid #d7dde7;padding:22px 24px 28px}
@@ -8085,8 +8078,8 @@ document.addEventListener("DOMContentLoaded", () => {
           .meta{text-align:right;font-size:12px;line-height:1.7}
           .patient{margin-top:12px;display:grid;grid-template-columns:1.3fr .9fr .8fr 1fr;gap:10px}
           .field{border:1px solid #111;min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
-          .main{margin-top:16px;display:grid;grid-template-columns:420px 1fr;gap:14px;align-items:start}
-          .boxWrap{border:1.5px solid #111;padding:10px}.sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px}
+          .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px}
+          .boxWrap{border:1.5px solid #111;padding:10px}
           .odonto{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#eef1f5}
           .odonto img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
           .overlay{position:absolute;inset:0}
@@ -8112,32 +8105,67 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="field"><span class="lbl">Cidade</span><span class="val">${patientCity}</span></div>
             <div class="field"><span class="lbl">Clínica</span><span class="val">${clinicName}</span></div>
           </div>
-          <div class="main">
-            <div class="boxWrap">
-              <div class="sectionTitle">Odontograma</div>
-              <div class="odonto"><img src="${ODONTO_BASE_LIGHT}" alt="Odontograma"><div class="overlay">${overlayBoxes(upper, 8.5)}${overlayBoxes(lower, 82.5)}</div></div>
-              <div class="legend"><span><i class="chip cp1"></i>Planejado</span><span><i class="chip cp2"></i>Fechado</span><span><i class="chip cp3"></i>Concluído</span></div>
-            </div>
-            <div style="border:1.5px solid #111;display:flex;flex-direction:column">
-              <table>
-                <thead><tr><th>Nº</th><th>Procedimento</th><th>Dente</th><th>Face</th><th>Tabela</th><th>Fechado</th><th>Pago</th></tr></thead>
-                <tbody>${ficha.plano.length ? ficha.plano.map((item, idx)=>`<tr class="${item.feito ? 'done' : (item.valorFechado ? 'closed' : '')}"><td class="center">${idx+1}</td><td>${escapeHTML(item.procedimento || '')}</td><td class="center">${escapeHTML(item.dente || '—')}</td><td class="center">${escapeHTML(item.face || '—')}</td><td class="right">${moneyBR(item.valorBase || 0)}</td><td class="right">${moneyBR(item.valorFechado || 0)}</td><td class="right">${item.pago ? moneyBR(item.valorFechado || 0) : moneyBR(0)}</td></tr>`).join('') : `<tr><td colspan="7">Nenhum item cadastrado.</td></tr>`}</tbody>
-              </table>
-              <div class="summary">
-                <div class="sum"><div class="lbl">Valor tabela</div><div class="val">${moneyBR(totals.totalBase)}</div></div>
-                <div class="sum"><div class="lbl">Valor fechado</div><div class="val">${moneyBR(totals.totalFechado)}</div></div>
-                <div class="sum"><div class="lbl">Desconto</div><div class="val">${moneyBR(totals.totalDesconto)}</div></div>
-                <div class="sum"><div class="lbl">Desconto %</div><div class="val">${totals.descontoPct.toFixed(2)}%</div></div>
-                <div class="sum"><div class="lbl">Valor pago</div><div class="val">${moneyBR(totals.totalPago)}</div></div>
-              </div>
+
+          <div class="boxWrap" style="margin-top:16px">
+            <div class="sectionTitle">Odontograma</div>
+            <div class="odonto"><img src="${ODONTO_BASE_LIGHT}" alt="Odontograma"><div class="overlay">${overlayBoxes(upper, 8.5)}${overlayBoxes(lower, 82.5)}</div></div>
+            <div class="legend"><span><i class="chip cp1"></i>Planejado</span><span><i class="chip cp2"></i>Fechado</span><span><i class="chip cp3"></i>Concluído</span></div>
+          </div>
+
+          <div style="border:1.5px solid #111;display:flex;flex-direction:column;margin-top:16px">
+            <table>
+              <thead><tr><th>Nº</th><th>Procedimento</th><th>Dente</th><th>Face</th><th>Tabela</th><th>Fechado</th><th>Pago</th></tr></thead>
+              <tbody>${ficha.plano.length ? ficha.plano.map((item, idx)=>`<tr class="${item.feito ? 'done' : (item.valorFechado ? 'closed' : '')}"><td class="center">${idx+1}</td><td>${escapeHTML(item.procedimento || '')}</td><td class="center">${escapeHTML(item.dente || '—')}</td><td class="center">${escapeHTML(item.face || '—')}</td><td class="right">${moneyBR(item.valorBase || 0)}</td><td class="right">${moneyBR(item.valorFechado || 0)}</td><td class="right">${item.pago ? moneyBR(item.valorFechado || 0) : moneyBR(0)}</td></tr>`).join('') : `<tr><td colspan="7">Nenhum item cadastrado.</td></tr>`}</tbody>
+            </table>
+            <div class="summary">
+              <div class="sum"><div class="lbl">Valor tabela</div><div class="val">${moneyBR(totals.totalBase)}</div></div>
+              <div class="sum"><div class="lbl">Valor fechado</div><div class="val">${moneyBR(totals.totalFechado)}</div></div>
+              <div class="sum"><div class="lbl">Desconto</div><div class="val">${moneyBR(totals.totalDesconto)}</div></div>
+              <div class="sum"><div class="lbl">Desconto %</div><div class="val">${totals.descontoPct.toFixed(2)}%</div></div>
+              <div class="sum"><div class="lbl">Valor pago</div><div class="val">${moneyBR(totals.totalPago)}</div></div>
             </div>
           </div>
+
           <div class="obs"><div class="sectionTitle">Observações</div><div class="obsText">${obs || '—'}</div></div>
           <div class="foot"><div>Documento gerado pelo Cronos</div><div class="sign">Assinatura / Responsável</div></div>
         </div>
-        <script>window.onload = () => window.print();<\/script>
-        </body></html>`);
-      win.document.close();
+        </body></html>`;
+
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(iframe);
+
+      const doc = iframe.contentWindow.document;
+      doc.open();
+      doc.write(html);
+      doc.close();
+
+      let printed = false;
+      const triggerPrint = ()=>{
+        if(printed) return;
+        printed = true;
+        try{
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
+        }catch(e){
+          console.error('printFicha/iframe', e);
+          toast('Impressão', 'Não foi possível abrir a impressão da ficha.');
+        }
+      };
+      const cleanup = ()=> setTimeout(()=>{ try{ iframe.remove(); }catch(_){ } }, 800);
+
+      iframe.onload = ()=>{
+        setTimeout(triggerPrint, 600);
+      };
+      try{ iframe.contentWindow.onafterprint = cleanup; }catch(_){}
+      setTimeout(triggerPrint, 1200);
+      setTimeout(cleanup, 5000);
     };
 
     function enhanceLeadCardsWithFichaButtons(){
