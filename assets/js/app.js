@@ -3683,11 +3683,13 @@ function setActiveView(view){
 }
 
 /* -------- Modal helpers -------- */
-function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null}){
+function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWidth="720px"}){
   el("modalTitle").textContent = title;
   el("modalSub").textContent = sub;
   el("modalBody").innerHTML = bodyHTML;
   el("modalFoot").innerHTML = footHTML;
+  const __modalInner = document.querySelector('#modalBg .modalInner');
+  if(__modalInner) __modalInner.style.maxWidth = maxWidth || '720px';
   el("modalBg").classList.add("show");
   el("modalBg").setAttribute("aria-hidden","false");
   if(typeof onMount==="function") onMount();
@@ -3695,6 +3697,8 @@ function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null}){
 function closeModal(){
   el("modalBg").classList.remove("show");
   el("modalBg").setAttribute("aria-hidden","true");
+  const __modalInner = document.querySelector('#modalBg .modalInner');
+  if(__modalInner) __modalInner.style.maxWidth = '720px';
 }
 el("modalClose").addEventListener("click", closeModal);
 el("modalBg").addEventListener("click", (e)=>{ if(e.target===el("modalBg")) closeModal(); });
@@ -7228,9 +7232,12 @@ document.addEventListener("DOMContentLoaded", () => {
       style.textContent = `
         .btnFicha{border-color: rgba(99,102,241,.35)!important}
         .procCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
-        .procGrid{display:grid;grid-template-columns:1.2fr .85fr .7fr .8fr .8fr .75fr;gap:10px;align-items:end}
-        .procCatalogTable td,.procCatalogTable th{font-size:13px}
+        .procGrid{display:grid;grid-template-columns:minmax(240px,1.3fr) minmax(180px,.9fr) minmax(120px,.7fr) minmax(130px,.8fr) minmax(130px,.8fr) minmax(140px,.85fr);gap:10px;align-items:end}
+        .procCatalogTable{min-width:1140px}
+        .procCatalogTable td,.procCatalogTable th{font-size:13px; white-space:nowrap}
+        .procCatalogTable td:first-child,.procCatalogTable th:first-child{white-space:normal}
         .procCatalogTable .miniBtn{padding:6px 10px}
+        .procCatalogTable td:last-child{min-width:170px}
         .brandCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
         .brandRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
         .brandPreview{width:72px;height:72px;border:1px dashed var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:rgba(255,255,255,.03)}
@@ -7489,7 +7496,8 @@ document.addEventListener("DOMContentLoaded", () => {
         sub:'Usado pela Ficha do lead. Valor base é referência; o valor do paciente continua editável no plano de tratamento.',
         bodyHTML:'<div id="procCatalogApp"></div>',
         footHTML:'<button class="btn" onclick="closeModal()">Fechar</button>',
-        onMount: renderProcedureCatalogApp
+        onMount: renderProcedureCatalogApp,
+        maxWidth:'1320px'
       });
     }
 
@@ -7722,6 +7730,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const selectedToothMeta = state.selectedTooth ? (ficha.odontograma?.[state.selectedTooth] || {}) : {};
       const selectedToothPlan = state.selectedTooth ? ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(state.selectedTooth))) : [];
       const selectedPrice = state.price !== '' ? String(state.price) : (selectedProc ? String(Number(selectedProc.valorBase||0)) : '');
+      const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
+      const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
       function overlayBoxes(list, y){
         return list.map((tooth, i)=>`<button type="button" class="toothOverlayBox ${getToothVisualState(entry, tooth)} ${state.selectedTooth===tooth ? 'active' : ''}" style="left:${5.5 + i * 6.0}%; top:${y}%" onclick="CRONOS_FICHA_UI.pickTooth('${tooth}')">${tooth}</button>`).join('');
       }
@@ -8039,7 +8049,8 @@ document.addEventListener("DOMContentLoaded", () => {
         sub:`${contact?.name || entry?.name || 'Lead'} • plano de tratamento, valores e odontograma`,
         bodyHTML:'<div id="fichaApp"></div>',
         footHTML:`<button class="btn" onclick="printFicha('${escapeHTML(String(entryId))}')">🖨️ Imprimir ficha</button><button class="btn" onclick="closeModal()">Fechar</button>`,
-        onMount: renderFichaApp
+        onMount: renderFichaApp,
+        maxWidth:'1380px'
       });
     };
 
