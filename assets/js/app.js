@@ -7232,12 +7232,12 @@ document.addEventListener("DOMContentLoaded", () => {
       style.textContent = `
         .btnFicha{border-color: rgba(99,102,241,.35)!important}
         .procCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
-        .procGrid{display:grid;grid-template-columns:minmax(240px,1.3fr) minmax(180px,.9fr) minmax(120px,.7fr) minmax(130px,.8fr) minmax(130px,.8fr) minmax(140px,.85fr);gap:10px;align-items:end}
-        .procCatalogTable{min-width:1140px}
+        .procGrid{display:grid;grid-template-columns:minmax(260px,1.55fr) minmax(190px,1fr) minmax(110px,.7fr) minmax(120px,.75fr) minmax(120px,.75fr) minmax(130px,.8fr);gap:10px;align-items:end}
+        .procCatalogTable{min-width:980px}
         .procCatalogTable td,.procCatalogTable th{font-size:13px; white-space:nowrap}
         .procCatalogTable td:first-child,.procCatalogTable th:first-child{white-space:normal}
-        .procCatalogTable .miniBtn{padding:6px 10px}
-        .procCatalogTable td:last-child{min-width:170px}
+        .procCatalogTable .miniBtn{padding:5px 8px;font-size:12px}
+        .procCatalogTable td:last-child{min-width:138px;white-space:nowrap}
         .brandCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
         .brandRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
         .brandPreview{width:72px;height:72px;border:1px dashed var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:rgba(255,255,255,.03)}
@@ -7256,7 +7256,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .toothChip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:rgba(255,255,255,.04);padding:6px 10px;border-radius:999px;font-size:12px}
         .fichaLayout{display:block}
         .fichaTableWrap{overflow:auto;border:1px solid var(--line);border-radius:16px}
-        .fichaTable{width:100%;border-collapse:collapse;min-width:1040px;background:rgba(255,255,255,.02)}
+        .fichaTable{width:100%;border-collapse:collapse;min-width:920px;background:rgba(255,255,255,.02)}
         .fichaTable th,.fichaTable td{padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
         .fichaTable th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;background:color-mix(in srgb, var(--panel2) 92%, transparent)}
         .fichaTable input[type="number"], .fichaTable select, .fichaTable input[type="text"], .fichaTable textarea{padding:8px 10px;border-radius:12px;font-size:13px}
@@ -7266,12 +7266,9 @@ document.addEventListener("DOMContentLoaded", () => {
         .totalBox{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
         .totalBox .label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
         .totalBox .value{font-size:19px;font-weight:800}
-        .odontoFull{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03);margin-bottom:14px}.odontoGrid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;align-items:start}.odontoPanel{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.02)}.odontoPanel textarea{min-height:100px}
+        .odontoFull{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03);margin-bottom:14px}.odontoGrid{display:grid;grid-template-columns:1.32fr .68fr;gap:14px;align-items:start}.odontoPanel{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.02)}.odontoPanel textarea{min-height:100px}
         .odontoRefStage{position:relative; width:100%; aspect-ratio:1536/740; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--panel2)}
         .odontoRefStage img{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; user-select:none}
-        .odontoBaseDark{opacity:0}
-        body.dark .odontoBaseLight{opacity:0}
-        body.dark .odontoBaseDark{opacity:1}
         .odontoOverlay{position:absolute; inset:0}
         .toothOverlayBox{position:absolute; width:36px; height:36px; border-radius:8px; border:2px solid var(--line); background:rgba(255,255,255,.95); color:#122033; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; transform:translate(-50%,0); cursor:pointer; user-select:none; backdrop-filter:blur(2px); transition:.15s ease}
         .toothOverlayBox:hover{transform:translate(-50%,0) scale(1.04)}
@@ -7284,7 +7281,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .legendDot{width:10px;height:10px;border-radius:999px;display:inline-block}
         .lp-plan .legendDot{background:#facc15}.lp-closed .legendDot{background:#4c6edb}.lp-done .legendDot{background:#2ee59d}
         .fichaEmpty{padding:18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}
-        @media(max-width:1100px){.fichaHead,.procGrid,.fichaAddGrid,.totalsGrid,.odontoGrid{grid-template-columns:1fr}.fichaTable{min-width:860px}}
+        @media(max-width:1180px){.fichaHead,.procGrid,.fichaAddGrid,.totalsGrid,.odontoGrid{grid-template-columns:1fr}.fichaTable{min-width:760px}}
       `;
       document.head.appendChild(style);
     }
@@ -7494,10 +7491,10 @@ document.addEventListener("DOMContentLoaded", () => {
       openModal({
         title:'Cadastro de procedimentos',
         sub:'Usado pela Ficha do lead. Valor base é referência; o valor do paciente continua editável no plano de tratamento.',
-        bodyHTML:'<div id="procCatalogApp"></div>',
+        bodyHTML:'<div id="procCatalogApp" style="max-width:100%;overflow-x:hidden"></div>',
         footHTML:'<button class="btn" onclick="closeModal()">Fechar</button>',
         onMount: renderProcedureCatalogApp,
-        maxWidth:'min(96vw, 1560px)'
+        maxWidth:'min(99vw, 1760px)'
       });
     }
 
@@ -7595,8 +7592,49 @@ document.addEventListener("DOMContentLoaded", () => {
       `;
     }
 
-    window.CRONOS_PROC_UI = {
-      search(v){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {search:v}); renderProcedureCatalogApp(); },
+    
+    function __cronosRefocusInput(id, value=''){
+      requestAnimationFrame(()=>{
+        const input = el(id);
+        if(!input) return;
+        try{
+          input.focus();
+          const pos = String(value ?? '').length;
+          if(typeof input.setSelectionRange === 'function') input.setSelectionRange(pos, pos);
+        }catch(_){}
+      });
+    }
+    function __cronosThemeIsDark(){
+      try{
+        const root = document.documentElement;
+        const body = document.body;
+        const cls = `${root.className||''} ${body.className||''}`.toLowerCase();
+        if(/(^|\s)dark(\s|$)/.test(cls)) return true;
+        const attr = String(root.getAttribute('data-theme') || body.getAttribute('data-theme') || '').toLowerCase();
+        if(attr.includes('dark')) return true;
+        const bg = getComputedStyle(body).backgroundColor || getComputedStyle(root).backgroundColor || '';
+        const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+        if(m){
+          const r=+m[1], g=+m[2], b=+m[3];
+          const lum = (0.2126*r + 0.7152*g + 0.0722*b);
+          return lum < 140;
+        }
+      }catch(_){}
+      return false;
+    }
+    function __odontoBoxLeftPct(tooth, i){
+      const base = 5.5 + i * 6.0;
+      const tweak = ({
+        '16': -0.30,
+        '26':  0.30,
+        '46': -0.30,
+        '36':  0.30
+      })[String(tooth)] || 0;
+      return (base + tweak).toFixed(2);
+    }
+
+window.CRONOS_PROC_UI = {
+      search(v){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {search:v}); renderProcedureCatalogApp(); __cronosRefocusInput('procSearch', v); },
       edit(id){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:id}); renderProcedureCatalogApp(); },
       reset(){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:null}); renderProcedureCatalogApp(); },
       save(){
@@ -7728,10 +7766,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const selectedToothMeta = state.selectedTooth ? (ficha.odontograma?.[state.selectedTooth] || {}) : {};
       const selectedToothPlan = state.selectedTooth ? ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(state.selectedTooth))) : [];
       const selectedPrice = state.price !== '' ? String(state.price) : (selectedProc ? String(Number(selectedProc.valorBase||0)) : '');
+      const odontoBaseSrc = __cronosThemeIsDark() ? ODONTO_BASE_DARK : ODONTO_BASE_LIGHT;
       const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
       const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
       function overlayBoxes(list, y){
-        return list.map((tooth, i)=>`<button type="button" class="toothOverlayBox ${getToothVisualState(entry, tooth)} ${state.selectedTooth===tooth ? 'active' : ''}" style="left:${5.5 + i * 6.0}%; top:${y}%" onclick="CRONOS_FICHA_UI.pickTooth('${tooth}')">${tooth}</button>`).join('');
+        return list.map((tooth, i)=>`<button type="button" class="toothOverlayBox ${getToothVisualState(entry, tooth)} ${state.selectedTooth===tooth ? 'active' : ''}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%" onclick="CRONOS_FICHA_UI.pickTooth('${tooth}')">${tooth}</button>`).join('');
       }
 
       box.innerHTML = `
@@ -7742,8 +7781,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="odontoGrid">
             <div>
               <div class="odontoRefStage">
-                <img class="odontoBaseLight" src="${ODONTO_BASE_LIGHT}" alt="Arcada clara">
-                <img class="odontoBaseDark" src="${ODONTO_BASE_DARK}" alt="Arcada escura">
+                <img class="odontoBaseLight" src="${odontoBaseSrc}" alt="Arcada odontograma">
                 <div class="odontoOverlay">${overlayBoxes(upper, 8.5)}${overlayBoxes(lower, 82.5)}</div>
               </div>
               <div class="odontoLegend">
@@ -7782,7 +7820,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="fichaAddGrid">
             <div>
               <label>Buscar procedimento</label>
-              <input type="text" value="${escapeHTML(state.procSearch||'')}" placeholder="Ex: restauração" oninput="CRONOS_FICHA_UI.setSearch(this.value)">
+              <input id="fichaProcSearch" type="text" value="${escapeHTML(state.procSearch||'')}" placeholder="Ex: restauração" oninput="CRONOS_FICHA_UI.setSearch(this.value)">
             </div>
             <div>
               <label>Procedimento</label>
@@ -7866,12 +7904,17 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="totalBox"><span class="label">Total pago</span><div class="value">${moneyBR(totals.totalPago)}</div></div>
             <div class="totalBox"><span class="label">Em aberto</span><div class="value">${moneyBR(totals.emAberto)}</div></div>
           </div>
+          <div class="fichaAddWrap" style="margin-top:14px">
+            <label>Observações da ficha</label>
+            <textarea id="fichaObsTxt" placeholder="Escreve aqui tudo que deve sair na impressão..." oninput="CRONOS_FICHA_UI.setObs(this.value)">${escapeHTML(String(ficha.observacoes || ''))}</textarea>
+            <div class="small" style="margin-top:8px">Fica salvo no Cronos e reaparece em qualquer nova impressão.</div>
+          </div>
         </div>
       `;
     }
 
     window.CRONOS_FICHA_UI = {
-      setSearch(v){ const s = getFichaState(); if(!s) return; s.procSearch = v; renderFichaApp(); },
+      setSearch(v){ const s = getFichaState(); if(!s) return; s.procSearch = v; renderFichaApp(); __cronosRefocusInput('fichaProcSearch', v); },
       selectProc(id){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
@@ -7891,6 +7934,7 @@ document.addEventListener("DOMContentLoaded", () => {
       },
       setFace(v){ const s = getFichaState(); if(!s) return; s.selectedFace = v || ''; },
       setPrice(v){ const s = getFichaState(); if(!s) return; s.price = v; },
+      setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; ensureFicha(entry).observacoes = String(v || ''); saveDB(db); },
       addToPlan(){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
@@ -8039,10 +8083,10 @@ document.addEventListener("DOMContentLoaded", () => {
       openModal({
         title:'Ficha do paciente',
         sub:`${contact?.name || entry?.name || 'Lead'} • plano de tratamento, valores e odontograma`,
-        bodyHTML:'<div id="fichaApp"></div>',
+        bodyHTML:'<div id="fichaApp" style="max-width:100%;overflow-x:hidden"></div>',
         footHTML:`<button class="btn" onclick="printFicha('${escapeHTML(String(entryId))}')">🖨️ Imprimir ficha</button><button class="btn" onclick="closeModal()">Fechar</button>`,
         onMount: renderFichaApp,
-        maxWidth:'min(96vw, 1680px)'
+        maxWidth:'min(99vw, 1820px)'
       });
     };
 
@@ -8064,7 +8108,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
       const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
       function overlayBoxes(list, y){
-        return list.map((tooth, i)=>`<div class="box ${getToothVisualState(entry, tooth)}" style="left:${5.5 + i * 6.0}%; top:${y}%">${tooth}</div>`).join('');
+        return list.map((tooth, i)=>`<div class="box ${getToothVisualState(entry, tooth)}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%">${tooth}</div>`).join('');
       }
 
       const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha - ${patientName}</title>
@@ -8089,8 +8133,8 @@ document.addEventListener("DOMContentLoaded", () => {
           .chip{width:10px;height:10px;border-radius:999px;display:inline-block}.cp1{background:#facc15}.cp2{background:#4c6edb}.cp3{background:#2ee59d}
           table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #111;padding:6px 7px;vertical-align:top}th{background:#f5f5f5;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#e6f7e3}tr.closed td{background:#eef4ff}
           .summary{border-top:1.5px solid #111;margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid #111;padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}
-          .obs{margin-top:14px;border:1.5px solid #111;min-height:96px;padding:10px}.obsText{margin-top:8px;line-height:1.45;font-size:13px}
-          .foot{margin-top:16px;display:flex;justify-content:space-between;gap:16px;align-items:flex-end;font-size:11px;color:#333}.sign{width:270px;border-top:1px solid #111;text-align:center;padding-top:6px;color:#111}
+          .obs{margin-top:14px;border:1.5px solid #111;padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
+          .foot{margin-top:16px;font-size:11px;color:#333}
           @media print{body{padding:0}.sheet{border:none}tr.done td{background:#e6f7e3 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.closed td{background:#eef4ff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>
         <div class="sheet">
@@ -8127,7 +8171,7 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
 
           <div class="obs"><div class="sectionTitle">Observações</div><div class="obsText">${obs || '—'}</div></div>
-          <div class="foot"><div>Documento gerado pelo Cronos</div><div class="sign">Assinatura / Responsável</div></div>
+          <div class="foot"><div>Documento gerado pelo Cronos</div></div>
         </div>
         </body></html>`;
 
