@@ -3899,13 +3899,16 @@ function setActiveView(view){
 }
 
 /* -------- Modal helpers -------- */
-function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWidth="720px"}){
+function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWidth="720px", width=null}){
   el("modalTitle").textContent = title;
   el("modalSub").textContent = sub;
   el("modalBody").innerHTML = bodyHTML;
   el("modalFoot").innerHTML = footHTML;
   const __modalInner = document.querySelector('#modalBg .modalInner');
-  if(__modalInner) __modalInner.style.maxWidth = maxWidth || '720px';
+  if(__modalInner){
+    __modalInner.style.maxWidth = maxWidth || '720px';
+    __modalInner.style.width = width || '';
+  }
   el("modalBg").classList.add("show");
   el("modalBg").setAttribute("aria-hidden","false");
   if(typeof onMount==="function") onMount();
@@ -3914,7 +3917,10 @@ function closeModal(){
   el("modalBg").classList.remove("show");
   el("modalBg").setAttribute("aria-hidden","true");
   const __modalInner = document.querySelector('#modalBg .modalInner');
-  if(__modalInner) __modalInner.style.maxWidth = '720px';
+  if(__modalInner){
+    __modalInner.style.maxWidth = '720px';
+    __modalInner.style.width = '';
+  }
 }
 el("modalClose").addEventListener("click", closeModal);
 el("modalBg").addEventListener("click", (e)=>{ if(e.target===el("modalBg")) closeModal(); });
@@ -7546,8 +7552,9 @@ document.addEventListener("DOMContentLoaded", () => {
         .toothChip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:rgba(255,255,255,.04);padding:6px 10px;border-radius:999px;font-size:12px}
         .fichaLayout{display:block}
         .fichaTableWrap{overflow:auto;border:1px solid var(--line);border-radius:16px}
-        .fichaTable{width:100%;border-collapse:collapse;min-width:1080px;background:rgba(255,255,255,.02)}
-        .fichaTable th:last-child,.fichaTable td:last-child{position:sticky;right:0;z-index:2;background:var(--panel2)}
+        .fichaTable{width:100%;border-collapse:collapse;min-width:1240px;background:rgba(255,255,255,.02)}
+        /* Ações não ficam mais fixas: agora rolam junto com a tabela, evitando sobreposição em linhas coloridas */
+        .fichaTable th:last-child,.fichaTable td:last-child{position:static;right:auto;z-index:auto;background:inherit}
         .fichaTable th,.fichaTable td{padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
         .fichaTable th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;background:color-mix(in srgb, var(--panel2) 92%, transparent)}
         .fichaTable input[type="number"], .fichaTable select, .fichaTable input[type="text"], .fichaTable textarea{padding:8px 10px;border-radius:12px;font-size:13px}
@@ -8710,7 +8717,8 @@ window.CRONOS_PROC_UI = {
         bodyHTML:'<div id="fichaApp" style="width:100%"></div>',
         footHTML:`<button class="btn" onclick="printFicha('${escapeHTML(String(entryId))}')">🖨️ Imprimir ficha</button><button class="btn" onclick="closeModal()">Fechar</button>`,
         onMount: renderFichaApp,
-        maxWidth:'min(99vw, 1880px)'
+        maxWidth:'min(99vw, 1880px)',
+        width:'min(99vw, 1880px)'
       });
     };
 
