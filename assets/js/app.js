@@ -2511,6 +2511,11 @@ function filteredEntries(){
   const f = getUIFilters();
   const search = (f.search||"").toLowerCase();
 
+  // Busca por lead deve ser global por padrão.
+  // Se o usuário digitar nome/telefone no campo Busca, o Cronos ignora Ano/Mês
+  // para não obrigar a adivinhar em que ano aquele paciente entrou.
+  const hasGlobalLeadSearch = !!search;
+
   const periodFrom = parseISO(f.periodFrom);
   const periodTo = parseISO(f.periodTo);
 
@@ -2530,15 +2535,20 @@ function filteredEntries(){
   const rows = (db.entries||[])
     .filter(e=>e.masterId===actor.masterId)
     .filter(e=>{
-      // month filter: specific month vs "all"
-      if(f.monthKey && f.monthKey !== "all"){
-        return e.monthKey === f.monthKey;
+      // Quando existe busca por nome/telefone/texto, ignora Ano/Mês.
+      // Isso faz o lead aparecer mesmo que ele seja de 2023, 2024, 2025 etc.
+      if(!hasGlobalLeadSearch){
+        // month filter: specific month vs "all"
+        if(f.monthKey && f.monthKey !== "all"){
+          return e.monthKey === f.monthKey;
+        }
+        // "Todos": keep year selectable
+        const y = String(e.monthKey||"").slice(0,4);
+        if(f.year && y !== String(f.year)) return false;
       }
-      // "Todos": keep year selectable
-      const y = String(e.monthKey||"").slice(0,4);
-      if(f.year && y !== String(f.year)) return false;
 
-      // apply unified period if provided
+      // Período manual continua valendo, porque se o usuário preencheu De/Até,
+      // ele está pedindo um recorte específico.
       if(f.periodFrom || f.periodTo){
         return inRangeISO(entryRefDate(e), periodFrom, periodTo);
       }
