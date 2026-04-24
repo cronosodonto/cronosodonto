@@ -7313,6 +7313,17 @@ document.addEventListener("DOMContentLoaded", () => {
         .odontoPanel .sideFormGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         .odontoPanel .sideFormGrid .full{grid-column:1 / -1}
         .odontoPanel .sideActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+        .procSuggestBox{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(255,255,255,.03);margin-top:8px;max-height:172px;overflow-y:auto}
+        .procSuggestItem{display:flex;justify-content:space-between;gap:10px;align-items:center;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--text);padding:9px 10px;cursor:pointer;font-weight:700}
+        .procSuggestItem:last-child{border-bottom:0}
+        .procSuggestItem:hover,.procSuggestItem.active{background:rgba(124,92,255,.14)}
+        .procSuggestItem small{color:var(--muted);font-weight:700}
+        .faceChipGrid{display:flex;gap:8px;flex-wrap:wrap}
+        .faceChip{border:1px solid var(--line);background:rgba(255,255,255,.035);color:var(--text);border-radius:999px;padding:8px 10px;cursor:pointer;font-weight:800}
+        .faceChip:hover{background:rgba(255,255,255,.07)}
+        .faceChip.active{background:rgba(96,165,250,.18);border-color:rgba(96,165,250,.72);box-shadow:0 0 0 2px rgba(96,165,250,.12)}
+        .faceChip.none.active{background:rgba(148,163,184,.14);border-color:rgba(148,163,184,.50)}
+
         .odontoRefStage{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:transparent}
         .odontoRefStage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;user-select:none}
         .odontoRefStage .odontoBaseLight{opacity:0}
@@ -7320,13 +7331,45 @@ document.addEventListener("DOMContentLoaded", () => {
         .light .odontoRefStage .odontoBaseLight{opacity:1}
         .light .odontoRefStage .odontoBaseDark{opacity:0}
         .odontoOverlay{position:absolute; inset:0}
-        .toothOverlayBox{position:absolute; width:34px; height:34px; border-radius:999px; border:2px solid transparent; background:rgba(15,23,42,.38); color:#f8fafc; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:900; transform:translate(-50%,0); cursor:pointer; user-select:none; transition:.15s ease; box-shadow:0 1px 5px rgba(0,0,0,.10)}
-        .toothOverlayBox:hover{transform:translate(-50%,0) scale(1.08); border-color:rgba(124,92,255,.65); background:rgba(124,92,255,.16)}
-        .light .toothOverlayBox{background:rgba(255,255,255,.36); color:#111827}
-        .toothOverlayBox.active{outline:3px solid rgba(124,92,255,.9); outline-offset:2px; box-shadow:0 0 0 5px rgba(124,92,255,.16),0 1px 5px rgba(0,0,0,.10)}
-        .toothOverlayBox.paid,.toothOverlayBox.plan,.toothOverlayBox.closed{background:#ffd400; border-color:#b7791f; color:#111827}
-        .toothOverlayBox.done{background:#16a34a; border-color:#166534; color:#ffffff}
-        .toothOverlayBox.absent{background:#dc2626; border-color:#991b1b; color:#ffffff}
+        .odontoSvgRoot{position:absolute;inset:0;width:100%;height:100%;display:block}
+        .odontoSvgBaseLight{opacity:0;transition:opacity .18s ease}
+        .odontoSvgBaseDark{opacity:1;transition:opacity .18s ease}
+        .light .odontoSvgBaseLight{opacity:1}
+        .light .odontoSvgBaseDark{opacity:0}
+        .svgToothGroup{cursor:pointer;outline:none}
+        .svgToothGroup .toothArea{fill:transparent;stroke:transparent;stroke-width:2.5;transition:fill .15s ease, stroke .15s ease, stroke-width .15s ease, filter .15s ease;pointer-events:all}
+        .svgToothGroup:hover .toothArea{fill:rgba(34,197,94,.08);stroke:rgba(34,197,94,.56);stroke-width:3}
+        .svgToothGroup.active .toothArea{fill:rgba(34,197,94,.16);stroke:#22c55e;stroke-width:4;filter:drop-shadow(0 0 8px rgba(34,197,94,.50))}
+        .svgToothGroup.paid .toothArea,.svgToothGroup.plan .toothArea,.svgToothGroup.closed .toothArea{fill:rgba(255,212,0,.24);stroke:rgba(183,121,31,.86);stroke-width:3}
+        .svgToothGroup.done .toothArea{fill:rgba(22,163,74,.24);stroke:rgba(22,101,52,.9);stroke-width:3}
+        .svgToothGroup.absent .toothArea{fill:rgba(220,38,38,.26);stroke:rgba(153,27,27,.92);stroke-width:3}
+        .svgToothGroup.active.paid .toothArea,.svgToothGroup.active.plan .toothArea,.svgToothGroup.active.closed .toothArea,.svgToothGroup.active.done .toothArea,.svgToothGroup.active.absent .toothArea{stroke:#22c55e;stroke-width:4.5;filter:drop-shadow(0 0 10px rgba(34,197,94,.60))}
+        .svgToothGroup .toothLabelBubble{fill:rgba(255,255,255,.055);stroke:var(--line);stroke-width:1.4;transition:.15s ease;pointer-events:none}
+        .light .svgToothGroup .toothLabelBubble{fill:rgba(255,255,255,.55);stroke:#d8dee8}
+        .svgToothGroup .toothLabelText{fill:var(--muted);font-size:22px;font-weight:900;text-anchor:middle;dominant-baseline:middle;pointer-events:none;user-select:none}
+        .light .svgToothGroup .toothLabelText{fill:#111827}
+        .svgToothGroup.active .toothLabelBubble{fill:rgba(34,197,94,.18);stroke:#22c55e;stroke-width:2.4}
+        .svgToothGroup.active .toothLabelText{fill:var(--text)}
+        .svgToothGroup.paid .toothLabelBubble,.svgToothGroup.plan .toothLabelBubble,.svgToothGroup.closed .toothLabelBubble{fill:#ffd400;stroke:#b7791f}
+        .svgToothGroup.paid .toothLabelText,.svgToothGroup.plan .toothLabelText,.svgToothGroup.closed .toothLabelText{fill:#111827}
+        .svgToothGroup.done .toothLabelBubble{fill:#16a34a;stroke:#166534}
+        .svgToothGroup.done .toothLabelText{fill:#ffffff}
+        .svgToothGroup.absent .toothLabelBubble{fill:#dc2626;stroke:#991b1b}
+        .svgToothGroup.absent .toothLabelText{fill:#ffffff}
+        .toothHitBox{position:absolute;width:4.35%;height:30%;border-radius:18px;border:2px solid transparent;background:transparent;color:transparent;transform:translateX(-50%);cursor:pointer;user-select:none;transition:.15s ease;box-sizing:border-box}
+        .toothHitBox:hover{border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.08)}
+        .toothHitBox.active{border-color:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.22),0 0 18px rgba(34,197,94,.30);background:rgba(34,197,94,.10)}
+        .toothHitBox.paid,.toothHitBox.plan,.toothHitBox.closed{background:rgba(255,212,0,.28);border-color:rgba(183,121,31,.85)}
+        .toothHitBox.done{background:rgba(22,163,74,.28);border-color:rgba(22,101,52,.9)}
+        .toothHitBox.absent{background:rgba(220,38,38,.30);border-color:rgba(153,27,27,.9)}
+        .toothHitBox.active.paid,.toothHitBox.active.plan,.toothHitBox.active.closed,.toothHitBox.active.done,.toothHitBox.active.absent{box-shadow:0 0 0 4px rgba(34,197,94,.25),0 0 20px rgba(34,197,94,.36)}
+        .toothNumberLabel{position:absolute;width:30px;height:30px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.055);color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;transform:translate(-50%,0);pointer-events:none;user-select:none}
+        .light .toothNumberLabel{background:rgba(255,255,255,.52);color:#111827}
+        .toothNumberLabel.active{border-color:#22c55e;color:var(--text);box-shadow:0 0 0 3px rgba(34,197,94,.16)}
+        .toothNumberLabel.paid,.toothNumberLabel.plan,.toothNumberLabel.closed{background:#ffd400;border-color:#b7791f;color:#111827}
+        .toothNumberLabel.done{background:#16a34a;border-color:#166534;color:#ffffff}
+        .toothNumberLabel.absent{background:#dc2626;border-color:#991b1b;color:#ffffff}
+        .selectionDot{background:transparent;border-color:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.22)}
         .fichaPaid{background:rgba(255,212,0,.18)!important}.fichaPaid td{background:rgba(255,212,0,.18)!important}
         .fichaAbsent{background:rgba(220,38,38,.12)!important}.fichaAbsent td{background:rgba(220,38,38,.12)!important}
         .fichaPlan{background:rgba(255,212,0,.14)!important}.fichaPlan td{background:rgba(255,212,0,.14)!important}
@@ -7784,6 +7827,39 @@ window.CRONOS_PROC_UI = {
       if(!selected.size && !String(cur||'').trim()) selected.add('');
       return FACE_OPTIONS.map(opt=>`<option value="${escapeHTML(opt.value)}" ${selected.has(String(opt.value)) ? 'selected' : ''}>${escapeHTML(opt.label)}</option>`).join('');
     }
+    function selectedFaceSet(cur=''){
+      const raw = String(cur || '').trim();
+      const set = new Set(raw.split(',').map(s=>s.trim()).filter(Boolean));
+      if(!raw) set.add('');
+      return set;
+    }
+    function getFaceChipsHTML(cur=''){
+      const selected = selectedFaceSet(cur);
+      return `<div class="faceChipGrid">${FACE_OPTIONS.map(opt=>{
+        const val = String(opt.value || '');
+        const active = selected.has(val) ? 'active' : '';
+        const none = val ? '' : 'none';
+        return `<button type="button" class="faceChip ${none} ${active}" onclick="CRONOS_FICHA_UI.toggleFace('${escapeHTML(val)}')">${escapeHTML(opt.label)}</button>`;
+      }).join('')}</div>`;
+    }
+    function getProcedureSuggestionsHTML(catalog, typed='', selectedId=''){
+      const query = String(typed || '').trim().toLowerCase();
+      let list = catalog;
+      if(query){
+        list = catalog.filter(item => {
+          const hay = `${item.nome || ''} ${item.categoria || ''} ${procLabel(item)}`.toLowerCase();
+          return hay.includes(query);
+        });
+      }
+      list = list.slice(0, 8);
+      if(!list.length) return `<div class="procSuggestBox"><div class="small muted" style="padding:10px">Nenhum procedimento encontrado.</div></div>`;
+      return `<div class="procSuggestBox">${list.map(item=>`
+        <button type="button" class="procSuggestItem ${String(item.id)===String(selectedId||'') ? 'active' : ''}" onclick="CRONOS_FICHA_UI.selectProc('${escapeHTML(item.id)}')">
+          <span>${escapeHTML(item.nome || 'Procedimento')}</span>
+          <small>${escapeHTML(item.categoria || '')}${item.valorBase ? ` • ${moneyBR(item.valorBase)}` : ''}</small>
+        </button>
+      `).join('')}</div>`;
+    }
     function lineDiscount(item){
       return Number(item.valorBase||0) - Number(item.valorFechado||0);
     }
@@ -7888,8 +7964,17 @@ window.CRONOS_PROC_UI = {
         : '—';
       const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
       const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
-      function overlayBoxes(list, y){
-        return list.map((tooth, i)=>`<button type="button" class="toothOverlayBox ${getToothVisualState(entry, tooth)} ${state.selectedTeeth.includes(tooth) ? 'active' : ''}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%" title="Selecionar dente para o plano. Use os botões ao lado para marcar pago, realizado ou ausente." onclick="CRONOS_FICHA_UI.toggleTooth('${tooth}')">${tooth}</button>`).join('');
+      function overlayToothHits(list, y){
+        return list.map((tooth, i)=>{
+          const active = state.selectedTeeth.includes(tooth) ? 'active' : '';
+          return `<button type="button" class="toothHitBox ${getToothVisualState(entry, tooth)} ${active}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%" title="Selecionar dente ${tooth}" aria-label="Selecionar dente ${tooth}" onclick="CRONOS_FICHA_UI.toggleTooth('${tooth}')"></button>`;
+        }).join('');
+      }
+      function overlayNumberLabels(list, y){
+        return list.map((tooth, i)=>{
+          const active = state.selectedTeeth.includes(tooth) ? 'active' : '';
+          return `<span class="toothNumberLabel ${getToothVisualState(entry, tooth)} ${active}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%">${tooth}</span>`;
+        }).join('');
       }
       const selectedTeeth = Array.isArray(state.selectedTeeth) ? state.selectedTeeth.slice() : [];
       const selectedTeethLabel = selectedTeeth.length ? selectedTeeth.join(', ') : 'Nenhum dente selecionado';
@@ -7900,6 +7985,39 @@ window.CRONOS_PROC_UI = {
           }).length
         : 0;
 
+      function renderSegmentedOdontogramSVG(){
+        const vbW = 1536;
+        const vbH = 740;
+        const hitW = 70;
+        const hitH = 222;
+        function toothGroups(list, hitTopPct, labelTopPct){
+          const y = (hitTopPct / 100) * vbH;
+          const labelY = (labelTopPct / 100) * vbH + 17;
+          return list.map((tooth, i)=>{
+            const key = String(tooth);
+            const x = (Number(__odontoBoxLeftPct(key, i)) / 100) * vbW;
+            const x0 = x - (hitW / 2);
+            const active = state.selectedTeeth.includes(key) ? 'active' : '';
+            const visual = getToothVisualState(entry, key) || '';
+            return `<g id="dente-${escapeHTML(key)}" data-tooth="${escapeHTML(key)}" class="svgToothGroup ${escapeHTML(visual)} ${active}" role="button" tabindex="0" aria-label="Alternar status do dente ${escapeHTML(key)}" onclick="CRONOS_FICHA_UI.toggleTooth('${escapeHTML(key)}')">
+              <title>Dente ${escapeHTML(key)} — clique: pago → realizado → sem cor</title>
+              <rect class="toothArea" x="${x0.toFixed(1)}" y="${y.toFixed(1)}" width="${hitW}" height="${hitH}" rx="24" ry="24"></rect>
+              <circle class="toothLabelBubble" cx="${x.toFixed(1)}" cy="${labelY.toFixed(1)}" r="17"></circle>
+              <text class="toothLabelText" x="${x.toFixed(1)}" y="${labelY.toFixed(1)}">${escapeHTML(key)}</text>
+            </g>`;
+          }).join('');
+        }
+
+        return `<svg class="odontoSvgRoot" viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-label="Odontograma clicável">
+          <image class="odontoSvgBaseLight" href="${ODONTO_BASE_LIGHT}" xlink:href="${ODONTO_BASE_LIGHT}" x="0" y="0" width="${vbW}" height="${vbH}" preserveAspectRatio="xMidYMid meet"></image>
+          <image class="odontoSvgBaseDark" href="${ODONTO_BASE_DARK}" xlink:href="${ODONTO_BASE_DARK}" x="0" y="0" width="${vbW}" height="${vbH}" preserveAspectRatio="xMidYMid meet"></image>
+          <g class="odontogramToothLayer">
+            ${toothGroups(upper, 27, 8.5)}
+            ${toothGroups(lower, 51, 82.5)}
+          </g>
+        </svg>`;
+      }
+
       box.innerHTML = `
         ${buildFichaHeader(entry, contact)}
 
@@ -7908,33 +8026,30 @@ window.CRONOS_PROC_UI = {
           <div class="odontoGrid">
             <div>
               <div class="odontoRefStage">
-                <img class="odontoBaseLight" src="${ODONTO_BASE_LIGHT}" alt="Arcada odontograma clara"><img class="odontoBaseDark" src="${ODONTO_BASE_DARK}" alt="Arcada odontograma escura">
-                <div class="odontoOverlay">${overlayBoxes(upper, 8.5)}${overlayBoxes(lower, 82.5)}</div>
+                ${renderSegmentedOdontogramSVG()}
               </div>
               <div class="odontoLegend">
-                <span class="legendPill"><span class="legendDot" style="background:transparent;border:1px solid var(--line)"></span>Neutro</span>
+                <span class="legendPill"><span class="legendDot selectionDot"></span>Selecionado agora</span>
                 <span class="legendPill lp-paid"><span class="legendDot"></span>Pago</span>
                 <span class="legendPill lp-done"><span class="legendDot"></span>Realizado</span>
                 <span class="legendPill lp-absent"><span class="legendDot"></span>Perda dentária / ausente</span>
               </div>
-              <div style="margin-top:12px" class="small">Clique nos números para selecionar um ou vários dentes. Depois escolha o procedimento no painel ao lado. Andamento e ausência também ficam no painel, sem misturar as coisas.</div>
+              <div style="margin-top:12px" class="small">Clique no número/região do dente para alternar: sem cor → pago → realizado → sem cor. O dente clicado também fica selecionado para lançar procedimento no painel.</div>
             </div>
 
             <div class="odontoPanel">
-              <div style="font-size:16px; font-weight:800">Plano do tratamento</div>
-              <div class="small" style="margin:6px 0 10px">Selecione um ou vários dentes no odontograma e lance o procedimento aqui mesmo, sem descer a tela.</div>
+              <div style="font-size:16px; font-weight:800">Dentes selecionados e plano</div>
+              <div class="small" style="margin:6px 0 10px">Clique nos dentes da arcada, escolha o procedimento aqui e salve no plano.</div>
 
               <div class="panelMiniGrid">
-                <div><span class="muted">Dente(s)</span><b>${escapeHTML(selectedTeethLabel)}</b></div>
-                <div><span class="muted">Itens ligados</span><b>${selectedPlanCount}</b></div>
+                <div><span class="muted">Selecionado(s)</span><b>${escapeHTML(selectedTeethLabel)}</b></div>
+                <div><span class="muted">Procedimentos nesses dentes</span><b>${selectedPlanCount}</b></div>
               </div>
               ${selectedTeeth.length ? `<div class="toothChipRow">${selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : `<div class="small muted" style="margin-top:8px">Nenhum dente selecionado ainda.</div>`}
 
               <label>Procedimento</label>
-              <input id="fichaProcPicker" list="fichaProcList" value="${escapeHTML(selectedProcLabel)}" placeholder="Digite para filtrar o procedimento" oninput="CRONOS_FICHA_UI.pickProcByText(this.value)">
-              <datalist id="fichaProcList">
-                ${catalog.map(item=>`<option value="${escapeHTML(procLabel(item))}"></option>`).join('')}
-              </datalist>
+              <input id="fichaProcPicker" value="${escapeHTML(state.procSearch || selectedProcLabel)}" placeholder="Digite para filtrar o procedimento" oninput="CRONOS_FICHA_UI.searchProcedure(this.value)" onfocus="CRONOS_FICHA_UI.searchProcedure(this.value)">
+              ${getProcedureSuggestionsHTML(catalog, state.procSearch || selectedProcLabel, state.selectedProcId)}
 
               <div class="sideFormGrid">
                 <div>
@@ -7947,21 +8062,19 @@ window.CRONOS_PROC_UI = {
                 </div>
                 <div class="full">
                   <label>Face(s)</label>
-                  <select ${selectedProc?.exigeFace ? '' : 'disabled'} multiple size="4" onchange="CRONOS_FICHA_UI.setFaceFromSelect(this)">${getFaceOptionsHTML(state.selectedFace || '')}</select>
-                  <div class="small muted" style="margin-top:6px">${selectedProc?.exigeFace ? 'Pode selecionar mais de uma face.' : 'Este procedimento não exige face.'}</div>
+                  ${selectedProc?.exigeFace ? getFaceChipsHTML(state.selectedFace || '') : `<div class="small muted" style="padding:10px 0">Este procedimento não exige face.</div>`}
+                  ${selectedProc?.exigeFace ? `<div class="small muted" style="margin-top:6px">Clique em uma ou mais faces. O texto já vai salvo no plano.</div>` : ''}
                 </div>
               </div>
 
               <button class="btn primary" style="width:100%; margin-top:12px" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
 
               <div class="sideActions">
-                <button class="btn small" onclick="CRONOS_FICHA_UI.markSelectedProgress('paid')">Marcar pago</button>
-                <button class="btn ok small" onclick="CRONOS_FICHA_UI.markSelectedProgress('done')">Marcar realizado</button>
                 <button class="btn danger small" onclick="CRONOS_FICHA_UI.setAbsentForSelection()">Marcar ausente</button>
                 <button class="btn small" onclick="CRONOS_FICHA_UI.clearSelection()">Limpar seleção</button>
                 <button class="btn small" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
               </div>
-              <div class="small muted" style="margin-top:10px">Pago/realizado são andamento. Ausente é condição clínica separada.</div>
+              <div class="small muted" style="margin-top:10px">Pago/realizado ficam no clique do número: 1 clique amarelo, 2 cliques verde, 3 cliques sem cor. Ausente continua separado.</div>
             </div>
           </div>
         </div>
@@ -8019,42 +8132,72 @@ window.CRONOS_PROC_UI = {
     }
 
     window.CRONOS_FICHA_UI = {
-      setSearch(v){ const s = getFichaState(); if(!s) return; s.procSearch = v; renderFichaApp(); __cronosRefocusInput('fichaProcSearch', v); },
-      pickProcByText(v){
+      setSearch(v){ return this.searchProcedure(v); },
+      searchProcedure(v){
         const s = getFichaState(); if(!s) return;
-        const typed = String(v||'').trim();
-        if(!typed){
-          s.selectedProcId = '';
-          s.selectedFace = '';
-          s.price = '';
-          renderFichaApp();
-          return;
-        }
+        const typed = String(v||'');
+        s.procSearch = typed;
         const db = loadDB();
         const catalog = getProcedureCatalog(db).filter(x=>x.ativo !== false);
-        const low = typed.toLowerCase();
-        const exact = catalog.find(x=>procLabel(x).toLowerCase()===low || String(x.nome||'').toLowerCase()===low);
+        const low = typed.trim().toLowerCase();
+        const exact = low ? catalog.find(x=>procLabel(x).toLowerCase()===low || String(x.nome||'').toLowerCase()===low) : null;
         if(exact){
-          this.selectProc(exact.id);
+          s.selectedProcId = exact.id;
+          if(!s.price) s.price = String(Number(exact.valorBase || 0));
+        }else if(low){
+          s.selectedProcId = '';
+          s.price = '';
+        }else{
+          s.selectedProcId = '';
+          s.price = '';
+          s.selectedFace = '';
         }
+        renderFichaApp();
+        __cronosRefocusInput('fichaProcPicker', typed);
       },
+      pickProcByText(v){ return this.searchProcedure(v); },
       selectProc(id){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
         const item = getProcedureCatalog(db).find(x=>x.id===id) || null;
         s.selectedProcId = id || '';
+        s.procSearch = item ? procLabel(item) : '';
         s.selectedFace = '';
         s.price = item ? String(Number(item.valorBase || 0)) : '';
         renderFichaApp();
       },
       toggleTooth(tooth){
         const s = getFichaState(); if(!s) return;
-        tooth = String(tooth || '');
-        if(!tooth) return;
-        const idx = s.selectedTeeth.indexOf(tooth);
-        if(idx >= 0) s.selectedTeeth.splice(idx,1); else s.selectedTeeth.push(tooth);
-        s.selectedTooth = tooth;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const key = String(tooth || '');
+        if(!key) return;
+
+        if(!s.selectedTeeth.includes(key)) s.selectedTeeth.push(key);
+        s.selectedTooth = key;
         s.selectedTeeth.sort((a,b)=>Number(a)-Number(b));
+
+        const meta = ficha.odontograma[key] || {};
+        const cur = String(meta.status || getToothProgressStatus(entry, key) || '');
+        let next = 'paid';
+        if(cur === 'paid' || cur === 'pago' || cur === 'closed' || cur === 'plan') next = 'done';
+        else if(cur === 'done' || cur === 'realizado') next = '';
+
+        meta.status = next;
+        if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
+        else ficha.odontograma[key] = meta;
+
+        (ficha.plano || []).forEach(item=>{
+          const itemTeeth = String(item.dente||'').split(',').map(v=>v.trim()).filter(Boolean);
+          if(itemTeeth.includes(key)){
+            item.pago = next === 'paid';
+            item.feito = next === 'done';
+          }
+        });
+
+        saveDB(db);
         renderFichaApp();
       },
       setTeethFromSelect(node){
@@ -8064,6 +8207,20 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
       },
       setFace(v){ const s = getFichaState(); if(!s) return; s.selectedFace = v || ''; },
+      toggleFace(v){
+        const s = getFichaState(); if(!s) return;
+        const val = String(v || '');
+        if(!val){
+          s.selectedFace = '';
+          renderFichaApp();
+          return;
+        }
+        const set = selectedFaceSet(s.selectedFace || '');
+        set.delete('');
+        if(set.has(val)) set.delete(val); else set.add(val);
+        s.selectedFace = Array.from(set).join(', ');
+        renderFichaApp();
+      },
       setFaceFromSelect(node){
         const s = getFichaState(); if(!s || !node) return;
         const values = Array.from(node.selectedOptions || []).map(opt=>String(opt.value||'')).filter(Boolean);
@@ -8088,6 +8245,7 @@ window.CRONOS_PROC_UI = {
         }
         if(proc.exigeDente && proc.cobraPorDente){
           teeth.forEach(tooth=>{
+            const toothStatus = getToothProgressStatus(entry, tooth);
             ficha.plano.push({
               id: uid('plan'),
               procedimentoId: proc.id,
@@ -8096,12 +8254,13 @@ window.CRONOS_PROC_UI = {
               face,
               valorBase,
               valorFechado,
-              feito:false,
-              pago:false,
+              feito: toothStatus === 'done',
+              pago: toothStatus === 'paid',
               observacao:''
             });
           });
         }else{
+          const itemStates = teeth.map(tooth=>getToothProgressStatus(entry, tooth)).filter(Boolean);
           ficha.plano.push({
             id: uid('plan'),
             procedimentoId: proc.id,
@@ -8110,8 +8269,8 @@ window.CRONOS_PROC_UI = {
             face,
             valorBase,
             valorFechado,
-            feito:false,
-            pago:false,
+            feito: itemStates.includes('done'),
+            pago: itemStates.includes('paid'),
             observacao:''
           });
         }
@@ -8182,23 +8341,7 @@ window.CRONOS_PROC_UI = {
       },
       pickTooth(tooth){ const s = getFichaState(); if(!s) return; s.selectedTooth = tooth; renderFichaApp(); },
       cycleToothStatus(tooth){
-        const s = getFichaState(); if(!s) return;
-        const db = loadDB();
-        const entry = getEntryById(s.entryId);
-        if(!entry) return;
-        const ficha = ensureFicha(entry);
-        const key = String(tooth);
-        const meta = ficha.odontograma[key] || {};
-        const cur = String(meta.status || '');
-        let next = 'paid';
-        if(cur === 'paid' || cur === 'pago' || cur === 'closed' || cur === 'plan') next = 'done';
-        else if(cur === 'done' || cur === 'realizado') next = '';
-        meta.status = next;
-        if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
-        else ficha.odontograma[key] = meta;
-        s.selectedTooth = key;
-        saveDB(db);
-        renderFichaApp();
+        return this.toggleTooth(tooth);
       },
       toggleAbsent(tooth){
         const s = getFichaState(); if(!s) return;
@@ -8229,9 +8372,6 @@ window.CRONOS_PROC_UI = {
         const s = getFichaState(); if(!s) return;
         s.selectedTeeth = [];
         s.selectedTooth = null;
-        s.selectedFace = '';
-        s.selectedProcId = '';
-        s.price = '';
         renderFichaApp();
       },
       selectedTeethOrLast(){
