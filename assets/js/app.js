@@ -2508,13 +2508,24 @@ function filteredEntries(){
   const db = loadDB();
   const actor = currentActor();
   if(!actor) return [];
-  const f = getUIFilters();
-  const search = (f.search||"").toLowerCase();
 
-  // Busca por lead deve ser global por padrão.
-  // Se o usuário digitar nome/telefone no campo Busca, o Cronos ignora Ano/Mês
-  // para não obrigar a adivinhar em que ano aquele paciente entrou.
-  const hasGlobalLeadSearch = !!search;
+  const f = getUIFilters();
+
+  // Lê direto do input visível também, porque em alguns fluxos o filtro salvo/normalizado
+  // pode ficar atrasado. Busca de lead precisa ser prioridade máxima.
+  const rawSearch = String(el("fSearch")?.value ?? f.search ?? "").trim();
+
+  function normText(v){
+    return String(v ?? "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  const search = normText(rawSearch);
+  const searchDigits = String(rawSearch || "").replace(/\D/g, "");
+  const hasGlobalLeadSearch = !!search || !!searchDigits;
 
   const periodFrom = parseISO(f.periodFrom);
   const periodTo = parseISO(f.periodTo);
@@ -2532,28 +2543,52 @@ function filteredEntries(){
     return e.firstContactAt || e.apptDate || e.createdAt || e.updatedAt || (e.monthKey ? (String(e.monthKey).slice(0,7) + "-01") : "");
   }
 
-  const rows = (db.entries||[])
-    .filter(e=>e.masterId===actor.masterId)
-    .filter(e=>{
-      // Quando existe busca por nome/telefone/texto, ignora Ano/Mês.
-      // Isso faz o lead aparecer mesmo que ele seja de 2023, 2024, 2025 etc.
-      if(!hasGlobalLeadSearch){
-        // month filter: specific month vs "all"
-        if(f.monthKey && f.monthKey !== "all"){
-          return e.monthKey === f.monthKey;
-        }
-        // "Todos": keep year selectable
-        const y = String(e.monthKey||"").slice(0,4);
-        if(f.year && y !== String(f.year)) return false;
-      }
+  const contactsById = new Map((db.contacts || []).map(c=>[String(c.id), c]));
 
-      // Período manual continua valendo, porque se o usuário preencheu De/Até,
-      // ele está pedindo um recorte específico.
-      if(f.periodFrom || f.periodTo){
-        return inRangeISO(entryRefDate(e), periodFrom, periodTo);
+  let rows = (db.entries || [])
+    .filter(e=>e.masterId === actor.masterId);
+
+  // Quando existe busca digitada, a busca é GLOBAL por ano/mês.
+  // Ou seja: não filtra por fYear nem fMonth. Só procura o paciente no banco inteiro da clínica.
+  if(hasGlobalLeadSearch){
+    rows = rows.filter(e=>{
+      const c = contactsById.get(String(e.contactId || "")) || {};
+      const hayText = normText([
+        c.name, c.phone, c.cpf,
+        e.name, e.lead, e.nome, e.phone, e.telefone,
+        e.city, e.notes, e.originOther, e.treatmentOther,
+        e.status, e.origin, e.treatment,
+        e.monthKey, monthLabel(String(e.monthKey || "").slice(0,7) || ""),
+        ...(Array.isArray(e.tags) ? e.tags : [])
+      ].filter(Boolean).join(" "));
+
+      const hayDigits = [
+        c.phone, c.cpf,
+        e.phone, e.telefone, e.contato
+      ].filter(Boolean).join(" ").replace(/\D/g, "");
+
+      const textOk = search ? hayText.includes(search) : false;
+      const digitsOk = searchDigits ? hayDigits.includes(searchDigits) : false;
+      return textOk || digitsOk;
+    });
+  }else{
+    rows = rows.filter(e=>{
+      // Sem busca: Ano/Mês funcionam normalmente.
+      if(f.monthKey && f.monthKey !== "all"){
+        return e.monthKey === f.monthKey;
       }
+      const y = String(e.monthKey || "").slice(0,4);
+      if(f.year && y !== String(f.year)) return false;
       return true;
-    })
+    });
+  }
+
+  // Período manual continua valendo porque é uma escolha explícita do usuário.
+  if(f.periodFrom || f.periodTo){
+    rows = rows.filter(e=>inRangeISO(entryRefDate(e), periodFrom, periodTo));
+  }
+
+  rows = rows
     .filter(e=> !f.status || e.status===f.status)
     .filter(e=>{
       if(!f.campaign) return true;
@@ -2561,21 +2596,11 @@ function filteredEntries(){
       return f.campaign === "yes" ? inCampaign : !inCampaign;
     })
     .filter(e=> !f.treatment || e.treatment===f.treatment)
-    .filter(e=> !f.origin || e.origin===f.origin)
-    .filter(e=>{
-      if(!search) return true;
-      const c = (db.contacts||[]).find(x=>x.id===e.contactId);
-      const hay = [
-        c?.name, c?.phone, e.city, e.notes, e.originOther, e.treatmentOther,
-        e.status, e.origin, e.treatment, ...(e.tags||[])
-      ].filter(Boolean).join(" ").toLowerCase();
-      return hay.includes(search);
-    });
+    .filter(e=> !f.origin || e.origin===f.origin);
 
   // sort
   try{
     const order = f.order || "recent";
-    const contactsById = new Map((db.contacts||[]).map(c=>[String(c.id), c]));
     const nameOf = (e)=> (contactsById.get(String(e.contactId||""))?.name || "").toLowerCase();
     const dateOf = (e)=> parseISO(entryRefDate(e)) || new Date(0);
 
@@ -2585,14 +2610,15 @@ function filteredEntries(){
     else if(order==="za") rows.sort((a,b)=> nameOf(b).localeCompare(nameOf(a)));
   }catch(_){}
 
-  // KPI clicável: quando ativo, aplica o bucket na lista/kanban
+  // KPI clicável: quando ativo, aplica o bucket na lista/kanban.
+  // Mas busca digitada deve vencer o KPI, senão parece que a busca "não achou".
   try{
     const k = window.__KPI_ACTIVE;
-    if(k && k!=="total") return __kpiBucket(k, rows);
+    if(!hasGlobalLeadSearch && k && k!=="total") return __kpiBucket(k, rows);
   }catch(_){ }
+
   return rows;
 }
-
 
 function getContact(contactId){
   const db = loadDB();
@@ -6317,12 +6343,18 @@ function bindActions(){
   ["fYear","fMonth","fSearch","fStatus","fCampaign","fTreatment","fOrigin","fPeriodFrom","fPeriodTo","fOrder"].forEach(id=>{
     el(id).addEventListener("input", ()=>{
       const f = getUIFilters();
+      if(id === "fSearch" && String(f.search || "").trim()){
+        window.__KPI_ACTIVE = null;
+      }
       saveFilters(f);
       currentPage = 1;
       renderAll();
     });
     el(id).addEventListener("change", ()=>{
       const f = getUIFilters();
+      if(id === "fSearch" && String(f.search || "").trim()){
+        window.__KPI_ACTIVE = null;
+      }
       saveFilters(f);
       if(id==="fYear"){
         ensureMonthOptions();
