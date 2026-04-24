@@ -8013,7 +8013,6 @@ window.CRONOS_PROC_UI = {
             <div class="muted" style="margin-top:6px">Telefone: ${phone}</div>
             <div class="muted">CPF: ${cpf}</div>
             <div class="muted">Nascimento: ${birthAge}</div>
-            <div class="muted">Cidade: ${city}</div>
           </div>
           <div class="cardMini">
             <div class="muted" style="font-size:12px">Resumo rápido</div>
@@ -8105,7 +8104,7 @@ window.CRONOS_PROC_UI = {
               <label>Procedimento</label>
               <div class="procPickerWrap">
                 <input id="fichaProcPicker" autocomplete="off" value="${escapeHTML(procInputValue)}" placeholder="Digite para filtrar o procedimento" onfocus="CRONOS_FICHA_UI.openProcMenu(false)" oninput="CRONOS_FICHA_UI.pickProcByText(this.value)">
-                <button type="button" class="procDropBtn" title="Ver procedimentos" onmousedown="event.preventDefault(); CRONOS_FICHA_UI.openProcMenu(true)">▾</button>
+                <button type="button" class="procDropBtn" title="Ver procedimentos" onmousedown="event.preventDefault(); CRONOS_FICHA_UI.toggleProcMenu()">▾</button>
                 <div id="fichaProcMenu" class="procSuggestMenu ${state.procMenuOpen ? 'show' : ''}">
                   ${procMenuHTML}
                 </div>
@@ -8223,6 +8222,20 @@ window.CRONOS_PROC_UI = {
           renderFichaApp();
         }
         setTimeout(()=>{ try{ el('fichaProcPicker')?.focus(); }catch(_){} }, 0);
+      },
+      closeProcMenu(){
+        const s = getFichaState(); if(!s) return;
+        s.procMenuOpen = false;
+        const menu = el('fichaProcMenu');
+        if(menu) menu.classList.remove('show');
+      },
+      toggleProcMenu(){
+        const s = getFichaState(); if(!s) return;
+        if(s.procMenuOpen){
+          this.closeProcMenu();
+        }else{
+          this.openProcMenu(true);
+        }
       },
       selectProc(id){
         const s = getFichaState(); if(!s) return;
@@ -8516,6 +8529,26 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
       }
     };
+
+    if(!window.__CRONOS_PROC_MENU_OUTSIDE_BOUND__){
+      window.__CRONOS_PROC_MENU_OUTSIDE_BOUND__ = true;
+      document.addEventListener('mousedown', function(ev){
+        try{
+          const wrap = ev.target?.closest?.('.procPickerWrap');
+          if(wrap) return;
+          if(window.CRONOS_FICHA_UI?.closeProcMenu){
+            window.CRONOS_FICHA_UI.closeProcMenu();
+          }
+        }catch(_){}
+      }, true);
+      document.addEventListener('keydown', function(ev){
+        try{
+          if(ev.key === 'Escape' && window.CRONOS_FICHA_UI?.closeProcMenu){
+            window.CRONOS_FICHA_UI.closeProcMenu();
+          }
+        }catch(_){}
+      });
+    }
 
     window.openFicha = function(entryId){
       ensureProcedureCatalogSeeded();
