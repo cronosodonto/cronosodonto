@@ -7406,6 +7406,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .fichaDone{background:rgba(46,229,157,.12)!important}
         .fichaDone td{background:rgba(46,229,157,.12)!important}
         .totalsGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+        .fichaTotalsUnderOdonto{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:14px}
         .totalBox{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
         .totalBox .label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
         .totalBox .value{font-size:19px;font-weight:800}
@@ -8080,6 +8081,15 @@ window.CRONOS_PROC_UI = {
                 <span class="legendPill lp-absent"><span class="legendDot"></span>Perda dentária / ausente</span>
               </div>
               <div style="margin-top:12px" class="small">Clique nos números para selecionar um ou vários dentes. Depois escolha o procedimento no painel ao lado. Andamento e ausência também ficam no painel, sem misturar as coisas.</div>
+
+              <div class="totalsGrid fichaTotalsUnderOdonto">
+                <div class="totalBox"><span class="label">Total pela tabela</span><div class="value">${moneyBR(totals.totalBase)}</div></div>
+                <div class="totalBox"><span class="label">Valor fechado</span><div class="value">${moneyBR(totals.totalFechado)}</div></div>
+                <div class="totalBox"><span class="label">Desconto total</span><div class="value">${moneyBR(totals.totalDesconto)}</div><div class="small">${totals.descontoPct.toFixed(2)}%</div></div>
+                <div class="totalBox"><span class="label">Total feito</span><div class="value">${moneyBR(totals.totalFeito)}</div></div>
+                <div class="totalBox"><span class="label">Total pago</span><div class="value">${moneyBR(totals.totalPago)}</div></div>
+                <div class="totalBox"><span class="label">Em aberto</span><div class="value">${moneyBR(totals.emAberto)}</div></div>
+              </div>
             </div>
 
             <div class="odontoPanel">
@@ -8166,14 +8176,7 @@ window.CRONOS_PROC_UI = {
               </tbody>
             </table>
           </div>
-          <div class="totalsGrid">
-            <div class="totalBox"><span class="label">Total pela tabela</span><div class="value">${moneyBR(totals.totalBase)}</div></div>
-            <div class="totalBox"><span class="label">Valor fechado</span><div class="value">${moneyBR(totals.totalFechado)}</div></div>
-            <div class="totalBox"><span class="label">Desconto total</span><div class="value">${moneyBR(totals.totalDesconto)}</div><div class="small">${totals.descontoPct.toFixed(2)}%</div></div>
-            <div class="totalBox"><span class="label">Total feito</span><div class="value">${moneyBR(totals.totalFeito)}</div></div>
-            <div class="totalBox"><span class="label">Total pago</span><div class="value">${moneyBR(totals.totalPago)}</div></div>
-            <div class="totalBox"><span class="label">Em aberto</span><div class="value">${moneyBR(totals.emAberto)}</div></div>
-          </div>
+
           <div class="fichaAddWrap" style="margin-top:14px">
             <label>Observações da ficha</label>
             <textarea id="fichaObsTxt" placeholder="Escreve aqui tudo que deve sair na impressão..." oninput="CRONOS_FICHA_UI.setObs(this.value)">${escapeHTML(String(ficha.observacoes || ''))}</textarea>
