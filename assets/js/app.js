@@ -147,65 +147,124 @@ function buildInstallments(entry){
   }
 }
 
-function syncInstallmentTasks(db, actor){
-  // cria/atualiza tarefas de inadimplência (apenas para atrasos)
+function isAutomaticInstallmentTask(t){
+  if(!t || typeof t !== "object") return false;
+  const key = String(t.key || "");
+  const type = String(t.type || "");
+  const title = String(t.title || t.name || "");
+  const notes = String(t.notes || t.desc || "");
+  return (
+    key.startsWith("INST:") ||
+    type === "installment" ||
+    title.startsWith("Inadimplente:") ||
+    (
+      notes.includes("Parcela") &&
+      (t.entryId || t.wa === true || String(t.action || "").toLowerCase().includes("whatsapp"))
+    )
+  );
+}
+
+function stableInstallmentTaskId(key){
+  return `task_${String(key || "").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+function scrubInstallmentTasksForMaster(db, masterId){
+  db.tasks = Array.isArray(db.tasks) ? db.tasks : [];
+  db.entries = Array.isArray(db.entries) ? db.entries : [];
+  db.contacts = Array.isArray(db.contacts) ? db.contacts : [];
+
+  if(!masterId) return {before: db.tasks.length, after: db.tasks.length, removed: 0, created: 0};
+
+  const before = db.tasks.length;
   const today = todayISO();
-  const masterId = actor?.masterId;
-  if(!masterId) return;
+  const contactsById = new Map((db.contacts||[])
+    .filter(c=>c.masterId===masterId)
+    .map(c=>[c.id,c]));
 
-  const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===masterId).map(c=>[c.id,c]));
-  const entries = (db.entries||[]).filter(e=>e.masterId===masterId);
-db.tasks = (db.tasks || []).filter(t => {
-  if(t.masterId && t.masterId !== masterId) return true;
-  const isInstallmentTask =
-    String(t.key || "").startsWith("INST:") ||
-    t.type === "installment" ||
-    String(t.title || "").startsWith("Inadimplente:") ||
-    String(t.desc || t.notes || "").includes("Parcela");
-  return !isInstallmentTask;
-});
-
-const tasks = db.tasks;
-  
-  function taskKey(entryId, dueDate, number){
-    return `INST:${entryId}:${dueDate}:${number}`;
-  }
-
-  // mark all existing installment tasks as not seen; we'll reconcile
-  const seen = new Set();
-
-  entries.forEach(e=>{
-    if(!e.installPlan) return;
-    ensureInstallmentsForEntry(e);
-    (e.installments||[]).forEach(p=>{
-      const due = p.dueDate;
-      const isPaid = !!p.paidAt || p.status==="PAGA";
-      const isLate = due && new Date(due) < new Date(today) && !isPaid;
-      if(!isLate && !isPaid) return;
-
-      const key = taskKey(e.id, due, p.number);
-      seen.add(key);
-
-      let t = tasks.find(x=>x.masterId===masterId && x.key===key);
-      const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
-      const title = `Inadimplente: ${c.name} • Parcela ${p.number}/${p.total}`;
-      const desc = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod||e.installPlan.payMethod||"—"}`;
-      if(!t){
-        t = { id: uid("t"), masterId, key, entryId: e.id, title, action:"WhatsApp", notes: desc, done:false, createdAt:new Date().toISOString(), dueDate: due, phone:c.phone, wa: true };
-        tasks.push(t);
-      }else{
-        t.title = title;
-        t.notes = desc;
-        if(!t.action) t.action = "WhatsApp";
-        if(!t.entryId) t.entryId = e.id;
-        t.dueDate = due;
-        t.phone = c.phone;
-        t.done = isPaid;
-      }
-    });
+  // Remove TODAS as tarefas automáticas de parcelamento desta clínica.
+  // Isso é intencional: evita que tarefas órfãs/duplicadas sejam ressuscitadas pela nuvem.
+  db.tasks = db.tasks.filter(t=>{
+    if(t?.masterId && t.masterId !== masterId) return true;
+    return !isAutomaticInstallmentTask(t);
   });
 
-  // optional: we don't delete tasks, just keep.
+  const createdKeys = new Set();
+  const rebuilt = [];
+
+  (db.entries||[])
+    .filter(e=>e.masterId===masterId && e.installPlan)
+    .forEach(e=>{
+      ensureInstallmentsForEntry(e);
+      (e.installments||[]).forEach(p=>{
+        const due = p.dueDate || p.due || "";
+        const isPaid = !!p.paidAt || p.status === "PAGA";
+        const isLate = !!due && due < today && !isPaid;
+
+        // Tarefa automática só deve existir para parcela vencida e NÃO paga.
+        if(!isLate) return;
+
+        const key = `INST:${e.id}:${due}:${p.number}`;
+        if(createdKeys.has(key)) return;
+        createdKeys.add(key);
+
+        const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
+        const title = `Inadimplente: ${c.name} • Parcela ${p.number}/${p.total}`;
+        const notes = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod||e.installPlan.payMethod||"—"}`;
+
+        rebuilt.push({
+          id: stableInstallmentTaskId(key),
+          masterId,
+          key,
+          type: "installment",
+          entryId: e.id,
+          contactId: e.contactId || "",
+          title,
+          action: "WhatsApp",
+          notes,
+          done: false,
+          createdAt: new Date().toISOString(),
+          dueDate: due,
+          phone: c.phone || "",
+          wa: true,
+          autoGenerated: true
+        });
+      });
+    });
+
+  db.tasks.push(...rebuilt);
+
+  // Dedup final por chave semântica. Se for tarefa automática, a key manda.
+  const seen = new Set();
+  db.tasks = db.tasks.filter(t=>{
+    const semanticKey = isAutomaticInstallmentTask(t)
+      ? String(t.key || t.id || "")
+      : String(t.id || t.key || `${t.masterId||""}|${t.title||""}|${t.dueDate||""}|${t.notes||""}`);
+    if(!semanticKey) return true;
+    if(seen.has(semanticKey)) return false;
+    seen.add(semanticKey);
+    return true;
+  });
+
+  return {before, after: db.tasks.length, removed: before - (db.tasks.length - rebuilt.length), created: rebuilt.length};
+}
+
+function scrubInstallmentTasksForAllMasters(db){
+  const masterIds = new Set();
+  (db.masters||[]).forEach(m=>{ if(m?.id) masterIds.add(String(m.id)); });
+  (db.users||[]).forEach(u=>{ if(u?.masterId) masterIds.add(String(u.masterId)); });
+  (db.entries||[]).forEach(e=>{ if(e?.masterId) masterIds.add(String(e.masterId)); });
+
+  const stats = [];
+  masterIds.forEach(masterId=>{
+    stats.push({masterId, ...scrubInstallmentTasksForMaster(db, masterId)});
+  });
+  return stats;
+}
+
+function syncInstallmentTasks(db, actor){
+  const masterId = actor?.masterId;
+  if(!masterId) return;
+  return scrubInstallmentTasksForMaster(db, masterId);
 }
 
 function installmentsKPIs(db, actor, monthKey){
@@ -665,6 +724,21 @@ function deleteInstallment(entryId, number){
   normalizeInstallmentsAfterMutation(entry);
   persistInstallmentMutation(db, actor, entryId, "Parcela excluída", `A parcela ${oldNumber}/${oldTotal} foi removida.`);
 }
+
+window.cronosLimparTarefasParcelamentoAgora = function(){
+  const actor = currentActor && currentActor();
+  if(!actor) return console.warn("Sem usuário logado.");
+  const db = loadDB();
+  const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+  const stats = syncInstallmentTasks(db, actor) || {};
+  const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
+  saveDB(db, { immediate:true });
+  try{ renderAll(); }catch(_){}
+  console.log("Cronos: tarefas de parcelamento higienizadas.", {before, after, stats});
+  try{ toast("Tarefas higienizadas", `Antes: ${before} • Depois: ${after}`); }catch(_){}
+  return {before, after, stats};
+};
+
 
 /* Hook renderAll to also render installments safely */
 const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
@@ -1566,6 +1640,11 @@ function mergeCloudAndLocalDB(cloudDB, localDB){
   merged.version = local.version || cloud.version || "cloud_v2";
   merged.createdAt = cloud.createdAt || local.createdAt || new Date().toISOString();
   merged.lastMergedAt = new Date().toISOString();
+
+  // Importante: merge por ID ressuscitava tarefas automáticas antigas da nuvem.
+  // Depois de mesclar, a gente reconstrói as tarefas de parcelamento do zero.
+  try{ scrubInstallmentTasksForAllMasters(merged); }catch(e){ console.warn("Falha ao higienizar tarefas no merge:", e); }
+
   return normalizeDBShape(merged);
 }
 
@@ -1586,6 +1665,9 @@ async function flushCloudSave(dbToSave){
   if(CLOUD_MEMBER_INFO){
     normalized = ensureMemberMirror(normalized, CLOUD_MEMBER_INFO);
   }
+
+  // Limpeza final antes de gravar na nuvem. Sem isso, tarefas antigas podem voltar no próximo refresh.
+  try{ scrubInstallmentTasksForAllMasters(normalized); }catch(e){ console.warn("Falha ao higienizar tarefas antes da nuvem:", e); }
 
   DB = normalized;
   localStorage.setItem(DBKEY, JSON.stringify(normalized));
@@ -2231,6 +2313,23 @@ function showApp(actor){
   if(exitBtn) exitBtn.classList.toggle("hidden", !actor?.isSupport);
   syncThemeButtons();
   applyRoleVisibility(actor);
+
+  // Reparação automática e idempotente das tarefas de parcelamento.
+  // Roda ao abrir o app e salva na nuvem uma base já higienizada.
+  try{
+    const db = loadDB();
+    const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+    const stats = syncInstallmentTasks(db, actor) || {};
+    const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
+    saveDB(db, { immediate:true });
+    if(before !== after && !window.__CRONOS_TASK_REPAIR_TOASTED__){
+      window.__CRONOS_TASK_REPAIR_TOASTED__ = true;
+      toast("Tarefas higienizadas", `Antes: ${before} • Depois: ${after}`);
+    }
+  }catch(e){
+    console.warn("Falha ao higienizar tarefas no boot:", e);
+  }
+
   window.__CRONOS_BOOTED = true;
 }
 
@@ -5781,7 +5880,7 @@ function renderTasks(){
   if(!actor) return;
   const db = loadDB();
   syncInstallmentTasks(db, actor);
-  saveDB(db);
+  saveDB(db, { skipCloud:true });
 
   const tbody = el("tasksTbody");
   if(!tbody) return;
