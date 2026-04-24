@@ -5999,8 +5999,9 @@ function renderTasks(){
   const taskFilter = filterEl?.value || "Todos";
 
   // Visão de tarefas:
-  // O mês selecionado manda na tela. "Todos" significa todos os STATUS daquele mês,
-  // não todos os meses da história da humanidade — porque aí vira arqueologia de follow-up.
+  // - Todos = todos os status do mês selecionado.
+  // - Pendente/Atrasado/Feito = respeitam o mês selecionado.
+  // - Pendentes e em atraso = painel geral de tarefas abertas, ignorando mês.
   const allStatusMode = taskFilter === "Todos";
   const allOpenMode = taskFilter === "PendentesEAtraso";
 
@@ -6009,6 +6010,7 @@ function renderTasks(){
   const tasks = (db.tasks||[])
     .filter(t => !t.masterId || t.masterId === actor.masterId)
     .filter(t => {
+      if(allOpenMode) return t.done !== true;
       if(!taskMonth) return true;
       return String(t.dueDate || "").slice(0,7) === taskMonth;
     })
