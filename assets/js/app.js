@@ -7994,7 +7994,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
 window.CRONOS_PROC_UI = {
       search(v){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {search:v}); renderProcedureCatalogApp(); __cronosRefocusInput('procSearch', v); },
-      edit(id){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:id}); renderProcedureCatalogApp(); },
+      edit(id){
+        window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:id});
+        renderProcedureCatalogApp();
+
+        // Ao editar um procedimento no fim de uma lista grande, volta automaticamente para o topo,
+        // onde fica o formulário de edição. Sem isso, o usuário clica e fica caçando o formulário
+        // igual quem perdeu a chave dentro da bolsa.
+        requestAnimationFrame(()=>{
+          try{
+            const modalBody = el('modalBody') || qs('#modalBg .modalBody');
+            const modalInner = qs('#modalBg .modalInner');
+            const app = el('procCatalogApp');
+
+            if(modalBody && typeof modalBody.scrollTo === 'function'){
+              modalBody.scrollTo({ top:0, behavior:'smooth' });
+            }
+            if(modalInner && typeof modalInner.scrollTo === 'function'){
+              modalInner.scrollTo({ top:0, behavior:'smooth' });
+            }
+            if(app && typeof app.scrollIntoView === 'function'){
+              app.scrollIntoView({ behavior:'smooth', block:'start' });
+            }
+
+            setTimeout(()=>{ try{ el('procName')?.focus(); }catch(_){} }, 220);
+          }catch(_){}
+        });
+      },
       reset(){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:null}); renderProcedureCatalogApp(); },
       save(){
         const db = loadDB();
