@@ -7304,18 +7304,26 @@ document.addEventListener("DOMContentLoaded", () => {
         .totalBox{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
         .totalBox .label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
         .totalBox .value{font-size:19px;font-weight:800}
-        .odontoFull{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03);margin-bottom:14px}.odontoGrid{display:grid;grid-template-columns:1.32fr .68fr;gap:14px;align-items:start}.odontoPanel{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.02)}.odontoPanel textarea{min-height:100px}
-        .odontoRefStage{position:relative; width:100%; aspect-ratio:1536/740; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#f3f4f6}
-        body.dark .odontoRefStage{background:#111827}
-        .odontoRefStage img{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; user-select:none}
-        .odontoRefStage .odontoBaseDark{opacity:0}
-        body.dark .odontoRefStage .odontoBaseLight{opacity:0}
-        body.dark .odontoRefStage .odontoBaseDark{opacity:1}
+        .odontoFull{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03);margin-bottom:14px}
+        .odontoGrid{display:grid;grid-template-columns:minmax(520px,1.05fr) minmax(390px,.95fr);gap:14px;align-items:start}
+        .odontoPanel{border:1px solid var(--line);border-radius:14px;padding:14px;background:rgba(255,255,255,.025)}
+        .odontoPanel textarea{min-height:100px}
+        .odontoPanel label{display:block;margin:10px 0 6px}
+        .odontoPanel input,.odontoPanel select{width:100%;box-sizing:border-box}
+        .odontoPanel .sideFormGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        .odontoPanel .sideFormGrid .full{grid-column:1 / -1}
+        .odontoPanel .sideActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+        .odontoRefStage{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:transparent}
+        .odontoRefStage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;user-select:none}
+        .odontoRefStage .odontoBaseLight{opacity:0}
+        .odontoRefStage .odontoBaseDark{opacity:1}
+        .light .odontoRefStage .odontoBaseLight{opacity:1}
+        .light .odontoRefStage .odontoBaseDark{opacity:0}
         .odontoOverlay{position:absolute; inset:0}
-        .toothOverlayBox{position:absolute; width:34px; height:34px; border-radius:999px; border:2px solid transparent; background:rgba(255,255,255,.28); color:#111827; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:900; transform:translate(-50%,0); cursor:pointer; user-select:none; transition:.15s ease; box-shadow:0 1px 5px rgba(0,0,0,.10)}
+        .toothOverlayBox{position:absolute; width:34px; height:34px; border-radius:999px; border:2px solid transparent; background:rgba(15,23,42,.38); color:#f8fafc; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:900; transform:translate(-50%,0); cursor:pointer; user-select:none; transition:.15s ease; box-shadow:0 1px 5px rgba(0,0,0,.10)}
         .toothOverlayBox:hover{transform:translate(-50%,0) scale(1.08); border-color:rgba(124,92,255,.65); background:rgba(124,92,255,.16)}
-        body.dark .toothOverlayBox{background:rgba(17,24,39,.34); color:#f8fafc}
-        .toothOverlayBox.active{outline:2px solid rgba(124,92,255,.75); outline-offset:2px}
+        .light .toothOverlayBox{background:rgba(255,255,255,.36); color:#111827}
+        .toothOverlayBox.active{outline:3px solid rgba(124,92,255,.9); outline-offset:2px; box-shadow:0 0 0 5px rgba(124,92,255,.16),0 1px 5px rgba(0,0,0,.10)}
         .toothOverlayBox.paid,.toothOverlayBox.plan,.toothOverlayBox.closed{background:#ffd400; border-color:#b7791f; color:#111827}
         .toothOverlayBox.done{background:#16a34a; border-color:#166534; color:#ffffff}
         .toothOverlayBox.absent{background:#dc2626; border-color:#991b1b; color:#ffffff}
@@ -7881,8 +7889,16 @@ window.CRONOS_PROC_UI = {
       const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
       const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
       function overlayBoxes(list, y){
-        return list.map((tooth, i)=>`<button type="button" class="toothOverlayBox ${getToothVisualState(entry, tooth)} ${state.selectedTooth===tooth ? 'active' : ''}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%" title="Clique: pago → realizado → limpar. Use o painel para marcar perda dentária." onclick="CRONOS_FICHA_UI.cycleToothStatus('${tooth}')">${tooth}</button>`).join('');
+        return list.map((tooth, i)=>`<button type="button" class="toothOverlayBox ${getToothVisualState(entry, tooth)} ${state.selectedTeeth.includes(tooth) ? 'active' : ''}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%" title="Selecionar dente para o plano. Use os botões ao lado para marcar pago, realizado ou ausente." onclick="CRONOS_FICHA_UI.toggleTooth('${tooth}')">${tooth}</button>`).join('');
       }
+      const selectedTeeth = Array.isArray(state.selectedTeeth) ? state.selectedTeeth.slice() : [];
+      const selectedTeethLabel = selectedTeeth.length ? selectedTeeth.join(', ') : 'Nenhum dente selecionado';
+      const selectedPlanCount = selectedTeeth.length
+        ? ficha.plano.filter(item=>{
+            const dentesItem = String(item.dente || '').split(',').map(s=>s.trim()).filter(Boolean);
+            return selectedTeeth.some(t=>dentesItem.includes(String(t)));
+          }).length
+        : 0;
 
       box.innerHTML = `
         ${buildFichaHeader(entry, contact)}
@@ -7901,73 +7917,53 @@ window.CRONOS_PROC_UI = {
                 <span class="legendPill lp-done"><span class="legendDot"></span>Realizado</span>
                 <span class="legendPill lp-absent"><span class="legendDot"></span>Perda dentária / ausente</span>
               </div>
-              <div style="margin-top:12px" class="small">Clique no número do dente para alternar andamento: neutro → pago → realizado → limpar. Perda dentária é condição clínica separada e fica no painel ao lado.</div>
+              <div style="margin-top:12px" class="small">Clique nos números para selecionar um ou vários dentes. Depois escolha o procedimento no painel ao lado. Andamento e ausência também ficam no painel, sem misturar as coisas.</div>
             </div>
 
             <div class="odontoPanel">
-              <div style="font-size:16px; font-weight:800">${state.selectedTooth ? `Dente ${state.selectedTooth} • ${deriveToothType(state.selectedTooth)}` : 'Seleciona um dente no odontograma'}</div>
-              ${state.selectedTooth ? `
-                <div class="small" style="margin:6px 0 10px">${selectedToothPlan.length ? `${selectedToothPlan.length} item(ns) do plano ligado(s) a este dente.` : 'Sem itens do plano ligados a este dente.'}</div>
-                <div class="panelMiniGrid">
-                  <div><span class="muted">Dente</span><b>${escapeHTML(state.selectedTooth)}</b></div>
-                  <div><span class="muted">Status</span><b>${escapeHTML(selectedToothStatus)}</b></div>
-                  <div><span class="muted">Procedimento</span><b>${selectedProcLabel ? escapeHTML(selectedProcLabel) : '—'}</b></div>
-                  <div><span class="muted">Face</span><b>${escapeHTML(selectedFaceText)}</b></div>
-                </div>
-                <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap">
-                  <button class="btn small" onclick="CRONOS_FICHA_UI.useSelectedToothForPlan()">Usar este dente</button>
-                  <button class="btn ok small" onclick="CRONOS_FICHA_UI.addToPlan()">Salvar no plano</button>
-                  <button class="btn danger small" onclick="CRONOS_FICHA_UI.toggleAbsent('${escapeHTML(state.selectedTooth)}')">${isToothAbsent(entry, state.selectedTooth) ? 'Remover ausência' : 'Marcar ausente'}</button>
-                  <button class="btn small" onclick="CRONOS_FICHA_UI.clearSelection()">Limpar seleção</button>
-                  <button class="btn small" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
-                </div>
-              ` : `<div class="muted" style="margin-top:8px">Clique no número do dente no odontograma para alternar pago/realizado, ou escolha vários dentes na lista para lançar procedimentos em lote.</div>`}
-            </div>
-          </div>
-        </div>
+              <div style="font-size:16px; font-weight:800">Plano do tratamento</div>
+              <div class="small" style="margin:6px 0 10px">Selecione um ou vários dentes no odontograma e lance o procedimento aqui mesmo, sem descer a tela.</div>
 
-        <div class="fichaAddWrap">
-          <div class="muted" style="margin-bottom:10px">Plano de tratamento — escolhe o procedimento, ajusta o valor do paciente se precisar e adiciona ao plano.</div>
-          <div class="fichaAddGrid">
-            <div>
+              <div class="panelMiniGrid">
+                <div><span class="muted">Dente(s)</span><b>${escapeHTML(selectedTeethLabel)}</b></div>
+                <div><span class="muted">Itens ligados</span><b>${selectedPlanCount}</b></div>
+              </div>
+              ${selectedTeeth.length ? `<div class="toothChipRow">${selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : `<div class="small muted" style="margin-top:8px">Nenhum dente selecionado ainda.</div>`}
+
               <label>Procedimento</label>
               <input id="fichaProcPicker" list="fichaProcList" value="${escapeHTML(selectedProcLabel)}" placeholder="Digite para filtrar o procedimento" oninput="CRONOS_FICHA_UI.pickProcByText(this.value)">
               <datalist id="fichaProcList">
                 ${catalog.map(item=>`<option value="${escapeHTML(procLabel(item))}"></option>`).join('')}
               </datalist>
-            </div>
-            <div>
-              <label>Valor do paciente</label>
-              <input type="number" step="0.01" value="${escapeHTML(selectedPrice)}" oninput="CRONOS_FICHA_UI.setPrice(this.value)" placeholder="0,00">
-            </div>
-            <div>
-              <label>Valor base</label>
-              <input type="text" disabled value="${selectedProc ? moneyBR(selectedProc.valorBase || 0) : '—'}">
-            </div>
-          </div>
-          <div class="fichaAddGrid">
-            <div>
-              <label>Face(s)</label>
-              <select ${selectedProc?.exigeFace ? '' : 'disabled'} multiple size="5" onchange="CRONOS_FICHA_UI.setFaceFromSelect(this)">${getFaceOptionsHTML(state.selectedFace || '')}</select>
-              <div class="small muted" style="margin-top:6px">Pode selecionar mais de uma face quando o procedimento exigir.</div>
-            </div>
-            <div style="display:flex; align-items:flex-end; grid-column:${selectedProc?.exigeDente ? 'auto' : '2 / span 2'}">
-              <button class="btn primary" style="width:100%" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
-            </div>
-          </div>
-          ${selectedProc?.exigeDente ? `
-            <div style="margin-top:12px">
-              <div class="toothToolbar">
-                <label style="margin:0">Dente(s)</label>
-                <div class="muted">${selectedProc?.cobraPorDente ? 'Seleciona um ou vários. Cada dente vira uma linha própria no plano.' : 'Seleciona um ou vários dentes para o mesmo item.'}</div>
+
+              <div class="sideFormGrid">
+                <div>
+                  <label>Valor do paciente</label>
+                  <input type="number" step="0.01" value="${escapeHTML(selectedPrice)}" oninput="CRONOS_FICHA_UI.setPrice(this.value)" placeholder="0,00">
+                </div>
+                <div>
+                  <label>Valor base</label>
+                  <input type="text" disabled value="${selectedProc ? moneyBR(selectedProc.valorBase || 0) : '—'}">
+                </div>
+                <div class="full">
+                  <label>Face(s)</label>
+                  <select ${selectedProc?.exigeFace ? '' : 'disabled'} multiple size="4" onchange="CRONOS_FICHA_UI.setFaceFromSelect(this)">${getFaceOptionsHTML(state.selectedFace || '')}</select>
+                  <div class="small muted" style="margin-top:6px">${selectedProc?.exigeFace ? 'Pode selecionar mais de uma face.' : 'Este procedimento não exige face.'}</div>
+                </div>
               </div>
-              <select id="fichaTeethSelect" multiple size="8" onchange="CRONOS_FICHA_UI.setTeethFromSelect(this)" style="width:100%; padding:10px; border-radius:12px; min-height:220px">
-                ${ALL_TEETH.map(tooth=>`<option value="${escapeHTML(tooth)}" ${state.selectedTeeth.includes(tooth) ? 'selected' : ''}>${escapeHTML(tooth)} — ${escapeHTML(deriveToothType(tooth))}</option>`).join('')}
-              </select>
-              <div class="small muted" style="margin-top:8px">Dica: no computador, usa Ctrl/Cmd para marcar vários. No celular, toca e marca os necessários.</div>
-              ${state.selectedTeeth.length ? `<div class="toothChipRow">${state.selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : ''}
+
+              <button class="btn primary" style="width:100%; margin-top:12px" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
+
+              <div class="sideActions">
+                <button class="btn small" onclick="CRONOS_FICHA_UI.markSelectedProgress('paid')">Marcar pago</button>
+                <button class="btn ok small" onclick="CRONOS_FICHA_UI.markSelectedProgress('done')">Marcar realizado</button>
+                <button class="btn danger small" onclick="CRONOS_FICHA_UI.setAbsentForSelection()">Marcar ausente</button>
+                <button class="btn small" onclick="CRONOS_FICHA_UI.clearSelection()">Limpar seleção</button>
+                <button class="btn small" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
+              </div>
+              <div class="small muted" style="margin-top:10px">Pago/realizado são andamento. Ausente é condição clínica separada.</div>
             </div>
-          ` : ''}
+          </div>
         </div>
 
         <div class="fichaLayout">
@@ -8029,7 +8025,6 @@ window.CRONOS_PROC_UI = {
         const typed = String(v||'').trim();
         if(!typed){
           s.selectedProcId = '';
-          s.selectedTeeth = [];
           s.selectedFace = '';
           s.price = '';
           renderFichaApp();
@@ -8048,15 +8043,17 @@ window.CRONOS_PROC_UI = {
         const db = loadDB();
         const item = getProcedureCatalog(db).find(x=>x.id===id) || null;
         s.selectedProcId = id || '';
-        s.selectedTeeth = [];
         s.selectedFace = '';
         s.price = item ? String(Number(item.valorBase || 0)) : '';
         renderFichaApp();
       },
       toggleTooth(tooth){
         const s = getFichaState(); if(!s) return;
+        tooth = String(tooth || '');
+        if(!tooth) return;
         const idx = s.selectedTeeth.indexOf(tooth);
         if(idx >= 0) s.selectedTeeth.splice(idx,1); else s.selectedTeeth.push(tooth);
+        s.selectedTooth = tooth;
         s.selectedTeeth.sort((a,b)=>Number(a)-Number(b));
         renderFichaApp();
       },
@@ -8120,6 +8117,7 @@ window.CRONOS_PROC_UI = {
         }
         saveDB(db);
         s.selectedTeeth = [];
+        s.selectedTooth = null;
         s.selectedFace = '';
         s.price = String(valorBase);
         renderFichaApp();
@@ -8230,9 +8228,55 @@ window.CRONOS_PROC_UI = {
       clearSelection(){
         const s = getFichaState(); if(!s) return;
         s.selectedTeeth = [];
+        s.selectedTooth = null;
         s.selectedFace = '';
         s.selectedProcId = '';
         s.price = '';
+        renderFichaApp();
+      },
+      selectedTeethOrLast(){
+        const s = getFichaState(); if(!s) return [];
+        const teeth = Array.isArray(s.selectedTeeth) ? s.selectedTeeth.slice() : [];
+        if(!teeth.length && s.selectedTooth) teeth.push(String(s.selectedTooth));
+        return [...new Set(teeth.map(String).filter(Boolean))];
+      },
+      markSelectedProgress(status){
+        const s = getFichaState(); if(!s) return;
+        const teeth = this.selectedTeethOrLast();
+        if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        teeth.forEach(tooth=>{
+          const key = String(tooth);
+          const meta = ficha.odontograma[key] || {};
+          meta.status = status || '';
+          if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
+          else ficha.odontograma[key] = meta;
+        });
+        saveDB(db);
+        renderFichaApp();
+      },
+      setAbsentForSelection(){
+        const s = getFichaState(); if(!s) return;
+        const teeth = this.selectedTeethOrLast();
+        if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const allAbsent = teeth.every(tooth=>isToothAbsent(entry, tooth));
+        teeth.forEach(tooth=>{
+          const key = String(tooth);
+          const meta = ficha.odontograma[key] || {};
+          meta.absent = !allAbsent;
+          meta.condition = meta.absent ? 'absent' : '';
+          if(meta.status === 'absent') meta.status = '';
+          if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
+          else ficha.odontograma[key] = meta;
+        });
+        saveDB(db);
         renderFichaApp();
       },
       saveToothMeta(){
@@ -8257,12 +8301,14 @@ window.CRONOS_PROC_UI = {
         toast('Odontograma salvo.');
       },
       clearToothMeta(){
-        const s = getFichaState(); if(!s || !s.selectedTooth) return;
+        const s = getFichaState(); if(!s) return;
+        const teeth = this.selectedTeethOrLast();
+        if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
         const db = loadDB();
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
-        delete ficha.odontograma[s.selectedTooth];
+        teeth.forEach(tooth=>{ delete ficha.odontograma[String(tooth)]; });
         saveDB(db);
         renderFichaApp();
       }
