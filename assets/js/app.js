@@ -156,11 +156,13 @@ function syncInstallmentTasks(db, actor){
   const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===masterId).map(c=>[c.id,c]));
   const entries = (db.entries||[]).filter(e=>e.masterId===masterId);
 db.tasks = (db.tasks || []).filter(t => {
-  return !(
-    t.id?.includes("INST") ||
+  if(t.masterId && t.masterId !== masterId) return true;
+  const isInstallmentTask =
+    String(t.key || "").startsWith("INST:") ||
     t.type === "installment" ||
-    t.desc?.includes("Parcela")
-  );
+    String(t.title || "").startsWith("Inadimplente:") ||
+    String(t.desc || t.notes || "").includes("Parcela");
+  return !isInstallmentTask;
 });
 
 const tasks = db.tasks;
