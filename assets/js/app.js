@@ -7551,6 +7551,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .toothChipRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
         .toothChip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:rgba(255,255,255,.04);padding:6px 10px;border-radius:999px;font-size:12px}
         .fichaLayout{display:block}
+        .fichaPlanToolbar{border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.025)}
         .fichaTableWrap{overflow:auto;border:1px solid var(--line);border-radius:16px}
         .fichaTable{width:100%;border-collapse:collapse;min-width:1240px;background:rgba(255,255,255,.02)}
         /* Ações não ficam mais fixas: agora rolam junto com a tabela, evitando sobreposição em linhas coloridas */
@@ -8296,6 +8297,13 @@ window.CRONOS_PROC_UI = {
         </div>
 
         <div class="fichaLayout">
+          <div class="fichaPlanToolbar" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px">
+            <div>
+              <div style="font-weight:900">Plano de tratamento</div>
+              <div class="small muted">Os valores de tabela ficam congelados no histórico. Use o botão ao lado só quando quiser atualizar a referência deste plano.</div>
+            </div>
+            <button class="btn small" type="button" onclick="CRONOS_FICHA_UI.refreshPlanBaseValues()">Atualizar valores de tabela</button>
+          </div>
           <div class="fichaTableWrap">
             <table class="fichaTable">
               <thead>
@@ -8494,6 +8502,58 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
         try{ renderLeadsTable(filteredEntries()); }catch(_){ }
         toast('Item adicionado ✅', proc.nome);
+      },
+      refreshPlanBaseValues(){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return toast('Ficha', 'Lead não encontrado.');
+        const ficha = ensureFicha(entry);
+        const catalog = getProcedureCatalog(db);
+
+        if(!Array.isArray(ficha.plano) || !ficha.plano.length){
+          return toast('Plano vazio', 'Nenhum procedimento para atualizar.');
+        }
+
+        if(!confirm(
+          'Atualizar os valores de tabela deste plano?\n\n' +
+          'Isso atualiza apenas o Valor de tabela/Valor base conforme o cadastro atual de procedimentos.\n' +
+          'O Valor de orçamento do paciente será mantido.'
+        )) return;
+
+        let updated = 0;
+        let unchanged = 0;
+        let notFound = 0;
+
+        ficha.plano.forEach(item=>{
+          const current = catalog.find(proc=>String(proc.id || '') === String(item.procedimentoId || ''))
+            || catalog.find(proc=>String(proc.nome || '').trim().toLowerCase() === String(item.procedimento || '').trim().toLowerCase());
+
+          if(!current){
+            notFound++;
+            return;
+          }
+
+          const oldBase = Number(item.valorBase || 0);
+          const newBase = Number(current.valorBase || 0);
+
+          item.procedimentoId = current.id || item.procedimentoId || '';
+          item.procedimento = current.nome || item.procedimento || '';
+
+          if(oldBase !== newBase){
+            item.valorBase = newBase;
+            updated++;
+          }else{
+            unchanged++;
+          }
+        });
+
+        saveDB(db);
+        renderFichaApp();
+        try{ renderLeadsTable(filteredEntries()); }catch(_){}
+
+        const msg = `${updated} atualizado(s) • ${unchanged} sem mudança${notFound ? ` • ${notFound} não encontrado(s)` : ''}`;
+        toast('Valores de tabela atualizados ✅', msg);
       },
       updateValue(itemId, v){
         const s = getFichaState(); if(!s) return;
