@@ -870,6 +870,28 @@ function monthLabel(key){
   const nomes = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
   return `${nomes[Number(m)-1]} ${y}`;
 }
+function formatCPF(v){
+  const s = String(v||"").replace(/\D/g,"").slice(0,11);
+  if(s.length !== 11) return String(v||"").trim();
+  return s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+}
+function calcAgeFromISO(iso){
+  const s = String(iso||"").trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y,m,d] = s.split("-").map(Number);
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  const passed = (now.getMonth()+1 > m) || ((now.getMonth()+1 === m) && now.getDate() >= d);
+  if(!passed) age -= 1;
+  return (Number.isFinite(age) && age >= 0 && age < 130) ? age : null;
+}
+function birthWithAgeLabel(iso){
+  const s = String(iso||"").trim();
+  if(!s) return "";
+  const birth = fmtBR(s);
+  const age = calcAgeFromISO(s);
+  return age == null ? birth : `${birth} · ${age} anos`;
+}
 
 /* -------- Theme -------- */
 function applyTheme(theme){
@@ -897,7 +919,7 @@ function toggleTheme(){
 db = {
   masters: [{id,name,email,passHash,createdAt}],
   users: [{id,masterId,name,username,email,passHash,role,createdAt}],
-  contacts: [{id, masterId, name, phone, firstSeenAt, lastSeenAt}],
+  contacts: [{id, masterId, name, phone, cpf, birthDate, firstSeenAt, lastSeenAt}],
   entries: [{id, masterId, contactId, monthKey, firstContactAt, lastUpdateAt, status, origin, originOther,
             treatment, treatmentOther, city, notes, apptDate, apptTime, callAttempts, callResult,
             tags:[], statusLog:[{at,from,to,by}]}],
@@ -3743,6 +3765,16 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
       </div>
 
       <div>
+        <label>CPF</label>
+        <input id="lf_cpf" ${ro?"disabled":""} value="${escapeHTML(formatCPF(c.cpf||""))}" placeholder="Ex: 123.456.789-00" autocomplete="off"/>
+      </div>
+
+      <div>
+        <label>Data de nascimento</label>
+        <input id="lf_birth" type="date" ${ro?"disabled":""} value="${escapeHTML(c.birthDate||"")}"/>
+      </div>
+
+      <div>
         <label>Data do 1º contato (mês)</label>
         <input id="lf_first" type="date" ${ro?"disabled":""} value="${escapeHTML(e.firstContactAt || todayISO())}"/>
       </div>
@@ -3945,7 +3977,7 @@ function openNewLead(){
   let monthKey = val("fMonth", new Date().toISOString().slice(0,7));
   if(!monthKey || monthKey === "all") monthKey = new Date().toISOString().slice(0,7);
   const entry = { monthKey, firstContactAt: todayISO(), status:"Conversando", origin:"Instagram orgânico", treatment:"Clínica geral", tags:[] };
-  const contact = { name:"", phone:"", firstSeenAt:"", lastSeenAt:"" };
+  const contact = { name:"", phone:"", cpf:"", birthDate:"", firstSeenAt:"", lastSeenAt:"" };
 
   openModal({
     title: "Novo Lead",
@@ -4447,9 +4479,11 @@ if(existingIndex < 0){
 
 if (existingIndex >= 0) {
 
-  // atualiza apenas nome e telefone
+  // atualiza os dados principais do contato
   db.contacts[existingIndex].name = contact.name;
   db.contacts[existingIndex].phone = contact.phone;
+  db.contacts[existingIndex].cpf = contact.cpf;
+  db.contacts[existingIndex].birthDate = contact.birthDate;
 
   // usa o contato existente para manter histórico
   contact = db.contacts[existingIndex];
@@ -4721,6 +4755,8 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
 
   setIf("lf_name", c.name || latest?.name || "");
   setIf("lf_phone", c.phone || "");
+  setIf("lf_cpf", formatCPF(c.cpf || ""));
+  setIf("lf_birth", c.birthDate || "");
   if(el("lf_name")) el("lf_name").dataset.contactId = String(c.id || "");
   if(el("lf_phone")) el("lf_phone").dataset.contactId = String(c.id || "");
 
@@ -7701,6 +7737,10 @@ window.CRONOS_PROC_UI = {
     }
     function getFichaState(){ return window.__fichaFeatureState || null; }
     function getSelectedProc(state, db){ return getProcedureCatalog(db).find(x=>x.id===state?.selectedProcId) || null; }
+    function procLabel(item){
+      if(!item) return '';
+      return `${String(item.nome||'')}${item.categoria ? ` • ${String(item.categoria||'')}` : ''}`;
+    }
     function getFaceOptionsHTML(cur=''){
       return FACE_OPTIONS.map(opt=>`<option value="${escapeHTML(opt.value)}" ${String(cur||'')===String(opt.value) ? 'selected' : ''}>${escapeHTML(opt.label)}</option>`).join('');
     }
@@ -7741,6 +7781,8 @@ window.CRONOS_PROC_UI = {
       const branding = getClinicBranding(db, actor);
       const patientName = escapeHTML(contact?.name || entry?.name || 'Paciente');
       const phone = escapeHTML(contact?.phone || entry?.phone || '—');
+      const cpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
+      const birthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
       const city = escapeHTML(entry?.city || '—');
       const treatment = escapeHTML(entry?.treatment || '—');
       const clinicName = escapeHTML(getClinicDisplayName(db, actor));
@@ -7756,6 +7798,8 @@ window.CRONOS_PROC_UI = {
             </div>
             <div style="font-size:18px; font-weight:800; margin-top:10px">${patientName}</div>
             <div class="muted" style="margin-top:6px">Telefone: ${phone}</div>
+            <div class="muted">CPF: ${cpf}</div>
+            <div class="muted">Nascimento: ${birthAge}</div>
             <div class="muted">Cidade: ${city}</div>
           </div>
           <div class="cardMini">
@@ -7780,11 +7824,7 @@ window.CRONOS_PROC_UI = {
       const ficha = ensureFicha(entry);
       const selectedProc = getSelectedProc(state, db);
       const catalogAll = getProcedureCatalog(db).filter(x=>x.ativo !== false);
-      const catalog = catalogAll.filter(item=>{
-        const q = String(state.procSearch||'').trim().toLowerCase();
-        if(!q) return true;
-        return String(item.nome||'').toLowerCase().includes(q) || String(item.categoria||'').toLowerCase().includes(q);
-      });
+      const catalog = catalogAll;
       const totals = calcFichaTotals(ficha.plano || []);
       const selectedToothMeta = state.selectedTooth ? (ficha.odontograma?.[state.selectedTooth] || {}) : {};
       const selectedToothPlan = state.selectedTooth ? ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(state.selectedTooth))) : [];
@@ -7841,19 +7881,19 @@ window.CRONOS_PROC_UI = {
           <div class="muted" style="margin-bottom:10px">Plano de tratamento — escolhe o procedimento, ajusta o valor do paciente se precisar e adiciona ao plano.</div>
           <div class="fichaAddGrid">
             <div>
-              <label>Buscar procedimento</label>
-              <input id="fichaProcSearch" type="text" value="${escapeHTML(state.procSearch||'')}" placeholder="Ex: restauração" oninput="CRONOS_FICHA_UI.setSearch(this.value)">
-            </div>
-            <div>
               <label>Procedimento</label>
-              <select onchange="CRONOS_FICHA_UI.selectProc(this.value)">
-                <option value="">Selecione</option>
-                ${catalog.map(item=>`<option value="${escapeHTML(item.id)}" ${item.id===state.selectedProcId ? 'selected' : ''}>${escapeHTML(item.nome)}${item.categoria ? ` • ${escapeHTML(item.categoria)}` : ''}</option>`).join('')}
-              </select>
+              <input id="fichaProcPicker" list="fichaProcList" value="${escapeHTML(selectedProcLabel)}" placeholder="Digite para filtrar o procedimento" oninput="CRONOS_FICHA_UI.pickProcByText(this.value)">
+              <datalist id="fichaProcList">
+                ${catalog.map(item=>`<option value="${escapeHTML(procLabel(item))}"></option>`).join('')}
+              </datalist>
             </div>
             <div>
               <label>Valor do paciente</label>
               <input type="number" step="0.01" value="${escapeHTML(selectedPrice)}" oninput="CRONOS_FICHA_UI.setPrice(this.value)" placeholder="0,00">
+            </div>
+            <div>
+              <label>Valor base</label>
+              <input type="text" disabled value="${selectedProc ? moneyBR(selectedProc.valorBase || 0) : '—'}">
             </div>
           </div>
           <div class="fichaAddGrid">
@@ -7861,23 +7901,20 @@ window.CRONOS_PROC_UI = {
               <label>Face</label>
               <select ${selectedProc?.exigeFace ? '' : 'disabled'} onchange="CRONOS_FICHA_UI.setFace(this.value)">${getFaceOptionsHTML(state.selectedFace || '')}</select>
             </div>
-            <div>
-              <label>Valor base</label>
-              <input type="text" disabled value="${selectedProc ? moneyBR(selectedProc.valorBase || 0) : '—'}">
-            </div>
-            <div style="display:flex; align-items:flex-end">
+            <div style="display:flex; align-items:flex-end; grid-column:${selectedProc?.exigeDente ? 'auto' : '2 / span 2'}">
               <button class="btn primary" style="width:100%" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
             </div>
           </div>
           ${selectedProc?.exigeDente ? `
             <div style="margin-top:12px">
               <div class="toothToolbar">
-                <label style="margin:0">Selecione o(s) dente(s)</label>
-                <div class="muted">${selectedProc?.cobraPorDente ? 'Cada dente vira uma linha própria no plano.' : 'Vários dentes podem entrar na mesma linha.'}</div>
+                <label style="margin:0">Dente(s)</label>
+                <div class="muted">${selectedProc?.cobraPorDente ? 'Seleciona um ou vários. Cada dente vira uma linha própria no plano.' : 'Seleciona um ou vários dentes para o mesmo item.'}</div>
               </div>
-              <div class="toothWrap">
-                ${ALL_TEETH.map(tooth=>`<button type="button" class="toothBtn ${state.selectedTeeth.includes(tooth) ? 'sel' : ''}" onclick="CRONOS_FICHA_UI.toggleTooth('${tooth}')">${tooth}<small>${deriveToothType(tooth)}</small></button>`).join('')}
-              </div>
+              <select id="fichaTeethSelect" multiple size="8" onchange="CRONOS_FICHA_UI.setTeethFromSelect(this)" style="width:100%; padding:10px; border-radius:12px; min-height:220px">
+                ${ALL_TEETH.map(tooth=>`<option value="${escapeHTML(tooth)}" ${state.selectedTeeth.includes(tooth) ? 'selected' : ''}>${escapeHTML(tooth)} — ${escapeHTML(deriveToothType(tooth))}</option>`).join('')}
+              </select>
+              <div class="small muted" style="margin-top:8px">Dica: no computador, usa Ctrl/Cmd para marcar vários. No celular, toca e marca os necessários.</div>
               ${state.selectedTeeth.length ? `<div class="toothChipRow">${state.selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : ''}
             </div>
           ` : ''}
@@ -7937,6 +7974,25 @@ window.CRONOS_PROC_UI = {
 
     window.CRONOS_FICHA_UI = {
       setSearch(v){ const s = getFichaState(); if(!s) return; s.procSearch = v; renderFichaApp(); __cronosRefocusInput('fichaProcSearch', v); },
+      pickProcByText(v){
+        const s = getFichaState(); if(!s) return;
+        const typed = String(v||'').trim();
+        if(!typed){
+          s.selectedProcId = '';
+          s.selectedTeeth = [];
+          s.selectedFace = '';
+          s.price = '';
+          renderFichaApp();
+          return;
+        }
+        const db = loadDB();
+        const catalog = getProcedureCatalog(db).filter(x=>x.ativo !== false);
+        const low = typed.toLowerCase();
+        const exact = catalog.find(x=>procLabel(x).toLowerCase()===low || String(x.nome||'').toLowerCase()===low);
+        if(exact){
+          this.selectProc(exact.id);
+        }
+      },
       selectProc(id){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
@@ -7951,6 +8007,12 @@ window.CRONOS_PROC_UI = {
         const s = getFichaState(); if(!s) return;
         const idx = s.selectedTeeth.indexOf(tooth);
         if(idx >= 0) s.selectedTeeth.splice(idx,1); else s.selectedTeeth.push(tooth);
+        s.selectedTeeth.sort((a,b)=>Number(a)-Number(b));
+        renderFichaApp();
+      },
+      setTeethFromSelect(node){
+        const s = getFichaState(); if(!s || !node) return;
+        s.selectedTeeth = Array.from(node.selectedOptions || []).map(opt=>String(opt.value||'')).filter(Boolean);
         s.selectedTeeth.sort((a,b)=>Number(a)-Number(b));
         renderFichaApp();
       },
@@ -8124,6 +8186,8 @@ window.CRONOS_PROC_UI = {
       const clinicName = escapeHTML(getClinicDisplayName(db, actor));
       const patientName = escapeHTML(contact?.name || entry?.name || 'Paciente');
       const patientPhone = escapeHTML(contact?.phone || entry?.phone || '—');
+      const patientCpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
+      const patientBirthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
       const patientCity = escapeHTML(entry?.city || '—');
       const patientTreatment = escapeHTML(entry?.treatment || '—');
       const obs = escapeHTML(String(ficha?.observacoes || entry?.obs || '').trim() || '');
@@ -8142,7 +8206,7 @@ window.CRONOS_PROC_UI = {
           .logo img{width:auto;height:76px;max-width:140px;display:block;object-fit:contain}
           .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:#444;letter-spacing:.08em}
           .meta{text-align:right;font-size:12px;line-height:1.7}
-          .patient{margin-top:12px;display:grid;grid-template-columns:1.3fr .9fr .8fr 1fr;gap:10px}
+          .patient{margin-top:12px;display:grid;grid-template-columns:1.3fr .9fr .9fr 1fr 1fr;gap:10px}
           .field{border:1px solid #111;min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
           .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px}
           .boxWrap{border:1.5px solid #111;padding:10px}
@@ -8168,8 +8232,9 @@ window.CRONOS_PROC_UI = {
           <div class="patient">
             <div class="field"><span class="lbl">Paciente</span><span class="val">${patientName}</span></div>
             <div class="field"><span class="lbl">Telefone</span><span class="val">${patientPhone}</span></div>
+            <div class="field"><span class="lbl">CPF</span><span class="val">${patientCpf}</span></div>
+            <div class="field"><span class="lbl">Nascimento</span><span class="val">${patientBirthAge}</span></div>
             <div class="field"><span class="lbl">Cidade</span><span class="val">${patientCity}</span></div>
-            <div class="field"><span class="lbl">Clínica</span><span class="val">${clinicName}</span></div>
           </div>
 
           <div class="boxWrap" style="margin-top:16px">
