@@ -8521,10 +8521,17 @@ window.CRONOS_PROC_UI = {
           });
         }
         saveDB(db);
+
+        // Depois de adicionar ao plano, limpa o painel para o próximo lançamento.
+        // O valor salvo continua na tabela; o formulário volta zerado.
         s.selectedTeeth = [];
         s.selectedTooth = null;
         s.selectedFace = '';
-        s.price = String(valorBase);
+        s.selectedProcId = '';
+        s.procSearch = '';
+        s.procMenuOpen = false;
+        s.price = '';
+
         renderFichaApp();
         try{ renderLeadsTable(filteredEntries()); }catch(_){ }
         toast('Item adicionado ✅', proc.nome);
