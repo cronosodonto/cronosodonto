@@ -7418,6 +7418,13 @@ document.addEventListener("DOMContentLoaded", () => {
         .odontoPanel .sideFormGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         .odontoPanel .sideFormGrid .full{grid-column:1 / -1}
         .odontoPanel .sideActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+        .faceChipWrap{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+        .faceChip{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);border-radius:999px;padding:8px 10px;font-weight:800;font-size:12px;cursor:pointer;transition:.15s ease}
+        .faceChip:hover{background:rgba(124,92,255,.12);border-color:rgba(124,92,255,.45)}
+        .faceChip.active{background:rgba(124,92,255,.18);border-color:rgba(124,92,255,.75);box-shadow:0 0 0 2px rgba(124,92,255,.12) inset}
+        .faceChip:disabled{opacity:.48;cursor:not-allowed}
+        .faceSelectedText{margin-top:8px;font-size:12px;color:var(--muted)}
+
         .odontoRefStage{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:transparent}
         .odontoRefStage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;user-select:none}
         .odontoRefStage .odontoBaseLight{opacity:0}
@@ -7889,6 +7896,20 @@ window.CRONOS_PROC_UI = {
       if(!selected.size && !String(cur||'').trim()) selected.add('');
       return FACE_OPTIONS.map(opt=>`<option value="${escapeHTML(opt.value)}" ${selected.has(String(opt.value)) ? 'selected' : ''}>${escapeHTML(opt.label)}</option>`).join('');
     }
+    function getFaceChipsHTML(cur='', enabled=true){
+      const selected = new Set(String(cur || '').split(',').map(s=>s.trim()).filter(Boolean));
+      const hasFaces = selected.size > 0;
+      return `
+        <div class="faceChipWrap">
+          ${FACE_OPTIONS.map(opt=>{
+            const value = String(opt.value || '');
+            const active = value ? selected.has(value) : !hasFaces;
+            return `<button type="button" class="faceChip ${active ? 'active' : ''}" ${enabled ? '' : 'disabled'} onclick="CRONOS_FICHA_UI.toggleFaceChip('${escapeHTML(value)}')">${escapeHTML(opt.label)}</button>`;
+          }).join('')}
+        </div>
+        <div class="faceSelectedText">${enabled ? (hasFaces ? `Selecionado: <b>${escapeHTML(Array.from(selected).join(', '))}</b>` : 'Sem face selecionada.') : 'Este procedimento não exige face.'}</div>
+      `;
+    }
     function lineDiscount(item){
       return Number(item.valorBase||0) - Number(item.valorFechado||0);
     }
@@ -8052,8 +8073,8 @@ window.CRONOS_PROC_UI = {
                 </div>
                 <div class="full">
                   <label>Face(s)</label>
-                  <select ${selectedProc?.exigeFace ? '' : 'disabled'} multiple size="4" onchange="CRONOS_FICHA_UI.setFaceFromSelect(this)">${getFaceOptionsHTML(state.selectedFace || '')}</select>
-                  <div class="small muted" style="margin-top:6px">${selectedProc?.exigeFace ? 'Pode selecionar mais de uma face.' : 'Este procedimento não exige face.'}</div>
+                  ${getFaceChipsHTML(state.selectedFace || '', !!selectedProc?.exigeFace)}
+                  <div class="small muted" style="margin-top:6px">${selectedProc?.exigeFace ? 'Clique nas faces para marcar ou desmarcar. Pode selecionar mais de uma.' : 'Este procedimento não exige face.'}</div>
                 </div>
               </div>
 
@@ -8173,6 +8194,21 @@ window.CRONOS_PROC_UI = {
         const s = getFichaState(); if(!s || !node) return;
         const values = Array.from(node.selectedOptions || []).map(opt=>String(opt.value||'')).filter(Boolean);
         s.selectedFace = values.join(', ');
+      },
+      toggleFaceChip(face){
+        const s = getFichaState(); if(!s) return;
+        const value = String(face || '').trim();
+        if(!value){
+          s.selectedFace = '';
+          renderFichaApp();
+          return;
+        }
+        const selected = String(s.selectedFace || '').split(',').map(x=>x.trim()).filter(Boolean);
+        const idx = selected.indexOf(value);
+        if(idx >= 0) selected.splice(idx, 1);
+        else selected.push(value);
+        s.selectedFace = selected.join(', ');
+        renderFichaApp();
       },
       setPrice(v){ const s = getFichaState(); if(!s) return; s.price = v; },
       setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; ensureFicha(entry).observacoes = String(v || ''); saveDB(db); },
