@@ -7425,6 +7425,16 @@ document.addEventListener("DOMContentLoaded", () => {
         .faceChip:disabled{opacity:.48;cursor:not-allowed}
         .faceSelectedText{margin-top:8px;font-size:12px;color:var(--muted)}
 
+        .procPickerWrap{position:relative}
+        .procPickerWrap input{padding-right:46px}
+        .procDropBtn{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-left:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer;font-size:16px;font-weight:900}
+        .procSuggestMenu{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:50;max-height:310px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb, var(--panel2) 96%, #000 4%);box-shadow:0 18px 36px rgba(0,0,0,.32);padding:6px;display:none}
+        .procSuggestMenu.show{display:block}
+        .procSuggestItem{width:100%;text-align:left;border:0;border-radius:10px;background:transparent;color:var(--text);padding:10px 11px;cursor:pointer;font-weight:800}
+        .procSuggestItem:hover{background:rgba(124,92,255,.18)}
+        .procSuggestItem .muted{font-size:12px;font-weight:700}
+        .procSuggestEmpty{padding:12px;color:var(--muted);font-size:13px}
+
         .odontoRefStage{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:transparent}
         .odontoRefStage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;user-select:none}
         .odontoRefStage .odontoBaseLight{opacity:0}
@@ -7877,6 +7887,7 @@ window.CRONOS_PROC_UI = {
       window.__fichaFeatureState = {
         entryId: String(entryId),
         procSearch: '',
+        procMenuOpen: false,
         selectedProcId: '',
         selectedTeeth: [],
         selectedFace: '',
@@ -7909,6 +7920,29 @@ window.CRONOS_PROC_UI = {
         </div>
         <div class="faceSelectedText">${enabled ? (hasFaces ? `Selecionado: <b>${escapeHTML(Array.from(selected).join(', '))}</b>` : 'Sem face selecionada.') : 'Este procedimento não exige face.'}</div>
       `;
+    }
+    function normalizeProcSearchText(v){
+      return String(v || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    }
+    function filterProcedureCatalog(catalog, query){
+      const q = normalizeProcSearchText(query);
+      if(!q) return catalog;
+      return catalog.filter(item=>{
+        const text = normalizeProcSearchText(`${item.nome || ''} ${item.categoria || ''} ${procLabel(item)}`);
+        return text.includes(q);
+      });
+    }
+    function getProcSuggestionsHTML(catalog, query=''){
+      const list = filterProcedureCatalog(catalog, query).slice(0, 40);
+      if(!list.length){
+        return `<div class="procSuggestEmpty">Nenhum procedimento encontrado.</div>`;
+      }
+      return list.map(item=>`
+        <button type="button" class="procSuggestItem" onmousedown="event.preventDefault(); CRONOS_FICHA_UI.selectProc('${escapeHTML(item.id)}')">
+          <div>${escapeHTML(item.nome || 'Procedimento')}</div>
+          <div class="muted">${escapeHTML(item.categoria || 'Sem categoria')} ${Number(item.valorBase || 0) ? `• ${moneyBR(item.valorBase || 0)}` : ''}</div>
+        </button>
+      `).join('');
     }
     function lineDiscount(item){
       return Number(item.valorBase||0) - Number(item.valorFechado||0);
@@ -8008,6 +8042,8 @@ window.CRONOS_PROC_UI = {
       const selectedToothPlan = state.selectedTooth ? ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(state.selectedTooth))) : [];
       const selectedPrice = state.price !== '' ? String(state.price) : (selectedProc ? String(Number(selectedProc.valorBase||0)) : '');
       const selectedProcLabel = selectedProc ? procLabel(selectedProc) : '';
+      const procInputValue = state.procSearch !== '' ? state.procSearch : selectedProcLabel;
+      const procMenuHTML = getProcSuggestionsHTML(catalog, state.procMenuOpen ? '' : procInputValue);
       const selectedFaceText = selectedProc?.exigeFace ? (String(state.selectedFace || '').trim() || '—') : 'Não exige';
       const selectedToothStatus = state.selectedTooth
         ? (isToothAbsent(entry, state.selectedTooth) ? 'Perda dentária / ausente' : (getToothProgressStatus(entry, state.selectedTooth) === 'done' ? 'Realizado' : (getToothProgressStatus(entry, state.selectedTooth) === 'paid' ? 'Pago' : 'Neutro')))
@@ -8057,10 +8093,13 @@ window.CRONOS_PROC_UI = {
               ${selectedTeeth.length ? `<div class="toothChipRow">${selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : `<div class="small muted" style="margin-top:8px">Nenhum dente selecionado ainda.</div>`}
 
               <label>Procedimento</label>
-              <input id="fichaProcPicker" list="fichaProcList" value="${escapeHTML(selectedProcLabel)}" placeholder="Digite para filtrar o procedimento" oninput="CRONOS_FICHA_UI.pickProcByText(this.value)">
-              <datalist id="fichaProcList">
-                ${catalog.map(item=>`<option value="${escapeHTML(procLabel(item))}"></option>`).join('')}
-              </datalist>
+              <div class="procPickerWrap">
+                <input id="fichaProcPicker" autocomplete="off" value="${escapeHTML(procInputValue)}" placeholder="Digite para filtrar o procedimento" onfocus="CRONOS_FICHA_UI.openProcMenu(false)" oninput="CRONOS_FICHA_UI.pickProcByText(this.value)">
+                <button type="button" class="procDropBtn" title="Ver procedimentos" onmousedown="event.preventDefault(); CRONOS_FICHA_UI.openProcMenu(true)">▾</button>
+                <div id="fichaProcMenu" class="procSuggestMenu ${state.procMenuOpen ? 'show' : ''}">
+                  ${procMenuHTML}
+                </div>
+              </div>
 
               <div class="sideFormGrid">
                 <div>
@@ -8148,27 +8187,47 @@ window.CRONOS_PROC_UI = {
       setSearch(v){ const s = getFichaState(); if(!s) return; s.procSearch = v; renderFichaApp(); __cronosRefocusInput('fichaProcSearch', v); },
       pickProcByText(v){
         const s = getFichaState(); if(!s) return;
-        const typed = String(v||'').trim();
-        if(!typed){
+        const typed = String(v||'');
+        s.procSearch = typed;
+        s.procMenuOpen = true;
+
+        // Se o usuário começou a editar um procedimento já selecionado, libera a escolha.
+        const db = loadDB();
+        const current = getProcedureCatalog(db).find(x=>x.id===s.selectedProcId) || null;
+        if(current && procLabel(current) !== typed){
           s.selectedProcId = '';
           s.selectedFace = '';
           s.price = '';
-          renderFichaApp();
-          return;
         }
+
+        const menu = el('fichaProcMenu');
+        if(menu){
+          const catalog = getProcedureCatalog(db).filter(x=>x.ativo !== false);
+          menu.innerHTML = getProcSuggestionsHTML(catalog, typed);
+          menu.classList.add('show');
+        }
+      },
+      openProcMenu(showAll=false){
+        const s = getFichaState(); if(!s) return;
+        s.procMenuOpen = true;
         const db = loadDB();
         const catalog = getProcedureCatalog(db).filter(x=>x.ativo !== false);
-        const low = typed.toLowerCase();
-        const exact = catalog.find(x=>procLabel(x).toLowerCase()===low || String(x.nome||'').toLowerCase()===low);
-        if(exact){
-          this.selectProc(exact.id);
+        const menu = el('fichaProcMenu');
+        if(menu){
+          menu.innerHTML = getProcSuggestionsHTML(catalog, showAll ? '' : (s.procSearch || ''));
+          menu.classList.add('show');
+        }else{
+          renderFichaApp();
         }
+        setTimeout(()=>{ try{ el('fichaProcPicker')?.focus(); }catch(_){} }, 0);
       },
       selectProc(id){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
         const item = getProcedureCatalog(db).find(x=>x.id===id) || null;
         s.selectedProcId = id || '';
+        s.procSearch = item ? procLabel(item) : '';
+        s.procMenuOpen = false;
         s.selectedFace = '';
         s.price = item ? String(Number(item.valorBase || 0)) : '';
         renderFichaApp();
