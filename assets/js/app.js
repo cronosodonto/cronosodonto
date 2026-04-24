@@ -8230,10 +8230,10 @@ window.CRONOS_PROC_UI = {
               <div style="margin-top:12px" class="small">Clique nos números para selecionar um ou vários dentes. Depois escolha o procedimento no painel ao lado. Andamento e ausência também ficam no painel, sem misturar as coisas.</div>
 
               <div class="totalsGrid fichaTotalsUnderOdonto">
-                <div class="totalBox"><span class="label">Total pela tabela</span><div class="value">${moneyBR(totals.totalBase)}</div></div>
-                <div class="totalBox"><span class="label">Valor fechado</span><div class="value">${moneyBR(totals.totalFechado)}</div></div>
+                <div class="totalBox"><span class="label">Valor de tabela</span><div class="value">${moneyBR(totals.totalBase)}</div></div>
+                <div class="totalBox"><span class="label">Valor de orçamento</span><div class="value">${moneyBR(totals.totalFechado)}</div></div>
                 <div class="totalBox"><span class="label">Desconto total</span><div class="value">${moneyBR(totals.totalDesconto)}</div><div class="small">${totals.descontoPct.toFixed(2)}%</div></div>
-                <div class="totalBox"><span class="label">Total feito</span><div class="value">${moneyBR(totals.totalFeito)}</div></div>
+                <div class="totalBox"><span class="label">Total realizado</span><div class="value">${moneyBR(totals.totalFeito)}</div></div>
                 <div class="totalBox"><span class="label">Total pago</span><div class="value">${moneyBR(totals.totalPago)}</div></div>
                 <div class="totalBox"><span class="label">Em aberto</span><div class="value">${moneyBR(totals.emAberto)}</div></div>
               </div>
