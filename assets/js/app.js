@@ -25,6 +25,7 @@ window.__CRONOS_BOOTING__ = true;
 
   function fallbackBeforeBoot(msg){
     try{
+      if(window.__CRONOS_SESSION_CHECKING__ || window.__CRONOS_BOOTING__) return;
       var a=document.getElementById('authView');
       var b=document.getElementById('appView');
       if(a) a.classList.remove('hidden');
@@ -6814,6 +6815,18 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
 async function verificarSessao() {
   window.__CRONOS_SESSION_CHECKING__ = true;
   window.__CRONOS_BOOTING__ = true;
+
+  // Antiflash: ao recarregar, não deixa a tela de login aparecer antes da checagem da sessão.
+  // Mostra direto o estado de carregamento. Se não houver sessão, showAuth() volta para o login normal.
+  try{
+    const auth = document.getElementById("authView");
+    const app = document.getElementById("appView");
+    if(app) app.classList.add("hidden");
+    if(auth) auth.classList.remove("hidden");
+    setSupportEntryLoading(false);
+    setLoginLoading(true, "Restaurando acesso e carregando seu ambiente...");
+  }catch(_){}
+
   const hasSupportToken = new URLSearchParams(location.search).has("support_token");
 
   // Em suporte, deixa o próprio boot resolver tudo — inclusive sem login.
@@ -6836,7 +6849,12 @@ async function verificarSessao() {
   showAuth();
 }
 
-window.addEventListener("load", verificarSessao);
+// Antes rodava só no window.load; isso deixava o login piscar enquanto imagens/assets carregavam.
+if(document.readyState === "loading"){
+  document.addEventListener("DOMContentLoaded", verificarSessao, { once:true });
+}else{
+  setTimeout(verificarSessao, 0);
+}
 document.addEventListener("DOMContentLoaded", () => {
   const btnKanban = document.querySelector('[data-view="kanban"]');
 
