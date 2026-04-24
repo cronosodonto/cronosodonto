@@ -8,6 +8,9 @@ function debounce(fn, delay){
 }
 // ==========================================
 
+window.__CRONOS_SESSION_CHECKING__ = true;
+window.__CRONOS_BOOTING__ = true;
+
 (function(){
   // Error handler:
   // - BEFORE boot: show auth fallback + message.
@@ -45,15 +48,16 @@ function debounce(fn, delay){
     handleErr(r && (r.message || r) );
   });
 
-  // If nothing shows after 1s, force auth visible (only if not booted).
+  // Se nada aparecer, só mostra o login depois de uma folga maior.
+  // Antes estava em 1s e causava flash da tela de login enquanto a nuvem ainda carregava.
   setTimeout(function(){
-    if(window.__CRONOS_BOOTED) return;
+    if(window.__CRONOS_BOOTED || window.__CRONOS_SESSION_CHECKING__ || window.__CRONOS_BOOTING__) return;
     var a=document.getElementById('authView');
     var b=document.getElementById('appView');
     if(a && b && a.classList.contains('hidden') && b.classList.contains('hidden')){
       fallbackBeforeBoot('Boot não exibiu nenhuma tela (fallback automático).');
     }
-  }, 1000);
+  }, 6500);
 })();
 
 /* =========================
@@ -1866,7 +1870,7 @@ async function syncCurrentCloudActor(){
 
   const user = await getCurrentSupabaseUser();
   if(isSupportMode()){
-    let db = await ensureCloudDBLoaded(true);
+    let db = await ensureCloudDBLoaded(false);
     const support = getSupportContext();
     if(!support) return null;
     const supportEmail = String(support.owner_email || "").trim().toLowerCase();
@@ -1880,7 +1884,7 @@ async function syncCurrentCloudActor(){
 
   if(!user) return null;
 
-  let db = await ensureCloudDBLoaded(true);
+  let db = await ensureCloudDBLoaded(false);
 
   const ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || user.email || "").trim().toLowerCase();
   db = ensureMasterRecordByEmail(db, ownerEmail);
@@ -2179,6 +2183,8 @@ function refreshAuthMasters(){
 }
 
 function showAuth(){
+  window.__CRONOS_SESSION_CHECKING__ = false;
+  window.__CRONOS_BOOTING__ = false;
   el("authView").classList.remove("hidden");
   el("appView").classList.add("hidden");
   hideAccessGate();
@@ -2202,6 +2208,8 @@ function showAuth(){
 }
 
 function showApp(actor){
+  window.__CRONOS_SESSION_CHECKING__ = false;
+  window.__CRONOS_BOOTING__ = false;
   window.__CRONOS_ACCESS_BLOCK__ = null;
   setSupportEntryLoading(false);
   el("authView").classList.add("hidden");
@@ -3465,6 +3473,7 @@ function renderLeadsTable(list){
     const idAttr = escapeHTML(String(id));
 
     // Ações
+    const btnFicha = `<button class="iconBtn btnFicha" title="Ficha" onclick="openFicha('${idAttr}')">📋</button>`;
     const btnEdit  = `<button class="iconBtn" title="Abrir" onclick="openLeadEntry('${idAttr}')">✏️</button>`;
     const btnOk    = `<button class="iconBtn" title="Marcar OK" onclick="markOK('${idAttr}')">✅</button>`;
     const btnMsg   = `<button class="iconBtn" title="WhatsApp" onclick="openWhats('${idAttr}')">💬</button>`;
@@ -3486,7 +3495,7 @@ function renderLeadsTable(list){
           </div>
 
           <div class="leadActionsRow">
-            ${btnEdit}${btnOk}${btnMsg}${btnDel}
+            ${btnFicha}${btnEdit}${btnOk}${btnMsg}${btnDel}
           </div>
         </div>
 
@@ -4773,12 +4782,24 @@ if (existingIndex >= 0) {
       entry.installments = [];
     }
 
-    const cloudOk = await saveDB(db, { immediate:true });
+    const cloudPromise = saveDB(db, { immediate:true });
     closeModal();
     ensureMonthOptions(); // in case new month
     const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
-    toast(cloudOk ? "Lead salvo ✅" : "Lead salvo neste navegador", cloudOk ? `${name} • ${savedMonthLabel} • nuvem confirmada` : `${name} • ${savedMonthLabel} • nuvem não confirmou agora`);
+    toast("Lead salvo ✅", `${name} • ${savedMonthLabel} • sincronizando na nuvem...`);
     renderAll();
+
+    Promise.resolve(cloudPromise).then((cloudOk)=>{
+      if(cloudOk){
+        toast("Salvo na nuvem ✅", `${name} • ${savedMonthLabel}`);
+        try{ renderAll(); }catch(_){}
+      }else{
+        toast("Lead salvo neste navegador", `${name} • ${savedMonthLabel} • a nuvem não confirmou agora`);
+      }
+    }).catch((err)=>{
+      console.error("Falha ao confirmar lead na nuvem:", err);
+      toast("Lead salvo neste navegador", `${name} • ${savedMonthLabel} • a nuvem não confirmou agora`);
+    });
   });
 }
 
@@ -6272,6 +6293,8 @@ function renderAll(){
 }
 
 async function boot(){
+  window.__CRONOS_BOOTING__ = true;
+  window.__CRONOS_SESSION_CHECKING__ = true;
   const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
 
   if(supportTokenPresent || isSupportMode()){
@@ -6789,6 +6812,8 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
 });
 
 async function verificarSessao() {
+  window.__CRONOS_SESSION_CHECKING__ = true;
+  window.__CRONOS_BOOTING__ = true;
   const hasSupportToken = new URLSearchParams(location.search).has("support_token");
 
   // Em suporte, deixa o próprio boot resolver tudo — inclusive sem login.
