@@ -5998,12 +5998,58 @@ function renderTasks(){
   const taskSearch = (searchEl?.value || "").trim().toLowerCase();
   const taskFilter = filterEl?.value || "Todos";
 
+  function normTaskFilter(v){
+    return String(v || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/_/g, " ")
+      .trim();
+  }
+
+  const taskFilterNorm = normTaskFilter(taskFilter);
+  const filterTextNorm = normTaskFilter(filterEl?.selectedOptions?.[0]?.textContent || "");
+
+  // Robusto contra diferença entre value e label do select.
+  // Ex: value pode ser "open", "PendentesEAtraso" ou texto "Pendentes e em atraso".
+  const isTodosFilter = taskFilter === "Todos" || taskFilterNorm === "todos" || filterTextNorm === "todos";
+  const isAllOpenFilter =
+    taskFilter === "PendentesEAtraso" ||
+    taskFilterNorm === "pendentes e atraso" ||
+    taskFilterNorm === "pendentes e em atraso" ||
+    filterTextNorm === "pendentes e atraso" ||
+    filterTextNorm === "pendentes e em atraso" ||
+    taskFilterNorm.includes("pendentes") && taskFilterNorm.includes("atraso") ||
+    filterTextNorm.includes("pendentes") && filterTextNorm.includes("atraso") ||
+    taskFilterNorm.includes("abert") ||
+    filterTextNorm.includes("abert");
+
+  const isLateFilter = !isAllOpenFilter && (
+    taskFilter === "Atrasado" ||
+    taskFilterNorm.includes("atrasad") ||
+    filterTextNorm.includes("atrasad")
+  );
+
+  const isPendingFilter = !isAllOpenFilter && (
+    taskFilter === "Pendente" ||
+    taskFilterNorm === "pendente" ||
+    taskFilterNorm === "pendentes" ||
+    filterTextNorm === "pendente" ||
+    filterTextNorm === "pendentes"
+  );
+
+  const isDoneFilter = (
+    taskFilter === "Feito" ||
+    taskFilterNorm.includes("feito") ||
+    filterTextNorm.includes("feito")
+  );
+
   // Visão de tarefas:
   // - Todos = todos os status do mês selecionado.
   // - Pendente/Atrasado/Feito = respeitam o mês selecionado.
   // - Pendentes e em atraso = painel geral de tarefas abertas, ignorando mês.
-  const allStatusMode = taskFilter === "Todos";
-  const allOpenMode = taskFilter === "PendentesEAtraso";
+  const allStatusMode = isTodosFilter;
+  const allOpenMode = isAllOpenFilter;
 
   const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
 
@@ -6025,10 +6071,10 @@ function renderTasks(){
       const overdue = due && due < today && !t.done;
       const pending = !t.done && !overdue;
 
-      if(taskFilter === "PendentesEAtraso") return t.done !== true;
-      if(taskFilter === "Atrasado") return !!overdue;
-      if(taskFilter === "Pendente") return !!pending;
-      if(taskFilter === "Feito") return !!t.done;
+      if(isAllOpenFilter) return t.done !== true;
+      if(isLateFilter) return !!overdue;
+      if(isPendingFilter) return !!pending;
+      if(isDoneFilter) return !!t.done;
       return true;
     })
     .sort((a,b)=> {
