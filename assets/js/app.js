@@ -5997,6 +5997,10 @@ function renderTasks(){
   const taskMonth = monthEl?.value || currentMonth;
   const taskSearch = (searchEl?.value || "").trim().toLowerCase();
   const taskFilter = filterEl?.value || "Todos";
+
+  // Filtros de tarefas abertas precisam ser globais.
+  // Se obedecerem ao mês selecionado, uma tarefa pendente de maio/junho some quando o mês está em abril.
+  const openGlobalMode = ["PendentesEAtraso", "Pendente", "Atrasado"].includes(taskFilter);
   const allOpenMode = taskFilter === "PendentesEAtraso";
 
   const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
@@ -6004,7 +6008,7 @@ function renderTasks(){
   const tasks = (db.tasks||[])
     .filter(t => !t.masterId || t.masterId === actor.masterId)
     .filter(t => {
-      if(allOpenMode) return t.done !== true;
+      if(openGlobalMode) return t.done !== true;
       if(!taskMonth) return true;
       return String(t.dueDate || "").slice(0,7) === taskMonth;
     })
