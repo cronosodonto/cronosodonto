@@ -725,6 +725,29 @@ function deleteInstallment(entryId, number){
   persistInstallmentMutation(db, actor, entryId, "Parcela excluída", `A parcela ${oldNumber}/${oldTotal} foi removida.`);
 }
 
+
+window.cronosSepararContatoDoLead = function(entryId, novoNome){
+  const actor = currentActor && currentActor();
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
+  if(!entry) return console.warn("Lead não encontrado:", entryId);
+  const oldContact = (db.contacts||[]).find(c=>String(c.id)===String(entry.contactId)) || {};
+  const newContact = {
+    ...oldContact,
+    id: (crypto.randomUUID ? crypto.randomUUID() : uid("c")),
+    name: novoNome || oldContact.name || "",
+    masterId: oldContact.masterId || actor?.masterId || entry.masterId || "",
+    firstSeenAt: entry.firstContactAt || oldContact.firstSeenAt || todayISO(),
+    lastSeenAt: todayISO()
+  };
+  db.contacts.push(newContact);
+  entry.contactId = newContact.id;
+  saveDB(db, { immediate:true });
+  try{ renderAll(); }catch(_){}
+  console.log("Contato separado para o lead.", {entryId, oldContactId: oldContact.id, newContactId: newContact.id, newContact});
+  return newContact;
+};
+
 window.cronosLimparTarefasParcelamentoAgora = function(){
   const actor = currentActor && currentActor();
   if(!actor) return console.warn("Sem usuário logado.");
@@ -4609,66 +4632,89 @@ function wireLeadModal(actor, editingEntryId, isNew){
     if(!monthKey || monthKey === "all") monthKey = new Date().toISOString().slice(0,7);
     if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
 
-    // find or create contact (unique by phone)
-// verifica se já existe alguém com esse telefone
-const existing = db.contacts.find(
-  c => c.masterId === actor.masterId && c.phone === phone
-);
+    // Contatos NÃO são mais únicos por telefone.
+    // Mãe e filha podem usar o mesmo WhatsApp sem uma roubar o nome/prontuário da outra.
+    const now = new Date().toISOString();
 
-const selectedContactId = String(el("lf_name")?.dataset.contactId || el("lf_phone")?.dataset.contactId || "").trim();
-if (existing && isNew && !selectedContactId) {
-  const continuar = confirm(
-    "Já existe outro contato com esse telefone.\n\nDeseja continuar mesmo assim?"
-  );
-  if (!continuar) return;
-}
+    const selectedId = String(el("lf_name")?.dataset.contactId || el("lf_phone")?.dataset.contactId || "").trim();
+    const contactDraft = {
+      id: null,
+      masterId: actor.masterId,
+      name,
+      phone,
+      cpf: String(val("lf_cpf") || "").replace(/\D/g, ""),
+      birthDate: val("lf_birth") || "",
+      firstSeenAt: val("lf_first") || todayISO(),
+      lastSeenAt: val("lf_first") || todayISO()
+    };
 
-// SEMPRE cria novo contato
-const now = new Date().toISOString();
+    let existingIndex = -1;
+    let shouldSplitSharedContact = false;
+    const editingEntryRef = editingEntryId ? db.entries.find(e=>String(e.id)===String(editingEntryId)) : null;
 
-let contact = {
-  id: null,
-  masterId: actor.masterId,
-  name,
-  phone,
-  cpf: String(val("lf_cpf") || "").replace(/\D/g, ""),
-  birthDate: val("lf_birth") || "",
-  firstSeenAt: val("lf_first") || todayISO(),
-  lastSeenAt: val("lf_first") || todayISO()
-};
+    if(editingEntryRef?.contactId){
+      // Editando lead existente: começa atualizando o contato vinculado àquele lead.
+      existingIndex = db.contacts.findIndex(c=>String(c.id)===String(editingEntryRef.contactId));
+    }else if(selectedId){
+      // Novo lead vindo de sugestão: aí sim usa o contato selecionado.
+      existingIndex = db.contacts.findIndex(c=>String(c.id)===String(selectedId) && c.masterId===actor.masterId);
+    }
 
-const selectedId = String(el("lf_name")?.dataset.contactId || el("lf_phone")?.dataset.contactId || "").trim();
-let existingIndex = -1;
-if(selectedId){
-  existingIndex = db.contacts.findIndex(function(c){
-    return String(c.id) === String(selectedId);
-  });
-}
-if(existingIndex < 0){
-  existingIndex = db.contacts.findIndex(function(c){
-    return String(c.phone) === String(contact.phone);
-  });
-}
+    const samePhoneContacts = db.contacts.filter(c=>
+      c.masterId === actor.masterId &&
+      String(c.phone || "") === String(phone || "")
+    );
 
-if (existingIndex >= 0) {
+    if(isNew && !selectedId && samePhoneContacts.length){
+      const names = samePhoneContacts.map(c=>c.name).filter(Boolean).slice(0,3).join(", ");
+      const continuar = confirm(
+        "Já existe contato com esse mesmo telefone.\n\n" +
+        (names ? "Contato(s): " + names + "\n\n" : "") +
+        "OK = cadastrar como OUTRO paciente usando o mesmo número.\n" +
+        "Cancelar = voltar e escolher uma sugestão existente."
+      );
+      if(!continuar) return;
+      // Importante: não reaproveita por telefone. Cria outro contato.
+      existingIndex = -1;
+    }
 
-  // atualiza os dados principais do contato
-  db.contacts[existingIndex].name = contact.name;
-  db.contacts[existingIndex].phone = contact.phone;
-  db.contacts[existingIndex].cpf = contact.cpf;
-  db.contacts[existingIndex].birthDate = contact.birthDate;
+    if(editingEntryRef && existingIndex >= 0){
+      const oldContact = db.contacts[existingIndex];
+      const linkedCount = db.entries.filter(e=>String(e.contactId)===String(oldContact.id)).length;
+      const personalChanged =
+        String(oldContact.name || "") !== String(contactDraft.name || "") ||
+        String(oldContact.phone || "") !== String(contactDraft.phone || "") ||
+        String(oldContact.cpf || "") !== String(contactDraft.cpf || "") ||
+        String(oldContact.birthDate || "") !== String(contactDraft.birthDate || "");
 
-  // usa o contato existente para manter histórico
-  contact = db.contacts[existingIndex];
+      if(linkedCount > 1 && personalChanged){
+        shouldSplitSharedContact = confirm(
+          "Este contato está vinculado a " + linkedCount + " leads.\n\n" +
+          "OK = separar ESTE lead como outro paciente, mantendo o mesmo telefone.\n" +
+          "Cancelar = atualizar o contato compartilhado em todos os leads vinculados."
+        );
+        if(shouldSplitSharedContact){
+          existingIndex = -1;
+        }
+      }
+    }
 
-} else {
-
-  // novo contato
-  contact.id = crypto.randomUUID();
-
-  db.contacts.push(contact);
-
-}
+    let contact;
+    if(existingIndex >= 0){
+      db.contacts[existingIndex].name = contactDraft.name;
+      db.contacts[existingIndex].phone = contactDraft.phone;
+      db.contacts[existingIndex].cpf = contactDraft.cpf;
+      db.contacts[existingIndex].birthDate = contactDraft.birthDate;
+      db.contacts[existingIndex].lastSeenAt = contactDraft.lastSeenAt;
+      if(!db.contacts[existingIndex].firstSeenAt) db.contacts[existingIndex].firstSeenAt = contactDraft.firstSeenAt;
+      contact = db.contacts[existingIndex];
+    }else{
+      contact = {
+        ...contactDraft,
+        id: (crypto.randomUUID ? crypto.randomUUID() : uid("c"))
+      };
+      db.contacts.push(contact);
+    }
 
     const status = val("lf_status");
     const origin = val("lf_origin");
@@ -4724,6 +4770,7 @@ if (existingIndex >= 0) {
     if(editingEntryId){
       entry = db.entries.find(e=>e.id===editingEntryId);
       if(!entry) return toast("Erro", "Entrada não encontrada");
+      entry.contactId = contact.id;
     }else{
       entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [] };
       db.entries.push(entry);
