@@ -5998,9 +5998,10 @@ function renderTasks(){
   const taskSearch = (searchEl?.value || "").trim().toLowerCase();
   const taskFilter = filterEl?.value || "Todos";
 
-  // Filtros de tarefas abertas precisam ser globais.
-  // Se obedecerem ao mês selecionado, uma tarefa pendente de maio/junho some quando o mês está em abril.
-  const openGlobalMode = ["PendentesEAtraso", "Pendente", "Atrasado"].includes(taskFilter);
+  // Visão de tarefas:
+  // O mês selecionado manda na tela. "Todos" significa todos os STATUS daquele mês,
+  // não todos os meses da história da humanidade — porque aí vira arqueologia de follow-up.
+  const allStatusMode = taskFilter === "Todos";
   const allOpenMode = taskFilter === "PendentesEAtraso";
 
   const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
@@ -6008,7 +6009,6 @@ function renderTasks(){
   const tasks = (db.tasks||[])
     .filter(t => !t.masterId || t.masterId === actor.masterId)
     .filter(t => {
-      if(openGlobalMode) return t.done !== true;
       if(!taskMonth) return true;
       return String(t.dueDate || "").slice(0,7) === taskMonth;
     })
@@ -6032,13 +6032,23 @@ function renderTasks(){
     .sort((a,b)=> {
       const aDue = String(a.dueDate||"9999-12-31");
       const bDue = String(b.dueDate||"9999-12-31");
-      if(allOpenMode){
+
+      if(allStatusMode || allOpenMode){
         const aDate = a.dueDate ? new Date(a.dueDate+"T00:00:00") : null;
         const bDate = b.dueDate ? new Date(b.dueDate+"T00:00:00") : null;
-        const aOver = aDate && aDate < today && a.done !== true ? 0 : 1;
-        const bOver = bDate && bDate < today && b.done !== true ? 0 : 1;
-        if(aOver !== bOver) return aOver - bOver;
+
+        const rank = (t, d)=>{
+          const overdue = d && d < today && t.done !== true;
+          if(overdue) return 0;
+          if(t.done === true) return allStatusMode ? 2 : 1;
+          return 1;
+        };
+
+        const ar = rank(a, aDate);
+        const br = rank(b, bDate);
+        if(ar !== br) return ar - br;
       }
+
       return aDue.localeCompare(bDue);
     });
 
