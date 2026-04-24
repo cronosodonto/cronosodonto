@@ -667,7 +667,8 @@ renderAll = function(){
     const db = loadDB();
     // ensure installments normalized
     (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
-    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db); }
+    // Não salva na nuvem durante renderização. Tela velha aberta em outro navegador não pode sobrescrever a base cloud.
+    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db, { skipCloud:true }); }
   }catch(e){}
   __renderAll();
   try{
@@ -1508,6 +1509,59 @@ function buildClinicStatePayload(db, user){
   };
 }
 
+
+function __cronosItemTime(item){
+  if(!item || typeof item !== "object") return 0;
+  const candidates = [item.updatedAt, item.lastUpdateAt, item.at, item.createdAt, item.lastSeenAt, item.firstSeenAt, item.date, item.dueDate];
+  for(const v of candidates){
+    if(!v) continue;
+    const t = Date.parse(String(v).length === 10 ? String(v)+"T00:00:00" : String(v));
+    if(Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+function __cronosMergeArrayById(cloudArr, localArr){
+  const out = new Map();
+  (Array.isArray(cloudArr) ? cloudArr : []).forEach(item=>{
+    if(!item || typeof item !== "object") return;
+    const id = String(item.id || item.key || "").trim();
+    if(id) out.set(id, item);
+  });
+  (Array.isArray(localArr) ? localArr : []).forEach(item=>{
+    if(!item || typeof item !== "object") return;
+    const id = String(item.id || item.key || "").trim();
+    if(!id){
+      out.set(`__noid_${Math.random()}_${Date.now()}`, item);
+      return;
+    }
+    const prev = out.get(id);
+    if(!prev){
+      out.set(id, item);
+      return;
+    }
+    const localTime = __cronosItemTime(item);
+    const cloudTime = __cronosItemTime(prev);
+    out.set(id, localTime >= cloudTime ? item : prev);
+  });
+  return Array.from(out.values());
+}
+function mergeCloudAndLocalDB(cloudDB, localDB){
+  const cloud = normalizeDBShape(cloudDB || freshDB());
+  const local = normalizeDBShape(localDB || freshDB());
+  const merged = normalizeDBShape({ ...cloud, ...local });
+  merged.masters = __cronosMergeArrayById(cloud.masters, local.masters);
+  merged.users = __cronosMergeArrayById(cloud.users, local.users);
+  merged.contacts = __cronosMergeArrayById(cloud.contacts, local.contacts);
+  merged.entries = __cronosMergeArrayById(cloud.entries, local.entries);
+  merged.tasks = __cronosMergeArrayById(cloud.tasks, local.tasks);
+  merged.payments = __cronosMergeArrayById(cloud.payments, local.payments);
+  merged.settings = { ...(cloud.settings || {}), ...(local.settings || {}) };
+  merged.version = local.version || cloud.version || "cloud_v2";
+  merged.createdAt = cloud.createdAt || local.createdAt || new Date().toISOString();
+  merged.lastMergedAt = new Date().toISOString();
+  return normalizeDBShape(merged);
+}
+
 async function flushCloudSave(dbToSave){
   const user = await getCurrentSupabaseUser();
   if(!user) return false;
@@ -1516,6 +1570,12 @@ async function flushCloudSave(dbToSave){
   const ownerEmail = String(ctx?.ownerEmail || user.email || "").trim().toLowerCase();
 
   let normalized = ensureMasterRecordByEmail(normalizeDBShape(dbToSave || DB || freshDB()), ownerEmail);
+  if(ctx?.row?.data){
+    // Evita o “último navegador vence”: antes de salvar, mistura o que está na nuvem
+    // com o que este navegador acabou de alterar, preservando leads novos de outros PCs.
+    normalized = mergeCloudAndLocalDB(ctx.row.data, normalized);
+    normalized = ensureMasterRecordByEmail(normalized, ownerEmail);
+  }
   if(CLOUD_MEMBER_INFO){
     normalized = ensureMemberMirror(normalized, CLOUD_MEMBER_INFO);
   }
@@ -1565,7 +1625,7 @@ async function flushCloudSave(dbToSave){
 }
 
 function scheduleCloudSave(immediate=false){
-  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return Promise.resolve(false);
   if(__cloudSaveTimer){
     clearTimeout(__cloudSaveTimer);
     __cloudSaveTimer = null;
@@ -1578,10 +1638,10 @@ function scheduleCloudSave(immediate=false){
     return __cloudSavePromise;
   };
   if(immediate){
-    run();
-    return;
+    return run();
   }
   __cloudSaveTimer = setTimeout(run, 650);
+  return Promise.resolve(true);
 }
 
 async function ensureCloudDBLoaded(force=false){
@@ -1694,8 +1754,8 @@ function saveDB(db, options={}){
     updateSidebarPills();
   }catch(e){}
 
-  if(options.skipCloud) return;
-  scheduleCloudSave(!!options.immediate);
+  if(options.skipCloud) return Promise.resolve(false);
+  return scheduleCloudSave(!!options.immediate);
 }
 
 function createIsolatedSupabaseClient(){
@@ -1873,7 +1933,7 @@ function getPrefs(){
   if(!db.settings) db.settings = {};
   if(typeof db.settings.waTemplate !== "string" || !db.settings.waTemplate.trim()){
     db.settings.waTemplate = "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊";
-    saveDB(db);
+    saveDB(db, { skipCloud:true });
   }
   return db.settings;
 }
@@ -4460,6 +4520,8 @@ let contact = {
   masterId: actor.masterId,
   name,
   phone,
+  cpf: String(val("lf_cpf") || "").replace(/\D/g, ""),
+  birthDate: val("lf_birth") || "",
   firstSeenAt: val("lf_first") || todayISO(),
   lastSeenAt: val("lf_first") || todayISO()
 };
@@ -4711,11 +4773,11 @@ if (existingIndex >= 0) {
       entry.installments = [];
     }
 
-    saveDB(db);
+    const cloudOk = await saveDB(db, { immediate:true });
     closeModal();
     ensureMonthOptions(); // in case new month
     const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
-    toast("Lead salvo ✅", `${name} • ${savedMonthLabel}`);
+    toast(cloudOk ? "Lead salvo ✅" : "Lead salvo neste navegador", cloudOk ? `${name} • ${savedMonthLabel} • nuvem confirmada` : `${name} • ${savedMonthLabel} • nuvem não confirmou agora`);
     renderAll();
   });
 }
