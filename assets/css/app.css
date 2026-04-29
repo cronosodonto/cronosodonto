@@ -97,8 +97,8 @@
     }
 
     .brand{
-      display:flex; align-items:center; gap:10px;
-      padding:10px 12px; border:1px solid var(--line);
+      display:flex; align-items:center; gap:8px;
+      padding:10px 10px; border:1px solid var(--line);
       border-radius: var(--radius);
       background: linear-gradient(135deg, rgba(124,92,255,.16), rgba(46,229,157,.10));
       box-shadow: var(--shadow);
@@ -121,14 +121,15 @@
       border: none;
     }
     .logoBox svg{width:30px;height:30px;display:block}
-    .brand h1{font-size:15px; margin:0; line-height:1.1}
+    .brand h1{font-size:14px; margin:0; line-height:1.05; white-space:nowrap}
     .brand p{margin:2px 0 0; font-size:12px; color:var(--muted)}
+    .brand > div:nth-child(2){min-width:0; flex:1}
 
     .topTools{
       display:flex; gap:8px; margin-top:10px;
     }
     .iconBtn{
-      width:42px; height:42px;
+      width:40px; height:40px;
       border-radius:14px;
       border:1px solid var(--line);
       background: rgba(255,255,255,.03);
@@ -524,6 +525,13 @@ to { transform: rotate(360deg); }
       background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 42%), var(--panel);
       box-shadow: var(--shadow);
       padding: 16px 16px 16px 16px;
+    }
+
+    .bootSplashCard{
+      text-align:left;
+    }
+    .bootSplashCard .authStatus{
+      justify-content:center;
     }
 
     .authLoginGrid{
@@ -1158,6 +1166,10 @@ html, body{ overflow-x: hidden; }
 #chartTooltip .ttTitle{font-weight:700; margin-bottom:4px;}
 #chartTooltip .ttRow{display:flex; gap:8px; justify-content:space-between;}
 #chartTooltip .ttDot{width:8px; height:8px; border-radius:99px; margin-top:4px;}
+#chartTooltip .ttSources{margin:4px 0 2px 16px; opacity:.96; font-size:11px; line-height:1.25;}
+#chartTooltip .ttSourceLine{display:flex; justify-content:space-between; gap:10px; max-width:230px;}
+#chartTooltip .ttSourceMore{opacity:.78; margin-top:2px;}
+#chartTooltip .ttHint{margin-top:6px; opacity:.72; font-size:11px; border-top:1px solid rgba(255,255,255,.16); padding-top:5px;}
 
 
 /* KPI clicável */
@@ -1551,3 +1563,310 @@ html.feature-lock-active{
 :root.light #featureBlockedOverlay .featureBlockedText + .featureBlockedText{
   color:rgba(15,23,42,.68);
 }
+
+
+/* v6: Simulador de Crédito respeitando tema claro */
+html.light #view-creditSimulator,
+html.light #view-creditSimulator *{
+  color: var(--text) !important;
+}
+html.light #view-creditSimulator .credHero,
+html.light #view-creditSimulator .credCard{
+  background: var(--panel) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow) !important;
+}
+html.light #view-creditSimulator .credMode button,
+html.light #view-creditSimulator .credBtn,
+html.light #view-creditSimulator .credForm input,
+html.light #view-creditSimulator .credCard input,
+html.light #view-creditSimulator .credSelected,
+html.light #view-creditSimulator .credSuggestion,
+html.light #view-creditSimulator .credPlan,
+html.light #view-creditSimulator .credHistItem,
+html.light #view-creditSimulator .credBox{
+  background: rgba(255,255,255,.72) !important;
+  border-color: rgba(17,24,39,.14) !important;
+  color: var(--text) !important;
+}
+html.light #view-creditSimulator .credForm input[readonly]{
+  background: rgba(17,24,39,.04) !important;
+  color: rgba(15,23,42,.72) !important;
+}
+html.light #view-creditSimulator .credMuted,
+html.light #view-creditSimulator .credPill{
+  color: var(--muted) !important;
+}
+html.light #view-creditSimulator .credSuccess{
+  background: rgba(6,182,212,.10) !important;
+  border-color: rgba(6,182,212,.35) !important;
+}
+html.light #view-creditSimulator .credAlert{
+  background: rgba(217,119,6,.10) !important;
+  border-color: rgba(217,119,6,.30) !important;
+}
+
+
+/* === PATCH v13: sidebar mais compacto com rolagem + Performance sem scroll horizontal === */
+.brand{gap:8px; padding:10px 10px; min-width:0;}
+.brand > div:not(.logoBox){min-width:0; flex:1 1 auto;}
+.brand h1{font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; letter-spacing:-.02em;}
+.brand p{white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.logoBox{width:40px; height:40px;}
+.logoBox svg{width:28px; height:28px;}
+.brand .iconBtn{width:38px; height:38px; border-radius:13px; flex:0 0 auto;}
+@media(max-width:1100px){
+  .brand h1{font-size:13px;}
+  .logoBox{width:36px;height:36px;}
+  .brand .iconBtn{width:36px;height:36px;}
+}
+
+
+/* === PATCH v89: simulador - percentual único e legível no modo claro === */
+#view-creditSimulator .credEntryPctBadge{display:none !important;}
+#view-creditSimulator .credEntryPctGroup label{display:block !important;}
+#view-creditSimulator .credEntryPctInline{
+  display:grid !important;
+  grid-template-columns:minmax(0,1fr) 94px !important;
+  gap:10px !important;
+  align-items:center !important;
+}
+#view-creditSimulator #credEntryPct{
+  opacity:1 !important;
+  text-align:center !important;
+  font-weight:900 !important;
+  color:#dbeafe !important;
+  -webkit-text-fill-color:#dbeafe !important;
+  background:rgba(96,165,250,.10) !important;
+  border-color:rgba(147,197,253,.22) !important;
+  cursor:default !important;
+}
+:root.light #view-creditSimulator #credEntryPct,
+html.light #view-creditSimulator #credEntryPct,
+body.light #view-creditSimulator #credEntryPct{
+  opacity:1 !important;
+  color:#0f172a !important;
+  -webkit-text-fill-color:#0f172a !important;
+  background:rgba(37,99,235,.12) !important;
+  border-color:rgba(37,99,235,.30) !important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.65) !important;
+}
+@media(max-width:720px){
+  #view-creditSimulator .credEntryPctInline{grid-template-columns:1fr !important;}
+  #view-creditSimulator #credEntryPct{text-align:left !important;}
+}
+
+/* CRONOS_PATCH_V90_SIDEFOOTER_ACTION_COLORS
+   Ações rápidas do rodapé lateral: cores sólidas no claro, vidro colorido no escuro. */
+.sideFooter .row button{
+  font-weight:800;
+  letter-spacing:-.01em;
+  justify-content:center;
+}
+:root.light #btnNewLeadSide,
+html.light #btnNewLeadSide,
+body.light #btnNewLeadSide,
+:root.light #btnRefreshNow,
+html.light #btnRefreshNow,
+body.light #btnRefreshNow{
+  color:#ffffff !important;
+  -webkit-text-fill-color:#ffffff !important;
+  border-color:rgba(37,99,235,.45) !important;
+  background:linear-gradient(135deg,#2563eb,#06b6d4) !important;
+  box-shadow:0 10px 22px rgba(37,99,235,.20) !important;
+}
+:root.light #btnMyPasswordSide,
+html.light #btnMyPasswordSide,
+body.light #btnMyPasswordSide{
+  color:#78350f !important;
+  -webkit-text-fill-color:#78350f !important;
+  border-color:rgba(245,158,11,.55) !important;
+  background:linear-gradient(135deg,#fbbf24,#f59e0b) !important;
+  box-shadow:0 10px 22px rgba(245,158,11,.18) !important;
+}
+:root.light #btnLogout,
+html.light #btnLogout,
+body.light #btnLogout{
+  color:#ffffff !important;
+  -webkit-text-fill-color:#ffffff !important;
+  border-color:rgba(225,29,72,.55) !important;
+  background:linear-gradient(135deg,#f43f5e,#e11d48) !important;
+  box-shadow:0 10px 22px rgba(225,29,72,.20) !important;
+}
+:root:not(.light) #btnNewLeadSide,
+html:not(.light) #btnNewLeadSide,
+body:not(.light) #btnNewLeadSide{
+  color:#dbeafe !important;
+  -webkit-text-fill-color:#dbeafe !important;
+  border-color:rgba(96,165,250,.55) !important;
+  background:linear-gradient(135deg,rgba(37,99,235,.24),rgba(6,182,212,.14)) !important;
+  box-shadow:0 10px 24px rgba(37,99,235,.13) !important;
+}
+:root:not(.light) #btnRefreshNow,
+html:not(.light) #btnRefreshNow,
+body:not(.light) #btnRefreshNow{
+  color:#dbeafe !important;
+  -webkit-text-fill-color:#dbeafe !important;
+  border-color:rgba(96,165,250,.50) !important;
+  background:rgba(37,99,235,.12) !important;
+  box-shadow:0 10px 24px rgba(37,99,235,.10) !important;
+}
+:root:not(.light) #btnMyPasswordSide,
+html:not(.light) #btnMyPasswordSide,
+body:not(.light) #btnMyPasswordSide{
+  color:#fde68a !important;
+  -webkit-text-fill-color:#fde68a !important;
+  border-color:rgba(245,158,11,.60) !important;
+  background:rgba(245,158,11,.12) !important;
+  box-shadow:0 10px 24px rgba(245,158,11,.09) !important;
+}
+:root:not(.light) #btnLogout,
+html:not(.light) #btnLogout,
+body:not(.light) #btnLogout{
+  color:#fecdd3 !important;
+  -webkit-text-fill-color:#fecdd3 !important;
+  border-color:rgba(244,63,94,.70) !important;
+  background:rgba(244,63,94,.10) !important;
+  box-shadow:0 10px 24px rgba(244,63,94,.09) !important;
+}
+#btnNewLeadSide:hover,
+#btnRefreshNow:hover,
+#btnMyPasswordSide:hover,
+#btnLogout:hover{
+  transform:translateY(-1px);
+  filter:brightness(1.04);
+}
+
+
+/* CRONOS_PATCH_V95_HOVER_KPI_BADGE_REFINADO_FALLBACK */
+  html.light .sidebar .nav button.active,
+  html.light .sidebar .nav button.active:hover,
+  :root.light .sidebar .nav button.active,
+  :root.light .sidebar .nav button.active:hover,
+  body.light .sidebar .nav button.active,
+  body.light .sidebar .nav button.active:hover{
+    color:#ffffff !important;
+    -webkit-text-fill-color:#ffffff !important;
+    border-color:rgba(37,99,235,.64) !important;
+    background:linear-gradient(135deg,#2563eb 0%,#0ea5e9 48%,#14b8a6 100%) !important;
+    box-shadow:0 14px 30px rgba(37,99,235,.21),0 6px 16px rgba(20,184,166,.13),inset 0 0 0 1px rgba(255,255,255,.20) !important;
+    transform:translateY(-1px) !important;
+  }
+  html.light .sidebar .nav button:not(.active):hover,
+  :root.light .sidebar .nav button:not(.active):hover,
+  body.light .sidebar .nav button:not(.active):hover{
+    border-color:rgba(37,99,235,.34) !important;
+    background:linear-gradient(135deg,rgba(37,99,235,.12),rgba(20,184,166,.09)),rgba(255,255,255,.94) !important;
+    box-shadow:0 10px 22px rgba(37,99,235,.10),inset 0 0 0 1px rgba(255,255,255,.62) !important;
+  }
+  html.light .sidebar .nav button.active .pill,
+  html.light .sidebar .nav #navHojeCronos.active .todayNavBadge,
+  :root.light .sidebar .nav button.active .pill,
+  :root.light .sidebar .nav #navHojeCronos.active .todayNavBadge,
+  body.light .sidebar .nav button.active .pill,
+  body.light .sidebar .nav #navHojeCronos.active .todayNavBadge{
+    color:#ffffff !important;
+    -webkit-text-fill-color:#ffffff !important;
+    background:rgba(255,255,255,.20) !important;
+    border-color:rgba(255,255,255,.32) !important;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.08) !important;
+  }
+  html:not(.light) .sidebar .nav button.active,
+  html:not(.light) .sidebar .nav button.active:hover,
+  :root:not(.light) .sidebar .nav button.active,
+  :root:not(.light) .sidebar .nav button.active:hover,
+  body:not(.light) .sidebar .nav button.active,
+  body:not(.light) .sidebar .nav button.active:hover{
+    color:#f8f7ff !important;
+    -webkit-text-fill-color:#f8f7ff !important;
+    border-color:rgba(196,181,253,.50) !important;
+    background:linear-gradient(135deg,rgba(88,28,135,.48) 0%,rgba(109,40,217,.38) 48%,rgba(49,46,129,.34) 100%),rgba(15,23,42,.58) !important;
+    box-shadow:0 9px 18px rgba(88,28,135,.13),inset 0 0 0 1px rgba(255,255,255,.07) !important;
+  }
+  html:not(.light) .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
+  :root:not(.light) .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
+  body:not(.light) .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
+  html:not(.light) .sidebar .nav button:not(.active) .pill,
+  :root:not(.light) .sidebar .nav button:not(.active) .pill,
+  body:not(.light) .sidebar .nav button:not(.active) .pill{
+    color:rgba(226,232,240,.74) !important;
+    -webkit-text-fill-color:rgba(226,232,240,.74) !important;
+    background:rgba(15,23,42,.26) !important;
+    border-color:rgba(148,163,184,.20) !important;
+    box-shadow:none !important;
+    opacity:1 !important;
+  }
+  html.light .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
+  :root.light .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
+  body.light .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
+  html.light .sidebar .nav button:not(.active) .pill,
+  :root.light .sidebar .nav button:not(.active) .pill,
+  body.light .sidebar .nav button:not(.active) .pill{
+    color:#475569 !important;
+    -webkit-text-fill-color:#475569 !important;
+    background:rgba(37,99,235,.065) !important;
+    border-color:rgba(37,99,235,.14) !important;
+    box-shadow:none !important;
+    opacity:1 !important;
+  }
+  html.light #view-dashboard .kpis .kpi.kpiActive,
+  html.light #view-dashboard .kpis .kpi.kpiActive:hover,
+  html.light #view-dashboard .kpis .kpi[aria-pressed="true"],
+  html.light #view-dashboard .kpis .kpi[aria-pressed="true"]:hover,
+  :root.light #view-dashboard .kpis .kpi.kpiActive,
+  :root.light #view-dashboard .kpis .kpi.kpiActive:hover,
+  :root.light #view-dashboard .kpis .kpi[aria-pressed="true"],
+  :root.light #view-dashboard .kpis .kpi[aria-pressed="true"]:hover,
+  body.light #view-dashboard .kpis .kpi.kpiActive,
+  body.light #view-dashboard .kpis .kpi.kpiActive:hover,
+  body.light #view-dashboard .kpis .kpi[aria-pressed="true"],
+  body.light #view-dashboard .kpis .kpi[aria-pressed="true"]:hover{
+    color:#ffffff !important;
+    -webkit-text-fill-color:#ffffff !important;
+    border-color:rgba(37,99,235,.74) !important;
+    background:linear-gradient(135deg,#2563eb 0%,#0ea5e9 52%,#14b8a6 100%) !important;
+    box-shadow:0 16px 34px rgba(37,99,235,.22),0 7px 18px rgba(20,184,166,.14),inset 0 0 0 1px rgba(255,255,255,.18) !important;
+  }
+  html.light #view-dashboard .kpis .kpi.kpiActive .label, html.light #view-dashboard .kpis .kpi.kpiActive .hint, html.light #view-dashboard .kpis .kpi.kpiActive .value, html.light #view-dashboard .kpis .kpi[aria-pressed="true"] .label, html.light #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, html.light #view-dashboard .kpis .kpi[aria-pressed="true"] .value,
+  :root.light #view-dashboard .kpis .kpi.kpiActive .label, :root.light #view-dashboard .kpis .kpi.kpiActive .hint, :root.light #view-dashboard .kpis .kpi.kpiActive .value, :root.light #view-dashboard .kpis .kpi[aria-pressed="true"] .label, :root.light #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, :root.light #view-dashboard .kpis .kpi[aria-pressed="true"] .value,
+  body.light #view-dashboard .kpis .kpi.kpiActive .label, body.light #view-dashboard .kpis .kpi.kpiActive .hint, body.light #view-dashboard .kpis .kpi.kpiActive .value, body.light #view-dashboard .kpis .kpi[aria-pressed="true"] .label, body.light #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, body.light #view-dashboard .kpis .kpi[aria-pressed="true"] .value{
+    color:#ffffff !important;
+    -webkit-text-fill-color:#ffffff !important;
+  }
+  html:not(.light) #view-dashboard .kpis .kpi.kpiActive,
+  html:not(.light) #view-dashboard .kpis .kpi.kpiActive:hover,
+  html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"],
+  html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"]:hover,
+  :root:not(.light) #view-dashboard .kpis .kpi.kpiActive,
+  :root:not(.light) #view-dashboard .kpis .kpi.kpiActive:hover,
+  :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"],
+  :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"]:hover,
+  body:not(.light) #view-dashboard .kpis .kpi.kpiActive,
+  body:not(.light) #view-dashboard .kpis .kpi.kpiActive:hover,
+  body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"],
+  body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"]:hover{
+    color:#f8f7ff !important;
+    -webkit-text-fill-color:#f8f7ff !important;
+    border-color:rgba(196,181,253,.62) !important;
+    background:linear-gradient(135deg,rgba(88,28,135,.54) 0%,rgba(109,40,217,.42) 50%,rgba(49,46,129,.38) 100%),rgba(17,24,39,.66) !important;
+    box-shadow:0 12px 26px rgba(88,28,135,.17),0 4px 12px rgba(79,70,229,.09),inset 0 0 0 1px rgba(255,255,255,.08) !important;
+    outline:0 !important;
+  }
+  html:not(.light) #view-dashboard .kpis .kpi.kpiActive .label, html:not(.light) #view-dashboard .kpis .kpi.kpiActive .hint, html:not(.light) #view-dashboard .kpis .kpi.kpiActive .value, html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .label, html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .value,
+  :root:not(.light) #view-dashboard .kpis .kpi.kpiActive .label, :root:not(.light) #view-dashboard .kpis .kpi.kpiActive .hint, :root:not(.light) #view-dashboard .kpis .kpi.kpiActive .value, :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .label, :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .value,
+  body:not(.light) #view-dashboard .kpis .kpi.kpiActive .label, body:not(.light) #view-dashboard .kpis .kpi.kpiActive .hint, body:not(.light) #view-dashboard .kpis .kpi.kpiActive .value, body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .label, body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .value{
+    color:#f8f7ff !important;
+    -webkit-text-fill-color:#f8f7ff !important;
+  }
+  html:not(.light) #view-dashboard .kpis .kpi.kpiActive .kpiPct,
+  html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .kpiPct,
+  :root:not(.light) #view-dashboard .kpis .kpi.kpiActive .kpiPct,
+  :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .kpiPct,
+  body:not(.light) #view-dashboard .kpis .kpi.kpiActive .kpiPct,
+  body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .kpiPct{
+    color:#ffffff !important;
+    -webkit-text-fill-color:#ffffff !important;
+    background:rgba(255,255,255,.13) !important;
+    border-color:rgba(255,255,255,.20) !important;
+    box-shadow:none !important;
+  }
