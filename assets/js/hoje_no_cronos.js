@@ -1595,7 +1595,7 @@
 
   function renderFlows(items, db){
     if(!items.length){
-      return `<div class="todayEmpty">Nenhum fluxo assistido vencendo hoje. Quando criarmos os fluxos, eles vão cair aqui automaticamente.</div>`;
+      return `<div class="todayEmpty">Nenhum fluxo assistido vencendo hoje. Silêncio raro, mas o Cronos não dorme no ponto</div>`;
     }
     return items.map(item=>{
       const e = item.entry;
