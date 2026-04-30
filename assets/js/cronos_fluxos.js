@@ -1,7 +1,5 @@
 /* =========================================================
-   CRONOS FLUXOS ASSISTIDOS — módulo separado
-   Versão: fluxos_v7_identity_dedupe_real
-   Coloque este arquivo DEPOIS do app.js e do hoje_no_cronos.js.
+   Fluxos assistidos
    ========================================================= */
 (function(){
   const BOOT_FLAG = "__CRONOS_FLUXOS_BOOTED__";
@@ -400,8 +398,6 @@
   function renderSettingsCard(){
     const card = $(CARD_ID);
     if(!card) return;
-    // Sempre que redesenha, remove a casca antiga do accordion; depois o enhanceSettingsUI recria.
-    // Sem isso, depois de salvar o primeiro fluxo o card ficava aberto/sem seta.
     card.classList.remove('settingsAccCard','isOpen');
     delete card.dataset.settingsAccordion;
     const db = load();

@@ -1,13 +1,11 @@
 /* =========================================================
-   CRONOS SIMULADOR DE CRÉDITO/PAGAMENTO — módulo separado
-   Versão: credito_v36_percentual_entrada_editavel
-   Preencha valor total, entrada opcional, meses e taxa; o saldo financiado e a prestação são calculados automaticamente. Inclui Análise Inteligente de Risco.
+   Simulador de crédito e análise de risco
    ========================================================= */
 (function(){
   const BOOT='__CRONOS_CREDITO_BOOTED__';
   if(window[BOOT]) return;
   window[BOOT]=true;
-  window.CRONOS_CREDITO_VERSION='v36-percentual-entrada-editavel';
+  window.CRONOS_CREDITO_VERSION='public';
 
   const VIEW_ID='view-creditSimulator';
   const NAV_ID='navCreditoSimulator';
@@ -44,6 +42,10 @@
   function load(){try{return window.loadDB()}catch(_){return null}}
   function actor(){try{return window.currentActor()}catch(_){return null}}
   function toast(t,m=''){try{if(typeof window.toast==='function')return window.toast(t,m)}catch(_){} console.log('[Simulador]',t,m)}
+  function canOpenCredit(){
+    try{return !window.CRONOS_CAN_ACCESS_MODULE || window.CRONOS_CAN_ACCESS_MODULE('creditSimulator')}catch(_){return true}
+  }
+  function denyCreditAccess(){toast('Acesso restrito','Seu nível de acesso não permite abrir o Simulador.')}
   function esc(v){try{if(typeof window.escapeHTML==='function')return window.escapeHTML(v)}catch(_){} return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
   function money(v){try{if(typeof window.moneyBR==='function')return window.moneyBR(v)}catch(_){} return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
   function fmt(iso){try{if(typeof window.fmtBR==='function')return window.fmtBR(iso)}catch(_){} const s=String(iso||'').slice(0,10),p=s.split('-'); return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:s}
@@ -53,10 +55,8 @@
     if(!s)return null;
     s=s.replace(/\s/g,'').replace(/R\$/gi,'').replace(/%/g,'');
     if(s.includes(',')){
-      // Formato BR: 5.000,00 ou 2,5
       s=s.replace(/\./g,'').replace(',','.');
     }else{
-      // Sem vírgula: preserva decimal com ponto quando existir só um ponto decimal.
       const dotCount=(s.match(/\./g)||[]).length;
       if(dotCount>1) s=s.replace(/\./g,'');
     }
@@ -293,7 +293,6 @@
       body.light #${VIEW_ID} .riskClass{background:#eef6ff;border-color:#cfe0ff;color:#0f172a}
 
 
-      /* v25 — botões realmente com cara de botão no tema claro */
       :root.light #${VIEW_ID} .credBtn,
       :root.light #${VIEW_ID} .credMode button,
       html.light #${VIEW_ID} .credBtn,
@@ -339,7 +338,6 @@
       }
 
 
-      /* v26 — override final: botões com cara de botão no tema claro */
       :root.light #${VIEW_ID} .credBtn,
       :root.light #${VIEW_ID} .credMode button,
       html.light #${VIEW_ID} .credBtn,
@@ -390,7 +388,6 @@
       }
 
 
-      /* v28 — Atualizar principal com texto branco e contraste certo */
       #${VIEW_ID} .credHero .credRefreshBtn,
       :root.light #${VIEW_ID} .credHero .credRefreshBtn,
       html.light #${VIEW_ID} .credHero .credRefreshBtn,
@@ -408,7 +405,6 @@
       }
 
 
-      /* v30 — busca de paciente compacta: não empurra a Análise de Risco para o rodapé do universo */
       #${VIEW_ID} .credSuggestions{
         max-height:260px;
         overflow:auto;
@@ -434,7 +430,6 @@
       }
 
 
-      /* v32 — resultado da simulação em card próprio, sem deixar buraco na coluna esquerda */
       #${VIEW_ID} .credResultCard{margin-top:0}
       #${VIEW_ID} .credResultCard .credSuccess{margin-top:0}
       #${VIEW_ID} .credResultWide{grid-template-columns:repeat(6,minmax(120px,1fr))}
@@ -443,7 +438,6 @@
       @media(max-width:760px){#${VIEW_ID} .credResultWide{grid-template-columns:1fr 1fr}}
 
 
-      /* v33 — gráfico simples no resultado da simulação */
       #${VIEW_ID} .credResultBody{
         display:grid;
         grid-template-columns:minmax(320px,.95fr) minmax(280px,.55fr);
@@ -523,7 +517,6 @@
 
       @media(max-width:1100px){.riskGrid{grid-template-columns:1fr}.credResult{grid-template-columns:1fr 1fr}}@media(max-width:760px){.credGrid{grid-template-columns:1fr!important}}
 
-      /* v29 — força layout lado a lado em notebook/desktop */
       #${VIEW_ID} .credGrid{
         display:grid!important;
         grid-template-columns:minmax(280px,0.82fr) minmax(460px,1.18fr)!important;
@@ -554,7 +547,11 @@
     return v;
   }
   function ensureNav(){
-    if($(NAV_ID))return;
+    const existing=$(NAV_ID);
+    if(existing){
+      existing.classList.toggle('hidden',!canOpenCredit());
+      return;
+    }
     const nav=qs('.nav');
     if(!nav)return;
     const b=document.createElement('button');
@@ -562,12 +559,17 @@
     b.type='button';
     b.dataset.creditoSimulator='1';
     b.innerHTML='<span><span class="credNavIcon">$</span>Simulador</span><span class="pill">crédito</span>';
+    b.classList.toggle('hidden',!canOpenCredit());
     const openCredit=e=>{
       try{
         e?.preventDefault?.();
         e?.stopPropagation?.();
         e?.stopImmediatePropagation?.();
       }catch(_){}
+      if(!canOpenCredit()){
+        denyCreditAccess();
+        return false;
+      }
       show();
       return false;
     };
@@ -579,8 +581,6 @@
     else nav.appendChild(b);
   }
   function restore(){
-    // Não reabre todas as telas nativas aqui. O roteador principal decide qual aba mostrar.
-    // Reabrir tudo por alguns milissegundos causava o Dashboard/Hoje no Cronos piscando dentro de outras abas.
     qsa('[data-credito-hidden="1"]',mainHost()).forEach(v=>{
       if(v.id!==VIEW_ID){
         delete v.dataset.creditoHidden;
@@ -626,6 +626,10 @@
     document.addEventListener('keydown',ev=>{if(ev.key==='Enter'||ev.key===' ')rec(ev)},true);
   }
   function show(){
+    if(!canOpenCredit()){
+      denyCreditAccess();
+      return;
+    }
     css();ensureView();ensureNav();recoverBind();hideOthers();render();
     setTimeout(()=>scrollTo({top:0,left:0,behavior:'auto'}),0);
   }
@@ -650,20 +654,17 @@
       const treatment=norm(e.treatment||e.tratamento||'');
       let score=0;
 
-      // Nome pesa muito mais que qualquer outro campo.
       if(name===q) score+=120;
       if(name.startsWith(q)) score+=100;
       else if(name.split(/\s+/).some(part=>part.startsWith(q))) score+=82;
       else if(name.includes(q)) score+=55;
 
-      // Telefone/CPF só quando o usuário digitar números.
       const digits=String(S.search||'').replace(/\D/g,'');
       if(digits.length>=3){
         if(String(c.phone||'').replace(/\D/g,'').includes(digits)) score+=45;
         if(String(c.cpf||'').replace(/\D/g,'').includes(digits)) score+=45;
       }
 
-      // Tratamento só como fallback leve, para evitar paciente aleatório por coincidência.
       if(score===0 && q.length>=4 && treatment.includes(q)) score+=12;
 
       if(tokens.length>1 && tokens.every(t=>name.includes(t))) score+=35;
@@ -731,10 +732,6 @@
   }
 
   function updateCreditDerived(source){
-    // Percentual da entrada agora é bidirecional:
-    // - digitou valor em reais na entrada => calcula %;
-    // - digitou % => calcula valor da entrada.
-    // O último campo editado vira a referência para os próximos recálculos.
     const total=parse(S.inputs.total);
     const entryRaw=parse(S.inputs.entry);
     const pctRaw=parseRate(S.inputs.entryPct);
@@ -850,8 +847,6 @@
     const entry=Math.max(0,Number(entryRaw||0));
     S.error='';S.result=null;
 
-    // Prestação é campo de saída. O usuário informa valor total, entrada opcional, prazo e taxa.
-    // O Cronos calcula automaticamente o saldo financiado e calcula as parcelas sobre esse saldo.
     if(total===null || n===null || rp===null){
       S.inputs.P='';
       S.error='Preencha valor total/proposta, nº de meses e taxa mensal. A entrada é opcional; o saldo financiado e a prestação são calculados pelo Cronos.';
@@ -870,9 +865,6 @@
       out.pmt=roundMoney(out.pmtExact);
       setInputValue('P',brnum(out.pmt));
       if(!Number.isFinite(out.total)||!Number.isFinite(out.entry)||!Number.isFinite(out.pv)||!Number.isFinite(out.n)||!Number.isFinite(out.ratePct)||!Number.isFinite(out.pmt))throw Error('Não foi possível calcular com esses dados.');
-      // Regra de apresentação/contrato: a parcela é arredondada para centavos primeiro.
-      // Depois o total parcelado, o total geral e os juros são calculados usando a parcela exibida.
-      // Assim o Cronos bate com a lógica visual da Calculadora do Cidadão: parcela x nº de meses.
       out.installmentsTotal=roundMoney(out.pmt*out.n);
       out.totalPaid=roundMoney(out.entry+out.installmentsTotal);
       out.interest=roundMoney(out.installmentsTotal-out.pv);

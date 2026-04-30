@@ -1,8 +1,5 @@
 /* =========================================================
-   CRONOS PERFORMANCE — módulo separado
-   Versão: performance_v3_tooltip_hover
-   - gráfico histórico de desempenho mês a mês
-   - barra/degradê compara apenas mês atual vs mês anterior
+   Performance mensal
    ========================================================= */
 (function(){
   const BOOT='__CRONOS_PERFORMANCE_BOOTED__';
@@ -26,6 +23,10 @@
   function esc(v){try{if(typeof window.escapeHTML==='function')return window.escapeHTML(v)}catch(_){} return String(v??'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))}
   function money(v){try{if(typeof window.moneyBR==='function')return window.moneyBR(v)}catch(_){} return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
   function toast(t,m=''){try{if(typeof window.toast==='function')return window.toast(t,m)}catch(_){} console.log('[Performance]',t,m)}
+  function canOpenPerformance(){
+    try{return !window.CRONOS_CAN_ACCESS_MODULE || window.CRONOS_CAN_ACCESS_MODULE('performance')}catch(_){return true}
+  }
+  function denyPerformanceAccess(){toast('Acesso restrito','Seu nível de acesso não permite abrir Performance.')}
   function num(v){const n=Number(v||0); return Number.isFinite(n)?n:0}
   function todayISO(){try{if(typeof window.todayISO==='function')return window.todayISO()}catch(_){} const d=new Date(); const tz=d.getTimezoneOffset()*60000; return new Date(d-tz).toISOString().slice(0,10)}
   function monthKeyFromDate(iso){return String(iso||'').slice(0,7)}
@@ -140,13 +141,17 @@
   function ensureNav(){
     const nav=qs('.nav'); if(!nav) return;
     let btn=$(NAV_ID);
+    if(btn){
+      btn.classList.toggle('hidden',!canOpenPerformance());
+    }
     if(!btn){
       btn=document.createElement('button');
       btn.id=NAV_ID;
       btn.type='button';
       btn.dataset.performance='1';
       btn.innerHTML='<span>↗ Performance</span><span class="pill">meta</span>';
-      const open=(ev)=>{try{ev?.preventDefault?.();ev?.stopPropagation?.();ev?.stopImmediatePropagation?.()}catch(_){} show(); return false;};
+      btn.classList.toggle('hidden',!canOpenPerformance());
+      const open=(ev)=>{try{ev?.preventDefault?.();ev?.stopPropagation?.();ev?.stopImmediatePropagation?.()}catch(_){} if(!canOpenPerformance()){denyPerformanceAccess(); return false;} show(); return false;};
       btn.addEventListener('pointerdown',open,true);
       btn.addEventListener('click',open,true);
       btn.onclick=open;
@@ -226,7 +231,6 @@
       return c?.name||obj?.contactName||obj?.name||entry?.name||entry?.lead||'Sem paciente vinculado';
     };
 
-    // Usa a mesma fonte oficial do Dashboard e de Recebimentos.
     const unifiedEvents = (typeof window.buildCronosReceivedEvents === 'function')
       ? window.buildCronosReceivedEvents(db, a, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true })
       : [];
@@ -241,7 +245,6 @@
         });
       });
     }else{
-      // Fallback antigo, só para o caso extremo do app principal não ter carregado a função oficial.
       (db.payments||[]).forEach((p,idx)=>{
         const pid=String(p.entryId||'');
         const cid=String(p.contactId||'');
@@ -547,7 +550,13 @@
     }
   }
 
-  function show(){css();ensureView();ensureNav();bindRecovery();hideOthers();render();setTimeout(()=>{try{window.scrollTo({top:0,left:0,behavior:'auto'})}catch(_){ }},0)}
+  function show(){
+    if(!canOpenPerformance()){
+      denyPerformanceAccess();
+      return;
+    }
+    css();ensureView();ensureNav();bindRecovery();hideOthers();render();setTimeout(()=>{try{window.scrollTo({top:0,left:0,behavior:'auto'})}catch(_){ }},0)
+  }
 
   function setYear(year){
     const y=Number(year);

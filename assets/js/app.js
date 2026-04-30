@@ -1,4 +1,3 @@
-// ===== SAFE PATCH: debounce fallback =====
 function debounce(fn, delay){
   let t;
   return function(...args){
@@ -6,17 +5,13 @@ function debounce(fn, delay){
     t = setTimeout(()=>fn.apply(this,args), delay||300);
   };
 }
-// ==========================================
+
 
 window.__CRONOS_SESSION_CHECKING__ = true;
 window.__CRONOS_BOOTING__ = true;
 
 (function(){
-  // Error handler:
-  // - BEFORE boot: show auth fallback + message.
-  // - AFTER boot: keep the current screen, only show a toast with the error (não derruba a sessão).
   function showToast(title, message, type = 'info') {
-    // Produção: sem notificações visuais (evita "tag" no canto).
     try {
       const prefix = type ? `[${String(type).toUpperCase()}]` : '[INFO]';
       console.log(prefix, title || '', message || '');
@@ -37,7 +32,6 @@ window.__CRONOS_BOOTING__ = true;
   }
 
   function handleErr(msg){
-    // If already booted, do NOT change screens—just report.
     if(window.__CRONOS_BOOTED){
       showToast(msg || 'Erro inesperado.');
       return;
@@ -51,8 +45,7 @@ window.__CRONOS_BOOTING__ = true;
     handleErr(r && (r.message || r) );
   });
 
-  // Se nada aparecer, só mostra o login depois de uma folga maior.
-  // Antes estava em 1s e causava flash da tela de login enquanto a nuvem ainda carregava.
+  
   setTimeout(function(){
     if(window.__CRONOS_BOOTED || window.__CRONOS_SESSION_CHECKING__ || window.__CRONOS_BOOTING__) return;
     var boot=document.getElementById('bootSplashView');
@@ -66,9 +59,7 @@ window.__CRONOS_BOOTING__ = true;
 })();
 
 /* =========================
-   Recebimentos / Recebimentos legados (v20+)
-   - guarda por entry.installPlan + entry.installments[]
-   - lista por paciente no view-installments
+   Recebimentos e parcelas
    ========================= */
 
 function parseMoney(v){
@@ -85,21 +76,17 @@ function isoDate(d){ return (d instanceof Date) ? d.toISOString().slice(0,10) : 
 function addMonthsISO(iso, k){
   const [y,m,d] = iso.split("-").map(x=>parseInt(x,10));
   const dt = new Date(y, (m-1)+k, d||1);
-  // keep day stable-ish (JS auto rolls)
   return isoDate(dt);
 }
 function monthKeyOf(iso){ return (iso||"").slice(0,7); }
 
 function ensureInstallmentsForEntry(entry){
-  // garante que exista um "plano" + parcelas geradas (compat v20)
   entry.installments = entry.installments || [];
 
-  // Se tem plano mas ainda não tem parcelas, gera agora
   if(entry.installPlan && (!Array.isArray(entry.installments) || entry.installments.length===0)){
     try{ buildInstallments(entry); }catch(e){ console.warn("buildInstallments falhou:", e); }
   }
 
-  // Normaliza chaves legadas e status
   (entry.installments||[]).forEach(p=>{
     if(p.due && !p.dueDate) p.dueDate = p.due;
     if(p.paid && !p.paidAt) p.paidAt = p.paid;
@@ -119,13 +106,11 @@ if (forma.includes("credito")) {
     if(!p.status){
       p.status = p.paidAt ? "PAGA" : "PENDENTE";
     }
-    // Se já pagou, força status
     if(p.paidAt && p.status!=="PAGA") p.status="PAGA";
   });
 }
 
 function buildInstallments(entry){
-  // uses entry.installPlan
   const plan = entry.installPlan;
   if(!plan) return;
   const amt = parseMoney(plan.amount);
@@ -186,8 +171,6 @@ function scrubInstallmentTasksForMaster(db, masterId){
     .filter(c=>c.masterId===masterId)
     .map(c=>[c.id,c]));
 
-  // Remove TODAS as tarefas automáticas de recebimento desta clínica.
-  // Isso é intencional: evita que tarefas órfãs/duplicadas sejam ressuscitadas pela nuvem.
   db.tasks = db.tasks.filter(t=>{
     if(t?.masterId && t.masterId !== masterId) return true;
     return !isAutomaticInstallmentTask(t);
@@ -205,7 +188,6 @@ function scrubInstallmentTasksForMaster(db, masterId){
         const isPaid = !!p.paidAt || p.status === "PAGA";
         const isLate = !!due && due < today && !isPaid;
 
-        // Tarefa automática só deve existir para parcela vencida e NÃO paga.
         if(!isLate) return;
 
         const key = `INST:${e.id}:${due}:${p.number}`;
@@ -237,7 +219,6 @@ function scrubInstallmentTasksForMaster(db, masterId){
     });
 
 
-  // Novo modelo de orçamentos financeiros: gera tarefas para pagamentos vencidos e não pagos.
   (db.entries||[])
     .filter(e=>e.masterId===masterId)
     .forEach(e=>{
@@ -280,7 +261,6 @@ function scrubInstallmentTasksForMaster(db, masterId){
 
   db.tasks.push(...rebuilt);
 
-  // Dedup final por chave semântica. Se for tarefa automática, a key manda.
   const seen = new Set();
   db.tasks = db.tasks.filter(t=>{
     const semanticKey = isAutomaticInstallmentTask(t)
@@ -332,7 +312,6 @@ function installmentsKPIs(db, actor, monthKey){
     });
   });
 
-  // Novo modelo financeiro também entra nos KPIs do módulo Recebimentos.
   (db.entries||[])
     .filter(e=>e.masterId===masterId)
     .forEach(e=>{
@@ -364,13 +343,7 @@ function entryInstallmentSummary(entry){
 }
 
 
-/* =========================
-   Novo fluxo financeiro de recebimentos (v10.24)
-   - vários orçamentos por lead/paciente
-   - pagamentos livres dentro do orçamento
-   - geração automática de parcelas do saldo restante
-   - preparado para módulo Financeiro/Caixa via cashDate + financeRefId
-   ========================= */
+/* Recebimentos */
 
 function ensureFinancialPlans(entry){
   if(!entry) return [];
@@ -447,7 +420,6 @@ function migrateLegacyInstallmentsToFinancialPlan(entry){
   const hasLegacyInstallments = legacyInstallments.length > 0;
   const entryAmount = parseMoney(entry.installPlan?.entryAmount || 0);
 
-  // Se não há nada para migrar, não inventa orçamento fantasma.
   if(!hasLegacyInstallments && !entryAmount) return null;
 
   const plans = ensureFinancialPlans(entry);
@@ -473,10 +445,7 @@ function migrateLegacyInstallmentsToFinancialPlan(entry){
 
   const payments = [];
 
-  // Entrada antiga, quando existia no cadastro do lead.
-  // Se o valor já constava como pago no legado, ela entra como PAGA; se não, fica só pendente.
   if(entryAmount > 0){
-    // v78: valuePaidGross/valueClosedGross sao referencia bruta de edicao/resgate, nao baixa real.
     const paidLegacy = parseMoney(entry.valuePaid ?? entry.valorPago ?? entry.valorRecebido ?? entry.totalRecebido ?? 0);
     const entryPaid = paidLegacy >= entryAmount;
     const entryDate = entry.lastPaymentDate || entry.firstContactAt || (entry.monthKey ? `${String(entry.monthKey).slice(0,7)}-01` : todayISO());
@@ -594,8 +563,6 @@ function cronosPaymentCashISO(payment, allowLegacyDueFallback=false){
     ""
   );
   if(iso) return iso;
-  // Só para dados antigos que já estavam marcados como pagos sem data de baixa.
-  // Não usar vencimento como regra normal de caixa.
   return allowLegacyDueFallback ? pickISOFlexible(payment?.dueDate || payment?.due || payment?.vencimento || "") : "";
 }
 function cronosLegacyManualPaymentNeedsMonthRepair(payment){
@@ -626,8 +593,6 @@ function cronosPaymentOfficialISO(payment, entry=null, allowLegacyDueFallback=fa
   const needsRepair = cronosLegacyManualPaymentNeedsMonthRepair(payment);
   const entryMonth = cronosLegacySafeMonthKeyFromEntry(entry);
 
-  // v73: pagamento manual antigo sem paidAt/cashDate/source/status é legado sensível.
-  // Se ele não tiver mês original do lead para servir de âncora, NÃO pode cair no mês atual por chute.
   if(needsRepair && !entryMonth){
     return "";
   }
@@ -682,8 +647,6 @@ function cronosValidMonthKey(raw){
 function cronosLegacySafeMonthKeyFromEntry(entry){
   if(!entry) return "";
 
-  // Não usa monthKey comum como fonte principal para legado sem data.
-  // Esse campo pode ter sido regravado pelo ano/filtro atual e foi o que jogou valores antigos em 2026.
   const explicitMonth = [
     entry.originalMonthKey,
     entry.legacyMonthKey,
@@ -739,7 +702,6 @@ function cronosLegacySafeMonthKeyFromEntry(entry){
     if(mk) return mk;
   }
 
-  // monthKey comum fica fora do fallback de legado sem data.
   return "";
 }
 function cronosLegacySafeAnchorISO(entry){
@@ -747,10 +709,6 @@ function cronosLegacySafeAnchorISO(entry){
   return mk ? { iso: `${mk}-01`, monthKey: mk, reason: "Legado sem data exata preservado no mês/ano original detectado; não usa o ano atual" } : null;
 }
 function cronosEntryLegacyPaymentISO(entry){
-  // Lead legado é dado antigo. Regra v73: não inventar mês/dia.
-  // 1) Se houver data real explícita, usa a data real completa.
-  // 2) Se só houver lastPaymentDate suspeito e o lead tiver monthKey original, usa o mês original + dia salvo.
-  // 3) Se não houver data/mês confiável, não entra no caixa mensal.
   const entryMonth = cronosLegacySafeMonthKeyFromEntry(entry);
   const candidates = [
     ["dataPagamento", entry?.dataPagamento],
@@ -769,7 +727,6 @@ function cronosEntryLegacyPaymentISO(entry){
     ["paymentAt", entry?.paymentAt],
     ["paidAt", entry?.paidAt],
     ["paidOn", entry?.paidOn],
-    // lastPaymentDate fica por último: versões recentes podem ter preenchido com data de edição/migração.
     ["lastPaymentDate", entry?.lastPaymentDate]
   ];
   const valid = [];
@@ -830,9 +787,6 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
   const toISO = pickISOFlexible(options.toISO || options.to || "");
   const untilToday = options.untilToday !== false;
   const includeLegacyDueFallback = options.includeLegacyDueFallback === true;
-  // v78: preserva o histórico sem contar campos brutos de resgate como caixa.
-  // Regra: financeiro auto-migrado não é fonte autoritária quando existe dado legado original;
-  // valor fechado/orçado continua fora do recebido.
   const includeUndatedLegacyByEntryMonth = options.includeUndatedLegacyByEntryMonth !== false;
 
   const entries = (db?.entries || []).filter(e=>!masterId || !e.masterId || e.masterId===masterId);
@@ -879,8 +833,6 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     return s || "other";
   }
   function loosePaymentKey(amount, iso, meta={}){
-    // Regra antifantasma: o mesmo paciente + mesma data da baixa + mesmo valor
-    // não pode virar dois recebimentos só porque existe em db.payments e também no plano/parcela.
     return `${canonicalPatientKey(meta)}|${String(iso||"").slice(0,10)}|${centsKey(amount)}`;
   }
 
@@ -944,7 +896,6 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     return true;
   }
 
-  // 1) Caixa/recebimentos explícitos: é a fonte mais forte.
   (db?.payments || []).forEach((p, idx)=>{
     if(!cronosSameMasterPayment(p, masterId, entryById, contactById, entriesByContact)) return;
     const status = String(p?.status || "").toUpperCase();
@@ -990,14 +941,10 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     });
   });
 
-  // 2) Pagamentos dentro de planos financeiros que ainda não viraram registro explícito em db.payments.
   entries.forEach(entry=>{
     const patient = cronosPatientNameForPayment({}, entry, contactById);
     ensureFinancialPlans(entry).forEach((plan, planIdx)=>{
       const isLegacyAdapterPlan = legacyPlanShouldBeSkippedAsAdapter(entry, plan);
-      // v81: o plano auto-migrado do legado NÃO deve ser descartado em bloco.
-      // Em muitos pacientes antigos ele é o único registro estruturado dos pagamentos.
-      // A duplicidade fica por conta da chave frouxa (paciente + data + valor) e do bloqueio do lead legado abaixo.
       (plan.payments || []).forEach((p, idx)=>{
         if(!financialPaymentPaid(p)) return;
         const planId = String(plan.id || planIdx);
@@ -1021,7 +968,6 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     });
   });
 
-  // 3) Parcelamentos legados pagos que não foram migrados/duplicados no novo modelo.
   entries.forEach(entry=>{
     if(entry?.installPlan?.migratedToFinancialPlanId) return;
     const patient = cronosPatientNameForPayment({}, entry, contactById);
@@ -1043,11 +989,6 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     });
   });
 
-  // 4) Lead legado recebido.
-  // v83:
-  // - não pula o lead só porque ele tem alguma baixa detalhada em OUTRO mês;
-  // - pula apenas se já existir baixa detalhada para o mesmo lead/contato no MESMO mês;
-  // - recupera valuePaid legado como histórico do mês original do lead, mas continua ignorando valueClosed/valueBudget/gross como caixa.
   function hasDetailedForEntryInMonth(eid, cid, mk){
     if(!mk) return false;
     return events.some(ev=>{
@@ -1351,7 +1292,6 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
           const paid = financialPaymentPaid(p);
           const cashISO = cronosPaymentCashISO(p, false);
           const dueISO = p?.dueDate || p?.due || "";
-          // Pago entra pelo mês da baixa/caixa. Pendente entra pelo mês do vencimento.
           if(paid) return cashISO && monthKeyOf(cashISO) === mk;
           return dueISO && monthKeyOf(dueISO) === mk;
         });
@@ -1823,8 +1763,6 @@ function renderNewFinancialInstallmentApp(){
   const plans = entry ? ensureFinancialPlans(entry) : [];
   let selectedPlan = plans.find(p=>String(p.id)===String(st.planId)) || null;
   if(entry && !selectedPlan && plans.length){
-    // Se o paciente já tem recebimento antigo/ativo, abre algum plano automaticamente.
-    // Isso evita o efeito "não abriu nada" quando o recebimento veio do modelo antigo e não tem vínculo com ficha.
     selectedPlan = plans[0];
     st.planId = String(selectedPlan.id);
     window.__newFinancialInstallmentState = st;
@@ -2133,7 +2071,6 @@ window.CRONOS_NEW_FIN_UI = {
     }
     renumberFinancialPlanPayments(plan);
 
-    // Se já entrou como pago, registra no caixa futuro também via db.payments.
     if(status === "PAGA"){
       db.payments = db.payments || [];
       plan.payments.filter(p=>p.status==="PAGA" && !findFinancePaymentRecord(db, entry.id, plan.id, p.id)).forEach(p=>{
@@ -2230,7 +2167,6 @@ function renderInstallmentsView(){
       const paid = !!p.paidAt || !!p.cashDate || p.status === "PAGA";
       const cashISO = cronosPaymentCashISO(p, false);
       const dueISO = p?.dueDate || p?.due || "";
-      // Pago entra pelo mês da baixa/caixa. Pendente entra pelo mês do vencimento.
       if(paid) return cashISO && monthKeyOf(cashISO) === mk;
       return dueISO && monthKeyOf(dueISO) === mk;
     });
@@ -2479,11 +2415,9 @@ async function payInstallment(entryId, number){
   p.cashDate = payDate;
   p.status = "PAGA";
 
-  // soma no valuePaid
   entry.valuePaid = parseMoney(entry.valuePaid) + parseMoney(p.amount);
   entry.valueClosed = (entry.status==="Fechou") ? entry.valuePaid : null;
 
-  // registra pagamento no caixa
   db.payments = db.payments || [];
   db.payments.push({
     id: uid("p"),
@@ -2520,13 +2454,11 @@ function undoInstallmentPay(entryId, number){
   const p = (entry.installments||[]).find(x=>x.number===number);
   if(!p) return toast("Erro", "Parcela não encontrada");
   if(!(p.paidAt || p.cashDate || p.status==="PAGA")) return toast("Nada a desfazer", "Essa parcela não está paga.");
-  // remove payment record (best effort)
   const amt = parseMoney(p.amount);
   entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - amt);
   p.paidAt = "";
   p.cashDate = "";
   p.status = "PENDENTE";
-  // remove one matching payment
   db.payments = db.payments || [];
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (String(x.legacyInstallmentNumber||"")===String(number) || (x.desc||"").includes(`Parcela ${number}/`)));
   if(idx>=0) db.payments.splice(idx,1);
@@ -2712,15 +2644,13 @@ window.cronosLimparTarefasParcelamentoAgora = function(){
 };
 
 
-/* Hook renderAll to also render installments safely */
+/* Recebimentos */
 const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
 renderAll = function(){
   try{
     const actor = currentActor();
     const db = loadDB();
-    // ensure installments normalized
     (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
-    // Não salva na nuvem durante renderização. Tela velha aberta em outro navegador não pode sobrescrever a base cloud.
     if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db, { skipCloud:true }); }
   }catch(e){}
   __renderAll();
@@ -2730,7 +2660,6 @@ renderAll = function(){
   }catch(e){}
 };
 
-// Ensure view switch triggers render
 const __showView = typeof showView === "function" ? showView : function(){};
 showView = function(view){
   if(typeof setActiveView === "function"){
@@ -2756,7 +2685,6 @@ showView = function(view){
   }
 }
 
-// Bind filters events on DOM ready
 document.addEventListener("DOMContentLoaded", ()=>{
   try{ relabelInstallmentsToRecebimentos(); }catch(e){}
   const mm = el("instMonth");
@@ -2810,27 +2738,34 @@ const TREATMENTS = [
   "Implante unitário","Prótese protocolo","HOF","Ortodontia","Endodontia","Clínica geral","Outros"
 ];
 
-// Status groups for dashboard math
 const POSITIVE = new Set(["Agendado","Compareceu","Fechou","Remarcou","Conversando","Concluído"]);
 const DISQUALIFIED = new Set(["Número incorreto","Achou caro","Não tem interesse","Mora longe","Mora em outra cidade","Fechou em outro lugar","Msg não entregue","Mensagem não entregue"]);
-// Permissions
 const APP_VIEWS = ["dashboard","leads","kanban","tasks","installments","users","settings"];
+const AUX_MODULES = ["todayCronos","creditSimulator","performance"];
+const ALL_ACCESS_MODULES = [...APP_VIEWS, ...AUX_MODULES];
 
 const PERMS = {
-  // MASTER (secundário): acesso alto, mas NÃO pode criar/remover outros masters
-  MASTER:     {viewAll:true, edit:true, delete:true, manageUsers:true, manageMasters:false, views:[...APP_VIEWS]},
-  GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban","tasks","installments"]},
-  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban","tasks","installments"]},
+  MASTER:     {viewAll:true, edit:true, delete:true, manageUsers:true, manageMasters:false, views:[...ALL_ACCESS_MODULES]},
+  GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","todayCronos","leads","kanban","tasks","installments","creditSimulator","performance"]},
+  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["todayCronos","leads","kanban","tasks","installments","creditSimulator"]},
   DENTISTA:   {viewAll:true, edit:false, delete:false, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban"]},
 };
 
-function actorAllowedViews(actor=currentActor()){
-  if(!actor) return [...APP_VIEWS];
+function actorAccessModules(actor=currentActor()){
+  if(!actor) return [...ALL_ACCESS_MODULES];
   const views = Array.isArray(actor?.perms?.views) && actor.perms.views.length ? actor.perms.views : ["dashboard"];
-  return [...new Set(views.filter(v=>APP_VIEWS.includes(v)))];
+  return [...new Set(views.filter(v=>ALL_ACCESS_MODULES.includes(v)))];
+}
+function actorAllowedViews(actor=currentActor()){
+  return actorAccessModules(actor).filter(v=>APP_VIEWS.includes(v));
 }
 function canAccessView(view, actor=currentActor()){
   return actorAllowedViews(actor).includes(view);
+}
+function canAccessModule(moduleKey, actor=currentActor()){
+  const key = String(moduleKey || "");
+  if(APP_VIEWS.includes(key)) return canAccessView(key, actor);
+  return actorAccessModules(actor).includes(key);
 }
 function firstAllowedView(actor=currentActor()){
   return actorAllowedViews(actor)[0] || "dashboard";
@@ -2839,6 +2774,15 @@ function applyRoleVisibility(actor=currentActor()){
   APP_VIEWS.forEach(view=>{
     const btn = qs(`.nav button[data-view="${view}"]`);
     if(btn) btn.classList.toggle("hidden", !canAccessView(view, actor));
+  });
+
+  [
+    { id:"navHojeCronos", module:"todayCronos" },
+    { id:"navCreditoSimulator", module:"creditSimulator" },
+    { id:"navPerformance", module:"performance" }
+  ].forEach(item=>{
+    const btn = el(item.id);
+    if(btn) btn.classList.toggle("hidden", !canAccessModule(item.module, actor));
   });
 
   const canEdit = !!actor?.perms?.edit;
@@ -2858,6 +2802,8 @@ function applyRoleVisibility(actor=currentActor()){
     if(node) node.classList.toggle("hidden", !canSettings);
   });
 }
+window.CRONOS_CAN_ACCESS_MODULE = canAccessModule;
+window.CRONOS_APPLY_ROLE_VISIBILITY = applyRoleVisibility;
 
 const el = (id)=>document.getElementById(id);
 
@@ -2904,7 +2850,6 @@ function relabelInstallmentsToRecebimentos(){
   }catch(_){}
 }
 
-  // Safe value readers (avoid null.value crashes when elements are not present in current view)
   const qv = (sel, root=document, fallback="") => {
     const e = qs(sel, root);
     return e && typeof e.value !== "undefined" ? e.value : fallback;
@@ -2991,7 +2936,7 @@ function birthWithAgeLabel(iso){
   return age == null ? birth : `${birth} · ${age} anos`;
 }
 
-/* -------- Theme -------- */
+/* -------- Tema claro/escuro -------- */
 function applyTheme(theme){
   const root = document.documentElement;
   if(theme === "light"){
@@ -3003,9 +2948,6 @@ function applyTheme(theme){
   }
   localStorage.setItem(THEMEKEY, theme);
 
-  // Sincroniza elementos injetados depois do carregamento principal.
-  // Sem isso, ao alternar claro/escuro, o badge do "Hoje no Cronos"
-  // podia ficar por alguns segundos com a cor/contraste do tema anterior.
   const syncInjectedThemeBits = ()=>{
     try{
       if(window.CRONOS_TODAY){
@@ -3042,7 +2984,7 @@ function toggleTheme(){
   repaintDashboardChartsForTheme();
 }
 
-/* -------- DB shape --------
+/* -------- Estrutura de dados --------
 db = {
   masters: [{id,name,email,passHash,createdAt}],
   users: [{id,masterId,name,username,email,passHash,role,createdAt}],
@@ -3687,8 +3629,6 @@ function mergeCloudAndLocalDB(cloudDB, localDB){
   merged.createdAt = cloud.createdAt || local.createdAt || new Date().toISOString();
   merged.lastMergedAt = new Date().toISOString();
 
-  // Importante: merge por ID ressuscitava tarefas automáticas antigas da nuvem.
-  // Depois de mesclar, a gente reconstrói as tarefas de recebimento do zero.
   try{ scrubInstallmentTasksForAllMasters(merged); }catch(e){ console.warn("Falha ao higienizar tarefas no merge:", e); }
 
   return normalizeDBShape(merged);
@@ -3703,8 +3643,6 @@ async function flushCloudSave(dbToSave){
 
   let normalized = ensureMasterRecordByEmail(normalizeDBShape(dbToSave || DB || freshDB()), ownerEmail);
   if(ctx?.row?.data){
-    // Evita o “último navegador vence”: antes de salvar, mistura o que está na nuvem
-    // com o que este navegador acabou de alterar, preservando leads novos de outros PCs.
     normalized = mergeCloudAndLocalDB(ctx.row.data, normalized);
     normalized = ensureMasterRecordByEmail(normalized, ownerEmail);
   }
@@ -3712,7 +3650,6 @@ async function flushCloudSave(dbToSave){
     normalized = ensureMemberMirror(normalized, CLOUD_MEMBER_INFO);
   }
 
-  // Limpeza final antes de gravar na nuvem. Sem isso, tarefas antigas podem voltar no próximo refresh.
   try{ scrubInstallmentTasksForAllMasters(normalized); }catch(e){ console.warn("Falha ao higienizar tarefas antes da nuvem:", e); }
 
   DB = normalized;
@@ -4083,7 +4020,6 @@ function applyTemplate(tpl, vars){
 function normalizePhoneBR(phone){
   const digits = String(phone||"").replace(/\D+/g,"");
   if(!digits) return "";
-  // If already has country code 55, keep; else assume BR.
   if(digits.startsWith("55")) return digits;
   return "55"+digits;
 }
@@ -4113,7 +4049,6 @@ function saveSession(s){ localStorage.setItem(SESSIONKEY, JSON.stringify(s)); }
 function clearSession(){ localStorage.removeItem(SESSIONKEY); }
 
 async function hashPass(p){
-  // robust for file:// + localhost
   try{
     if (window.crypto?.subtle){
       const enc = new TextEncoder().encode(p);
@@ -4121,13 +4056,12 @@ async function hashPass(p){
       return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
     }
   }catch(e){}
-  // fallback FNV-1a
   let h = 2166136261;
   for (let i=0;i<p.length;i++){ h ^= p.charCodeAt(i); h = Math.imul(h, 16777619); }
   return "fnv1a_" + (h>>>0).toString(16);
 }
 
-/* -------- Auth -------- */
+/* -------- Autenticação -------- */
 function currentActor(){
   const db = loadDB();
 
@@ -4262,8 +4196,6 @@ function setSupportEntryLoading(isLoading, message="Modo suporte • Validando a
   const authButtons = el("btnLogin")?.parentElement;
 
   if(isLoading){
-    // Reseta qualquer loading de login antes de esconder os campos,
-    // para não reexibir a UI logo em seguida.
     setLoginLoading(false);
   }
 
@@ -4334,7 +4266,6 @@ function showAuth(){
 
   const exitBtn = el("btnExitSupport");
   if(exitBtn) exitBtn.classList.add("hidden");
-  // refreshAuthMasters();
   syncThemeButtons();
   window.__CRONOS_BOOTED = true;
 }
@@ -4362,8 +4293,6 @@ function showApp(actor){
   syncThemeButtons();
   applyRoleVisibility(actor);
 
-  // Reparação automática e idempotente das tarefas de recebimento.
-  // Roda ao abrir o app e salva na nuvem uma base já higienizada.
   try{
     const db = loadDB();
     const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
@@ -4392,7 +4321,7 @@ function masterName(masterId){
   return m ? m.name : "—";
 }
 
-/* -------- Filters (persist across views) -------- */
+/* -------- Filtros principais -------- */
 const FILTERKEY = "cronoscrm_phase1_filters";
 function loadFilters(){
   const raw = localStorage.getItem(FILTERKEY);
@@ -4411,17 +4340,14 @@ function loadFilters(){
   if(!raw) return def;
   try{
     const parsed = JSON.parse(raw) || {};
-    // backward compatibility: migrate old fields into new ones
     const out = {...def, ...parsed};
     if(!out.year){
       const mk = String(out.monthKey||def.monthKey);
       out.year = mk && mk!=="all" ? mk.slice(0,4) : def.year;
     }
-    // old filters: first/appt -> period (keep only if new empty)
     if(!out.periodFrom && (parsed.firstFrom||parsed.apptFrom)) out.periodFrom = parsed.firstFrom || parsed.apptFrom || "";
     if(!out.periodTo && (parsed.firstTo||parsed.apptTo)) out.periodTo = parsed.firstTo || parsed.apptTo || "";
     if(!out.order) out.order = "recent";
-    // default seguro: evitar abrir o sistema preso em "Todos"
     if(!out.monthKey || out.monthKey === "all"){
       out.monthKey = def.monthKey;
       out.year = def.year;
@@ -4482,7 +4408,6 @@ function ensureYearOptions(){
   const years = Array.from(ySet).sort((a,b)=>Number(b)-Number(a)); // desc
   el("fYear").innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
 
-  // keep selection
   const f = loadFilters ? loadFilters() : null;
   const desired = (getUIFilters()?.year) || (f?.year) || String(currentYear);
   if(el("fYear").value !== desired) el("fYear").value = desired;
@@ -4505,7 +4430,6 @@ function ensureMonthOptions(){
 
   el("fMonth").innerHTML = months.map(o=>`<option value="${o.value}">${o.label}</option>`).join("");
 
-  // keep selection: prefer saved monthKey if matches selectedYear
   const f = loadFilters ? loadFilters() : {};
   const desiredMk = (getUIFilters()?.monthKey) || f.monthKey || currentMonthKey;
 
@@ -4513,7 +4437,6 @@ function ensureMonthOptions(){
   if(finalMk !== "all"){
     const y = String(finalMk).slice(0,4);
     if(Number(y)!==selectedYear){
-      // if current year, select current month; otherwise default to "all"
       finalMk = (selectedYear===currentYear) ? currentMonthKey : "all";
     }
   }
@@ -4528,7 +4451,7 @@ function fillSelectOptions(){
   el("fTreatment").innerHTML = `<option value="">Todos</option>` + TREATMENTS.map(t=>`<option value="${t}">${t}</option>`).join("");
 }
 
-/* -------- Data access -------- */
+/* -------- Acesso aos dados -------- */
 function filteredEntries(){
   const db = loadDB();
   const actor = currentActor();
@@ -4536,8 +4459,6 @@ function filteredEntries(){
 
   const f = getUIFilters();
 
-  // Lê direto do input visível também, porque em alguns fluxos o filtro salvo/normalizado
-  // pode ficar atrasado. Busca de lead precisa ser prioridade máxima.
   const rawSearch = String(el("fSearch")?.value ?? f.search ?? "").trim();
 
   function normText(v){
@@ -4563,7 +4484,6 @@ function filteredEntries(){
     return true;
   }
 
-  // pick ONE "reference date" for the unified period filter
   function entryRefDate(e){
     return e.firstContactAt || e.apptDate || e.createdAt || e.updatedAt || (e.monthKey ? (String(e.monthKey).slice(0,7) + "-01") : "");
   }
@@ -4573,8 +4493,6 @@ function filteredEntries(){
   let rows = (db.entries || [])
     .filter(e=>e.masterId === actor.masterId);
 
-  // Quando existe busca digitada, a busca é GLOBAL por ano/mês.
-  // Ou seja: não filtra por fYear nem fMonth. Só procura o paciente no banco inteiro da clínica.
   if(hasGlobalLeadSearch){
     rows = rows.filter(e=>{
       const c = contactsById.get(String(e.contactId || "")) || {};
@@ -4598,7 +4516,6 @@ function filteredEntries(){
     });
   }else{
     rows = rows.filter(e=>{
-      // Sem busca: Ano/Mês funcionam normalmente.
       if(f.monthKey && f.monthKey !== "all"){
         return e.monthKey === f.monthKey;
       }
@@ -4608,7 +4525,6 @@ function filteredEntries(){
     });
   }
 
-  // Período manual continua valendo porque é uma escolha explícita do usuário.
   if(f.periodFrom || f.periodTo){
     rows = rows.filter(e=>inRangeISO(entryRefDate(e), periodFrom, periodTo));
   }
@@ -4623,7 +4539,6 @@ function filteredEntries(){
     .filter(e=> !f.treatment || e.treatment===f.treatment)
     .filter(e=> !f.origin || e.origin===f.origin);
 
-  // sort
   try{
     const order = f.order || "recent";
     const nameOf = (e)=> (contactsById.get(String(e.contactId||""))?.name || "").toLowerCase();
@@ -4635,9 +4550,6 @@ function filteredEntries(){
     else if(order==="za") rows.sort((a,b)=> nameOf(b).localeCompare(nameOf(a)));
   }catch(_){}
 
-  // Importante: KPI clicável é filtro LOCAL do Dashboard.
-  // Não pode vazar para Leads/Kanban/pílulas do menu lateral.
-  // O Dashboard aplica o bucket em renderDashboard() via __dashboardRowsByKpi().
   return rows;
 }
 
@@ -4646,7 +4558,7 @@ function getContact(contactId){
   return db.contacts.find(c=>c.id===contactId) || null;
 }
 
-/* -------- UI Render -------- */
+/* -------- Renderização da interface -------- */
 function updateSidebarPills(){
   const db = loadDB();
   const actor = currentActor();
@@ -4704,21 +4616,18 @@ function setDashStatusFilter(status){
 function getEntryBudgetValue(e){
   if(!e) return 0;
 
-  // 1) Orçamentos financeiros novos
   try{
     const plans = Array.isArray(e.financialPlans) ? e.financialPlans : [];
     const totalPlans = plans.reduce((sum,p)=>sum + Number(p.amount || p.total || 0), 0);
     if(totalPlans > 0) return totalPlans;
   }catch(_){}
 
-  // 2) Ficha/prontuário
   try{
     const items = Array.isArray(e?.ficha?.plano) ? e.ficha.plano : [];
     const fichaTotal = items.reduce((sum,item)=>sum + Number(item.valorFechado ?? item.valorBase ?? 0), 0);
     if(fichaTotal > 0) return fichaTotal;
   }catch(_){}
 
-  // 3) Legado do cadastro antigo
   return (e.valueBudget!=null && !isNaN(Number(e.valueBudget)))
     ? Number(e.valueBudget)
     : ((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
@@ -4726,7 +4635,6 @@ function getEntryBudgetValue(e){
 function getEntryPaidValue(e){
   if(!e) return 0;
 
-  // 1) Pagamentos do novo orçamento financeiro
   try{
     const plans = Array.isArray(e.financialPlans) ? e.financialPlans : [];
     const totalPaidPlans = plans.reduce((sum,p)=>{
@@ -4738,7 +4646,6 @@ function getEntryPaidValue(e){
     if(totalPaidPlans > 0) return totalPaidPlans;
   }catch(_){}
 
-  // 2) Legado
   return (e.valuePaid!=null && !isNaN(Number(e.valuePaid)))
     ? Number(e.valuePaid)
     : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
@@ -4748,10 +4655,6 @@ function getEntryPaidValue(e){
 function getEntryCashPaidValue(e){
   if(!e) return 0;
 
-  // v80: valor pago explícito para legado COM data segura.
-  // Aqui ainda aceitamos valuePaid, porque ele pode ser o campo antigo de "valor pago".
-  // Só não usamos valuePaid para "legado sem data" ancorado no mês, porque esse campo também
-  // pode ter sido preenchido por migração/baixa e inflar o histórico.
   const paidCandidates = [
     e.totalRecebido,
     e.valuePaid,
@@ -4774,10 +4677,6 @@ function getEntryCashPaidValue(e){
 function getEntryStrictUndatedLegacyPaidValue(e){
   if(!e) return 0;
 
-  // v80: fallback histórico SEM data exata.
-  // Não usa valuePaid/valueClosed/valueBudget/valuePaidGross/valueClosedGross.
-  // Motivo: valuePaid foi usado em versões diferentes como "pago acumulado", "espelho"
-  // de parcelamento e até campo de migração; quando não há data, ele vira inflação.
   const paidCandidates = [
     e.totalRecebido,
     e.paidValue,
@@ -4798,8 +4697,6 @@ function getEntryStrictUndatedLegacyPaidValue(e){
 }
 function getEntryHistoricalValuePaidOnly(e){
   if(!e) return 0;
-  // v83: recuperação histórica segura.
-  // Usa somente campos que representam pago/recebido antigo; NÃO usa valueClosed/valueBudget/gross.
   const paidCandidates = [
     e.valuePaid,
     e.valorPago,
@@ -4820,8 +4717,6 @@ function getEntryHistoricalValuePaidOnly(e){
 }
 
 function entryHasLegacyOriginalPaidValue(e){
-  // Para decidir se um plano legado auto-migrado e so espelho, campos brutos tambem contam
-  // como sinal de legado original. Mas eles NAO entram em getEntryCashPaidValue().
   return getEntryCashPaidValue(e) > 0 ||
     parseMoney(e?.valuePaidGross) > 0 ||
     parseMoney(e?.valorPagoBruto) > 0 ||
@@ -4847,7 +4742,6 @@ function isAutoMigratedLegacyPlan(plan){
 }
 function legacyPlanShouldBeSkippedAsAdapter(entry, plan){
   if(!isAutoMigratedLegacyPlan(plan)) return false;
-  // Quando existe dado legado original no lead/parcelas, o plano auto-migrado e so um espelho/adaptador.
   const hasOriginalInstallments = Array.isArray(entry?.installments) && entry.installments.length > 0;
   const hasOriginalPaid = entryHasLegacyOriginalPaidValue(entry);
   const hasLegacyInstallPlan = !!entry?.installPlan;
@@ -5115,7 +5009,6 @@ function renderDashboard(){
   const kpiApptPct = el('kpiApptPct');
   if(kpiApptPct) kpiApptPct.textContent = pctBaseNum(appt);
 
-  // Ticket médio (orçado): média do orçamento no filtro (considera apenas leads com orçamento > 0, sem resgatados)
   try{
     const budgetCount = rows.reduce((acc,e)=>{
       const b = isRescueEntry(e) ? 0 : getEntryBudgetValue(e);
@@ -5145,7 +5038,6 @@ function renderDashboard(){
     dashStatusActive = "";
   }
 
-  // Robust render (grid)
   grid.innerHTML = `
     <div class="sgHead">Status</div>
     <div class="sgHead center">Total</div>
@@ -5229,7 +5121,6 @@ function renderDashboard(){
 
 
 
-  // preview (max 10)
  const dashStatusActivePreview = getDashStatusFilter();
 const sortedRows = rowsForDashboardDetail
   .slice()
@@ -5293,12 +5184,10 @@ if(!prev.length){
 
 try{ __bindKpiClicks(); }catch(_){}
 
-// charts
 requestAnimationFrame(()=>renderDashboardCharts(rows));
 }
 function statusDotClass(status){
   const s = (status||"").trim();
-  // cores inspiradas no layout de referência
   const map = {
     "Conversando":"st-yellow",
     "Agendado":"st-blue",
@@ -5379,7 +5268,6 @@ function clearCanvas(canvas){
   let w = rect.width;
   let h = rect.height;
 
-  // fallback quando o canvas está dentro de seção recém-exibida (ou ainda sem layout)
   if(w < 50) w = (canvas.parentElement?.getBoundingClientRect().width) || 600;
   if(h < 50) h = 180;
 
@@ -5400,7 +5288,6 @@ const mutedColor = css.getPropertyValue('--muted').trim();
   const maxV = Math.max(1, ...values);
   const minV = 0;
 
-  // axes
   ctx.globalAlpha = 1;
   ctx.lineWidth = 1;
   ctx.strokeStyle = mutedColor;
@@ -5410,7 +5297,6 @@ const mutedColor = css.getPropertyValue('--muted').trim();
   ctx.lineTo(w-10, h-pad);
   ctx.stroke();
 
-  // line
   ctx.strokeStyle = "rgba(30,120,255,0.9)";
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -5421,7 +5307,6 @@ const mutedColor = css.getPropertyValue('--muted').trim();
   });
   ctx.stroke();
 
-  // labels (poucos pra não poluir)
   ctx.fillStyle = textColor || "1f2937";
   ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
   const step = Math.ceil(labels.length/8);
@@ -5429,7 +5314,6 @@ const mutedColor = css.getPropertyValue('--muted').trim();
     const x = pad + (i*(w-pad-10))/Math.max(1, labels.length-1);
     ctx.fillText(labels[i], x-8, h-10);
   }
-  // max value
   ctx.fillText((opt.yPrefix||"")+moneyBR(maxV).replace(/R\$\s*/,""), 10, 18);
 }
 
@@ -5449,16 +5333,13 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
   const h0 = canvas.clientHeight || canvas.height || 0;
   if(w0===0 || h0===0) return;
 
-  // series: [{name, values, color, dash?, fill?}]
   const {ctx,w,h} = clearCanvas(canvas);
 
-  // Premium spacing
   const padL = 34;
   const padR = 18;
   const padB = 30;
   const topBase = 64; // legenda + respiro
 
-  // y scale (dinâmica p/ evitar "linha reta")
   const all = (series||[]).flatMap(s=>s.values||[]).filter(v=>typeof v==="number" && !isNaN(v));
   let minV = Math.min(...(all.length?all:[0]));
   let maxV = Math.max(...(all.length?all:[1]));
@@ -5479,7 +5360,6 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
   const X = (i,n) => plotLeft + (i*(plotRight-plotLeft))/Math.max(1, n-1);
   const Y = (v)   => plotBottom - ((v-minV)*(plotBottom-plotTop))/Math.max(1e-9, (maxV-minV));
 
-  // grid (horizontal)
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.lineWidth = 1;
@@ -5492,7 +5372,6 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
     ctx.lineTo(plotRight, yy);
     ctx.stroke();
   }
-  // axis
   ctx.strokeStyle = axisColor;
   ctx.beginPath();
   ctx.moveTo(plotLeft, plotTop);
@@ -5501,7 +5380,6 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
   ctx.stroke();
   ctx.restore();
 
-  // helpers: smooth curve (Catmull-Rom -> Bezier)
   function drawSmoothPath(values){
     const n = values.length;
     if(n===0) return;
@@ -5529,12 +5407,10 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
     return pts;
   }
 
-  // draw series
   (series||[]).forEach((s, si)=>{
     const values = (s.values||[]).map(v=>Number(v)||0);
     if(values.length===0) return;
 
-    // stroke
     ctx.save();
     ctx.lineWidth = 3;
     ctx.lineJoin = "round";
@@ -5544,13 +5420,11 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
 
     const pts = drawSmoothPath(values);
 
-    // soft shadow
     ctx.shadowColor = "rgba(0,0,0,0.25)";
     ctx.shadowBlur = 10;
     ctx.shadowOffsetY = 2;
     ctx.stroke();
 
-    // fill (only if requested)
     if(s.fill){
       ctx.setLineDash([]);
       ctx.shadowBlur = 0;
@@ -5565,7 +5439,6 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
       ctx.fill();
     }
 
-    // points
     ctx.globalAlpha = 1;
     ctx.fillStyle = "rgba(255,255,255,0.95)";
     ctx.strokeStyle = s.color || "rgba(46,229,157,0.9)";
@@ -5583,7 +5456,6 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
 ctx.restore();
   });
 
-  // x labels (few)
   ctx.save();
   ctx.fillStyle = labelColor;
   ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
@@ -5593,13 +5465,11 @@ ctx.restore();
     ctx.fillText(labels[i], x-10, h-10);
   }
 
-  // y max label (optional)
   if(opt.showMaxLabel !== false){
     ctx.fillStyle = labelColor;
     ctx.fillText((opt.yPrefix||"")+moneyBR(maxV).replace(/R\$\s*/,""), 10, 18);
   }
   ctx.restore();
-// legend (more padding, wrap)
   ctx.save();
   let x = plotLeft, y = 22;
   const maxX = plotRight;
@@ -5611,7 +5481,6 @@ ctx.restore();
     ctx.fillStyle = s.color || "rgba(30,120,255,0.9)";
     ctx.fillRect(x, y, 12, 3);
     if(Array.isArray(s.dash)){
-      // dashed hint
       ctx.save();
       ctx.strokeStyle = s.color || "rgba(30,120,255,0.9)";
       ctx.setLineDash(s.dash);
@@ -5627,7 +5496,6 @@ ctx.restore();
   });
   ctx.restore();
 
-  // bind tooltip data
   try{
     canvas.__chartData = {
       type:"multiLine",
@@ -5653,7 +5521,6 @@ ctx.restore();
 
 function drawBarChart(canvas, labels, values){
   if(!canvas) return;
-  // evita erro quando canvas está oculto/sem tamanho
   const w0 = canvas.clientWidth || canvas.width || 0;
   const h0 = canvas.clientHeight || canvas.height || 0;
   if(w0===0 || h0===0) return;
@@ -5670,7 +5537,6 @@ function drawBarChart(canvas, labels, values){
   const barW = (w - pad - 10) / n;
   const rects = [];
 
-  // axes
   ctx.strokeStyle = axisColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -5679,7 +5545,6 @@ function drawBarChart(canvas, labels, values){
   ctx.lineTo(w-10, h-pad);
   ctx.stroke();
 
-  // bars
   for(let i=0;i<n;i++){
     const v = values[i]||0;
     const bh = ((v)* (h-pad-top)) / maxV;
@@ -5694,7 +5559,6 @@ function drawBarChart(canvas, labels, values){
     ctx.fillText(lab, x, h-10);
   }
 
-  // bind tooltip data
   try{
     canvas.__chartData = { type:"bar", rects: rects };
     __bindChartHoverOnce(canvas);
@@ -5702,7 +5566,6 @@ function drawBarChart(canvas, labels, values){
 
 }
 
-// === PAGINAÇÃO GLOBAL ===
 let currentPage = 1;
 const leadsPerPage = 50;
 
@@ -5767,7 +5630,6 @@ function renderLeadsPagination(totalLeads, totalPages){
 }
 
 function renderLeadsTable(list){
-  // Novo layout (cards) na aba Leads
   const cardsWrap = document.getElementById('leadsCards');
   const tbody = document.getElementById('leadsTbody'); // fallback antigo (se existir)
   const db = loadDB();
@@ -5779,7 +5641,6 @@ function renderLeadsTable(list){
 
   const fullList = Array.isArray(list) ? [...list] : [];
 
-  // === PAGINAÇÃO ===
   const totalLeads = fullList.length;
   const totalPages = Math.max(1, Math.ceil(totalLeads / leadsPerPage));
 
@@ -5800,7 +5661,6 @@ function renderLeadsTable(list){
     const phoneDigits = phoneRaw.replace(/\D/g,'');
     const phonePretty = phoneDigits ? phoneDigits : '—';
 
-    // Prioridade (normalizada)
     const prioridadeRaw = (e.priority || e.prioridade || e.temperature || e.temperatura || e.temp || e.pri || '').toString().trim();
     let prioridade = prioridadeRaw;
     const priNorm = String(prioridadeRaw).trim().toLowerCase();
@@ -5808,7 +5668,6 @@ function renderLeadsTable(list){
     else if (priNorm === '1' || priNorm === 'warm' || priNorm === 'morno' || priNorm === 'm') prioridade = 'Morno';
     else if (priNorm === '0' || priNorm === 'cold' || priNorm === 'frio' || priNorm === 'f') prioridade = 'Frio';
 
-    // fallback: prioridade via tag "Prioridade: X"
     const tagsArr = ([]
       .concat(Array.isArray(e.tags) ? e.tags : (Array.isArray(e.tag) ? e.tag : (e.tag ? [e.tag] : [])))
       .concat(Array.isArray(c?.tags) ? c.tags : (Array.isArray(c?.tag) ? c.tag : (c?.tag ? [c.tag] : [])))
@@ -5844,7 +5703,6 @@ function renderLeadsTable(list){
     const id = e.id ?? e._id ?? '';
     const idAttr = escapeHTML(String(id));
 
-    // Ações — SVG nativo, sem emoji renderizado por baixo
 
     const svgFicha = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>`;
     const svgEdit  = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
@@ -6126,8 +5984,6 @@ async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
 }
 
 function closeAuxiliaryViews(){
-  // Fecha telas injetadas fora do roteador principal (Hoje no Cronos / Simulador).
-  // Sem isso, um módulo externo pode continuar por cima da aba nova ou deixar conteúdo antigo piscando.
   ["view-todayCronos", "view-creditSimulator"].forEach(id=>{
     const node = el(id);
     if(node){
@@ -6147,8 +6003,6 @@ function closeAuxiliaryViews(){
 
 
 function renderActiveViewOnly(view){
-  // Renderiza só a tela aberta. Antes o Cronos chamava renderAll() em toda troca de aba,
-  // e isso segurava o repaint: parecia 1s de tela vazia em Dashboard/Leads/Usuários.
   try{ updateSidebarPills(); }catch(_){ }
 
   if(view === "dashboard"){
@@ -6159,8 +6013,6 @@ function renderActiveViewOnly(view){
     try{
       renderLeadsTable(filteredEntries());
 
-      // v46: failsafe contra tela branca/flash ao abrir Leads.
-      // Se algum módulo externo ainda estiver terminando de injetar algo, renderiza de novo só a aba Leads.
       setTimeout(()=>{
         try{
           const viewNode = document.getElementById("view-leads");
@@ -6205,8 +6057,6 @@ function renderActiveViewOnly(view){
 }
 
 function setActiveView(view){
-  // Proteção contra botões injetados sem data-view: evita fallback indevido para Dashboard
-  // e remove o toast "não pode abrir undefined".
   if(!view || !APP_VIEWS.includes(view)){
     if(view === "todayCronos" && window.CRONOS_TODAY && typeof window.CRONOS_TODAY.show === "function"){
       window.CRONOS_TODAY.show();
@@ -6289,7 +6139,6 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
   }
 
 
-  // Tags: aceitar legado (e.tag / c.tags) e garantir render estável
   const __toArr = (v)=> Array.isArray(v) ? v : (v ? [v] : []);
   const __uniq = (arr)=> Array.from(new Set((arr||[]).map(x=>String(x||"").trim()).filter(Boolean)));
   const __manualTagsForUI = __uniq([]
@@ -6761,7 +6610,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
   const db = loadDB();
   const suggestBox = el("leadSuggest");
 
-  // toggle others
   const originSel = el("lf_origin");
   const treatSel = el("lf_treatment");
   const toggleOrigin = ()=> el("originOtherWrap").classList.toggle("hidden", originSel.value!=="Outros");
@@ -6769,7 +6617,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
   originSel?.addEventListener("change", toggleOrigin);
   treatSel?.addEventListener("change", toggleTreat);
 
-  // valores: em aberto (orçamento - pago)
   const budgetInp = el("lf_value_budget");
   const paidInp = el("lf_value_paid");
   const openEl = el("lf_open_value");
@@ -6786,7 +6633,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
   updateOpen();
 
 
-  // recebimento: pré-preencher + cálculo de parcela estimada
   const pmSel = el("lf_pay_method");
   const entryAmt = el("lf_entry_amount");
   const instAmt = el("lf_inst_amount");
@@ -6822,7 +6668,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
   fillPlan();
 
 
-  // suggestions
   const nameInp = el("lf_name");
   const phoneInp = el("lf_phone");
   const showSuggest = ()=>{
@@ -6840,13 +6685,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
   nameInp?.addEventListener("input", ()=>{ showSuggest(); });
   phoneInp?.addEventListener("input", ()=>{ showSuggest(); });
 
-  // hide suggest on blur (small delay for click)
   [nameInp, phoneInp].forEach(inp=>{
     inp?.addEventListener("blur", ()=>setTimeout(()=>suggestBox.classList.remove("show"), 180));
     inp?.addEventListener("focus", ()=>showSuggest());
   });
 
-  // tag adding (persistente)
   const tagInp = el("lf_tag");
   const tagListEl = el("lf_tag_list");
 
@@ -6862,7 +6705,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     tagListEl.innerHTML = cur.map((t,i)=>`<span class="tagPill" data-i="${i}">${escapeHTML(t)}<button type="button" class="tagRemove" data-i="${i}" aria-label="Remover tag">×</button></span>`).join("");
   };
 
-  // remover tag (clicando no ×)
   if(tagListEl){
     tagListEl.addEventListener("click", (e)=>{
       const btn = e.target?.closest?.(".tagRemove");
@@ -6880,7 +6722,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
 
 
-  // init: puxa tags já salvas (sem "Prioridade:")
   try{
     const db3 = loadDB();
     let ent = null;
@@ -6915,7 +6756,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     }
   });
 
-// Save
   const btn = el("btnSaveLead");
   btn?.addEventListener("click", async ()=>{
     if(!actor.perms.edit) return toast("Sem permissão", "Seu nível não permite editar.");
@@ -6928,8 +6768,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     if(!monthKey || monthKey === "all") monthKey = new Date().toISOString().slice(0,7);
     if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
 
-    // Contatos NÃO são mais únicos por telefone.
-    // Mãe e filha podem usar o mesmo WhatsApp sem uma roubar o nome/prontuário da outra.
     const now = new Date().toISOString();
 
     const selectedId = String(el("lf_name")?.dataset.contactId || el("lf_phone")?.dataset.contactId || "").trim();
@@ -6949,10 +6787,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const editingEntryRef = editingEntryId ? db.entries.find(e=>String(e.id)===String(editingEntryId)) : null;
 
     if(editingEntryRef?.contactId){
-      // Editando lead existente: começa atualizando o contato vinculado àquele lead.
       existingIndex = db.contacts.findIndex(c=>String(c.id)===String(editingEntryRef.contactId));
     }else if(selectedId){
-      // Novo lead vindo de sugestão: aí sim usa o contato selecionado.
       existingIndex = db.contacts.findIndex(c=>String(c.id)===String(selectedId) && c.masterId===actor.masterId);
     }
 
@@ -6970,7 +6806,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
         "Cancelar = voltar e escolher uma sugestão existente."
       );
       if(!continuar) return;
-      // Importante: não reaproveita por telefone. Cria outro contato.
       existingIndex = -1;
     }
 
@@ -7024,8 +6859,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const callAttempts = val("lf_calls") || "";
     const callResult = val("lf_callResult") || "";
     const notes = val("lf_notes").trim();
-    // Financeiro/recebimento saiu do cadastro do lead.
-    // Mantemos compatibilidade com arquivos antigos, mas se os campos não existem, não registra pagamento manual.
     const hasLegacyFinancialFields = !!(el("lf_value_budget") || el("lf_value_paid") || el("lf_payment_date") || el("lf_pay_method"));
     const hasLegacyBudgetField = !!el("lf_value_budget");
     const hasLegacyPaidField = !!el("lf_value_paid");
@@ -7040,7 +6873,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
     let manualTags = [];
     try{ manualTags = JSON.parse((tagInp?.dataset.tags)||"[]") || []; }catch(_){ manualTags = []; }
-    // Se o usuário digitou uma tag e clicou em "Salvar" sem dar Enter, não vamos perder.
     const pendingTag = (tagInp?.value||"").trim();
     if(pendingTag){
       manualTags = Array.from(new Set([...(manualTags||[]), pendingTag]));
@@ -7051,7 +6883,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     if(prio) tags.push("Prioridade: " + prio);
     tags.push(...manualTags);
 
-    // resgate financeiro: só entra no mês da data do pagamento quando houver dinheiro novo + status Fechou
     const realToday = todayISO();
     const rescueDate = paymentDate || realToday;
     const rescueMonthKey = String(rescueDate).slice(0,7);
@@ -7059,7 +6890,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const existingThisMonth = db.entries.find(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey === monthKey);
 
     if(isNew && existingThisMonth){
-      // instead of duplicate, open existing entry and update it
       saveDB(db);
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
       closeModal();
@@ -7093,7 +6923,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const fromStatus = shouldRegisterRescue ? originalStatus : (entry.status || "");
     const toStatus = shouldRegisterRescue ? originalStatus : status;
 
-    // update entry fields (edições cadastrais sempre podem corrigir a ficha antiga)
     entry.monthKey = editingEntryId ? (originalMonthKey || monthKey) : monthKey;
     entry.firstContactAt = firstContactAt;
     entry.lastUpdateAt = now;
@@ -7114,7 +6943,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     entry.callResult = callResult;
 
     if(shouldRegisterRescue){
-      // mantém o mês antigo intacto e guarda o total bruto só como referência de edição
       entry.valuePaid = (originalPaidShown || null);
       entry.valueClosed = (originalStatus === "Fechou") ? (originalPaidShown || null) : null;
       entry.valuePaidGross = paidNow;
@@ -7128,7 +6956,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
       if(shouldRegisterDirectPayment || (paidNow>0 && hasExplicitLegacyPaymentDate)) entry.lastPaymentDate = rescueDate;
     }
 
-    // tags: sobrescreve tags manuais (permite remover), preservando tags de sistema
     const preserved = (entry.tags||[]).filter(t=>String(t)==="Resgatado");
     entry.tags = Array.from(new Set([...preserved, ...tags, ...(campaign ? ["Campanha"] : [])]));
     if(!editingEntryId && hadBefore){
@@ -7281,8 +7108,6 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   const existing = entries.find(e=>e.monthKey===monthKey);
   const latest = entries[0] || null;
 
-  // Se o contato já existe no banco, abrir a ficha real para editar
-  // evita duplicidade, respeita o mês/ano original e elimina o alerta falso de telefone duplicado.
   const targetEntry = existing || latest;
   if(targetEntry){
     closeModal();
@@ -7356,7 +7181,6 @@ function toggleLeadDone(entryId){
   const db = loadDB();
   const e = db.entries.find(x=>x.id===entryId);
   if(!e) return;
-  // simple toggle: status between "Concluído" and previous
   if(e.status==="Concluído"){
     e.status = e._prevStatus || "Conversando";
     delete e._prevStatus;
@@ -7387,13 +7211,11 @@ function markOK(entryId){
     const fromStatus = String(entry.status||"");
     let toStatus = "Concluído";
 
-    // Toggle: se já estiver Concluído, volta pro status anterior (quando existir)
     if(fromStatus === "Concluído"){
       const back = entry._prevStatus || entry.prevStatus || "";
       if(back && back !== "Concluído"){
         toStatus = back;
       }else{
-        // fallback seguro
         toStatus = "Sem resposta";
       }
       entry._prevStatus = null;
@@ -7407,11 +7229,9 @@ function markOK(entryId){
     entry.status = toStatus;
     entry.lastUpdateAt = new Date().toISOString();
 
-    // compat
     const vp = parseMoney(entry.valuePaid);
     entry.valueClosed = vp || null;
 
-    // log
     entry.statusLog = entry.statusLog || [];
     if(fromStatus !== toStatus){
       entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
@@ -7437,7 +7257,6 @@ function openWhats(entryId){
     const contact = (db.contacts||[]).find(c=>c.id===entry.contactId) || {};
     const phone = String(contact.phone||entry.phone||"").replace(/\D/g,'');
     if(!phone) return toast("Sem telefone", "Esse lead não tem telefone.");
-    // template simples (pode evoluir depois)
     const tpl = (db.settings && db.settings.waTemplate) ? String(db.settings.waTemplate) : "Oi {nome}! Vi seu interesse. Posso te ajudar?";
     const msg = tpl
       .replaceAll("{nome}", String(contact.name||entry.name||""))
@@ -7996,7 +7815,6 @@ function importJSON(file){
     try{
       const data = JSON.parse(r.result);
       if(!data || typeof data!=="object") throw new Error("invalid");
-      // basic shape check
       if(!Array.isArray(data.masters) || !Array.isArray(data.entries)) throw new Error("invalid");
       saveDB(normalizeDBShape(data), { immediate:true });
       toast("Backup importado ✅", "Se a sessão estiver ativa, já sobe para a nuvem.");
@@ -8113,13 +7931,11 @@ const total = list.reduce((sum,e)=>{
     `;
   }).join("");
 
-  // Wire drag & drop (robust: desktop + touch)
   window.__KANBAN_DRAG_ID = null;
 
   qsa(".kanCard", board).forEach(card=>{
     const id = card.dataset.entry;
 
-    // Desktop HTML5 drag
     card.addEventListener("dragstart", (ev)=>{
       window.__KANBAN_DRAG_ID = id;
       try{
@@ -8137,7 +7953,6 @@ const total = list.reduce((sum,e)=>{
       qsa(".kanDropHint", board).forEach(x=>x.classList.remove("kanDropHint"));
     });
 
-    // Touch/pointer fallback: tap a card, then tap a column to move
     card.addEventListener("pointerdown", (ev)=>{
       if(ev.pointerType === "mouse") return;
       const t = ev.target;
@@ -8185,7 +8000,6 @@ const total = list.reduce((sum,e)=>{
       kanbanMoveTo(status);
     });
 
-    // Tap-to-move fallback (mobile)
     zone.addEventListener("click", ()=>{
       if(window.__KANBAN_DRAG_ID) kanbanMoveTo(status);
     });
@@ -8268,8 +8082,6 @@ function renderTasks(){
   const taskFilterNorm = normTaskFilter(taskFilter);
   const filterTextNorm = normTaskFilter(filterEl?.selectedOptions?.[0]?.textContent || "");
 
-  // Robusto contra diferença entre value e label do select.
-  // Ex: value pode ser "open", "PendentesEAtraso" ou texto "Pendentes e em atraso".
   const isTodosFilter = taskFilter === "Todos" || taskFilterNorm === "todos" || filterTextNorm === "todos";
   const isAllOpenFilter =
     taskFilter === "PendentesEAtraso" ||
@@ -8302,10 +8114,6 @@ function renderTasks(){
     filterTextNorm.includes("feito")
   );
 
-  // Visão de tarefas:
-  // - Todos = todos os status do mês selecionado.
-  // - Pendente/Atrasado/Feito = respeitam o mês selecionado.
-  // - Pendentes e em atraso = painel geral de tarefas abertas, ignorando mês.
   const allStatusMode = isTodosFilter;
   const allOpenMode = isAllOpenFilter;
 
@@ -8397,7 +8205,6 @@ function openNewTask(){
   const db = loadDB();
   const monthKey = val("fMonth") || new Date().toISOString().slice(0,7);
 
-  // choices from current filtered entries
   const entries = filteredEntries();
   const opts = entries.map(e=>{
     const c = db.contacts.find(x=>x.id===e.contactId);
@@ -8522,18 +8329,15 @@ function toggleTaskDone(taskId){
   const t = (db.tasks||[]).find(x=>x.id===taskId);
   if(!t) return;
 
-  // 🔒 BLOQUEIO DE TAREFA AUTOMÁTICA
   if (t.key && t.key.startsWith("INST:")) {
     return toast("Aviso", "Essa tarefa é automática e vinculada ao recebimento.");
   }
-  // toggle done and keep a memory of previous state if you want future audits
   t.done = !t.done;
   saveDB(db);
   toast(t.done ? "Tarefa marcada como feita" : "Tarefa reaberta");
  if (typeof renderTasks === "function") renderTasks();
   if (typeof updateSidebarPills === "function") updateSidebarPills();
 }
-// compat
 function markTaskDone(taskId){ return toggleTaskDone(taskId); }
 function deleteTask(taskId){
   return toast("Exclusão bloqueada", "As tarefas não podem mais ser apagadas. Use editar, concluir ou reabrir.");
@@ -8564,7 +8368,6 @@ function bindNav(){
 const bKan = el("btnNewLeadKanban"); if(bKan) bKan.addEventListener("click", openNewLead);
 const bTask = el("btnNewTask"); if(bTask) bTask.addEventListener("click", openNewTask);
 
-  // Recebimentos bindings
   const instMonth = el("instMonth");
   const instSearch = el("instSearch");
   const instFilter = el("instFilter");
@@ -8682,17 +8485,14 @@ function bindActions(){
       if(id==="fYear"){
         ensureMonthOptions();
       }
-      // persist again in case month selection was adjusted
       saveFilters(getUIFilters());
       currentPage = 1;
       renderAll();
     });
   });
 
-  // Users
   el("btnNewUser").onclick = openNewUser;
 
-  // Settings
   el("btnBackup").onclick = exportJSON;
   el("fileImport").addEventListener("change", (e)=>{
     const f = e.target.files?.[0]; if(f) importJSON(f);
@@ -8743,12 +8543,10 @@ function bindActions(){
     toast("Preferência de mensagem salva.");
   };
 
-  // Recebimentos: template de cobrança
   const taCharge = el("waChargeTemplate");
   const hintCharge = el("chargeTplSaved");
   const btnSaveCharge = el("btnSaveChargeTpl");
   const btnResetCharge = el("btnResetChargeTpl");
-  // carregar valores atuais
   try{
     const db0 = loadDB();
     if(taCharge){
@@ -8772,7 +8570,6 @@ function bindActions(){
     if(hintCharge){ hintCharge.textContent = "Padrão restaurado."; setTimeout(()=>hintCharge.textContent="", 2000); }
     toast("Padrão restaurado.");
   };
-  // wipe removed for production
 }
 
 function bindAuth(){ 
@@ -8828,7 +8625,6 @@ async function boot(){
 
     const supportCtx = getSupportContext();
 
-    // Em fluxo de suporte, não mostra toast antes do fluxo terminar.
     if(!supportCtx && !supportTokenPresent){
       clearSupportContext();
       toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
@@ -8840,22 +8636,18 @@ async function boot(){
 
   fillSelectOptions();
 
-  // Filters (year/month) need options before we set values
   const f = loadFilters();
   ensureYearOptions();
   setUIFilters(f);
   ensureMonthOptions();
 
-  // migração (valores antigos -> novos)
   try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db); }catch(e){}
 
-  // persist normalized filters
   saveFilters(getUIFilters());
 
   const actor = currentActor();
 
   if(!actor){
-    // Evita jogar o suporte na tela de login por causa de corrida de inicialização.
     if((supportTokenPresent || isSupportMode()) && (window.__SUPPORT_BOOT_RETRIES__ || 0) < 6){
       window.__SUPPORT_BOOT_RETRIES__ = (window.__SUPPORT_BOOT_RETRIES__ || 0) + 1;
       setTimeout(()=>boot(), 180);
@@ -8889,16 +8681,12 @@ async function boot(){
 
 /* One-time bindings */
 (function init(){
-  // theme at start
   applyTheme(localStorage.getItem(THEMEKEY) || "dark");
 
   bindActions();
   bindAuth();
   bindLoginEnterSubmit();
 
-  // Antiflash real: ao recarregar/F5, NÃO chama showAuth() aqui.
-  // Enquanto a sessão está sendo checada, mantém apenas a tela única de boot.
-  // Se não houver sessão, verificarSessao() chama showAuth().
   try{
     const auth = document.getElementById("authView");
     const app = document.getElementById("appView");
@@ -8930,7 +8718,6 @@ function setupLeadsTopScrollbar(){
 }
 
 
-// === PATCH: sincroniza a rolagem horizontal dos Leads (top bar) ===
 (function(){
   function setupTopScroll(){
     const leadsView = document.getElementById('view-leads');
@@ -8944,23 +8731,18 @@ function setupLeadsTopScrollbar(){
     if(!inner || !table) return;
 
     function refresh(){
-      // faz o "inner" ter a mesma largura do conteúdo real (table scrollWidth)
       inner.style.width = table.scrollWidth + "px";
-      // mantém sincronizado caso alguém tenha mexido no outro
       top.scrollLeft = wrap.scrollLeft;
     }
-    // sync listeners (evita loop com flag simples)
     let lock=false;
     top.addEventListener('scroll', ()=>{ if(lock) return; lock=true; wrap.scrollLeft = top.scrollLeft; lock=false; });
     wrap.addEventListener('scroll', ()=>{ if(lock) return; lock=true; top.scrollLeft = wrap.scrollLeft; lock=false; });
 
     window.addEventListener('resize', refresh);
-    // quando tabela re-renderizar, tenta de novo
     const mo = new MutationObserver(()=>refresh());
     mo.observe(wrap, {childList:true, subtree:true});
     refresh();
   }
-  // espera DOM pronto
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTopScroll);
   else setupTopScroll();
 })();
@@ -9180,7 +8962,6 @@ function __kpiBucket(key, rows){
   if(key==="pos") return list.filter(e => KPI_RULES.positive.has((e.status||"").trim()));
   if(key==="bad") return list.filter(e => KPI_RULES.disqualified.has((e.status||"").trim()));
   if(key==="sched") return list.filter(e => ["Agendado","Remarcou"].includes((e.status||"").trim()));
-  // dinheiro: mostra tudo (modal informativa) – útil p/ auditoria rápida
   if(key==="budget"||key==="received"||key==="open") return list;
   return list;
 }
@@ -9219,7 +9000,6 @@ function __applyKpiClick(key, opts={}){
   key = String(key || "");
   if(!key) return;
 
-  // evita clique duplicado no mesmo evento/ciclo
   const now = Date.now();
   const sig = `${key}|${now}`;
   if(window.__KPI_CLICK_LOCK && (now - window.__KPI_CLICK_LOCK_AT) < 160) return;
@@ -9238,8 +9018,6 @@ function __applyKpiClick(key, opts={}){
   window.DASH_PREVIEW_LIMIT = 10;
   __updateKpiActiveUI();
 
-  // Só o dashboard precisa re-renderizar. renderAll aqui era martelo de obra:
-  // pesado, recriava os cards e fazia o clique parecer que precisava ser repetido.
   try{ renderDashboard(); }catch(_){ try{ renderAll(); }catch(__){} }
 }
 
@@ -9261,8 +9039,6 @@ function __bindKpiClicks(){
   }catch(_){}
 }
 
-// Delegação única e robusta para KPI. Sem listener por card, sem duplicar clique.
-// pointerdown abre no primeiro toque/clique e bloqueia o click normal logo depois.
 (function(){
   if(window.__CRONOS_KPI_CLICK_V1032_BOUND) return;
   window.__CRONOS_KPI_CLICK_V1032_BOUND = true;
@@ -9322,13 +9098,10 @@ async function finalizeCloudLogin(){
     document.getElementById("appView").classList.add("hidden");
 
     if(explicitLogin){
-      // Login digitado pelo usuário: pode usar o loading do card de login.
       hideBootSplash();
       document.getElementById("authView").classList.remove("hidden");
       setLoginLoading(true, "Validando acesso e carregando seu ambiente...");
     }else{
-      // F5/sessão já salva: mantém UMA tela só.
-      // Nada de mostrar o card de login com “Validando acesso” por 1s.
       document.getElementById("authView").classList.add("hidden");
       setLoginLoading(false);
       showBootSplash("Sincronizando seu ambiente...");
@@ -9429,8 +9202,6 @@ async function verificarSessao() {
   window.__CRONOS_SESSION_CHECKING__ = true;
   window.__CRONOS_BOOTING__ = true;
 
-  // Antiflash: ao recarregar, não deixa a tela de login aparecer antes da checagem da sessão.
-  // Mostra direto o estado de carregamento. Se não houver sessão, showAuth() volta para o login normal.
   try{
     const auth = document.getElementById("authView");
     const app = document.getElementById("appView");
@@ -9443,7 +9214,6 @@ async function verificarSessao() {
 
   const hasSupportToken = new URLSearchParams(location.search).has("support_token");
 
-  // Em suporte, deixa o próprio boot resolver tudo — inclusive sem login.
   if (hasSupportToken || isSupportMode()) {
     await boot();
     return;
@@ -9463,7 +9233,6 @@ async function verificarSessao() {
   showAuth();
 }
 
-// Antes rodava só no window.load; isso deixava o login piscar enquanto imagens/assets carregavam.
 if(document.readyState === "loading"){
   document.addEventListener("DOMContentLoaded", verificarSessao, { once:true });
 }else{
@@ -9958,7 +9727,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 })();
 
-/* ===== FICHA DO LEAD + CADASTRO DE PROCEDIMENTOS (v1) ===== */
+/* Ficha do lead e procedimentos */
 (function(){
   try{
     const FACE_OPTIONS = [
@@ -10676,9 +10445,6 @@ window.CRONOS_PROC_UI = {
         window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:id});
         renderProcedureCatalogApp();
 
-        // Ao editar um procedimento no fim de uma lista grande, volta automaticamente para o topo,
-        // onde fica o formulário de edição. Sem isso, o usuário clica e fica caçando o formulário
-        // igual quem perdeu a chave dentro da bolsa.
         requestAnimationFrame(()=>{
           try{
             const modalBody = el('modalBody') || qs('#modalBg .modalBody');
@@ -11089,7 +10855,6 @@ window.CRONOS_PROC_UI = {
         s.procSearch = typed;
         s.procMenuOpen = true;
 
-        // Se o usuário começou a editar um procedimento já selecionado, libera a escolha.
         const db = loadDB();
         const current = getProcedureCatalog(db).find(x=>x.id===s.selectedProcId) || null;
         if(current && procLabel(current) !== typed){
@@ -11236,8 +11001,6 @@ window.CRONOS_PROC_UI = {
         }
         saveDB(db);
 
-        // Depois de adicionar ao plano, limpa o painel para o próximo lançamento.
-        // O valor salvo continua na tabela; o formulário volta zerado.
         s.selectedTeeth = [];
         s.selectedTooth = null;
         s.selectedFace = '';
@@ -11341,7 +11104,6 @@ window.CRONOS_PROC_UI = {
         if(!entry) return;
         const item = ensureFicha(entry).plano.find(x=>x.id===itemId);
         if(!item) return;
-        // Pago agora passa pelo Recebimentos. Se já está vinculado, abre o recebimento.
         const plan = getFinancialPlanForFichaItem(entry, item);
         if(plan) return openNewFinancialInstallment(entry.id, plan.id);
         this.openReceivingForItems([itemId]);

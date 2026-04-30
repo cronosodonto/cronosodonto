@@ -1,8 +1,5 @@
 /* =========================================================
-   HOJE NO CRONOS — módulo separado
-   Versão: today_v21_flow_stage1_whatsapp
-   Coloque este arquivo DEPOIS do app.js principal.
-   Ele não altera o app.js; injeta a tela e o menu em runtime.
+   Hoje no Cronos
    ========================================================= */
 (function(){
   const VIEW = "todayCronos";
@@ -49,8 +46,6 @@
     if(f === "all") return list;
     if(f === "overdue") return list.filter(x=>x.overdue);
 
-    // Ao clicar em uma KPI específica, os outros cards continuam na tela,
-    // mas ficam zerados. Isso mantém o layout estável.
     return f === section ? list : [];
   }
 
@@ -129,6 +124,18 @@
       if(typeof window.toast === "function") return window.toast(title, msg);
     }catch(_){}
     console.log("[Hoje no Cronos]", title, msg);
+  }
+
+  function canOpenToday(){
+    try{
+      return !window.CRONOS_CAN_ACCESS_MODULE || window.CRONOS_CAN_ACCESS_MODULE("todayCronos");
+    }catch(_){
+      return true;
+    }
+  }
+
+  function denyTodayAccess(){
+    toast("Acesso restrito", "Seu nível de acesso não permite abrir Hoje no Cronos.");
   }
 
   function save(db, opts={ immediate:true }){
@@ -367,8 +374,6 @@
   }
 
   function findMainHost(){
-    // O Cronos usa .main como área real das telas.
-    // Se o Hoje no Cronos for colocado no body, o botão fica ativo mas a tela parece vazia.
     return qs(".main") || $("appView") || qs("main") || qs(".app") || document.body;
   }
 
@@ -377,7 +382,6 @@
     const host = findMainHost();
 
     if(view){
-      // Garante que a tela esteja dentro da área principal certa.
       if(host && view.parentNode !== host){
         host.appendChild(view);
       }
@@ -397,7 +401,11 @@
   }
 
   function ensureNav(){
-    if($(NAV_ID)) return;
+    const existing = $(NAV_ID);
+    if(existing){
+      existing.classList.toggle("hidden", !canOpenToday());
+      return;
+    }
 
     const nav = qs(".nav") || qs("nav") || qs("#sidebar") || qs(".sidebar");
     if(!nav) return;
@@ -405,17 +413,19 @@
     const btn = document.createElement("button");
     btn.id = NAV_ID;
     btn.type = "button";
-    // Não usamos data-view aqui.
-    // O Cronos principal bloqueia views que não estão em APP_VIEWS e mostrava "acesso restrito".
-    // Então este botão fica fora do roteador principal e chama a tela pelo módulo próprio.
     btn.dataset.todayCronos = "1";
     btn.innerHTML = `<span>Hoje no Cronos</span><span id="todayNavBadge" class="todayNavBadge empty">0</span>`;
+    btn.classList.toggle("hidden", !canOpenToday());
     const openToday = (ev)=>{
       try{
         ev?.preventDefault?.();
         ev?.stopPropagation?.();
         ev?.stopImmediatePropagation?.();
       }catch(_){}
+      if(!canOpenToday()){
+        denyTodayAccess();
+        return false;
+      }
       window.CRONOS_TODAY.show();
       return false;
     };
@@ -433,8 +443,6 @@
   }
 
   function restoreNativeViews(){
-    // Só limpa a marcação feita pelo Hoje no Cronos.
-    // O roteador principal decide qual tela nativa deve ser exibida; reabrir todas aqui gerava piscadas.
     const host = findMainHost();
     qsa('[data-today-hidden="1"]', host).forEach(v=>{
       if(v.id !== VIEW_ID){
@@ -457,8 +465,6 @@
     const host = findMainHost();
     ensureView();
 
-    // Esconde qualquer conteúdo nativo direto dentro da área principal.
-    // Isso remove os filtros do Dashboard que apareciam no fim da tela.
     qsa(':scope > *', host).forEach(v=>{
       if(v.id === VIEW_ID){
         v.classList.remove("hidden");
@@ -470,7 +476,6 @@
       }
     });
 
-    // Também cobre estruturas por id view-*.
     qsa('[id^="view-"], .view', host).forEach(v=>{
       if(v.id === VIEW_ID){
         v.classList.remove("hidden");
@@ -492,9 +497,6 @@
     }
 
     qsa(".nav button, nav button, [data-view]").forEach(b=>{
-      // v90: seleção única também para módulos injetados fora do roteador
-      // (Hoje no Cronos e Simulador não usam data-view). Antes, ao voltar
-      // do Simulador para o Hoje, os dois botões podiam ficar ativos.
       b.classList.toggle("active", b.id === NAV_ID);
     });
   }
@@ -514,8 +516,6 @@
 
       const todayBtnActive = $(NAV_ID)?.classList.contains("active");
 
-      // Só mexe quando estamos SAINDO do Hoje no Cronos.
-      // E faz isso antes do roteador nativo agir, para não deixar a tela limpa por 1s.
       if(!todayIsActuallyOpen() && !todayBtnActive) return;
 
       restoreNativeViews();
@@ -523,17 +523,13 @@
       scheduleScrollCronosToTop();
     };
 
-    // pointerdown acontece antes do click do roteador do Cronos.
-    // Removi o listener de click duplicado e os setTimeouts que causavam piscada.
     document.addEventListener("pointerdown", recoverBeforeNativeClick, true);
 
-    // Acesso por teclado no menu.
     document.addEventListener("keydown", (ev)=>{
       if(ev.key !== "Enter" && ev.key !== " ") return;
       recoverBeforeNativeClick(ev);
     }, true);
 
-    // Se algum código chamar showView diretamente, também recupera as telas nativas.
     try{
       if(typeof window.showView === "function" && !window.showView.__todayCronosWrapped){
         const originalShowView = window.showView;
@@ -952,17 +948,12 @@
     const activeStatus = ["Agendado","Remarcou"];
     const resolvedStatus = ["Compareceu","Faltou","Fechou","Concluído"];
 
-    // 1) Agendamento ainda ativo: conta.
     if(activeStatus.includes(status)) return true;
 
-    // 2) Agendamento resolvido: conta somente se ainda existir evidência de data/hora.
-    // Assim, se alguém só colocou data para inflar número e depois removeu, não conta.
     if(resolvedStatus.includes(status) && (entry.apptDate || entry.apptTime)) return true;
 
     const log = Array.isArray(entry.statusLog) ? entry.statusLog : [];
 
-    // 3) Histórico confiável: só conta se houve um agendamento e depois um desfecho real.
-    // Passar por "Agendado" e depois remover NÃO conta sozinho.
     const hadScheduled = log.some(l=>{
       const from = String(l?.from || "").trim();
       const to = String(l?.to || "").trim();
@@ -997,7 +988,6 @@
 
   function patchDashboardAppointmentHistory(){
     try{
-      // Ajusta o bucket da KPI "Agendados" para histórico, não só status atual.
       if(typeof window.__kpiBucket === "function" && !window.__kpiBucket.__todayCronosPatched){
         const originalBucket = window.__kpiBucket;
         const patchedBucket = function(key, rows){
@@ -1010,7 +1000,6 @@
         window.__kpiBucket = patchedBucket;
       }
 
-      // Depois que o Dashboard renderizar, corrige o número e a porcentagem de Agendados.
       if(typeof window.renderDashboard === "function" && !window.renderDashboard.__todayCronosApptPatched){
         const originalRenderDashboard = window.renderDashboard;
         const wrappedRenderDashboard = function(){
@@ -1022,7 +1011,6 @@
         window.renderDashboard = wrappedRenderDashboard;
       }
 
-      // Se já estiver no dashboard, aplica agora.
       setTimeout(patchDashboardAppointmentKpi, 0);
     }catch(e){
       console.warn("Hoje no Cronos: patch de histórico de agendados falhou", e);
@@ -1052,7 +1040,7 @@
       if(!rows) return;
       pill.textContent = String(rows.length);
     }catch(e){
-      console.warn("Hoje no Cronos: não consegui corrigir contador do Dashboard", e);
+      console.warn("Hoje no Cronos: contador do Dashboard indisponível", e);
     }
   }
 
@@ -1112,9 +1100,6 @@
 
       if(!contact) return;
 
-      // O bug era: CPF/nascimento salvava localmente, mas no merge com a nuvem
-      // o contato antigo vencia por não existir updatedAt no contato local.
-      // Marcando updatedAt, a versão recém-editada vence corretamente no Supabase.
       contact.updatedAt = now;
       contact.lastModifiedAt = now;
       contact.birthDate = birth;
@@ -1192,8 +1177,6 @@
 
       if(!badge || !ref) return;
 
-      // Copia a aparência REAL dos contadores nativos do menu.
-      // Assim o Hoje no Cronos não fica com "bolinha de outra família".
       const cs = getComputedStyle(ref);
       const props = [
         "backgroundColor","borderTopColor","borderRightColor","borderBottomColor","borderLeftColor",
@@ -1364,7 +1347,6 @@
 
     const key = String(task?.key || "");
 
-    // Novo recebimento: FININST:entryId:planId:paymentId
     if(key.startsWith("FININST:")){
       const parts = key.split(":");
       const planId = parts[2] || task?.financialPlanId || "";
@@ -1384,7 +1366,6 @@
       }
     }
 
-    // Parcelamento legado: INST:entryId:due:number
     if(key.startsWith("INST:")){
       const parts = key.split(":");
       const due = parts[2] || fallback.dueDate || "";
@@ -1748,6 +1729,10 @@
   }
 
   function show(){
+    if(!canOpenToday()){
+      denyTodayAccess();
+      return;
+    }
     addStyles();
     installV94Refinements();
     ensureNav();
@@ -1813,7 +1798,6 @@
     restoreNativeViews();
     hideTodayView();
 
-    // Reinjeta caso o Cronos redesenhe a tela/menu.
     setInterval(()=>{
       try{
         ensureNav();
@@ -1821,13 +1805,9 @@
         bindNativeNavRecovery();
         patchBirthDateCloudSync();
 
-        // Rotina leve: contador do Hoje no Cronos + estilo do badge.
-        // Os patches pesados rodam no boot e nas renderizações, não em todo ciclo.
         updateNavCount();
         syncNavBadgeStyle();
 
-        // Não renderiza automaticamente enquanto a tela está aberta.
-        // Isso evitava a rolagem interna voltar sozinha para o topo.
 
       }catch(_){}
     }, 12000);
