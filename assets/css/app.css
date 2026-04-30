@@ -1141,6 +1141,31 @@ html, body{ overflow-x: hidden; }
 .badge.late{color:var(--danger);}
 .badge.pending{color:var(--warn);}
 .miniLink{color:var(--info); text-decoration:none; font-weight:700;}
+.miniLink.waChargeBtn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:34px;
+  padding:8px 14px;
+  border-radius:12px;
+  border:1px solid rgba(34,197,94,.38);
+  background:rgba(34,197,94,.14);
+  color:#86efac;
+  line-height:1;
+  box-shadow:none;
+}
+.miniLink.waChargeBtn:hover{
+  filter:brightness(1.08);
+  border-color:rgba(34,197,94,.55);
+  background:rgba(34,197,94,.20);
+}
+html.light .miniLink.waChargeBtn,
+body.light .miniLink.waChargeBtn,
+:root.light .miniLink.waChargeBtn{
+  color:#047857;
+  background:rgba(16,185,129,.12);
+  border-color:rgba(16,185,129,.32);
+}
 
 
 /* Ajustes visuais do Cronos */
