@@ -2350,7 +2350,7 @@ function renderInstallmentTable(entry, contact){
       ? (canSensitive ? `<a class="miniLink" href="javascript:void(0)" onclick="undoInstallmentPay('${entry.id}', ${p.number})">Desfazer</a>` : `<span class="muted" style="font-size:12px">Pago</span>`)
       : `<button class="btn ok" onclick="payInstallment('${entry.id}', ${p.number})">Dar baixa</button>`;
     const transfer = (paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferInstallmentCashDate('${entry.id}', ${p.number})">Transferir data</a>` : "";
-    const wa = !paid ? `<a class="miniLink waChargeBtn" href="${waChargeLink(contact.phone, contact.name, entry, p)}" target="_blank">Cobrar</a>` : "";
+    const wa = !paid ? `<a class="waChargeBtn" href="${waChargeLink(contact.phone, contact.name, entry, p)}" target="_blank"><span class="waChargeIcon">☎</span><span>Cobrar</span></a>` : "";
     const deleteBtn = canSensitive ? `<button class="miniBtn danger" onclick="deleteInstallment('${entry.id}', ${p.number})" title="Excluir parcela">🗑️</button>` : "";
     const cashISO = cronosPaymentCashISO(p, false);
     return `

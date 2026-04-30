@@ -1519,6 +1519,34 @@
     return task?.message || task?.notes || task?.desc || task?.title || "";
   }
 
+  function openTaskWhats(taskId){
+    const db = load();
+    if(!db) return toast("WhatsApp", "Não consegui carregar os dados agora.");
+
+    const task = (db.tasks || []).find(x=>String(x.id) === String(taskId));
+    if(!task) return toast("WhatsApp", "Tarefa não encontrada.");
+
+    const entry = (db.entries || []).find(x=>String(x.id) === String(task.entryId || task.leadId || ""));
+    const msg = taskPatientMessage(db, task, entry);
+    const phone = taskPhone(db, task, entry);
+
+    if(phone){
+      window.open(waLink(phone, msg), "_blank");
+      return;
+    }
+
+    if(entry && typeof window.openWhats === "function"){
+      if(msg) copyText(msg);
+      try{
+        window.openWhats(entry.id);
+        return;
+      }catch(_){}
+    }
+
+    if(msg) copyText(msg);
+    toast("Telefone não encontrado", "Copiei a mensagem, mas esse registro ainda não tem telefone vinculado.");
+  }
+
   function renderTasksList(items, db){
     if(!items.length) return `<div class="todayEmpty">Nenhuma tarefa vencida para hoje. Milagre administrativo detectado.</div>`;
     return items.map(item=>{
@@ -1541,7 +1569,7 @@
             <button class="todayBtn ok" onclick="CRONOS_TODAY.doneTask('${escapeHTML(t.id)}')">Marcar feito</button>
             <button class="todayBtn warn" onclick="CRONOS_TODAY.postponeTask('${escapeHTML(t.id)}')">Adiar</button>
             ${msg ? `<button class="todayBtn" onclick="CRONOS_TODAY.copy(${JSON.stringify(msg).replace(/"/g,'&quot;')})">Copiar</button>` : ""}
-            ${phone ? `<a class="todayBtn" target="_blank" href="${waLink(phone, msg)}">WhatsApp</a>` : ""}
+            ${(msg || t.wa || String(t.action || "").toLowerCase().includes("whatsapp")) ? `<button class="todayBtn wa" onclick="CRONOS_TODAY.openTaskWhats('${escapeHTML(t.id)}')">WhatsApp</button>` : ""}
             ${e ? `<button class="todayBtn" onclick="CRONOS_TODAY.openLead('${escapeHTML(e.id)}')">Abrir lead</button>` : ""}
           </div>
         </div>
@@ -1850,6 +1878,7 @@
     payFinancial,
     payLegacy,
     copy:copyText,
+    openTaskWhats,
     doneFlow:markFlowStepDone,
     finishFlow
   };
