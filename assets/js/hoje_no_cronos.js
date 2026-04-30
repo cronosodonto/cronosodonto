@@ -427,6 +427,24 @@
       .todayBtn.ok{background:rgba(34,197,94,.14); border-color:rgba(34,197,94,.35)}
       .todayBtn.warn{background:rgba(245,158,11,.14); border-color:rgba(245,158,11,.35)}
       .todayBtn.danger{background:rgba(239,68,68,.14); border-color:rgba(239,68,68,.35)}
+      #${VIEW_ID} .todayBtn.wa,
+      #${VIEW_ID} a.todayBtn[href*="wa.me"]{
+        background:rgba(34,197,94,.18) !important;
+        border-color:rgba(34,197,94,.46) !important;
+        color:#dcfce7 !important;
+        font-weight:800;
+      }
+      html.light #${VIEW_ID} .todayBtn.wa,
+      body.light #${VIEW_ID} .todayBtn.wa,
+      html.light #${VIEW_ID} a.todayBtn[href*="wa.me"],
+      body.light #${VIEW_ID} a.todayBtn[href*="wa.me"]{
+        background:#22c55e !important;
+        border-color:#16a34a !important;
+        color:#ffffff !important;
+        box-shadow:0 8px 16px rgba(34,197,94,.18) !important;
+      }
+      #${VIEW_ID} .todayBtn.wa:hover,
+      #${VIEW_ID} a.todayBtn[href*="wa.me"]:hover{filter:brightness(1.06)}
       .todayBadge{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--tc-line); border-radius:999px; padding:4px 8px; font-size:11px; color:var(--tc-muted)}
       .todayEmpty{padding:18px; color:var(--tc-muted); text-align:center; border:1px dashed var(--tc-line); border-radius:14px; background:rgba(255,255,255,.035)}
       html.light #${VIEW_ID} .todayEmpty{background:rgba(255,255,255,.45)}
