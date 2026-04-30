@@ -166,7 +166,83 @@
 
   function contactPhone(db, entry){
     const c = getContact(db, entry);
-    return c.phone || entry.phone || entry.telefone || "";
+    return pickPhone(c) || pickPhone(entry);
+  }
+
+  function normalizeText(v){
+    return String(v || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function pickPhone(obj){
+    if(!obj) return "";
+    return obj.phone || obj.whatsapp || obj.telefone || obj.celular || obj.mobile || obj.phoneNumber || obj.tel || "";
+  }
+
+  function taskContactName(task){
+    const raw = String(task?.title || task?.name || "").trim();
+    if(!raw) return "";
+    return raw
+      .replace(/^(remarcar\s+falta|inadimplente|follow\-?up|retorno|cobrança|cobranca)\s*:\s*/i, "")
+      .replace(/\s*[•-]\s*parcela\s+\d+\s*\/\s*\d+.*$/i, "")
+      .replace(/\s*[•-]\s*parcelamento.*$/i, "")
+      .split("•")[0]
+      .trim();
+  }
+
+  function findPhoneByName(db, name, masterId=""){
+    const target = normalizeText(name);
+    if(!target) return "";
+
+    const contacts = Array.isArray(db?.contacts) ? db.contacts : [];
+    const entries = Array.isArray(db?.entries) ? db.entries : [];
+
+    const contact = contacts.find(c=>{
+      if(masterId && c.masterId && c.masterId !== masterId) return false;
+      const n = normalizeText(c.name || c.nome || c.fullName);
+      return n && (n === target || n.includes(target) || target.includes(n));
+    });
+    if(contact) return pickPhone(contact);
+
+    const entry = entries.find(e=>{
+      if(masterId && e.masterId && e.masterId !== masterId) return false;
+      const n = normalizeText(e.name || e.lead || e.patientName || e.nome);
+      return n && (n === target || n.includes(target) || target.includes(n));
+    });
+    if(entry) return contactPhone(db, entry);
+
+    return "";
+  }
+
+  function taskPhone(db, task, entry){
+    const direct = pickPhone(task);
+    if(direct) return direct;
+
+    if(entry){
+      const fromEntry = contactPhone(db, entry);
+      if(fromEntry) return fromEntry;
+    }
+
+    const contactId = task?.contactId || task?.contact_id || "";
+    if(contactId){
+      const c = (db.contacts || []).find(x=>String(x.id) === String(contactId));
+      const fromContact = pickPhone(c);
+      if(fromContact) return fromContact;
+    }
+
+    const entryId = task?.entryId || task?.leadId || "";
+    if(entryId){
+      const e = (db.entries || []).find(x=>String(x.id) === String(entryId));
+      const fromEntry = contactPhone(db, e);
+      if(fromEntry) return fromEntry;
+    }
+
+    return findPhoneByName(db, taskContactName(task), task?.masterId || actor()?.masterId || "");
   }
 
   function waLink(phone, msg=""){
@@ -1235,11 +1311,7 @@
   }
 
   function renderItemActionsForLead(db, entry){
-    /*
-      v63 — remove o WhatsApp genérico de apoio.
-      O botão com mensagem real deve vir do contexto correto: fluxo, tarefa, cobrança etc.
-      Aqui fica só o acesso ao lead para evitar duplicidade tipo “Oi, tudo bem?” perdido no meio da operação.
-    */
+    // Acesso rápido ao lead
     return `
       <button class="todayBtn" onclick="CRONOS_TODAY.openLead('${escapeHTML(entry.id)}')">Abrir lead</button>
     `;
@@ -1452,7 +1524,7 @@
     return items.map(item=>{
       const t = item.task;
       const e = (db.entries || []).find(x=>String(x.id)===String(t.entryId));
-      const phone = t.phone || (e ? contactPhone(db, e) : "");
+      const phone = taskPhone(db, t, e);
       const msg = taskPatientMessage(db, t, e);
       const internalNote = t.message || t.notes || t.desc || t.title || "";
       return `
