@@ -1,7 +1,6 @@
     /* =========================
-       Cronos Odonto (single-file)
-       Phase 1: localStorage
-       ========================= */
+   Estilos principais do Cronos
+   ========================= */
 
     :root{
       --bg:#0b0f14;
@@ -678,7 +677,7 @@ to { transform: rotate(360deg); }
 /* Ajuste sutil de densidade */
 .leadsTableWrap th, .leadsTableWrap td{padding:6px 8px!important; vertical-align:middle!important;}
 
-/* === PATCH: Leads (scroll & actions) === */
+/* Área de leads */
 #view-leads .tableWrap{overflow-x:auto; position:relative; border-radius:14px;}
 #view-leads .tableWrap::-webkit-scrollbar{height:0px;}
 #view-leads .tableWrap{scrollbar-width:none;}
@@ -711,13 +710,13 @@ to { transform: rotate(360deg); }
 #leadsTopScroll > .inner{height:1px;}
 
 
-/* === PATCH: Charts spacing === */
+/* Gráficos e indicadores */
 #view-dashboard .card h3{margin:0 0 8px 0;}
 #view-dashboard .chartTitle{margin-top:0;}
 .chartNote{margin-top:0;}
 
 
-/* ===== Patch v20-fix5: Leads actions overlap + tasks scroll + chart height ===== */
+/* Área de leads */
 #leads .tableWrap table{width:100%; table-layout:fixed;}
 #leads .tableWrap th, #leads .tableWrap td{overflow:hidden; text-overflow:ellipsis; white-space:normal;}
 #leads .tableWrap th:nth-child(10), #leads .tableWrap td:nth-child(10){width:160px;} /* Datas */
@@ -740,7 +739,7 @@ to { transform: rotate(360deg); }
 
 
 
-/* ===== Patch v20-fix7: Leads overlap (actions x dates) + Tasks horizontal bar ===== */
+/* Área de leads */
 #view-leads .tableWrap{
   overflow-x:auto !important;
 }
@@ -1072,9 +1071,7 @@ html.light .card, html.light .panel{background:var(--panel); color:var(--text);}
 
 
 
-/* =========================
-   PATCH: Dashboard (Resumo por Status + Leads filtrados) side-by-side
-   ========================= */
+/* Área de leads */
 #view-dashboard .grid.cols2{
   grid-template-columns: 50% 50%;
   gap: 12px;
@@ -1146,7 +1143,7 @@ html, body{ overflow-x: hidden; }
 .miniLink{color:var(--info); text-decoration:none; font-weight:700;}
 
 
-/* v23: dashboard/cards responsivo em telas grandes (sem sobrepor) */
+/* Ajustes visuais do Cronos */
 .kpiGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;}
 .topbar{flex-wrap:wrap;}
 .topbar .actions{flex-wrap:wrap;}
@@ -1247,11 +1244,7 @@ html, body{ overflow-x: hidden; }
 .taskActionsRow .miniBtn{min-width:36px;}
 #view-tasks td:last-child{padding-right:16px;}
 
-/* =========================
-   v52 – Refinos de layout
-   - Resumo por Status com respiro e alinhamento financeiro
-   - Tarefas com colunas balanceadas e quebra de linha na Tarefa
-   ========================= */
+/* Área de tarefas */
 
 /* Resumo por Status (Status | Total | Valor) */
 .summaryTable{width:100%; border-collapse:separate; border-spacing:0;}
@@ -1290,11 +1283,7 @@ html, body{ overflow-x: hidden; }
 
 
 
-/* =========================
-   v53 – Ajustes
-   - Resumo por Status: mais respiro, colunas equilibradas, alinhamento financeiro
-   - Tarefas: coluna Ação sem corte, quebra de linha na Tarefa sem esmagar o resto
-   ========================= */
+/* Área de tarefas */
 
 /* Dashboard: Resumo por Status (grid) — alinhado tipo "tabela limpa" */
 #dashByStatusGrid.statusGrid{
@@ -1565,7 +1554,7 @@ html.feature-lock-active{
 }
 
 
-/* v6: Simulador de Crédito respeitando tema claro */
+/* Simulador de crédito */
 html.light #view-creditSimulator,
 html.light #view-creditSimulator *{
   color: var(--text) !important;
@@ -1607,7 +1596,7 @@ html.light #view-creditSimulator .credAlert{
 }
 
 
-/* === PATCH v13: sidebar mais compacto com rolagem + Performance sem scroll horizontal === */
+/* Menu lateral e indicadores */
 .brand{gap:8px; padding:10px 10px; min-width:0;}
 .brand > div:not(.logoBox){min-width:0; flex:1 1 auto;}
 .brand h1{font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; letter-spacing:-.02em;}
@@ -1622,7 +1611,7 @@ html.light #view-creditSimulator .credAlert{
 }
 
 
-/* === PATCH v89: simulador - percentual único e legível no modo claro === */
+/* Simulador de crédito */
 #view-creditSimulator .credEntryPctBadge{display:none !important;}
 #view-creditSimulator .credEntryPctGroup label{display:block !important;}
 #view-creditSimulator .credEntryPctInline{
@@ -1656,8 +1645,7 @@ body.light #view-creditSimulator #credEntryPct{
   #view-creditSimulator #credEntryPct{text-align:left !important;}
 }
 
-/* CRONOS_PATCH_V90_SIDEFOOTER_ACTION_COLORS
-   Ações rápidas do rodapé lateral: cores sólidas no claro, vidro colorido no escuro. */
+/* Ações rápidas da lateral */
 .sideFooter .row button{
   font-weight:800;
   letter-spacing:-.01em;
@@ -1738,7 +1726,7 @@ body:not(.light) #btnLogout{
 }
 
 
-/* CRONOS_PATCH_V95_HOVER_KPI_BADGE_REFINADO_FALLBACK */
+/* Menu lateral e indicadores */
   html.light .sidebar .nav button.active,
   html.light .sidebar .nav button.active:hover,
   :root.light .sidebar .nav button.active,
@@ -1870,3 +1858,37 @@ body:not(.light) #btnLogout{
     border-color:rgba(255,255,255,.20) !important;
     box-shadow:none !important;
   }
+
+/* Copyright da lateral */
+.sidebarCopyright{
+  margin-top:12px;
+  padding-top:10px;
+  border-top:1px solid rgba(148,163,184,.18);
+  text-align:center;
+  display:grid;
+  gap:2px;
+  color:var(--muted);
+  opacity:.78;
+}
+.sidebarCopyright span{
+  font-size:10.5px;
+  font-weight:700;
+  line-height:1.35;
+}
+.sidebarCopyright small{
+  font-size:10px;
+  line-height:1.35;
+  font-weight:500;
+}
+:root.light .sidebarCopyright,
+html.light .sidebarCopyright,
+body.light .sidebarCopyright{
+  color:rgba(71,85,105,.82);
+  border-top-color:rgba(15,23,42,.08);
+}
+:root:not(.light) .sidebarCopyright,
+html:not(.light) .sidebarCopyright,
+body:not(.light) .sidebarCopyright{
+  color:rgba(226,232,240,.58);
+  border-top-color:rgba(255,255,255,.08);
+}
