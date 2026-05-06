@@ -3012,6 +3012,8 @@ let CLOUD_ACCESS_KIND = "guest"; // owner | member | guest
 let CLOUD_MEMBER_INFO = null;
 let __cloudSaveTimer = null;
 let __cloudSavePromise = null;
+let __cloudSaveRevision = 0;
+let __cloudSaveRunning = false;
 let __cloudToastSuppressedUntil = 0;
 
 function suppressCloudFailureToasts(ms=6000){
@@ -3614,6 +3616,76 @@ function __cronosMergeArrayById(cloudArr, localArr){
   });
   return Array.from(out.values());
 }
+
+function __cronosNormProcName(name){
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+function __cronosProcedureKey(item){
+  const id = String(item?.id || "").trim();
+  if(id) return `id:${id}`;
+  const name = __cronosNormProcName(item?.nome || item?.name);
+  return name ? `name:${name}` : `tmp:${Math.random()}_${Date.now()}`;
+}
+function __cronosProcedureTime(item){
+  if(!item || typeof item !== "object") return 0;
+  const candidates = [item.deletedAt, item.updatedAt, item.createdAt, item.lastUpdateAt, item.at];
+  for(const v of candidates){
+    if(!v) continue;
+    const t = Date.parse(String(v).length === 10 ? String(v)+"T00:00:00" : String(v));
+    if(Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+function __cronosMergeProcedureCatalog(cloudArr, localArr){
+  const out = new Map();
+  const byName = new Map();
+
+  function add(item, origin){
+    if(!item || typeof item !== "object") return;
+    const copy = { ...item };
+    const key = __cronosProcedureKey(copy);
+    const nameKey = __cronosNormProcName(copy.nome || copy.name);
+    const previousKey = nameKey ? byName.get(nameKey) : null;
+    const finalKey = previousKey || key;
+    const prev = out.get(finalKey);
+
+    if(!prev){
+      out.set(finalKey, copy);
+      if(nameKey) byName.set(nameKey, finalKey);
+      return;
+    }
+
+    const prevTime = __cronosProcedureTime(prev);
+    const nextTime = __cronosProcedureTime(copy);
+    const shouldReplace = nextTime > prevTime || (nextTime === prevTime && origin === "local");
+    const merged = shouldReplace ? { ...prev, ...copy } : { ...copy, ...prev };
+    if(prev.id && copy.id && prev.id !== copy.id){
+      merged.id = shouldReplace ? copy.id : prev.id;
+    }
+    out.set(finalKey, merged);
+    if(nameKey) byName.set(nameKey, finalKey);
+  }
+
+  (Array.isArray(cloudArr) ? cloudArr : []).forEach(item=>add(item, "cloud"));
+  (Array.isArray(localArr) ? localArr : []).forEach(item=>add(item, "local"));
+
+  return Array.from(out.values()).filter(item=>item && typeof item === "object");
+}
+function __cronosMergeSettings(cloudSettings, localSettings){
+  const cloud = (cloudSettings && typeof cloudSettings === "object") ? cloudSettings : {};
+  const local = (localSettings && typeof localSettings === "object") ? localSettings : {};
+  const merged = { ...cloud, ...local };
+  if(Array.isArray(cloud.procedureCatalog) || Array.isArray(local.procedureCatalog)){
+    merged.procedureCatalog = __cronosMergeProcedureCatalog(cloud.procedureCatalog, local.procedureCatalog);
+  }
+  return merged;
+}
+
 function mergeCloudAndLocalDB(cloudDB, localDB){
   const cloud = normalizeDBShape(cloudDB || freshDB());
   const local = normalizeDBShape(localDB || freshDB());
@@ -3624,7 +3696,7 @@ function mergeCloudAndLocalDB(cloudDB, localDB){
   merged.entries = __cronosMergeArrayById(cloud.entries, local.entries);
   merged.tasks = __cronosMergeArrayById(cloud.tasks, local.tasks);
   merged.payments = __cronosMergeArrayById(cloud.payments, local.payments);
-  merged.settings = { ...(cloud.settings || {}), ...(local.settings || {}) };
+  merged.settings = __cronosMergeSettings(cloud.settings, local.settings);
   merged.version = local.version || cloud.version || "cloud_v2";
   merged.createdAt = cloud.createdAt || local.createdAt || new Date().toISOString();
   merged.lastMergedAt = new Date().toISOString();
@@ -3698,20 +3770,39 @@ async function flushCloudSave(dbToSave){
 
 function scheduleCloudSave(immediate=false){
   if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return Promise.resolve(false);
+  __cloudSaveRevision += 1;
+  const revision = __cloudSaveRevision;
   if(__cloudSaveTimer){
     clearTimeout(__cloudSaveTimer);
     __cloudSaveTimer = null;
   }
-  const run = ()=>{
-    __cloudSavePromise = flushCloudSave(DB).catch(err=>{
+
+  const run = async ()=>{
+    if(__cloudSaveRunning){
+      __cloudSaveTimer = setTimeout(()=>scheduleCloudSave(true), 450);
+      return __cloudSavePromise || Promise.resolve(true);
+    }
+
+    __cloudSaveRunning = true;
+    const snapshot = normalizeDBShape(JSON.parse(JSON.stringify(DB || freshDB())));
+
+    __cloudSavePromise = flushCloudSave(snapshot).catch(err=>{
       console.error("Erro na sincronização com a nuvem:", err);
       return false;
+    }).finally(()=>{
+      __cloudSaveRunning = false;
+      if(revision !== __cloudSaveRevision){
+        scheduleCloudSave(true);
+      }
     });
+
     return __cloudSavePromise;
   };
+
   if(immediate){
     return run();
   }
+
   __cloudSaveTimer = setTimeout(run, 650);
   return Promise.resolve(true);
 }
@@ -8257,7 +8348,7 @@ function openNewTask(){
         const t = {id: uid("task"), masterId: actor.masterId, entryId, dueDate, title, action, notes, done:false, createdAt:new Date().toISOString()};
         db.tasks = db.tasks || [];
         db.tasks.push(t);
-        saveDB(db);
+        saveDB(db, { immediate:true });
         closeModal();
         toast("Tarefa criada");
         renderAll();
@@ -9870,14 +9961,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function getProcedureCatalog(db=loadDB()){
       const arr = db?.settings?.procedureCatalog;
+      return Array.isArray(arr) ? arr.filter(item=>!item?.deletedAt) : [];
+    }
+    function getProcedureCatalogRaw(db=loadDB()){
+      const arr = db?.settings?.procedureCatalog;
       return Array.isArray(arr) ? arr : [];
     }
     function ensureProcedureCatalogSeeded(){
       const db = loadDB();
       if(!db.settings) db.settings = {};
       if(!Array.isArray(db.settings.procedureCatalog) || !db.settings.procedureCatalog.length){
-        db.settings.procedureCatalog = procedureCatalogDefaults();
-        saveDB(db);
+        db.settings.procedureCatalog = procedureCatalogDefaults().map(item=>({
+          ...item,
+          createdAt: item.createdAt || new Date().toISOString(),
+          updatedAt: item.updatedAt || new Date().toISOString()
+        }));
+        saveDB(db, { immediate:true });
       }
     }
     function getEntryById(entryId){
@@ -10469,7 +10568,7 @@ window.CRONOS_PROC_UI = {
       save(){
         const db = loadDB();
         if(!db.settings) db.settings = {};
-        const catalog = getProcedureCatalog(db).slice();
+        const catalog = getProcedureCatalogRaw(db).slice();
         const state = window.__procCatalogState || { editingId:null };
         const nome = String(val('procName') || '').trim();
         const categoria = String(val('procCategory') || '').trim();
@@ -10482,26 +10581,64 @@ window.CRONOS_PROC_UI = {
         const cobraPorDente = String(val('procPerTooth')) === '1';
         const ativo = !!el('procActive')?.checked;
         if(!nome) return toast('Procedimento', 'Digite o nome do procedimento.');
-        const payload = { id: state.editingId || uid('proc'), nome, categoria, valorBase, tipoClinico, indicacao, abrangencia, exigeDente, exigeFace, cobraPorDente, ativo };
-        const idx = catalog.findIndex(x=>x.id===payload.id);
+        const now = new Date().toISOString();
+        const currentItem = state.editingId ? catalog.find(x=>String(x.id)===String(state.editingId)) : null;
+        const payload = {
+          ...(currentItem || {}),
+          id: state.editingId || uid('proc'),
+          nome,
+          categoria,
+          valorBase,
+          tipoClinico,
+          indicacao,
+          abrangencia,
+          exigeDente,
+          exigeFace,
+          cobraPorDente,
+          ativo,
+          createdAt: currentItem?.createdAt || now,
+          updatedAt: now,
+          deletedAt: ''
+        };
+        const idx = catalog.findIndex(x=>String(x.id)===String(payload.id));
         if(idx >= 0) catalog[idx] = payload; else catalog.push(payload);
         db.settings.procedureCatalog = catalog;
-        saveDB(db);
+        const cloudSave = saveDB(db, { immediate:true });
         window.__procCatalogState = { editingId:null, search: state.search || '' };
         renderProcedureCatalogApp();
         injectProcedureSettingsCard();
-        toast('Procedimento salvo ✅', nome);
+        if(cloudSave && typeof cloudSave.then === 'function'){
+          cloudSave.then(ok=>{
+            if(ok) toast('Procedimento salvo na nuvem ✅', nome);
+            else toast('Procedimento salvo neste navegador', 'Não consegui confirmar a nuvem agora. Clique em Atualizar depois para sincronizar.');
+          });
+        }else{
+          toast('Procedimento salvo ✅', nome);
+        }
       },
       remove(id){
         if(!confirm('Excluir este procedimento do cadastro?')) return;
         const db = loadDB();
         if(!db.settings) db.settings = {};
-        db.settings.procedureCatalog = getProcedureCatalog(db).filter(x=>x.id!==id);
-        saveDB(db);
+        const now = new Date().toISOString();
+        const raw = getProcedureCatalogRaw(db).slice();
+        const idx = raw.findIndex(x=>String(x.id)===String(id));
+        if(idx >= 0){
+          raw[idx] = { ...raw[idx], ativo:false, deletedAt: now, updatedAt: now };
+        }
+        db.settings.procedureCatalog = raw;
+        const cloudSave = saveDB(db, { immediate:true });
         if(window.__procCatalogState?.editingId === id) window.__procCatalogState.editingId = null;
         renderProcedureCatalogApp();
         injectProcedureSettingsCard();
-        toast('Procedimento removido.');
+        if(cloudSave && typeof cloudSave.then === 'function'){
+          cloudSave.then(ok=>{
+            if(ok) toast('Procedimento removido da nuvem.');
+            else toast('Procedimento removido neste navegador', 'Não consegui confirmar a nuvem agora.');
+          });
+        }else{
+          toast('Procedimento removido.');
+        }
       }
     };
 
