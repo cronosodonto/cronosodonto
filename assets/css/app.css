@@ -2018,3 +2018,51 @@ body.light #view-creditSimulator .credBtn.wa,
   color: #dcfce7 !important;
   border-color: rgba(34,197,94,.45) !important;
 }
+
+/* Modal e troca de tema */
+html.themeSwitching *,
+html.themeSwitching *::before,
+html.themeSwitching *::after{
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+html:not(.light) .modalBg,
+body:not(.light) .modalBg,
+:root:not(.light) .modalBg{
+  background: rgba(3, 7, 18, .82) !important;
+  backdrop-filter: blur(6px) saturate(.82) !important;
+  -webkit-backdrop-filter: blur(6px) saturate(.82) !important;
+}
+
+html:not(.light) .modal,
+body:not(.light) .modal,
+:root:not(.light) .modal{
+  background: linear-gradient(180deg, rgba(30, 41, 59, .98), rgba(15, 23, 42, .98)) !important;
+  border-color: rgba(148, 163, 184, .22) !important;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .48) !important;
+}
+
+html:not(.light) #modalBody,
+body:not(.light) #modalBody,
+:root:not(.light) #modalBody{
+  background: transparent !important;
+}
+
+html.light .modalBg,
+body.light .modalBg,
+:root.light .modalBg{
+  background: rgba(15, 23, 42, .42) !important;
+  backdrop-filter: blur(8px) saturate(.9) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(.9) !important;
+}
+
+html.light .modal,
+body.light .modal,
+:root.light .modal{
+  background: #ffffff !important;
+  border-color: rgba(15, 23, 42, .14) !important;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .22) !important;
+}
+
