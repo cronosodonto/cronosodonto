@@ -8141,10 +8141,12 @@ function renderTasks(){
   const searchEl = el("taskSearch");
   const filterEl = el("taskFilter");
 
-  const currentMonth = new Date().toISOString().slice(0,7);
+  // Filtro de tarefas
+  // "Todos" respeita o mês selecionado.
+  // "Pendentes e em atraso" ignora o mês e mostra todas as tarefas abertas.
 
   if(monthEl && !monthEl.value){
-    monthEl.value = currentMonth;
+    monthEl.value = new Date().toISOString().slice(0,7);
   }
 
   [monthEl, searchEl, filterEl].forEach(ctrl => {
@@ -8157,7 +8159,7 @@ function renderTasks(){
     }
   });
 
-  const taskMonth = monthEl?.value || currentMonth;
+  const taskMonth = monthEl?.value || "";
   const taskSearch = (searchEl?.value || "").trim().toLowerCase();
   const taskFilter = filterEl?.value || "Todos";
 
@@ -8213,8 +8215,9 @@ function renderTasks(){
   const tasks = (db.tasks||[])
     .filter(t => !t.masterId || t.masterId === actor.masterId)
     .filter(t => {
+      // Visão mensal: Todos, Atrasado, Pendente e Feito respeitam o mês selecionado.
+      // Visão operacional: Pendentes e em atraso mostra todas as tarefas abertas.
       if(allOpenMode) return t.done !== true;
-      if(!taskMonth) return true;
       return String(t.dueDate || "").slice(0,7) === taskMonth;
     })
     .filter(t => {
