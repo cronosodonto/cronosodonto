@@ -2918,6 +2918,24 @@ function formatCPF(v){
   if(s.length !== 11) return String(v||"").trim();
   return s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 }
+function maskCPFInput(v){
+  const s = String(v||"").replace(/\D/g,"").slice(0,11);
+  if(s.length <= 3) return s;
+  if(s.length <= 6) return `${s.slice(0,3)}.${s.slice(3)}`;
+  if(s.length <= 9) return `${s.slice(0,3)}.${s.slice(3,6)}.${s.slice(6)}`;
+  return `${s.slice(0,3)}.${s.slice(3,6)}.${s.slice(6,9)}-${s.slice(9)}`;
+}
+function formatPhoneBR(v){
+  let s = String(v||"").replace(/\D/g,"");
+  if(s.length > 11 && s.startsWith("55")) s = s.slice(2);
+  s = s.slice(0,11);
+  if(s.length <= 2) return s ? `(${s}` : "";
+  const ddd = s.slice(0,2);
+  const rest = s.slice(2);
+  if(rest.length <= 4) return `(${ddd}) ${rest}`;
+  if(s.length <= 10) return `(${ddd}) ${rest.slice(0,4)}-${rest.slice(4)}`;
+  return `(${ddd}) ${rest.slice(0,5)}-${rest.slice(5)}`;
+}
 function calcAgeFromISO(iso){
   const s = String(iso||"").trim();
   if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
@@ -6252,12 +6270,12 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div class="suggest">
         <label>Telefone/WhatsApp *</label>
-        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(c.phone||"")}" placeholder="Ex: 98999990000" autocomplete="off"/>
+        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Ex: (98) 99999-0000" autocomplete="off"/>
       </div>
 
       <div>
         <label>CPF</label>
-        <input id="lf_cpf" ${ro?"disabled":""} value="${escapeHTML(formatCPF(c.cpf||""))}" placeholder="Ex: 123.456.789-00" autocomplete="off"/>
+        <input id="lf_cpf" ${ro?"disabled":""} value="${escapeHTML(maskCPFInput(c.cpf||""))}" placeholder="Ex: 123.456.789-00" autocomplete="off"/>
       </div>
 
       <div>
@@ -6272,8 +6290,8 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div>
         <label>Mês/Ano</label>
-        <input id="lf_month" ${isNew?"":"disabled"} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : new Date().toISOString().slice(0,7)))}" class="mono"/>
-        <div class="help muted" style="font-size:12px">Formato: YYYY-MM (ex: 2026-01).</div>
+        <input id="lf_month" type="month" ${ro?"disabled":""} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : new Date().toISOString().slice(0,7)))}" class="mono"/>
+        <div class="help muted" style="font-size:12px">Editável. Use o mês correto do registro (ex: 2026-01).</div>
       </div>
 
       <div>
@@ -6761,6 +6779,34 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
   const nameInp = el("lf_name");
   const phoneInp = el("lf_phone");
+  const cpfInp = el("lf_cpf");
+  const firstInp = el("lf_first");
+  const monthInp = el("lf_month");
+
+  if(phoneInp){
+    phoneInp.value = formatPhoneBR(phoneInp.value);
+    phoneInp.addEventListener("input", ()=>{
+      const masked = formatPhoneBR(phoneInp.value);
+      if(phoneInp.value !== masked) phoneInp.value = masked;
+    });
+  }
+  if(cpfInp){
+    cpfInp.value = maskCPFInput(cpfInp.value);
+    cpfInp.addEventListener("input", ()=>{
+      const masked = maskCPFInput(cpfInp.value);
+      if(cpfInp.value !== masked) cpfInp.value = masked;
+    });
+  }
+
+  let monthEditedManually = false;
+  monthInp?.addEventListener("input", ()=>{ monthEditedManually = true; });
+  firstInp?.addEventListener("change", ()=>{
+    const mk = monthKeyFromDate(firstInp.value || "");
+    if(monthInp && /^\d{4}-\d{2}$/.test(mk) && !monthEditedManually){
+      monthInp.value = mk;
+    }
+  });
+
   const showSuggest = ()=>{
     const html = buildSuggestList(actor, nameInp.value, phoneInp.value);
     if(!html){ suggestBox.classList.remove("show"); suggestBox.innerHTML=""; return; }
@@ -6870,7 +6916,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
       cpf: String(val("lf_cpf") || "").replace(/\D/g, ""),
       birthDate: val("lf_birth") || "",
       firstSeenAt: val("lf_first") || todayISO(),
-      lastSeenAt: val("lf_first") || todayISO()
+      lastSeenAt: val("lf_first") || todayISO(),
+      updatedAt: now
     };
 
     let existingIndex = -1;
@@ -6928,12 +6975,16 @@ function wireLeadModal(actor, editingEntryId, isNew){
       db.contacts[existingIndex].cpf = contactDraft.cpf;
       db.contacts[existingIndex].birthDate = contactDraft.birthDate;
       db.contacts[existingIndex].lastSeenAt = contactDraft.lastSeenAt;
+      db.contacts[existingIndex].updatedAt = now;
+      if(!db.contacts[existingIndex].createdAt) db.contacts[existingIndex].createdAt = db.contacts[existingIndex].firstSeenAt || now;
       if(!db.contacts[existingIndex].firstSeenAt) db.contacts[existingIndex].firstSeenAt = contactDraft.firstSeenAt;
       contact = db.contacts[existingIndex];
     }else{
       contact = {
         ...contactDraft,
-        id: (crypto.randomUUID ? crypto.randomUUID() : uid("c"))
+        id: (crypto.randomUUID ? crypto.randomUUID() : uid("c")),
+        createdAt: now,
+        updatedAt: now
       };
       db.contacts.push(contact);
     }
@@ -6978,13 +7029,22 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const rescueDate = paymentDate || realToday;
     const rescueMonthKey = String(rescueDate).slice(0,7);
     const hadBefore = db.entries.some(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey !== rescueMonthKey);
-    const existingThisMonth = db.entries.find(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey === monthKey);
+    const existingThisMonth = db.entries.find(e=>
+      e.masterId===actor.masterId &&
+      e.contactId===contact.id &&
+      e.monthKey === monthKey &&
+      (!editingEntryId || String(e.id) !== String(editingEntryId))
+    );
 
     if(isNew && existingThisMonth){
       saveDB(db);
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
       closeModal();
       openLeadEntry(existingThisMonth.id);
+      return;
+    }
+    if(!isNew && existingThisMonth){
+      toast("Já existe outro registro neste mês", "Abra o lead desse mês para editar ou escolha outro mês/ano.");
       return;
     }
 
@@ -6994,7 +7054,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
       if(!entry) return toast("Erro", "Entrada não encontrada");
       entry.contactId = contact.id;
     }else{
-      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [] };
+      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [], createdAt: now, updatedAt: now };
       db.entries.push(entry);
     }
 
@@ -7014,9 +7074,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const fromStatus = shouldRegisterRescue ? originalStatus : (entry.status || "");
     const toStatus = shouldRegisterRescue ? originalStatus : status;
 
-    entry.monthKey = editingEntryId ? (originalMonthKey || monthKey) : monthKey;
+    entry.monthKey = monthKey;
     entry.firstContactAt = firstContactAt;
     entry.lastUpdateAt = now;
+    entry.updatedAt = now;
+    if(!entry.createdAt) entry.createdAt = now;
     entry.status = shouldRegisterRescue ? originalStatus : status;
     entry.origin = origin;
     entry.originOther = originOther;
@@ -7069,12 +7131,14 @@ function wireLeadModal(actor, editingEntryId, isNew){
       const rescuePrevPaid = rescueEntry ? getEntryPaidValue(rescueEntry) : 0;
       const rescuePrevStatus = rescueEntry ? String(rescueEntry.status || "") : "";
       if(!rescueEntry){
-        rescueEntry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey: rescueMonthKey, statusLog: [], tags: [] };
+        rescueEntry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey: rescueMonthKey, statusLog: [], tags: [], createdAt: now, updatedAt: now };
         db.entries.push(rescueEntry);
       }
 
       rescueEntry.firstContactAt = rescueEntry.firstContactAt || rescueDate;
       rescueEntry.lastUpdateAt = now;
+      rescueEntry.updatedAt = now;
+      if(!rescueEntry.createdAt) rescueEntry.createdAt = now;
       rescueEntry.status = status;
       rescueEntry.origin = origin;
       rescueEntry.originOther = originOther;
@@ -7213,8 +7277,8 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   };
 
   setIf("lf_name", c.name || latest?.name || "");
-  setIf("lf_phone", c.phone || "");
-  setIf("lf_cpf", formatCPF(c.cpf || ""));
+  setIf("lf_phone", formatPhoneBR(c.phone || ""));
+  setIf("lf_cpf", maskCPFInput(c.cpf || ""));
   setIf("lf_birth", c.birthDate || "");
   if(el("lf_name")) el("lf_name").dataset.contactId = String(c.id || "");
   if(el("lf_phone")) el("lf_phone").dataset.contactId = String(c.id || "");
