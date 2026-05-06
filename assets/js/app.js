@@ -97,8 +97,13 @@ const forma = (p.payMethod || "").toLowerCase().normalize("NFD").replace(/[\u030
 
 if (forma.includes("credito")) {
   if (dataParcela <= hoje && !p.paidAt) {
-    p.paidAt = new Date().toISOString();
+    const autoCreditDate = String(p.dueDate || p.due || todayISO()).slice(0,10);
+    const autoCreditNow = new Date().toISOString();
+    p.paidAt = autoCreditDate;
+    p.cashDate = autoCreditDate;
     p.status = "PAGA";
+    p.autoCreditSettlement = true;
+    p.updatedAt = p.updatedAt || autoCreditNow;
   }
 }
     if(!p.payMethod && entry.installPlan?.payMethod) p.payMethod = entry.installPlan.payMethod;
@@ -1265,7 +1270,10 @@ function ensureNewInstallmentButton(){
         <div style="font-weight:900">Recebimentos</div>
         <div class="muted" style="font-size:12px">Escolha o paciente, vincule procedimentos da ficha e lance pagamentos à vista ou parcelados.</div>
       </div>
-      <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">+ Novo recebimento</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn ok" type="button" onclick="openCreditAnticipationModal()">Antecipar crédito</button>
+        <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">+ Novo recebimento</button>
+      </div>
     `;
     list.parentNode.insertBefore(bar, list);
   }catch(e){
@@ -1413,7 +1421,7 @@ function renderFinancialPaymentTable(entry, plan, contact){
         <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod || "—")}</td>
-        <td>${st}${cashISO ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}</td>
+        <td>${st}${cashISO ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}${(p.creditAnticipated || p.settlementType === "antecipacao_credito") ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
         <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${deleteBtn}</td>
       </tr>
     `;
@@ -1444,6 +1452,22 @@ function toggleFinancialPlanRow(rowId){
   window.__instOpen[rowId] = row.classList.contains("open");
   const btn = row.querySelector(`[data-toggle-inst="${rowId}"]`);
   if(btn) btn.textContent = row.classList.contains("open") ? "Fechar pagamentos" : "Ver pagamentos";
+}
+
+function markFinancialMutation(entry, plan=null, payment=null, nowISO=new Date().toISOString()){
+  if(entry){
+    entry.updatedAt = nowISO;
+    entry.lastUpdateAt = nowISO;
+    entry.financeUpdatedAt = nowISO;
+  }
+  if(plan){
+    plan.updatedAt = nowISO;
+    plan.lastUpdateAt = nowISO;
+  }
+  if(payment){
+    payment.updatedAt = nowISO;
+    payment.lastUpdateAt = nowISO;
+  }
 }
 
 function findFinancePaymentRecord(db, entryId, planId, paymentId){
@@ -1506,6 +1530,396 @@ function askPaymentCashDate({title="Data do pagamento", subtitle="", defaultDate
   });
 }
 
+
+function normalizeCreditMethodText(value){
+  return String(value || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isCreditPaymentMethod(method){
+  const m = normalizeCreditMethodText(method);
+  if(!m) return false;
+  if(m.includes("debito")) return false;
+  return m.includes("credito") || (m.includes("cartao") && !m.includes("debito"));
+}
+
+function creditAnticipationKey(type, entryId, planId, paymentIdOrNumber){
+  return [type, entryId || "", planId || "", paymentIdOrNumber || ""].map(v=>String(v).replace(/\|/g,"_")).join("|");
+}
+
+function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey="", query=""){
+  const masterId = actor?.masterId || actor?.clinicId || "";
+  const q = String(query || "").trim().toLowerCase();
+  const mk = String(monthKey || "").slice(0,7);
+  const contactsById = new Map((db.contacts || [])
+    .filter(c=>!masterId || !c.masterId || c.masterId === masterId)
+    .map(c=>[String(c.id), c]));
+  const candidates = [];
+
+  function contactMatches(contact){
+    if(!q) return true;
+    const hay = `${contact?.name || ""} ${contact?.phone || ""} ${contact?.cpf || ""}`.toLowerCase();
+    return hay.includes(q);
+  }
+  function monthMatches(dueDate){
+    if(scope !== "month") return true;
+    return !!mk && String(dueDate || "").slice(0,7) === mk;
+  }
+
+  (db.entries || [])
+    .filter(e=>!masterId || !e.masterId || e.masterId === masterId)
+    .forEach(entry=>{
+      const contact = contactsById.get(String(entry.contactId)) || {name:"(sem nome)", phone:""};
+      if(scope === "search" && !contactMatches(contact)) return;
+      if(scope !== "search" && q && !contactMatches(contact)) return;
+
+      ensureFinancialPlans(entry).forEach(plan=>{
+        renumberFinancialPlanPayments(plan);
+        (plan.payments || []).forEach(payment=>{
+          if(financialPaymentPaid(payment)) return;
+          if(!isCreditPaymentMethod(payment.payMethod || plan.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
+          const dueDate = payment.dueDate || payment.due || "";
+          if(!monthMatches(dueDate)) return;
+          const amount = parseMoney(payment.amount);
+          if(amount <= 0) return;
+          candidates.push({
+            key: creditAnticipationKey("financial", entry.id, plan.id, payment.id),
+            type: "financial",
+            entry, plan, payment, contact,
+            amount,
+            dueDate,
+            method: payment.payMethod || plan.payMethod || "Cartão de crédito",
+            label: `${contact.name || "Sem nome"} • ${plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`
+          });
+        });
+      });
+
+      if(entry.installPlan && !entry.installPlan.migratedToFinancialPlanId){
+        try{ ensureInstallmentsForEntry(entry); }catch(_){ }
+        (entry.installments || []).forEach(inst=>{
+          if(inst.paidAt || inst.cashDate || String(inst.status || "").toUpperCase() === "PAGA") return;
+          if(!isCreditPaymentMethod(inst.payMethod || entry.installPlan?.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
+          const dueDate = inst.dueDate || inst.due || "";
+          if(!monthMatches(dueDate)) return;
+          const amount = parseMoney(inst.amount);
+          if(amount <= 0) return;
+          candidates.push({
+            key: creditAnticipationKey("legacy", entry.id, "legacy", inst.number),
+            type: "legacy",
+            entry,
+            plan: null,
+            payment: inst,
+            contact,
+            amount,
+            dueDate,
+            method: inst.payMethod || entry.installPlan?.payMethod || "Cartão de crédito",
+            label: `${contact.name || "Sem nome"} • Parcelamento • ${inst.number || ""}/${inst.total || ""}`
+          });
+        });
+      }
+    });
+
+  candidates.sort((a,b)=>String(a.dueDate || "9999-99-99").localeCompare(String(b.dueDate || "9999-99-99")) || String(a.label).localeCompare(String(b.label)));
+  return candidates;
+}
+
+function openCreditAnticipationModal(){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  const db = loadDB();
+  const old = document.getElementById("cronosCreditAnticipationModal");
+  if(old) old.remove();
+
+  const monthValue = (el("instMonth")?.value || todayISO().slice(0,7)).slice(0,7);
+  const searchValue = (el("instSearch")?.value || "").trim();
+  let candidates = [];
+
+  const overlay = document.createElement("div");
+  overlay.id = "cronosCreditAnticipationModal";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(6px)";
+  overlay.innerHTML = `
+    <div style="width:min(780px,96vw);max-height:92vh;overflow:auto;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:var(--shadow);padding:18px;color:var(--text)">
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:20px;font-weight:950">Antecipação de crédito</div>
+          <div class="muted" style="font-size:13px;line-height:1.45;margin-top:4px">Dê baixa em lote nas parcelas de cartão de crédito e informe a taxa para o Cronos registrar o valor líquido recebido.</div>
+        </div>
+        <button type="button" class="btn" id="cronosCreditAnticipationClose">Fechar</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px">
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Data da baixa</span>
+          <input id="creditAntDate" class="input" type="date" value="${escapeHTML(todayISO())}" style="width:100%;margin-top:6px">
+        </label>
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Taxa do cartão (%)</span>
+          <input id="creditAntFee" class="input" type="text" inputmode="decimal" value="0" placeholder="Ex.: 3,49" style="width:100%;margin-top:6px">
+        </label>
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Parcelas consideradas</span>
+          <select id="creditAntScope" class="input" style="width:100%;margin-top:6px">
+            <option value="month">Crédito pendente do mês selecionado</option>
+            <option value="search">Crédito pendente da busca atual</option>
+            <option value="all">Todos os créditos pendentes</option>
+          </select>
+        </label>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.035)">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:13px">
+          <input type="checkbox" id="creditAntSelectAll" checked>
+          Marcar todos
+        </label>
+        <div class="muted" id="creditAntContext" style="font-size:12px"></div>
+      </div>
+
+      <div id="creditAntList" style="border:1px solid var(--line);border-radius:16px;overflow:auto;max-height:300px"></div>
+
+      <div id="creditAntSummary" style="margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(34,197,94,.08)"></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;flex-wrap:wrap">
+        <button type="button" class="btn" id="creditAntCancel">Cancelar</button>
+        <button type="button" class="btn ok" id="creditAntConfirm">Confirmar antecipação</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const listEl = document.getElementById("creditAntList");
+  const summaryEl = document.getElementById("creditAntSummary");
+  const scopeEl = document.getElementById("creditAntScope");
+  const feeEl = document.getElementById("creditAntFee");
+  const selectAllEl = document.getElementById("creditAntSelectAll");
+  const contextEl = document.getElementById("creditAntContext");
+
+  function selectedKeys(){
+    return new Set(Array.from(listEl.querySelectorAll('input[data-credit-ant-item]:checked')).map(i=>i.value));
+  }
+
+  function updateSummary(){
+    const keys = selectedKeys();
+    const selected = candidates.filter(c=>keys.has(c.key));
+    const gross = selected.reduce((sum,c)=>sum + parseMoney(c.amount), 0);
+    const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
+    const feeAmount = gross * (feePercent / 100);
+    const net = Math.max(0, gross - feeAmount);
+    summaryEl.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+        <div><div class="muted" style="font-size:11px;font-weight:800">Selecionadas</div><div style="font-weight:950">${selected.length}</div></div>
+        <div><div class="muted" style="font-size:11px;font-weight:800">Valor bruto</div><div style="font-weight:950">${moneyBR(gross)}</div></div>
+        <div><div class="muted" style="font-size:11px;font-weight:800">Taxa/desconto</div><div style="font-weight:950">${moneyBR(feeAmount)}</div></div>
+        <div><div class="muted" style="font-size:11px;font-weight:800">Valor líquido</div><div style="font-weight:950;color:var(--success, #16a34a)">${moneyBR(net)}</div></div>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">A baixa marcará as parcelas como pagas, mantendo o valor bruto no plano e registrando o valor líquido no caixa/recebimentos.</div>
+    `;
+  }
+
+  function renderCandidates(){
+    const scope = scopeEl.value || "month";
+    candidates = collectCreditAnticipationCandidates(db, actor, scope, monthValue, searchValue);
+    const context = scope === "month"
+      ? `Mês: ${monthValue.split("-").reverse().join("/")}`
+      : scope === "search"
+        ? `Busca: ${searchValue || "sem texto — todos os pendentes"}`
+        : "Todos os créditos pendentes";
+    contextEl.textContent = context;
+
+    if(!candidates.length){
+      listEl.innerHTML = `<div class="muted" style="padding:14px">Nenhuma parcela pendente de cartão de crédito encontrada para esse critério.</div>`;
+      selectAllEl.checked = false;
+      updateSummary();
+      return;
+    }
+
+    selectAllEl.checked = true;
+    listEl.innerHTML = candidates.map((c, idx)=>{
+      const feePreview = Math.max(0, parseBRNum(feeEl.value) || 0);
+      const netPreview = Math.max(0, c.amount - (c.amount * feePreview / 100));
+      return `
+        <label style="display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:center;padding:11px 12px;border-bottom:1px solid var(--line);cursor:pointer">
+          <input type="checkbox" data-credit-ant-item value="${escapeHTML(c.key)}" checked>
+          <span style="min-width:0">
+            <span style="display:block;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(c.label)}</span>
+            <span class="muted" style="display:block;font-size:12px">Venc.: ${c.dueDate ? fmtBR(c.dueDate) : "—"} • ${escapeHTML(c.method || "Cartão de crédito")}</span>
+          </span>
+          <span style="text-align:right;white-space:nowrap">
+            <b>${moneyBR(c.amount)}</b>
+            <span class="muted" style="display:block;font-size:11px">líq. ${moneyBR(netPreview)}</span>
+          </span>
+        </label>
+      `;
+    }).join("");
+    listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>ch.addEventListener("change", updateSummary));
+    updateSummary();
+  }
+
+  document.getElementById("cronosCreditAnticipationClose")?.addEventListener("click", ()=>overlay.remove());
+  document.getElementById("creditAntCancel")?.addEventListener("click", ()=>overlay.remove());
+  overlay.addEventListener("click", ev=>{ if(ev.target === overlay) overlay.remove(); });
+  scopeEl.addEventListener("change", renderCandidates);
+  feeEl.addEventListener("input", renderCandidates);
+  selectAllEl.addEventListener("change", ()=>{
+    listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>{ ch.checked = selectAllEl.checked; });
+    updateSummary();
+  });
+  document.getElementById("creditAntConfirm")?.addEventListener("click", async ()=>{
+    const date = String(document.getElementById("creditAntDate")?.value || "").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Data inválida", "Escolha a data da baixa da antecipação.");
+    const keys = selectedKeys();
+    const selected = candidates.filter(c=>keys.has(c.key));
+    if(!selected.length) return toast("Nada selecionado", "Marque pelo menos uma parcela de crédito para antecipar.");
+    const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
+    const ok = confirm(`Confirmar antecipação de ${selected.length} parcela(s) em ${fmtBR(date)}?\n\nTaxa: ${feePercent.toLocaleString("pt-BR", {maximumFractionDigits:4})}%`);
+    if(!ok) return;
+    await applyCreditAnticipation(db, selected, date, feePercent);
+    overlay.remove();
+  });
+
+  renderCandidates();
+}
+
+async function applyCreditAnticipation(db, candidates, settlementDate, feePercent=0){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  db.payments = db.payments || [];
+  const nowISO = new Date().toISOString();
+  let count = 0;
+  let grossTotal = 0;
+  let feeTotal = 0;
+  let netTotal = 0;
+
+  candidates.forEach(c=>{
+    const payment = c.payment;
+    if(!payment || financialPaymentPaid(payment)) return;
+    const gross = parseMoney(payment.amount);
+    if(gross <= 0) return;
+    const feeAmount = Number((gross * (Math.max(0, feePercent) / 100)).toFixed(2));
+    const net = Number(Math.max(0, gross - feeAmount).toFixed(2));
+    grossTotal += gross;
+    feeTotal += feeAmount;
+    netTotal += net;
+    count++;
+
+    payment.status = "PAGA";
+    payment.paidAt = settlementDate;
+    payment.cashDate = settlementDate;
+    payment.manualPayment = true;
+    payment.autoCreditSettlement = false;
+    payment.creditAnticipated = true;
+    payment.settlementType = "antecipacao_credito";
+    payment.grossValue = gross;
+    payment.cashValue = net;
+    payment.netValue = net;
+    payment.cardFeePercent = Math.max(0, feePercent);
+    payment.cardFeeAmount = feeAmount;
+    payment.updatedAt = nowISO;
+    payment.lastUpdateAt = nowISO;
+
+    if(c.type === "financial"){
+      markFinancialMutation(c.entry, c.plan, payment, nowISO);
+      let rec = findFinancePaymentRecord(db, c.entry.id, c.plan.id, payment.id);
+      if(!rec){
+        rec = {
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId: c.entry.id,
+          contactId: c.entry.contactId || "",
+          financialPlanId: c.plan.id,
+          financialPaymentId: payment.id,
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          date: settlementDate,
+          paidAt: settlementDate,
+          cashDate: settlementDate,
+          status: "PAGA",
+          value: net,
+          grossValue: gross,
+          cardFeePercent: Math.max(0, feePercent),
+          cardFeeAmount: feeAmount,
+          method: payment.payMethod || c.method || "Cartão de crédito",
+          desc: `Antecipação de crédito • ${c.plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
+          source: "creditAnticipation",
+          settlementType: "antecipacao_credito"
+        };
+        db.payments.push(rec);
+      }else{
+        rec.date = settlementDate;
+        rec.paidAt = settlementDate;
+        rec.cashDate = settlementDate;
+        rec.status = "PAGA";
+        rec.at = nowISO;
+        rec.updatedAt = nowISO;
+        rec.value = net;
+        rec.grossValue = gross;
+        rec.cardFeePercent = Math.max(0, feePercent);
+        rec.cardFeeAmount = feeAmount;
+        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
+        rec.source = "creditAnticipation";
+        rec.settlementType = "antecipacao_credito";
+      }
+    }else{
+      markFinancialMutation(c.entry, null, payment, nowISO);
+      c.entry.valuePaid = parseMoney(c.entry.valuePaid) + gross;
+      c.entry.valueClosed = (c.entry.status === "Fechou") ? c.entry.valuePaid : c.entry.valueClosed;
+      const legacyNum = String(payment.number || "");
+      let rec = db.payments.find(x=>String(x.entryId)===String(c.entry.id) && String(x.legacyInstallmentNumber || "") === legacyNum);
+      if(!rec){
+        rec = {
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId: c.entry.id,
+          contactId: c.entry.contactId || "",
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          date: settlementDate,
+          paidAt: settlementDate,
+          cashDate: settlementDate,
+          status: "PAGA",
+          value: net,
+          grossValue: gross,
+          cardFeePercent: Math.max(0, feePercent),
+          cardFeeAmount: feeAmount,
+          method: payment.payMethod || c.method || "Cartão de crédito",
+          desc: `Antecipação de crédito • Parcela ${payment.number || ""}/${payment.total || ""}`,
+          source: "creditAnticipation",
+          settlementType: "antecipacao_credito",
+          legacyInstallmentNumber: payment.number
+        };
+        db.payments.push(rec);
+      }else{
+        rec.date = settlementDate;
+        rec.paidAt = settlementDate;
+        rec.cashDate = settlementDate;
+        rec.status = "PAGA";
+        rec.at = nowISO;
+        rec.updatedAt = nowISO;
+        rec.value = net;
+        rec.grossValue = gross;
+        rec.cardFeePercent = Math.max(0, feePercent);
+        rec.cardFeeAmount = feeAmount;
+        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
+        rec.source = "creditAnticipation";
+        rec.settlementType = "antecipacao_credito";
+      }
+    }
+  });
+
+  if(!count) return toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
+  try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  const cloudOk = await saveDB(db, { immediate:true });
+  if(cloudOk){
+    toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
+  }else{
+    toast("Antecipação salva no navegador", "A nuvem ainda não confirmou. Evite atualizar a página antes de sincronizar.");
+  }
+  renderAll();
+}
+
 async function payFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   const db = loadDB();
@@ -1522,9 +1936,13 @@ async function payFinancialPayment(entryId, planId, paymentId){
   });
   if(!payDate) return;
 
+  const nowISO = new Date().toISOString();
   payment.status = "PAGA";
   payment.paidAt = payDate;
   payment.cashDate = payDate;
+  payment.manualPayment = true;
+  payment.autoCreditSettlement = false;
+  markFinancialMutation(entry, plan, payment, nowISO);
 
   db.payments = db.payments || [];
   let rec = findFinancePaymentRecord(db, entryId, planId, paymentId);
@@ -1536,7 +1954,9 @@ async function payFinancialPayment(entryId, planId, paymentId){
       contactId: entry.contactId || "",
       financialPlanId: planId,
       financialPaymentId: paymentId,
-      at: new Date().toISOString(),
+      at: nowISO,
+      createdAt: nowISO,
+      updatedAt: nowISO,
       date: payDate,
       paidAt: payDate,
       cashDate: payDate,
@@ -1552,7 +1972,8 @@ async function payFinancialPayment(entryId, planId, paymentId){
     rec.paidAt = payDate;
     rec.cashDate = payDate;
     rec.status = "PAGA";
-    rec.at = new Date().toISOString();
+    rec.at = nowISO;
+    rec.updatedAt = nowISO;
     rec.value = parseMoney(payment.amount);
     rec.method = payment.payMethod || rec.method || "";
   }
@@ -1568,11 +1989,15 @@ async function payFinancialPayment(entryId, planId, paymentId){
     });
   }
 
-  saveDB(db, { immediate:true });
-  toast("Baixa feita ✅", `${moneyBR(payment.amount)} • caixa em ${fmtBR(payDate)}`);
+  const cloudOk = await saveDB(db, { immediate:true });
+  if(cloudOk){
+    toast("Baixa feita ✅", `${moneyBR(payment.amount)} • salvo na nuvem • caixa em ${fmtBR(payDate)}`);
+  }else{
+    toast("Baixa salva no navegador", "A nuvem ainda não confirmou. Evite atualizar a página e tente clicar em Atualizar antes de sair.");
+  }
   renderAll();
 }
-function undoFinancialPayment(entryId, planId, paymentId){
+async function undoFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -1581,9 +2006,12 @@ function undoFinancialPayment(entryId, planId, paymentId){
   const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
   if(!payment) return toast("Erro", "Pagamento não encontrado.");
 
+  const nowISO = new Date().toISOString();
   payment.status = "PENDENTE";
   payment.paidAt = "";
   payment.cashDate = "";
+  payment.manualPayment = false;
+  markFinancialMutation(entry, plan, payment, nowISO);
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
 
   if(Array.isArray(plan.fichaItemIds)){
@@ -1596,8 +2024,8 @@ function undoFinancialPayment(entryId, planId, paymentId){
   }
 
   syncInstallmentTasks(db, actor);
-  saveDB(db, { immediate:true });
-  toast("Baixa desfeita", "Pagamento voltou para pendente.");
+  const cloudOk = await saveDB(db, { immediate:true });
+  toast(cloudOk ? "Baixa desfeita" : "Baixa desfeita localmente", cloudOk ? "Pagamento voltou para pendente." : "A nuvem ainda não confirmou a alteração.");
   renderAll();
 }
 
@@ -1605,8 +2033,8 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
-  const {plan} = getFinancialPlan(db, entryId, planId);
-  if(!plan) return toast("Erro", "Recebimento não encontrado.");
+  const {entry, plan} = getFinancialPlan(db, entryId, planId);
+  if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
   const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
   if(!payment || !financialPaymentPaid(payment)) return toast("Transferência", "Só dá para transferir pagamento baixado.");
   const current = cronosPaymentCashISO(payment, false) || todayISO();
@@ -1617,21 +2045,24 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   });
   if(!next) return;
 
+  const nowISO = new Date().toISOString();
   payment.cashDate = next;
   payment.paidAt = next;
+  markFinancialMutation(entry, plan, payment, nowISO);
   const rec = findFinancePaymentRecord(db, entryId, planId, paymentId);
   if(rec){
     rec.date = next;
     rec.cashDate = next;
     rec.paidAt = next;
     rec.status = "PAGA";
-    rec.at = `${next}T12:00:00.000`;
+    rec.at = nowISO;
+    rec.updatedAt = nowISO;
   }
-  saveDB(db, { immediate:true });
-  toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
+  const cloudOk = await saveDB(db, { immediate:true });
+  toast(cloudOk ? "Data transferida ✅" : "Data transferida localmente", cloudOk ? `Caixa: ${fmtBR(next)}` : "A nuvem ainda não confirmou a alteração.");
   renderAll();
 }
-function deleteFinancialPayment(entryId, planId, paymentId){
+async function deleteFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   if(!confirm("Excluir este pagamento/parcela?")) return;
@@ -1644,15 +2075,16 @@ function deleteFinancialPayment(entryId, planId, paymentId){
   const after = plan.payments.length;
   if(before === after) return toast("Atenção", "Não encontrei essa parcela para excluir.");
 
+  const nowISO = new Date().toISOString();
   renumberFinancialPlanPayments(plan);
+  markFinancialMutation(entry, plan, null, nowISO);
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
   syncInstallmentTasks(db, actor);
-  const cloudPromise = saveDB(db, { immediate:true });
-  toast("Pagamento removido");
+  const cloudOk = await saveDB(db, { immediate:true });
+  toast(cloudOk ? "Pagamento removido" : "Pagamento removido localmente", cloudOk ? "Alteração salva na nuvem." : "A nuvem ainda não confirmou a alteração.");
   try{ renderNewFinancialInstallmentApp(); }catch(_){}
   try{ renderInstallmentsView(); }catch(_){}
   try{ renderDashboard(); }catch(_){}
-  Promise.resolve(cloudPromise).catch(err=>console.warn("Falha ao salvar exclusão de pagamento:", err));
 }
 
 function openNewFinancialInstallment(entryId="", planId=""){
@@ -2359,7 +2791,7 @@ function renderInstallmentTable(entry, contact){
         <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod||pmDefault||"—")}</td>
-        <td>${st} ${cashISO?`<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>`:""}</td>
+        <td>${st} ${cashISO?`<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>`:""}${(p.creditAnticipated || p.settlementType === "antecipacao_credito") ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
         <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${wa} ${deleteBtn}</td>
       </tr>
     `;
@@ -2411,9 +2843,13 @@ async function payInstallment(entryId, number){
   });
   if(!payDate) return;
 
+  const nowISO = new Date().toISOString();
   p.paidAt = payDate;
   p.cashDate = payDate;
   p.status = "PAGA";
+  p.manualPayment = true;
+  p.autoCreditSettlement = false;
+  markFinancialMutation(entry, null, p, nowISO);
 
   entry.valuePaid = parseMoney(entry.valuePaid) + parseMoney(p.amount);
   entry.valueClosed = (entry.status==="Fechou") ? entry.valuePaid : null;
@@ -2424,7 +2860,9 @@ async function payInstallment(entryId, number){
     masterId: actor.masterId,
     entryId,
     contactId: entry.contactId,
-    at: new Date().toISOString(),
+    at: nowISO,
+    createdAt: nowISO,
+    updatedAt: nowISO,
     date: payDate,
     paidAt: payDate,
     cashDate: payDate,
@@ -2436,15 +2874,18 @@ async function payInstallment(entryId, number){
     legacyInstallmentNumber: p.number
   });
 
-  saveDB(db);
-  toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • caixa em ${fmtBR(payDate)}`);
   try {
     syncInstallmentTasks(db, actor);
-    saveDB(db);
   } catch {}
+  const cloudOk = await saveDB(db, { immediate:true });
+  if(cloudOk){
+    toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • salvo na nuvem • caixa em ${fmtBR(payDate)}`);
+  }else{
+    toast("Baixa salva no navegador", "A nuvem ainda não confirmou. Evite atualizar a página e tente clicar em Atualizar antes de sair.");
+  }
   renderAll();
 }
-function undoInstallmentPay(entryId, number){
+async function undoInstallmentPay(entryId, number){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -2456,16 +2897,20 @@ function undoInstallmentPay(entryId, number){
   if(!(p.paidAt || p.cashDate || p.status==="PAGA")) return toast("Nada a desfazer", "Essa parcela não está paga.");
   const amt = parseMoney(p.amount);
   entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - amt);
+  const nowISO = new Date().toISOString();
   p.paidAt = "";
   p.cashDate = "";
   p.status = "PENDENTE";
+  p.manualPayment = false;
+  p.autoCreditSettlement = false;
+  markFinancialMutation(entry, null, p, nowISO);
   db.payments = db.payments || [];
-  const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (String(x.legacyInstallmentNumber||"")===String(number) || (x.desc||"").includes(`Parcela ${number}/`)));
+  const idx = db.payments.findIndex(x=>String(x.entryId)===String(entryId) && (String(x.legacyInstallmentNumber||"")===String(number) || String(x.desc||"").includes(`Parcela ${number}/`)));
   if(idx>=0) db.payments.splice(idx,1);
 
-  saveDB(db);
-  toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
-  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
+  try{ syncInstallmentTasks(db, actor); }catch{}
+  const cloudOk = await saveDB(db, { immediate:true });
+  toast(cloudOk ? "Baixa desfeita" : "Baixa desfeita localmente", cloudOk ? `Parcela ${number}/${p.total} voltou para pendente.` : "A nuvem ainda não confirmou a alteração.");
   setTimeout(() => {
   if (typeof renderAll === "function") renderAll();
 }, 50);
@@ -2490,22 +2935,25 @@ async function transferInstallmentCashDate(entryId, number){
   });
   if(!next) return;
 
+  const nowISO = new Date().toISOString();
   p.cashDate = next;
   p.paidAt = next;
+  markFinancialMutation(entry, null, p, nowISO);
 
   const amt = parseMoney(p.amount);
   db.payments = db.payments || [];
-  const rec = db.payments.find(x=>String(x.entryId)===String(entryId) && parseMoney(x.value)===amt && (String(x.legacyInstallmentNumber||"")===String(number) || String(x.desc||"").includes(`Parcela ${number}/`)));
+  const rec = db.payments.find(x=>String(x.entryId)===String(entryId) && (String(x.legacyInstallmentNumber||"")===String(number) || String(x.desc||"").includes(`Parcela ${number}/`)));
   if(rec){
     rec.date = next;
     rec.cashDate = next;
     rec.paidAt = next;
     rec.status = "PAGA";
-    rec.at = `${next}T12:00:00.000`;
+    rec.at = nowISO;
+    rec.updatedAt = nowISO;
   }
 
-  saveDB(db, { immediate:true });
-  toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
+  const cloudOk = await saveDB(db, { immediate:true });
+  toast(cloudOk ? "Data transferida ✅" : "Data transferida localmente", cloudOk ? `Caixa: ${fmtBR(next)}` : "A nuvem ainda não confirmou a alteração.");
   renderAll();
 }
 
