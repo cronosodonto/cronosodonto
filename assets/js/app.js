@@ -90,14 +90,16 @@ function ensureInstallmentsForEntry(entry){
   (entry.installments||[]).forEach(p=>{
     if(p.due && !p.dueDate) p.dueDate = p.due;
     if(p.paid && !p.paidAt) p.paidAt = p.paid;
-    const hoje = new Date();
-const dataParcela = new Date(p.dueDate || p.due || 0);
+    const todayKey = todayISO();
+const dueKeyForAutoCredit = String(p.dueDate || p.due || "").slice(0,10);
 
 const forma = (p.payMethod || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 if (forma.includes("credito")) {
-  if (dataParcela <= hoje && !p.paidAt) {
-    const autoCreditDate = String(p.dueDate || p.due || todayISO()).slice(0,10);
+  // Baixa automática de crédito só depois que o dia de vencimento passou.
+  // Assim a parcela que vence hoje ainda pode ser antecipada manualmente no lote.
+  if (dueKeyForAutoCredit && dueKeyForAutoCredit < todayKey && !p.paidAt) {
+    const autoCreditDate = dueKeyForAutoCredit || todayISO();
     const autoCreditNow = new Date().toISOString();
     p.paidAt = autoCreditDate;
     p.cashDate = autoCreditDate;
@@ -1551,7 +1553,7 @@ function creditAnticipationKey(type, entryId, planId, paymentIdOrNumber){
 
 function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey="", query=""){
   const masterId = actor?.masterId || actor?.clinicId || "";
-  const q = String(query || "").trim().toLowerCase();
+  const q = normalizeCreditMethodText(query || "");
   const mk = String(monthKey || "").slice(0,7);
   const contactsById = new Map((db.contacts || [])
     .filter(c=>!masterId || !c.masterId || c.masterId === masterId)
@@ -1560,20 +1562,24 @@ function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey=
 
   function contactMatches(contact){
     if(!q) return true;
-    const hay = `${contact?.name || ""} ${contact?.phone || ""} ${contact?.cpf || ""}`.toLowerCase();
+    const hay = normalizeCreditMethodText(`${contact?.name || ""} ${contact?.phone || ""} ${contact?.cpf || ""}`);
     return hay.includes(q);
   }
   function monthMatches(dueDate){
     if(scope !== "month") return true;
     return !!mk && String(dueDate || "").slice(0,7) === mk;
   }
+  function scopeAllowsContact(contact){
+    if(scope === "patient") return contactMatches(contact);
+    if(scope === "search") return contactMatches(contact);
+    return true;
+  }
 
   (db.entries || [])
     .filter(e=>!masterId || !e.masterId || e.masterId === masterId)
     .forEach(entry=>{
       const contact = contactsById.get(String(entry.contactId)) || {name:"(sem nome)", phone:""};
-      if(scope === "search" && !contactMatches(contact)) return;
-      if(scope !== "search" && q && !contactMatches(contact)) return;
+      if(!scopeAllowsContact(contact)) return;
 
       ensureFinancialPlans(entry).forEach(plan=>{
         renumberFinancialPlanPayments(plan);
@@ -1591,7 +1597,8 @@ function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey=
             amount,
             dueDate,
             method: payment.payMethod || plan.payMethod || "Cartão de crédito",
-            label: `${contact.name || "Sem nome"} • ${plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`
+            label: `${contact.name || "Sem nome"} • ${plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
+            patientKey: String(contact.id || entry.contactId || contact.name || entry.id)
           });
         });
       });
@@ -1615,13 +1622,14 @@ function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey=
             amount,
             dueDate,
             method: inst.payMethod || entry.installPlan?.payMethod || "Cartão de crédito",
-            label: `${contact.name || "Sem nome"} • Parcelamento • ${inst.number || ""}/${inst.total || ""}`
+            label: `${contact.name || "Sem nome"} • Parcelamento • ${inst.number || ""}/${inst.total || ""}`,
+            patientKey: String(contact.id || entry.contactId || contact.name || entry.id)
           });
         });
       }
     });
 
-  candidates.sort((a,b)=>String(a.dueDate || "9999-99-99").localeCompare(String(b.dueDate || "9999-99-99")) || String(a.label).localeCompare(String(b.label)));
+  candidates.sort((a,b)=>String(a.contact?.name || "").localeCompare(String(b.contact?.name || ""), "pt-BR") || String(a.dueDate || "9999-99-99").localeCompare(String(b.dueDate || "9999-99-99")) || String(a.label).localeCompare(String(b.label)));
   return candidates;
 }
 
@@ -1662,10 +1670,19 @@ function openCreditAnticipationModal(){
           <span class="muted" style="font-size:12px;font-weight:800">Parcelas consideradas</span>
           <select id="creditAntScope" class="input" style="width:100%;margin-top:6px">
             <option value="month">Crédito pendente do mês selecionado</option>
+            <option value="patient">Paciente específico</option>
             <option value="search">Crédito pendente da busca atual</option>
             <option value="all">Todos os créditos pendentes</option>
           </select>
         </label>
+      </div>
+
+      <div id="creditAntPatientBox" style="display:none;margin:0 0 12px">
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Buscar paciente</span>
+          <input id="creditAntPatientSearch" class="input" type="text" placeholder="Digite nome, telefone ou CPF" style="width:100%;margin-top:6px">
+        </label>
+        <div class="muted" style="font-size:12px;margin-top:6px">Ao selecionar “Paciente específico”, use a busca e marque todos para baixar todas as parcelas pendentes de crédito desse paciente.</div>
       </div>
 
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.035)">
@@ -1694,6 +1711,8 @@ function openCreditAnticipationModal(){
   const feeEl = document.getElementById("creditAntFee");
   const selectAllEl = document.getElementById("creditAntSelectAll");
   const contextEl = document.getElementById("creditAntContext");
+  const patientBoxEl = document.getElementById("creditAntPatientBox");
+  const patientSearchEl = document.getElementById("creditAntPatientSearch");
 
   function selectedKeys(){
     return new Set(Array.from(listEl.querySelectorAll('input[data-credit-ant-item]:checked')).map(i=>i.value));
@@ -1713,22 +1732,27 @@ function openCreditAnticipationModal(){
         <div><div class="muted" style="font-size:11px;font-weight:800">Taxa/desconto</div><div style="font-weight:950">${moneyBR(feeAmount)}</div></div>
         <div><div class="muted" style="font-size:11px;font-weight:800">Valor líquido</div><div style="font-weight:950;color:var(--success, #16a34a)">${moneyBR(net)}</div></div>
       </div>
-      <div class="muted" style="font-size:12px;margin-top:8px">A baixa marcará as parcelas como pagas, mantendo o valor bruto no plano e registrando o valor líquido no caixa/recebimentos.</div>
+      <div class="muted" style="font-size:12px;margin-top:8px">A baixa marcará as parcelas como pagas, mantendo o valor bruto no plano e registrando o valor líquido no caixa/recebimentos. Se o plano vinculado ficar totalmente pago, a ficha também será marcada como paga.</div>
     `;
   }
 
   function renderCandidates(){
     const scope = scopeEl.value || "month";
-    candidates = collectCreditAnticipationCandidates(db, actor, scope, monthValue, searchValue);
+    const patientQuery = String(patientSearchEl?.value || "").trim();
+    if(patientBoxEl) patientBoxEl.style.display = scope === "patient" ? "block" : "none";
+    const queryForScope = scope === "patient" ? patientQuery : (scope === "search" ? searchValue : "");
+    candidates = collectCreditAnticipationCandidates(db, actor, scope, monthValue, queryForScope);
     const context = scope === "month"
       ? `Mês: ${monthValue.split("-").reverse().join("/")}`
-      : scope === "search"
-        ? `Busca: ${searchValue || "sem texto — todos os pendentes"}`
-        : "Todos os créditos pendentes";
+      : scope === "patient"
+        ? `Paciente: ${patientQuery || "digite para buscar"}`
+        : scope === "search"
+          ? `Busca: ${searchValue || "sem texto — todos os pendentes"}`
+          : "Todos os créditos pendentes";
     contextEl.textContent = context;
 
     if(!candidates.length){
-      listEl.innerHTML = `<div class="muted" style="padding:14px">Nenhuma parcela pendente de cartão de crédito encontrada para esse critério.</div>`;
+      listEl.innerHTML = `<div class="muted" style="padding:14px">Nenhuma parcela pendente de cartão de crédito encontrada para esse critério.${(scopeEl.value === "patient" && !(patientSearchEl?.value||"").trim()) ? " Digite o nome, telefone ou CPF do paciente para filtrar." : ""}</div>`;
       selectAllEl.checked = false;
       updateSummary();
       return;
@@ -1760,6 +1784,7 @@ function openCreditAnticipationModal(){
   document.getElementById("creditAntCancel")?.addEventListener("click", ()=>overlay.remove());
   overlay.addEventListener("click", ev=>{ if(ev.target === overlay) overlay.remove(); });
   scopeEl.addEventListener("change", renderCandidates);
+  patientSearchEl?.addEventListener("input", debounce(renderCandidates, 180));
   feeEl.addEventListener("input", renderCandidates);
   selectAllEl.addEventListener("change", ()=>{
     listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>{ ch.checked = selectAllEl.checked; });
@@ -1790,6 +1815,7 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
   let grossTotal = 0;
   let feeTotal = 0;
   let netTotal = 0;
+  const affectedFinancialPlans = new Map();
 
   candidates.forEach(c=>{
     const payment = c.payment;
@@ -1820,6 +1846,7 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
 
     if(c.type === "financial"){
       markFinancialMutation(c.entry, c.plan, payment, nowISO);
+      if(c.entry && c.plan) affectedFinancialPlans.set(`${c.entry.id}|${c.plan.id}`, { entry:c.entry, plan:c.plan });
       let rec = findFinancePaymentRecord(db, c.entry.id, c.plan.id, payment.id);
       if(!rec){
         rec = {
@@ -1907,6 +1934,18 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
         rec.settlementType = "antecipacao_credito";
       }
     }
+  });
+
+  affectedFinancialPlans.forEach(({entry, plan})=>{
+    if(!entry || !plan || !Array.isArray(plan.fichaItemIds)) return;
+    const fullyPaid = financialPlanIsFullyPaid(plan);
+    const ids = new Set(plan.fichaItemIds.map(String));
+    ensureFicha(entry).plano.forEach(item=>{
+      if(ids.has(String(item.id))){
+        item.pago = !!fullyPaid;
+        item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
+      }
+    });
   });
 
   if(!count) return toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
