@@ -10400,7 +10400,8 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="procGrid">
           <div>
             <label>Nome do procedimento</label>
-            <input id="procName" type="text" placeholder="Ex: Restauração de resina 1 face" value="${escapeHTML(editItem?.nome || '')}">
+            <input id="procName" type="text" autocomplete="off" placeholder="Ex: Restauração de resina 1 face" value="${escapeHTML(editItem?.nome || '')}" oninput="CRONOS_PROC_UI.nameInput(this.value)" onfocus="CRONOS_PROC_UI.nameInput(this.value)">
+            <div id="procNameSuggestions" style="margin-top:6px"></div>
           </div>
           <div>
             <label>Categoria</label>
@@ -10487,7 +10488,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   <td>${item.ativo === false ? 'Inativo' : 'Ativo'}</td>
                   <td>
                     <button class="miniBtn" onclick="CRONOS_PROC_UI.edit('${escapeHTML(item.id)}')">Editar</button>
-                    <button class="miniBtn danger" onclick="CRONOS_PROC_UI.remove('${escapeHTML(item.id)}')">Excluir</button>
+                    <button class="miniBtn danger" onclick="CRONOS_PROC_UI.remove('${escapeHTML(item.id)}')">Inativar</button>
                   </td>
                 </tr>
               `).join('') : `<tr><td colspan="11" class="muted">Nenhum procedimento encontrado.</td></tr>`}
@@ -10495,6 +10496,7 @@ document.addEventListener("DOMContentLoaded", () => {
           </table>
         </div>
       `;
+      requestAnimationFrame(()=>renderProcedureNameSuggestions(el('procName')?.value || ''));
     }
 
     
@@ -10538,7 +10540,44 @@ document.addEventListener("DOMContentLoaded", () => {
       return (base + tweak).toFixed(2);
     }
 
+
+    function renderProcedureNameSuggestions(value){
+      const host = el('procNameSuggestions');
+      if(!host) return;
+      const q = __cronosNormProcName(value || '');
+      const state = window.__procCatalogState || { editingId:null };
+      if(q.length < 2){
+        host.innerHTML = '';
+        return;
+      }
+      const catalog = getProcedureCatalog(loadDB())
+        .filter(item=>String(item.id || '') !== String(state.editingId || ''));
+      const matches = catalog.filter(item=>{
+        const name = __cronosNormProcName(item.nome || '');
+        const category = __cronosNormProcName(item.categoria || '');
+        return name.includes(q) || q.includes(name) || category.includes(q);
+      }).slice(0, 6);
+      if(!matches.length){
+        host.innerHTML = '<div class="small muted" style="padding:6px 0">Nenhum procedimento parecido cadastrado.</div>';
+        return;
+      }
+      host.innerHTML = `
+        <div style="border:1px solid rgba(148,163,184,.28); border-radius:14px; padding:8px; background:rgba(148,163,184,.08)">
+          <div class="small muted" style="margin-bottom:6px">Procedimentos parecidos já cadastrados:</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap">
+            ${matches.map(item=>`
+              <button type="button" class="miniBtn" onclick="CRONOS_PROC_UI.edit('${escapeHTML(item.id || '')}')" title="Editar procedimento já cadastrado">
+                ${escapeHTML(item.nome || 'Procedimento')}
+                <span class="muted">• ${item.ativo === false ? 'inativo' : 'ativo'}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
 window.CRONOS_PROC_UI = {
+      nameInput(v){ renderProcedureNameSuggestions(v); },
       search(v){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {search:v}); renderProcedureCatalogApp(); __cronosRefocusInput('procSearch', v); },
       edit(id){
         window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:id});
@@ -10581,6 +10620,17 @@ window.CRONOS_PROC_UI = {
         const cobraPorDente = String(val('procPerTooth')) === '1';
         const ativo = !!el('procActive')?.checked;
         if(!nome) return toast('Procedimento', 'Digite o nome do procedimento.');
+        const normNome = __cronosNormProcName(nome);
+        const duplicated = catalog.find(item=>
+          String(item.id || '') !== String(state.editingId || '') &&
+          !item.deletedAt &&
+          __cronosNormProcName(item.nome || '') === normNome
+        );
+        if(duplicated){
+          window.__procCatalogState = Object.assign(window.__procCatalogState || {}, { search:nome });
+          renderProcedureCatalogApp();
+          return toast('Procedimento já cadastrado', `${duplicated.nome || nome} já existe como ${duplicated.ativo === false ? 'inativo' : 'ativo'}. Use Editar para ajustar em vez de cadastrar duplicado.`);
+        }
         const now = new Date().toISOString();
         const currentItem = state.editingId ? catalog.find(x=>String(x.id)===String(state.editingId)) : null;
         const payload = {
@@ -10617,14 +10667,14 @@ window.CRONOS_PROC_UI = {
         }
       },
       remove(id){
-        if(!confirm('Excluir este procedimento do cadastro?')) return;
+        if(!confirm('Inativar este procedimento? Ele não aparecerá para novos lançamentos, mas continuará preservado no histórico.')) return;
         const db = loadDB();
         if(!db.settings) db.settings = {};
         const now = new Date().toISOString();
         const raw = getProcedureCatalogRaw(db).slice();
         const idx = raw.findIndex(x=>String(x.id)===String(id));
         if(idx >= 0){
-          raw[idx] = { ...raw[idx], ativo:false, deletedAt: now, updatedAt: now };
+          raw[idx] = { ...raw[idx], ativo:false, deletedAt:'', updatedAt: now };
         }
         db.settings.procedureCatalog = raw;
         const cloudSave = saveDB(db, { immediate:true });
@@ -10633,11 +10683,11 @@ window.CRONOS_PROC_UI = {
         injectProcedureSettingsCard();
         if(cloudSave && typeof cloudSave.then === 'function'){
           cloudSave.then(ok=>{
-            if(ok) toast('Procedimento removido da nuvem.');
-            else toast('Procedimento removido neste navegador', 'Não consegui confirmar a nuvem agora.');
+            if(ok) toast('Procedimento inativado na nuvem.');
+            else toast('Procedimento inativado neste navegador', 'Não consegui confirmar a nuvem agora.');
           });
         }else{
-          toast('Procedimento removido.');
+          toast('Procedimento inativado.');
         }
       }
     };
