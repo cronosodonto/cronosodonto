@@ -2939,10 +2939,6 @@ function birthWithAgeLabel(iso){
 /* -------- Tema claro/escuro -------- */
 function applyTheme(theme){
   const root = document.documentElement;
-  root.classList.add("themeSwitching");
-  if(window.__cronosThemeSwitchTimer) clearTimeout(window.__cronosThemeSwitchTimer);
-  window.__cronosThemeSwitchTimer = setTimeout(()=>root.classList.remove("themeSwitching"), 180);
-
   if(theme === "light"){
     root.classList.add("light");
     setThemeIcons("☾");
@@ -11643,7 +11639,6 @@ window.CRONOS_PROC_UI = {
       const patientPhone = escapeHTML(contact?.phone || entry?.phone || '—');
       const patientCpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
       const patientBirthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
-      const patientCity = escapeHTML(entry?.city || '—');
       const patientTreatment = escapeHTML(entry?.treatment || '—');
       const obs = escapeHTML(String(ficha?.observacoes || entry?.obs || '').trim() || '');
       const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
@@ -11654,28 +11649,29 @@ window.CRONOS_PROC_UI = {
 
       const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha - ${patientName}</title>
         <style>
-          body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0}
-          .sheet{border:1px solid #d7dde7;padding:22px 24px 28px}
-          .head{display:grid;grid-template-columns:120px 1fr 220px;gap:16px;align-items:center;border-bottom:2px solid #111;padding-bottom:14px}
+          :root{--line:#6b7280;--line-soft:#cbd5e1;--text:#111827;--muted:#4b5563}
+          body{font-family:Arial,sans-serif;padding:24px;color:var(--text);margin:0}
+          .sheet{border:1px solid var(--line-soft);padding:22px 24px 28px}
+          .head{display:grid;grid-template-columns:120px 1fr 220px;gap:16px;align-items:center;border-bottom:1.5px solid var(--line);padding-bottom:14px}
           .logo{width:140px;height:84px;display:flex;align-items:center;justify-content:flex-start;text-align:center;font-size:12px;font-weight:700}
           .logo img{width:auto;height:76px;max-width:140px;display:block;object-fit:contain}
-          .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:#444;letter-spacing:.08em}
+          .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:var(--muted);letter-spacing:.08em}
           .meta{text-align:right;font-size:12px;line-height:1.7}
-          .patient{margin-top:12px;display:grid;grid-template-columns:1.3fr .9fr .9fr 1fr 1fr;gap:10px}
-          .field{border:1px solid #111;min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
+          .patient{margin-top:12px;display:grid;grid-template-columns:1.45fr .95fr .95fr 1fr;gap:10px}
+          .field{border:1px solid var(--line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
           .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px}
-          .boxWrap{border:1.5px solid #111;padding:10px}
-          .odonto{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#eef1f5}
-          .odonto img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
+          .boxWrap{border:1.25px solid var(--line);padding:10px}
+          .odonto{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid var(--line-soft);border-radius:10px;overflow:hidden;background:#f8fafc}
+          .odonto img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;opacity:.72}
           .overlay{position:absolute;inset:0}
           .box{position:absolute;width:34px;height:34px;border-radius:999px;border:2px solid transparent;background:rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;color:#111827;transform:translate(-50%,0)}
           .box.paid,.box.plan,.box.closed{background:#ffd400;border-color:#b7791f;color:#111827}.box.done{background:#16a34a;border-color:#166534;color:#fff}.box.absent{background:#dc2626;border-color:#991b1b;color:#fff}
-          .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#555}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;padding:5px 9px;border-radius:999px}
+          .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-soft);padding:5px 9px;border-radius:999px}
           .chip{width:10px;height:10px;border-radius:999px;display:inline-block}.cp1{background:#ffd400}.cp2{background:#16a34a}.cp3{background:#dc2626}
-          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #111;padding:6px 7px;vertical-align:top}th{background:#f5f5f5;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
-          .summary{border-top:1.5px solid #111;margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid #111;padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}
-          .obs{margin-top:14px;border:1.5px solid #111;padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
-          .foot{margin-top:16px;font-size:11px;color:#333}
+          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--line);padding:6px 7px;vertical-align:top}th{background:#f5f7fa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
+          .summary{border-top:1.25px solid var(--line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid var(--line);padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:var(--muted);font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}
+          .obs{margin-top:14px;border:1.25px solid var(--line);padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
+          .foot{margin-top:16px;font-size:11px;color:var(--muted)}
           @media print{body{padding:0}.sheet{border:none}tr.done td{background:#bbf7d0 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.paid td,tr.closed td{background:#fef08a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.absent td{background:#fecaca !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.box.paid,.box.plan,.box.closed,.box.done,.box.absent{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>
         <div class="sheet">
@@ -11689,7 +11685,6 @@ window.CRONOS_PROC_UI = {
             <div class="field"><span class="lbl">Telefone</span><span class="val">${patientPhone}</span></div>
             <div class="field"><span class="lbl">CPF</span><span class="val">${patientCpf}</span></div>
             <div class="field"><span class="lbl">Nascimento</span><span class="val">${patientBirthAge}</span></div>
-            <div class="field"><span class="lbl">Cidade</span><span class="val">${patientCity}</span></div>
           </div>
 
           <div class="boxWrap" style="margin-top:16px">
