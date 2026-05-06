@@ -2939,6 +2939,10 @@ function birthWithAgeLabel(iso){
 /* -------- Tema claro/escuro -------- */
 function applyTheme(theme){
   const root = document.documentElement;
+  root.classList.add("themeSwitching");
+  if(window.__cronosThemeSwitchTimer) clearTimeout(window.__cronosThemeSwitchTimer);
+  window.__cronosThemeSwitchTimer = setTimeout(()=>root.classList.remove("themeSwitching"), 180);
+
   if(theme === "light"){
     root.classList.add("light");
     setThemeIcons("☾");
