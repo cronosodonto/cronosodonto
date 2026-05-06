@@ -96,9 +96,9 @@ const dueKeyForAutoCredit = String(p.dueDate || p.due || "").slice(0,10);
 const forma = (p.payMethod || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 if (forma.includes("credito")) {
-  // Baixa automática de crédito só depois que o dia de vencimento passou.
-  // Assim a parcela que vence hoje ainda pode ser antecipada manualmente no lote.
-  if (dueKeyForAutoCredit && dueKeyForAutoCredit < todayKey && !p.paidAt) {
+  // Baixa automática de crédito no dia do vencimento ou depois.
+  // Baixa manual/antecipada continua tendo prioridade quando já existir paidAt/cashDate.
+  if (dueKeyForAutoCredit && dueKeyForAutoCredit <= todayKey && !p.paidAt) {
     const autoCreditDate = dueKeyForAutoCredit || todayISO();
     const autoCreditNow = new Date().toISOString();
     p.paidAt = autoCreditDate;
@@ -1476,6 +1476,57 @@ function findFinancePaymentRecord(db, entryId, planId, paymentId){
   return (db.payments||[]).find(p=>String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId));
 }
 
+function syncFinancialPlansFromLedger(db){
+  if(!db || !Array.isArray(db.entries) || !Array.isArray(db.payments)) return db;
+  const paidLedger = (db.payments || []).filter(rec=>{
+    if(!rec || typeof rec !== "object") return false;
+    if(String(rec.status || "").toUpperCase() !== "PAGA" && !rec.paidAt && !rec.cashDate) return false;
+    return !!(rec.entryId && rec.financialPlanId && rec.financialPaymentId);
+  });
+  if(!paidLedger.length) return db;
+
+  const entriesById = new Map((db.entries || []).map(entry=>[String(entry.id || ""), entry]));
+  const touchedPlans = new Map();
+
+  paidLedger.forEach(rec=>{
+    const entry = entriesById.get(String(rec.entryId || ""));
+    if(!entry) return;
+    const plan = ensureFinancialPlans(entry).find(p=>String(p.id)===String(rec.financialPlanId || ""));
+    if(!plan) return;
+    const payment = (plan.payments || []).find(p=>String(p.id)===String(rec.financialPaymentId || ""));
+    if(!payment) return;
+
+    const ledgerTime = __cronosItemTime(rec);
+    const paymentTime = __cronosItemTime(payment);
+    const shouldApply = !financialPaymentPaid(payment) || ledgerTime >= paymentTime;
+    if(!shouldApply) return;
+
+    payment.status = "PAGA";
+    payment.paidAt = String(rec.paidAt || rec.cashDate || rec.date || todayISO()).slice(0,10);
+    payment.cashDate = String(rec.cashDate || rec.paidAt || rec.date || payment.paidAt || todayISO()).slice(0,10);
+    payment.manualPayment = rec.source === "creditAnticipation" || payment.manualPayment === true;
+    if(rec.source === "creditAnticipation" || rec.settlementType === "antecipacao_credito"){
+      payment.autoCreditSettlement = false;
+      payment.creditAnticipated = true;
+      payment.settlementType = "antecipacao_credito";
+      payment.grossValue = parseMoney(rec.grossValue || payment.grossValue || payment.amount);
+      payment.cashValue = parseMoney(rec.value || rec.cashValue || payment.cashValue || payment.amount);
+      payment.netValue = parseMoney(rec.value || rec.netValue || payment.netValue || payment.amount);
+      payment.cardFeePercent = parseBRNum(rec.cardFeePercent) ?? payment.cardFeePercent ?? 0;
+      payment.cardFeeAmount = parseMoney(rec.cardFeeAmount || payment.cardFeeAmount || 0);
+    }
+    const stamp = rec.updatedAt || rec.at || new Date().toISOString();
+    markFinancialMutation(entry, plan, payment, stamp);
+    touchedPlans.set(`${entry.id}|${plan.id}`, {entry, plan});
+  });
+
+  touchedPlans.forEach(({entry, plan})=>{
+    markFichaItemsPaidByFinancialPlan(entry, plan);
+  });
+
+  return db;
+}
+
 function cronosFinancialPlanFullyPaid(plan){
   if(!plan) return false;
   const t = financialPlanTotals(plan);
@@ -1971,6 +2022,7 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
   });
 
   if(!count) return toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
+  try{ syncFinancialPlansFromLedger(db); }catch(e){ console.warn("Falha ao conciliar antecipação com a ficha:", e); }
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
   let cloudOk = false;
   try{
@@ -3880,6 +3932,7 @@ function normalizeDBShape(db){
   }
   if(!out.version) out.version = "cloud_v2";
   if(!out.createdAt) out.createdAt = new Date().toISOString();
+  try{ syncFinancialPlansFromLedger(out); }catch(e){ console.warn("Falha ao conciliar recebimentos com financeiro:", e); }
   return out;
 }
 
