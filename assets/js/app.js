@@ -10398,10 +10398,10 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       box.innerHTML = `
         <div class="procGrid">
-          <div>
+          <div style="position:relative">
             <label>Nome do procedimento</label>
-            <input id="procName" type="text" autocomplete="off" placeholder="Ex: Restauração de resina 1 face" value="${escapeHTML(editItem?.nome || '')}" oninput="CRONOS_PROC_UI.nameInput(this.value)" onfocus="CRONOS_PROC_UI.nameInput(this.value)">
-            <div id="procNameSuggestions" style="margin-top:6px"></div>
+            <input id="procName" type="text" autocomplete="new-password" spellcheck="false" placeholder="Ex: Restauração de resina 1 face" value="${escapeHTML(editItem?.nome || '')}" oninput="CRONOS_PROC_UI.nameInput(this.value)" onfocus="CRONOS_PROC_UI.nameInput(this.value)" onblur="CRONOS_PROC_UI.hideNameSuggestions()">
+            <div id="procNameSuggestions" style="display:none; position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:80"></div>
           </div>
           <div>
             <label>Categoria</label>
@@ -10548,6 +10548,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const state = window.__procCatalogState || { editingId:null };
       if(q.length < 2){
         host.innerHTML = '';
+        host.style.display = 'none';
         return;
       }
       const catalog = getProcedureCatalog(loadDB())
@@ -10556,19 +10557,21 @@ document.addEventListener("DOMContentLoaded", () => {
         const name = __cronosNormProcName(item.nome || '');
         const category = __cronosNormProcName(item.categoria || '');
         return name.includes(q) || q.includes(name) || category.includes(q);
-      }).slice(0, 6);
+      }).slice(0, 5);
       if(!matches.length){
-        host.innerHTML = '<div class="small muted" style="padding:6px 0">Nenhum procedimento parecido cadastrado.</div>';
+        host.innerHTML = '';
+        host.style.display = 'none';
         return;
       }
+      host.style.display = 'block';
       host.innerHTML = `
-        <div style="border:1px solid rgba(148,163,184,.28); border-radius:14px; padding:8px; background:rgba(148,163,184,.08)">
-          <div class="small muted" style="margin-bottom:6px">Procedimentos parecidos já cadastrados:</div>
-          <div style="display:flex; gap:6px; flex-wrap:wrap">
+        <div style="border:1px solid rgba(148,163,184,.30); border-radius:14px; padding:8px; background:var(--panel, rgba(15,23,42,.96)); box-shadow:0 18px 44px rgba(15,23,42,.24); max-height:190px; overflow:auto">
+          <div class="small muted" style="margin-bottom:6px">Procedimentos parecidos:</div>
+          <div style="display:grid; gap:6px">
             ${matches.map(item=>`
-              <button type="button" class="miniBtn" onclick="CRONOS_PROC_UI.edit('${escapeHTML(item.id || '')}')" title="Editar procedimento já cadastrado">
-                ${escapeHTML(item.nome || 'Procedimento')}
-                <span class="muted">• ${item.ativo === false ? 'inativo' : 'ativo'}</span>
+              <button type="button" class="miniBtn" style="width:100%; justify-content:space-between; text-align:left" onmousedown="event.preventDefault(); CRONOS_PROC_UI.edit('${escapeHTML(item.id || '')}')" title="Editar procedimento já cadastrado">
+                <span>${escapeHTML(item.nome || 'Procedimento')}</span>
+                <span class="muted">${item.ativo === false ? 'inativo' : 'ativo'}</span>
               </button>
             `).join('')}
           </div>
@@ -10578,6 +10581,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 window.CRONOS_PROC_UI = {
       nameInput(v){ renderProcedureNameSuggestions(v); },
+      hideNameSuggestions(){ setTimeout(()=>{ const host = el('procNameSuggestions'); if(host){ host.style.display='none'; host.innerHTML=''; } }, 180); },
       search(v){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {search:v}); renderProcedureCatalogApp(); __cronosRefocusInput('procSearch', v); },
       edit(id){
         window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:id});
