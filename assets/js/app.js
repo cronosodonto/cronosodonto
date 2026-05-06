@@ -1476,6 +1476,30 @@ function findFinancePaymentRecord(db, entryId, planId, paymentId){
   return (db.payments||[]).find(p=>String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId));
 }
 
+function cronosFinancialPlanFullyPaid(plan){
+  if(!plan) return false;
+  const t = financialPlanTotals(plan);
+  const target = Number(t.total || plan.amount || 0);
+  return target > 0 && Number(t.paid || 0) >= (target - 0.01);
+}
+
+function markFichaItemsPaidByFinancialPlan(entry, plan){
+  if(!entry || !plan) return;
+  const ficha = ensureFicha(entry);
+  const linkedIds = new Set((Array.isArray(plan.fichaItemIds) ? plan.fichaItemIds : []).map(String));
+  const planId = String(plan.id || "");
+  const fullyPaid = cronosFinancialPlanFullyPaid(plan);
+  ficha.plano.forEach(item=>{
+    const itemLinkedToPlan = String(item?.financialPlanId || item?.recebimentoId || "") === planId;
+    const itemListedInPlan = linkedIds.has(String(item?.id || ""));
+    if(itemLinkedToPlan || itemListedInPlan){
+      item.pago = !!fullyPaid;
+      item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
+      item.updatedAt = new Date().toISOString();
+    }
+  });
+}
+
 function canManageFinancialSensitiveActions(actor=currentActor()){
   const role = String(actor?.role || "").toUpperCase();
   return !!actor && (actor.isPrimaryMaster === true || role === "MASTER" || role === "GERENTE");
@@ -1799,8 +1823,13 @@ function openCreditAnticipationModal(){
     const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
     const ok = confirm(`Confirmar antecipação de ${selected.length} parcela(s) em ${fmtBR(date)}?\n\nTaxa: ${feePercent.toLocaleString("pt-BR", {maximumFractionDigits:4})}%`);
     if(!ok) return;
-    await applyCreditAnticipation(db, selected, date, feePercent);
-    overlay.remove();
+    try{
+      await applyCreditAnticipation(db, selected, date, feePercent);
+      overlay.remove();
+    }catch(err){
+      console.error("Erro ao confirmar antecipação de crédito", err);
+      toast("Erro ao antecipar crédito", err?.message || "Não foi possível concluir a baixa antecipada. Tente novamente.");
+    }
   });
 
   renderCandidates();
@@ -1937,24 +1966,23 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
   });
 
   affectedFinancialPlans.forEach(({entry, plan})=>{
-    if(!entry || !plan || !Array.isArray(plan.fichaItemIds)) return;
-    const fullyPaid = financialPlanIsFullyPaid(plan);
-    const ids = new Set(plan.fichaItemIds.map(String));
-    ensureFicha(entry).plano.forEach(item=>{
-      if(ids.has(String(item.id))){
-        item.pago = !!fullyPaid;
-        item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
-      }
-    });
+    markFichaItemsPaidByFinancialPlan(entry, plan);
+    markFinancialMutation(entry, plan, null, nowISO);
   });
 
   if(!count) return toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
-  const cloudOk = await saveDB(db, { immediate:true });
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar antecipação de crédito na nuvem", err);
+    try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(_){ }
+  }
   if(cloudOk){
     toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
   }else{
-    toast("Antecipação salva no navegador", "A nuvem ainda não confirmou. Evite atualizar a página antes de sincronizar.");
+    toast("Antecipação salva no navegador", "A nuvem ainda não confirmou. Clique em Atualizar depois de alguns segundos para conferir a sincronização.");
   }
   renderAll();
 }
