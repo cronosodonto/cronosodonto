@@ -10639,7 +10639,8 @@ document.addEventListener("DOMContentLoaded", () => {
       {value:'L/P', label:'Lingual/Palatina'},
       {value:'M', label:'Mesial'},
       {value:'D', label:'Distal'},
-      {value:'O/I', label:'Oclusal/Incisal'}
+      {value:'O', label:'Oclusal'}
+      {value:'I', label:'Incisal'}
     ];
 
     const TOOTH_ROWS = {
