@@ -1368,8 +1368,11 @@ function syncFichaFinancialLinks(entry){
 }
 
 function fichaLinkedFinancialPaidTotal(entry, plano=[]){
+  if(!entry) return 0;
   let total = 0;
   const seenPlans = new Set();
+
+  // Pagamentos vinculados diretamente aos procedimentos da ficha.
   (plano || []).forEach(item=>{
     const plan = findFinancialPlanByFichaItem(entry, item);
     if(plan){
@@ -1386,7 +1389,23 @@ function fichaLinkedFinancialPaidTotal(entry, plano=[]){
     }
     if(item?.pago) total += Number(item.valorFechado || 0);
   });
-  return total;
+
+  // Pagamentos do paciente que ainda não foram alocados em procedimentos específicos.
+  // Ex.: entrada/recebimento avulso de R$ 4.000,00. O valor precisa aparecer
+  // no resumo da ficha, mas sem pintar procedimentos como pagos no chute.
+  ensureFinancialPlans(entry).forEach(plan=>{
+    const pid = String(plan?.id || '');
+    if(!pid || seenPlans.has(pid)) return;
+    const paid = Number(financialPlanTotals(plan).paid || 0);
+    if(paid <= 0) return;
+    const linkedIds = getPlanFichaItemIds(plan);
+    if(linkedIds.length) return;
+    seenPlans.add(pid);
+    total += paid;
+  });
+
+  const totalFechado = (plano || []).reduce((s,x)=>s + Number(x.valorFechado || 0), 0);
+  return Math.min(total, totalFechado || total);
 }
 
 function financialPlanStatusLabel(plan){
