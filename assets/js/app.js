@@ -91,23 +91,22 @@ function ensureInstallmentsForEntry(entry){
     if(p.due && !p.dueDate) p.dueDate = p.due;
     if(p.paid && !p.paidAt) p.paidAt = p.paid;
     const todayKey = todayISO();
-const dueKeyForAutoCredit = String(p.dueDate || p.due || "").slice(0,10);
+    const dueKeyForAutoCredit = cronosISOFromAny(p.dueDate || p.due || "");
+    const forma = normalizePlainText(p.payMethod || entry.installPlan?.payMethod || "");
 
-const forma = (p.payMethod || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-if (forma.includes("credito")) {
-  // Baixa automática de crédito no dia do vencimento ou depois.
-  // Baixa manual/antecipada continua tendo prioridade quando já existir paidAt/cashDate.
-  if (dueKeyForAutoCredit && dueKeyForAutoCredit <= todayKey && !p.paidAt) {
-    const autoCreditDate = dueKeyForAutoCredit || todayISO();
-    const autoCreditNow = new Date().toISOString();
-    p.paidAt = autoCreditDate;
-    p.cashDate = autoCreditDate;
-    p.status = "PAGA";
-    p.autoCreditSettlement = true;
-    p.updatedAt = p.updatedAt || autoCreditNow;
-  }
-}
+    if (forma.includes("credito")) {
+      // Baixa automática de crédito no dia do vencimento ou depois.
+      // Baixa manual/antecipada continua tendo prioridade quando já existir paidAt/cashDate.
+      if (dueKeyForAutoCredit && dueKeyForAutoCredit <= todayKey && !financialPaymentPaid(p)) {
+        const autoCreditDate = dueKeyForAutoCredit || todayISO();
+        const autoCreditNow = new Date().toISOString();
+        p.paidAt = autoCreditDate;
+        p.cashDate = autoCreditDate;
+        p.status = "PAGA";
+        p.autoCreditSettlement = true;
+        p.updatedAt = p.updatedAt || autoCreditNow;
+      }
+    }
     if(!p.payMethod && entry.installPlan?.payMethod) p.payMethod = entry.installPlan.payMethod;
     if(!p.total && entry.installPlan?.n) p.total = parseInt(entry.installPlan.n||0,10) || p.total || 0;
     if(!p.status){
@@ -549,7 +548,7 @@ function suggestedFinancialPlanTotal(entry){
 }
 
 function financialPaymentPaid(payment){
-  return !!payment?.paidAt || payment?.status === "PAGA" || payment?.paid === true;
+  return !!payment?.paidAt || !!payment?.cashDate || String(payment?.status || "").toUpperCase() === "PAGA" || payment?.paid === true;
 }
 
 
@@ -1534,21 +1533,185 @@ function cronosFinancialPlanFullyPaid(plan){
   return target > 0 && Number(t.paid || 0) >= (target - 0.01);
 }
 
+function financialPlanHasExplicitFichaItemsGlobal(plan){
+  return Array.isArray(plan?.fichaItemIds) && plan.fichaItemIds.map(String).filter(Boolean).length > 0;
+}
+
+function fichaItemBelongsToFinancialPlanGlobal(item, plan){
+  if(!item || !plan) return false;
+  const itemId = String(item.id || "");
+  const planId = String(plan.id || "");
+  const explicitIds = new Set((Array.isArray(plan.fichaItemIds) ? plan.fichaItemIds : []).map(String).filter(Boolean));
+  if(explicitIds.size) return explicitIds.has(itemId);
+  return String(item.financialPlanId || item.recebimentoId || "") === planId;
+}
+
 function markFichaItemsPaidByFinancialPlan(entry, plan){
   if(!entry || !plan) return;
-  const ficha = ensureFicha(entry);
-  const linkedIds = new Set((Array.isArray(plan.fichaItemIds) ? plan.fichaItemIds : []).map(String));
+  const ficha = ensureFichaForRecebimentos(entry);
   const planId = String(plan.id || "");
+  const hasExplicitItems = financialPlanHasExplicitFichaItemsGlobal(plan);
   const fullyPaid = cronosFinancialPlanFullyPaid(plan);
+  const now = new Date().toISOString();
+
   ficha.plano.forEach(item=>{
     const itemLinkedToPlan = String(item?.financialPlanId || item?.recebimentoId || "") === planId;
-    const itemListedInPlan = linkedIds.has(String(item?.id || ""));
-    if(itemLinkedToPlan || itemListedInPlan){
+    const itemBelongs = fichaItemBelongsToFinancialPlanGlobal(item, plan);
+
+    if(itemBelongs){
+      item.financialPlanId = planId;
+      item.recebimentoId = planId;
       item.pago = !!fullyPaid;
       item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
-      item.updatedAt = new Date().toISOString();
+      item.updatedAt = now;
+      return;
+    }
+
+    // Se o plano tem uma lista explícita de procedimentos, ela é a fonte da verdade.
+    // Isso evita que a antecipação marque toda a avaliação quando só alguns itens foram vinculados ao recebimento.
+    if(hasExplicitItems && itemLinkedToPlan){
+      item.financialPlanId = "";
+      item.recebimentoId = "";
+      if(["pago","em_pagamento","recebimento_criado","linked"].includes(String(item.financeStatus || ""))){
+        item.financeStatus = "";
+      }
+      if(item.pago === true && !item.feito){
+        item.pago = false;
+      }
+      item.updatedAt = now;
     }
   });
+}
+
+
+function cronosISOFromAny(raw){
+  if(!raw) return "";
+  try{
+    if(typeof pickISOFlexible === "function"){
+      const picked = pickISOFlexible(raw);
+      if(picked) return picked;
+    }
+  }catch(_){ }
+  const s = String(raw || "").trim();
+  if(!s) return "";
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  const br = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(br) return `${br[3]}-${String(br[2]).padStart(2,"0")}-${String(br[1]).padStart(2,"0")}`;
+  return "";
+}
+
+function normalizePlainText(value){
+  return String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function paymentLooksLikeCredit(payment, fallbackMethod=""){
+  const method = normalizePlainText(payment?.payMethod || payment?.method || fallbackMethod || "");
+  return method.includes("credito") || method.includes("cartao de credito") || method.includes("cartao credito");
+}
+
+function autoSettleDueCreditPayments(db, actor=currentActor()){
+  if(!db || !Array.isArray(db.entries)) return 0;
+  db.payments = db.payments || [];
+  const todayKey = todayISO();
+  const nowISO = new Date().toISOString();
+  let count = 0;
+
+  (db.entries || []).forEach(entry=>{
+    if(!entry) return;
+
+    // Parcelamentos financeiros novos, incluindo os criados pela ficha do paciente.
+    const plans = ensureFinancialPlans(entry);
+    plans.forEach(plan=>{
+      (plan.payments || []).forEach(payment=>{
+        if(!payment || financialPaymentPaid(payment)) return;
+        if(!paymentLooksLikeCredit(payment, payment.payMethod || plan.payMethod || "")) return;
+        const dueISO = cronosISOFromAny(payment.dueDate || payment.due || payment.date || "");
+        if(!dueISO || dueISO > todayKey) return;
+
+        payment.status = "PAGA";
+        payment.paidAt = dueISO;
+        payment.cashDate = dueISO;
+        payment.autoCreditSettlement = true;
+        payment.manualPayment = false;
+        markFinancialMutation(entry, plan, payment, nowISO);
+
+        let rec = findFinancePaymentRecord(db, entry.id, plan.id, payment.id);
+        if(!rec){
+          rec = {
+            id: uid("p"),
+            masterId: actor?.masterId || entry.masterId || "",
+            entryId: entry.id,
+            contactId: entry.contactId || "",
+            financialPlanId: plan.id,
+            financialPaymentId: payment.id,
+            at: nowISO,
+            createdAt: nowISO,
+            updatedAt: nowISO,
+            date: dueISO,
+            paidAt: dueISO,
+            cashDate: dueISO,
+            status: "PAGA",
+            value: parseMoney(payment.cashValue || payment.netValue || payment.amount),
+            grossValue: parseMoney(payment.grossValue || payment.amount),
+            method: payment.payMethod || plan.payMethod || "Cartão de crédito",
+            desc: `Baixa automática de crédito • ${plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
+            source: "autoCreditSettlement"
+          };
+          db.payments.push(rec);
+        }else{
+          rec.date = dueISO;
+          rec.paidAt = dueISO;
+          rec.cashDate = dueISO;
+          rec.status = "PAGA";
+          rec.at = nowISO;
+          rec.updatedAt = nowISO;
+          rec.value = parseMoney(payment.cashValue || payment.netValue || payment.amount);
+          rec.grossValue = parseMoney(payment.grossValue || payment.amount);
+          rec.method = payment.payMethod || plan.payMethod || rec.method || "Cartão de crédito";
+          rec.source = rec.source || "autoCreditSettlement";
+        }
+
+        markFichaItemsPaidByFinancialPlan(entry, plan);
+        count++;
+      });
+    });
+
+    // Parcelamentos legados ainda usados em alguns registros antigos.
+    try{ ensureInstallmentsForEntry(entry); }catch(_){ }
+    (entry.installments || []).forEach(inst=>{
+      if(!inst || financialPaymentPaid(inst)) return;
+      if(!paymentLooksLikeCredit(inst, inst.payMethod || entry.installPlan?.payMethod || "")) return;
+      const dueISO = cronosISOFromAny(inst.dueDate || inst.due || "");
+      if(!dueISO || dueISO > todayKey) return;
+      inst.status = "PAGA";
+      inst.paidAt = dueISO;
+      inst.cashDate = dueISO;
+      inst.autoCreditSettlement = true;
+      inst.manualPayment = false;
+      markFinancialMutation(entry, null, inst, nowISO);
+      count++;
+    });
+  });
+
+  if(count){
+    try{ syncFinancialPlansFromLedger(db); }catch(_){ }
+    try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  }
+  return count;
+}
+
+let __cronosAutoCreditLastRun = 0;
+function runAutoCreditSettlementsIfNeeded(force=false){
+  const now = Date.now();
+  if(!force && now - __cronosAutoCreditLastRun < 30000) return 0;
+  __cronosAutoCreditLastRun = now;
+  const db = loadDB();
+  const count = autoSettleDueCreditPayments(db, currentActor());
+  if(count){
+    try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(_){ }
+    try{ saveDB(db, { immediate:true }); }catch(_){ }
+  }
+  return count;
 }
 
 function canManageFinancialSensitiveActions(actor=currentActor()){
@@ -1659,6 +1822,7 @@ function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey=
       ensureFinancialPlans(entry).forEach(plan=>{
         renumberFinancialPlanPayments(plan);
         (plan.payments || []).forEach(payment=>{
+          if(!payment.id) payment.id = uid("pay");
           if(financialPaymentPaid(payment)) return;
           if(!isCreditPaymentMethod(payment.payMethod || plan.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
           const dueDate = payment.dueDate || payment.due || "";
@@ -1807,7 +1971,7 @@ function openCreditAnticipationModal(){
         <div><div class="muted" style="font-size:11px;font-weight:800">Taxa/desconto</div><div style="font-weight:950">${moneyBR(feeAmount)}</div></div>
         <div><div class="muted" style="font-size:11px;font-weight:800">Valor líquido</div><div style="font-weight:950;color:var(--success, #16a34a)">${moneyBR(net)}</div></div>
       </div>
-      <div class="muted" style="font-size:12px;margin-top:8px">A baixa marcará as parcelas como pagas, mantendo o valor bruto no plano e registrando o valor líquido no caixa/recebimentos. Se o plano vinculado ficar totalmente pago, a ficha também será marcada como paga.</div>
+      <div class="muted" style="font-size:12px;margin-top:8px">A baixa marcará as parcelas como pagas, mantendo o valor bruto no plano e registrando o valor líquido no caixa/recebimentos. Se o plano vinculado ficar totalmente pago, somente os procedimentos vinculados a esse recebimento serão marcados como pagos.</div>
     `;
   }
 
@@ -2100,15 +2264,16 @@ async function payFinancialPayment(entryId, planId, paymentId){
   syncInstallmentTasks(db, actor);
   if(Array.isArray(plan.fichaItemIds)){
     const fullyPaid = financialPlanIsFullyPaid(plan);
-    ensureFicha(entry).plano.forEach(item=>{
-      if(plan.fichaItemIds.map(String).includes(String(item.id))){
-        item.pago = !!fullyPaid;
-        item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
-      }
-    });
+    markFichaItemsPaidByFinancialPlan(entry, plan);
   }
 
-  const cloudOk = await saveDB(db, { immediate:true });
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar baixa financeira", err);
+    try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(_){ }
+  }
   if(cloudOk){
     toast("Baixa feita ✅", `${moneyBR(payment.amount)} • salvo na nuvem • caixa em ${fmtBR(payDate)}`);
   }else{
@@ -2134,12 +2299,7 @@ async function undoFinancialPayment(entryId, planId, paymentId){
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
 
   if(Array.isArray(plan.fichaItemIds)){
-    ensureFicha(entry).plano.forEach(item=>{
-      if(plan.fichaItemIds.map(String).includes(String(item.id))){
-        item.pago = false;
-        item.financeStatus = "em_pagamento";
-      }
-    });
+    markFichaItemsPaidByFinancialPlan(entry, plan);
   }
 
   syncInstallmentTasks(db, actor);
@@ -9319,6 +9479,8 @@ function bindAuth(){
   });
 }
 function renderAll(){
+  try{ runAutoCreditSettlementsIfNeeded(false); }catch(_){ }
+
   setTimeout(() => {
     try{ updateSidebarPills(); }catch(_){ }
     try{ renderInstallmentsView(); }catch(_){ }
@@ -10706,11 +10868,28 @@ document.addEventListener("DOMContentLoaded", () => {
       return `Avaliação ${n}`;
     }
 
+    function financialPlanHasExplicitFichaItems(plan){
+      return Array.isArray(plan?.fichaItemIds) && plan.fichaItemIds.map(String).filter(Boolean).length > 0;
+    }
+
+    function fichaItemBelongsToFinancialPlan(item, plan){
+      if(!item || !plan) return false;
+      const itemId = String(item.id || "");
+      const planId = String(plan.id || "");
+      const explicitIds = new Set((Array.isArray(plan.fichaItemIds) ? plan.fichaItemIds : []).map(String).filter(Boolean));
+      if(explicitIds.size) return explicitIds.has(itemId);
+      return String(item.financialPlanId || item.recebimentoId || "") === planId;
+    }
+
     function getFinancialPlanForFichaItem(entry, item){
-      const planId = String(item?.financialPlanId || item?.recebimentoId || "").trim();
-      if(!entry || !planId) return null;
+      if(!entry || !item) return null;
       const plans = ensureFinancialPlans(entry);
-      return plans.find(p=>String(p.id)===planId) || null;
+      const directPlanId = String(item?.financialPlanId || item?.recebimentoId || "").trim();
+      if(directPlanId){
+        const plan = plans.find(p=>String(p.id)===directPlanId) || null;
+        if(plan && fichaItemBelongsToFinancialPlan(item, plan)) return plan;
+      }
+      return plans.find(plan=>fichaItemBelongsToFinancialPlan(item, plan)) || null;
     }
 
     function financialPlanIsFullyPaid(plan){
