@@ -1258,9 +1258,30 @@ function financialPlanHasAnyPayment(plan){
 }
 
 function getPlanFichaItemIds(plan){
-  return Array.from(new Set((Array.isArray(plan?.fichaItemIds) ? plan.fichaItemIds : [])
-    .map(x=>String(x||'').trim())
-    .filter(Boolean)));
+  if(!plan) return [];
+  const raw = [];
+  [
+    plan.fichaItemIds,
+    plan.fichaItensIds,
+    plan.itemIds,
+    plan.procedureItemIds,
+    plan.fichaProcedureIds,
+    plan.selectedItemIds,
+    plan.linkedFichaItemIds
+  ].forEach(arr=>{
+    if(Array.isArray(arr)) raw.push(...arr);
+  });
+  if(Array.isArray(plan.fichaItems)){
+    plan.fichaItems.forEach(x=> raw.push(typeof x === 'object' ? (x.id || x.itemId || x.fichaItemId) : x));
+  }
+  return Array.from(new Set(raw.map(x=>String(x||'').trim()).filter(Boolean)));
+}
+
+function setPlanFichaItemIds(plan, ids){
+  if(!plan) return [];
+  const merged = Array.from(new Set([...(getPlanFichaItemIds(plan)||[]), ...((ids||[]).map(x=>String(x||'').trim()).filter(Boolean))]));
+  plan.fichaItemIds = merged;
+  return merged;
 }
 
 function planContainsFichaItem(plan, itemId){
@@ -1269,49 +1290,80 @@ function planContainsFichaItem(plan, itemId){
   return getPlanFichaItemIds(plan).includes(id);
 }
 
-function findFinancialPlanByFichaItem(entry, itemId){
-  if(!entry || !itemId) return null;
-  const directId = String(itemId?.financialPlanId || itemId?.recebimentoId || '').trim();
-  const targetItemId = typeof itemId === 'object' ? String(itemId.id || '').trim() : String(itemId || '').trim();
+function getFichaPlanoSafe(entry){
+  if(!entry) return [];
+  if(!entry.ficha || typeof entry.ficha !== 'object') entry.ficha = { plano: [], odontograma: {}, avaliacoes: [] };
+  if(!Array.isArray(entry.ficha.plano)) entry.ficha.plano = [];
+  if(!entry.ficha.odontograma || typeof entry.ficha.odontograma !== 'object') entry.ficha.odontograma = {};
+  if(!Array.isArray(entry.ficha.avaliacoes)) entry.ficha.avaliacoes = [];
+  return entry.ficha.plano;
+}
+
+function findFinancialPlanByFichaItem(entry, itemOrId){
+  if(!entry || !itemOrId) return null;
+  const itemObj = typeof itemOrId === 'object' ? itemOrId : null;
+  const targetItemId = itemObj ? String(itemObj.id || '').trim() : String(itemOrId || '').trim();
+  const directId = String(itemObj?.financialPlanId || itemObj?.recebimentoId || itemObj?.budgetId || itemObj?.paymentPlanId || '').trim();
   const plans = ensureFinancialPlans(entry);
+
   if(directId){
     const direct = plans.find(p=>String(p.id)===directId);
-    if(direct) return direct;
+    if(direct){
+      if(targetItemId) setPlanFichaItemIds(direct, [targetItemId]);
+      return direct;
+    }
   }
   if(!targetItemId) return null;
+
   return plans.find(plan=>planContainsFichaItem(plan, targetItemId)) || null;
 }
 
+function updateFichaItemFinanceStatusFromPlan(item, plan){
+  if(!item || !plan) return;
+  item.financialPlanId = String(plan.id);
+  item.recebimentoId = String(plan.id);
+  const totals = financialPlanTotals(plan);
+  if(financialPlanIsFullyPaid(plan)){
+    item.financeStatus = 'pago';
+    item.pago = true;
+  }else if(Number(totals.paid || 0) > 0){
+    item.financeStatus = 'parcial';
+    item.pago = false;
+  }else if(financialPlanHasAnyPayment(plan)){
+    item.financeStatus = 'em_pagamento';
+    item.pago = false;
+  }else{
+    item.financeStatus = 'recebimento_criado';
+    item.pago = false;
+  }
+}
+
 function syncFichaFinancialLinks(entry){
-  if(!entry || !entry.ficha || !Array.isArray(entry.ficha.plano)) return entry;
+  if(!entry) return entry;
+  const plano = getFichaPlanoSafe(entry);
   const plans = ensureFinancialPlans(entry);
-  const byItemId = new Map();
+
+  // 1) Se o item já aponta para um recebimento, garante o caminho inverso no plano.
+  plano.forEach(item=>{
+    if(!item || !item.id) return;
+    const directId = String(item.financialPlanId || item.recebimentoId || '').trim();
+    if(!directId) return;
+    const plan = plans.find(p=>String(p.id)===directId);
+    if(plan) setPlanFichaItemIds(plan, [String(item.id)]);
+  });
+
+  // 2) Se o plano tem fichaItemIds, garante o vínculo em cada procedimento.
+  const itemById = new Map(plano.filter(item=>item && item.id).map(item=>[String(item.id), item]));
   plans.forEach(plan=>{
-    getPlanFichaItemIds(plan).forEach(id=>{
-      if(!byItemId.has(id)) byItemId.set(id, plan);
+    const ids = getPlanFichaItemIds(plan);
+    if(!ids.length) return;
+    setPlanFichaItemIds(plan, ids);
+    ids.forEach(id=>{
+      const item = itemById.get(String(id));
+      if(item) updateFichaItemFinanceStatusFromPlan(item, plan);
     });
   });
-  entry.ficha.plano.forEach(item=>{
-    if(!item || !item.id) return;
-    const plan = byItemId.get(String(item.id)) || findFinancialPlanByFichaItem(entry, item);
-    if(!plan) return;
-    item.financialPlanId = String(plan.id);
-    item.recebimentoId = String(plan.id);
-    const totals = financialPlanTotals(plan);
-    if(financialPlanIsFullyPaid(plan)){
-      item.financeStatus = 'pago';
-      item.pago = true;
-    }else if(Number(totals.paid || 0) > 0){
-      item.financeStatus = 'parcial';
-      item.pago = false;
-    }else if(financialPlanHasAnyPayment(plan)){
-      item.financeStatus = 'em_pagamento';
-      item.pago = false;
-    }else{
-      item.financeStatus = 'recebimento_criado';
-      item.pago = false;
-    }
-  });
+
   return entry;
 }
 
@@ -1667,9 +1719,11 @@ async function payFinancialPayment(entryId, planId, paymentId){
     });
   }
 
+  try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
   saveDB(db, { immediate:true });
   toast("Baixa feita ✅", `${moneyBR(payment.amount)} • caixa em ${fmtBR(payDate)}`);
   renderAll();
+  try{ renderFichaApp(); }catch(_){}
 }
 function undoFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
@@ -2083,10 +2137,12 @@ window.CRONOS_NEW_FIN_UI = {
     try{ syncFichaFinancialLinks(entry); }catch(_){}
     window.__newFinancialInstallmentState.planId = plan.id;
     window.__newFinancialInstallmentState.fichaItemIds = [];
+    try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar vínculo da ficha:", err); }
     saveDB(db, { immediate:true });
-    toast("Orçamento criado ✅", `${plan.title} • ${moneyBR(plan.amount)}`);
+    toast("Recebimento criado ✅", `${plan.title} • ${moneyBR(plan.amount)}`);
     renderNewFinancialInstallmentApp();
     renderInstallmentsView();
+    try{ renderFichaApp(); }catch(_){}
   },
   selectPlan(planId){
     window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {planId:String(planId)});
@@ -2191,11 +2247,13 @@ window.CRONOS_NEW_FIN_UI = {
       });
     }
 
+    try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após pagamento:", err); }
     syncInstallmentTasks(db, actor);
     saveDB(db, { immediate:true });
     toast("Pagamento lançado ✅", `${count} parcela(s) • ${moneyBR(amount)}`);
     renderNewFinancialInstallmentApp();
     renderInstallmentsView();
+    try{ renderFichaApp(); }catch(_){}
   }
 };
 
@@ -9930,7 +9988,8 @@ document.addEventListener("DOMContentLoaded", () => {
       {value:'L/P', label:'Lingual/Palatina'},
       {value:'M', label:'Mesial'},
       {value:'D', label:'Distal'},
-      {value:'O/I', label:'Oclusal/Incisal'}
+      {value:'O', label:'Oclusal'},
+      {value:'I', label:'Incisal'}
     ];
 
     const TOOTH_ROWS = {
@@ -10960,6 +11019,7 @@ window.CRONOS_PROC_UI = {
       if(!entry){ box.innerHTML = `<div class="fichaEmpty">Lead não encontrado.</div>`; return; }
       const contact = getContactForEntry(entry);
       const ficha = ensureFicha(entry);
+      try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao reconciliar ficha/recebimentos:", err); }
       const selectedProc = getSelectedProc(state, db);
       const catalogAll = getProcedureCatalog(db).filter(x=>x.ativo !== false);
       const catalog = catalogAll;
