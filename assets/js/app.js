@@ -2029,21 +2029,36 @@ function openCreditAnticipationModal(){
     listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>{ ch.checked = selectAllEl.checked; });
     updateSummary();
   });
-  document.getElementById("creditAntConfirm")?.addEventListener("click", async ()=>{
+  const confirmBtn = document.getElementById("creditAntConfirm");
+  confirmBtn?.addEventListener("click", async ()=>{
+    if(confirmBtn.dataset.busy === "1") return;
+
     const date = String(document.getElementById("creditAntDate")?.value || "").slice(0,10);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Data inválida", "Escolha a data da baixa da antecipação.");
+
     const keys = selectedKeys();
     const selected = candidates.filter(c=>keys.has(c.key));
     if(!selected.length) return toast("Nada selecionado", "Marque pelo menos uma parcela de crédito para antecipar.");
+
     const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
     const ok = confirm(`Confirmar antecipação de ${selected.length} parcela(s) em ${fmtBR(date)}?\n\nTaxa: ${feePercent.toLocaleString("pt-BR", {maximumFractionDigits:4})}%`);
     if(!ok) return;
+
+    const originalText = confirmBtn.textContent;
+    confirmBtn.dataset.busy = "1";
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Processando...";
+    toast("Processando antecipação", "Aguarde a confirmação da baixa e da sincronização na nuvem.");
+
     try{
       await applyCreditAnticipation(db, selected, date, feePercent);
       overlay.remove();
     }catch(err){
       console.error("Erro ao confirmar antecipação de crédito", err);
       toast("Erro ao antecipar crédito", err?.message || "Não foi possível concluir a baixa antecipada. Tente novamente.");
+      confirmBtn.dataset.busy = "0";
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = originalText || "Confirmar antecipação";
     }
   });
 
