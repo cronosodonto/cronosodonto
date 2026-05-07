@@ -90,23 +90,17 @@ function ensureInstallmentsForEntry(entry){
   (entry.installments||[]).forEach(p=>{
     if(p.due && !p.dueDate) p.dueDate = p.due;
     if(p.paid && !p.paidAt) p.paidAt = p.paid;
-    const todayKey = todayISO();
-    const dueKeyForAutoCredit = cronosISOFromAny(p.dueDate || p.due || "");
-    const forma = normalizePlainText(p.payMethod || entry.installPlan?.payMethod || "");
+    const hoje = new Date();
+const dataParcela = new Date(p.dueDate || p.due || 0);
 
-    if (forma.includes("credito")) {
-      // Baixa automática de crédito no dia do vencimento ou depois.
-      // Baixa manual/antecipada continua tendo prioridade quando já existir paidAt/cashDate.
-      if (dueKeyForAutoCredit && dueKeyForAutoCredit <= todayKey && !financialPaymentPaid(p)) {
-        const autoCreditDate = dueKeyForAutoCredit || todayISO();
-        const autoCreditNow = new Date().toISOString();
-        p.paidAt = autoCreditDate;
-        p.cashDate = autoCreditDate;
-        p.status = "PAGA";
-        p.autoCreditSettlement = true;
-        p.updatedAt = p.updatedAt || autoCreditNow;
-      }
-    }
+const forma = (p.payMethod || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+if (forma.includes("credito")) {
+  if (dataParcela <= hoje && !p.paidAt) {
+    p.paidAt = new Date().toISOString();
+    p.status = "PAGA";
+  }
+}
     if(!p.payMethod && entry.installPlan?.payMethod) p.payMethod = entry.installPlan.payMethod;
     if(!p.total && entry.installPlan?.n) p.total = parseInt(entry.installPlan.n||0,10) || p.total || 0;
     if(!p.status){
@@ -396,13 +390,18 @@ function ensureFichaForRecebimentos(entry){
     if(item.financialPlanId && !item.recebimentoId) item.recebimentoId = item.financialPlanId;
   });
 
+  try{ syncFichaFinancialLinks(entry); }catch(_){}
   return entry.ficha;
 }
 
 function getFinancialPlanForFichaItemInRecebimentos(entry, item){
-  const planId = String(item?.financialPlanId || item?.recebimentoId || "").trim();
-  if(!entry || !planId) return null;
-  return ensureFinancialPlans(entry).find(p=>String(p.id)===planId) || null;
+  if(!entry || !item) return null;
+  const plan = findFinancialPlanByFichaItem(entry, item);
+  if(plan){
+    item.financialPlanId = String(plan.id);
+    item.recebimentoId = String(plan.id);
+  }
+  return plan;
 }
 
 function isFichaItemAvailableForRecebimentos(entry, item){
@@ -548,7 +547,7 @@ function suggestedFinancialPlanTotal(entry){
 }
 
 function financialPaymentPaid(payment){
-  return !!payment?.paidAt || !!payment?.cashDate || String(payment?.status || "").toUpperCase() === "PAGA" || payment?.paid === true;
+  return !!payment?.paidAt || payment?.status === "PAGA" || payment?.paid === true;
 }
 
 
@@ -1244,6 +1243,100 @@ function financialPlanNextDue(plan){
   return pending[0]?.dueDate || "";
 }
 
+
+function financialPlanIsFullyPaid(plan){
+  if(!plan) return false;
+  const t = financialPlanTotals(plan);
+  const target = Number(t.total || plan.amount || 0);
+  return target > 0 && Number(t.paid || 0) >= (target - 0.01);
+}
+
+function financialPlanHasAnyPayment(plan){
+  if(!plan) return false;
+  const pays = Array.isArray(plan.payments) ? plan.payments : [];
+  return pays.length > 0 || Number(financialPlanTotals(plan).scheduled || 0) > 0;
+}
+
+function getPlanFichaItemIds(plan){
+  return Array.from(new Set((Array.isArray(plan?.fichaItemIds) ? plan.fichaItemIds : [])
+    .map(x=>String(x||'').trim())
+    .filter(Boolean)));
+}
+
+function planContainsFichaItem(plan, itemId){
+  const id = String(itemId || '').trim();
+  if(!id) return false;
+  return getPlanFichaItemIds(plan).includes(id);
+}
+
+function findFinancialPlanByFichaItem(entry, itemId){
+  if(!entry || !itemId) return null;
+  const directId = String(itemId?.financialPlanId || itemId?.recebimentoId || '').trim();
+  const targetItemId = typeof itemId === 'object' ? String(itemId.id || '').trim() : String(itemId || '').trim();
+  const plans = ensureFinancialPlans(entry);
+  if(directId){
+    const direct = plans.find(p=>String(p.id)===directId);
+    if(direct) return direct;
+  }
+  if(!targetItemId) return null;
+  return plans.find(plan=>planContainsFichaItem(plan, targetItemId)) || null;
+}
+
+function syncFichaFinancialLinks(entry){
+  if(!entry || !entry.ficha || !Array.isArray(entry.ficha.plano)) return entry;
+  const plans = ensureFinancialPlans(entry);
+  const byItemId = new Map();
+  plans.forEach(plan=>{
+    getPlanFichaItemIds(plan).forEach(id=>{
+      if(!byItemId.has(id)) byItemId.set(id, plan);
+    });
+  });
+  entry.ficha.plano.forEach(item=>{
+    if(!item || !item.id) return;
+    const plan = byItemId.get(String(item.id)) || findFinancialPlanByFichaItem(entry, item);
+    if(!plan) return;
+    item.financialPlanId = String(plan.id);
+    item.recebimentoId = String(plan.id);
+    const totals = financialPlanTotals(plan);
+    if(financialPlanIsFullyPaid(plan)){
+      item.financeStatus = 'pago';
+      item.pago = true;
+    }else if(Number(totals.paid || 0) > 0){
+      item.financeStatus = 'parcial';
+      item.pago = false;
+    }else if(financialPlanHasAnyPayment(plan)){
+      item.financeStatus = 'em_pagamento';
+      item.pago = false;
+    }else{
+      item.financeStatus = 'recebimento_criado';
+      item.pago = false;
+    }
+  });
+  return entry;
+}
+
+function fichaLinkedFinancialPaidTotal(entry, plano=[]){
+  let total = 0;
+  const seenPlans = new Set();
+  (plano || []).forEach(item=>{
+    const plan = findFinancialPlanByFichaItem(entry, item);
+    if(plan){
+      const pid = String(plan.id || '');
+      if(seenPlans.has(pid)) return;
+      seenPlans.add(pid);
+      const linkedIds = getPlanFichaItemIds(plan);
+      const linkedTotal = (plano || [])
+        .filter(x=>linkedIds.includes(String(x.id || '')))
+        .reduce((s,x)=>s + Number(x.valorFechado || 0), 0);
+      const paid = Number(financialPlanTotals(plan).paid || 0);
+      total += Math.min(paid, linkedTotal || Number(plan.amount || 0) || paid);
+      return;
+    }
+    if(item?.pago) total += Number(item.valorFechado || 0);
+  });
+  return total;
+}
+
 function financialPlanStatusLabel(plan){
   const st = String(plan?.status || "Aguardando");
   if(st.toLowerCase().includes("aprov")) return `<span class="badge ok">Aprovado</span>`;
@@ -1271,10 +1364,7 @@ function ensureNewInstallmentButton(){
         <div style="font-weight:900">Recebimentos</div>
         <div class="muted" style="font-size:12px">Escolha o paciente, vincule procedimentos da ficha e lance pagamentos à vista ou parcelados.</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-        <button class="btn ok" type="button" onclick="openCreditAnticipationModal()">Antecipar crédito</button>
-        <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">+ Novo recebimento</button>
-      </div>
+      <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">+ Novo recebimento</button>
     `;
     list.parentNode.insertBefore(bar, list);
   }catch(e){
@@ -1422,7 +1512,7 @@ function renderFinancialPaymentTable(entry, plan, contact){
         <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod || "—")}</td>
-        <td>${st}${cashISO ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}${(p.creditAnticipated || p.settlementType === "antecipacao_credito") ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
+        <td>${st}${cashISO ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}</td>
         <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${deleteBtn}</td>
       </tr>
     `;
@@ -1455,263 +1545,8 @@ function toggleFinancialPlanRow(rowId){
   if(btn) btn.textContent = row.classList.contains("open") ? "Fechar pagamentos" : "Ver pagamentos";
 }
 
-function markFinancialMutation(entry, plan=null, payment=null, nowISO=new Date().toISOString()){
-  if(entry){
-    entry.updatedAt = nowISO;
-    entry.lastUpdateAt = nowISO;
-    entry.financeUpdatedAt = nowISO;
-  }
-  if(plan){
-    plan.updatedAt = nowISO;
-    plan.lastUpdateAt = nowISO;
-  }
-  if(payment){
-    payment.updatedAt = nowISO;
-    payment.lastUpdateAt = nowISO;
-  }
-}
-
 function findFinancePaymentRecord(db, entryId, planId, paymentId){
   return (db.payments||[]).find(p=>String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId));
-}
-
-function syncFinancialPlansFromLedger(db){
-  if(!db || !Array.isArray(db.entries) || !Array.isArray(db.payments)) return db;
-  const paidLedger = (db.payments || []).filter(rec=>{
-    if(!rec || typeof rec !== "object") return false;
-    if(String(rec.status || "").toUpperCase() !== "PAGA" && !rec.paidAt && !rec.cashDate) return false;
-    return !!(rec.entryId && rec.financialPlanId && rec.financialPaymentId);
-  });
-  if(!paidLedger.length) return db;
-
-  const entriesById = new Map((db.entries || []).map(entry=>[String(entry.id || ""), entry]));
-  const touchedPlans = new Map();
-
-  paidLedger.forEach(rec=>{
-    const entry = entriesById.get(String(rec.entryId || ""));
-    if(!entry) return;
-    const plan = ensureFinancialPlans(entry).find(p=>String(p.id)===String(rec.financialPlanId || ""));
-    if(!plan) return;
-    const payment = (plan.payments || []).find(p=>String(p.id)===String(rec.financialPaymentId || ""));
-    if(!payment) return;
-
-    const ledgerTime = __cronosItemTime(rec);
-    const paymentTime = __cronosItemTime(payment);
-    const shouldApply = !financialPaymentPaid(payment) || ledgerTime >= paymentTime;
-    if(!shouldApply) return;
-
-    payment.status = "PAGA";
-    payment.paidAt = String(rec.paidAt || rec.cashDate || rec.date || todayISO()).slice(0,10);
-    payment.cashDate = String(rec.cashDate || rec.paidAt || rec.date || payment.paidAt || todayISO()).slice(0,10);
-    payment.manualPayment = rec.source === "creditAnticipation" || payment.manualPayment === true;
-    if(rec.source === "creditAnticipation" || rec.settlementType === "antecipacao_credito"){
-      payment.autoCreditSettlement = false;
-      payment.creditAnticipated = true;
-      payment.settlementType = "antecipacao_credito";
-      payment.grossValue = parseMoney(rec.grossValue || payment.grossValue || payment.amount);
-      payment.cashValue = parseMoney(rec.value || rec.cashValue || payment.cashValue || payment.amount);
-      payment.netValue = parseMoney(rec.value || rec.netValue || payment.netValue || payment.amount);
-      payment.cardFeePercent = parseBRNum(rec.cardFeePercent) ?? payment.cardFeePercent ?? 0;
-      payment.cardFeeAmount = parseMoney(rec.cardFeeAmount || payment.cardFeeAmount || 0);
-    }
-    const stamp = rec.updatedAt || rec.at || new Date().toISOString();
-    markFinancialMutation(entry, plan, payment, stamp);
-    touchedPlans.set(`${entry.id}|${plan.id}`, {entry, plan});
-  });
-
-  touchedPlans.forEach(({entry, plan})=>{
-    markFichaItemsPaidByFinancialPlan(entry, plan);
-  });
-
-  return db;
-}
-
-function cronosFinancialPlanFullyPaid(plan){
-  if(!plan) return false;
-  const t = financialPlanTotals(plan);
-  const target = Number(t.total || plan.amount || 0);
-  return target > 0 && Number(t.paid || 0) >= (target - 0.01);
-}
-
-function financialPlanHasExplicitFichaItemsGlobal(plan){
-  return Array.isArray(plan?.fichaItemIds) && plan.fichaItemIds.map(String).filter(Boolean).length > 0;
-}
-
-function fichaItemBelongsToFinancialPlanGlobal(item, plan){
-  if(!item || !plan) return false;
-  const itemId = String(item.id || "");
-  const planId = String(plan.id || "");
-  const explicitIds = new Set((Array.isArray(plan.fichaItemIds) ? plan.fichaItemIds : []).map(String).filter(Boolean));
-  if(explicitIds.size) return explicitIds.has(itemId);
-  return String(item.financialPlanId || item.recebimentoId || "") === planId;
-}
-
-function markFichaItemsPaidByFinancialPlan(entry, plan){
-  if(!entry || !plan) return;
-  const ficha = ensureFichaForRecebimentos(entry);
-  const planId = String(plan.id || "");
-  const hasExplicitItems = financialPlanHasExplicitFichaItemsGlobal(plan);
-  const fullyPaid = cronosFinancialPlanFullyPaid(plan);
-  const now = new Date().toISOString();
-
-  ficha.plano.forEach(item=>{
-    const itemLinkedToPlan = String(item?.financialPlanId || item?.recebimentoId || "") === planId;
-    const itemBelongs = fichaItemBelongsToFinancialPlanGlobal(item, plan);
-
-    if(itemBelongs){
-      item.financialPlanId = planId;
-      item.recebimentoId = planId;
-      item.pago = !!fullyPaid;
-      item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
-      item.updatedAt = now;
-      return;
-    }
-
-    // Se o plano tem uma lista explícita de procedimentos, ela é a fonte da verdade.
-    // Isso evita que a antecipação marque toda a avaliação quando só alguns itens foram vinculados ao recebimento.
-    if(hasExplicitItems && itemLinkedToPlan){
-      item.financialPlanId = "";
-      item.recebimentoId = "";
-      if(["pago","em_pagamento","recebimento_criado","linked"].includes(String(item.financeStatus || ""))){
-        item.financeStatus = "";
-      }
-      if(item.pago === true && !item.feito){
-        item.pago = false;
-      }
-      item.updatedAt = now;
-    }
-  });
-}
-
-
-function cronosISOFromAny(raw){
-  if(!raw) return "";
-  try{
-    if(typeof pickISOFlexible === "function"){
-      const picked = pickISOFlexible(raw);
-      if(picked) return picked;
-    }
-  }catch(_){ }
-  const s = String(raw || "").trim();
-  if(!s) return "";
-  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
-  const br = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if(br) return `${br[3]}-${String(br[2]).padStart(2,"0")}-${String(br[1]).padStart(2,"0")}`;
-  return "";
-}
-
-function normalizePlainText(value){
-  return String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-function paymentLooksLikeCredit(payment, fallbackMethod=""){
-  const method = normalizePlainText(payment?.payMethod || payment?.method || fallbackMethod || "");
-  return method.includes("credito") || method.includes("cartao de credito") || method.includes("cartao credito");
-}
-
-function autoSettleDueCreditPayments(db, actor=currentActor()){
-  if(!db || !Array.isArray(db.entries)) return 0;
-  db.payments = db.payments || [];
-  const todayKey = todayISO();
-  const nowISO = new Date().toISOString();
-  let count = 0;
-
-  (db.entries || []).forEach(entry=>{
-    if(!entry) return;
-
-    // Parcelamentos financeiros novos, incluindo os criados pela ficha do paciente.
-    const plans = ensureFinancialPlans(entry);
-    plans.forEach(plan=>{
-      (plan.payments || []).forEach(payment=>{
-        if(!payment || financialPaymentPaid(payment)) return;
-        if(!paymentLooksLikeCredit(payment, payment.payMethod || plan.payMethod || "")) return;
-        const dueISO = cronosISOFromAny(payment.dueDate || payment.due || payment.date || "");
-        if(!dueISO || dueISO > todayKey) return;
-
-        payment.status = "PAGA";
-        payment.paidAt = dueISO;
-        payment.cashDate = dueISO;
-        payment.autoCreditSettlement = true;
-        payment.manualPayment = false;
-        markFinancialMutation(entry, plan, payment, nowISO);
-
-        let rec = findFinancePaymentRecord(db, entry.id, plan.id, payment.id);
-        if(!rec){
-          rec = {
-            id: uid("p"),
-            masterId: actor?.masterId || entry.masterId || "",
-            entryId: entry.id,
-            contactId: entry.contactId || "",
-            financialPlanId: plan.id,
-            financialPaymentId: payment.id,
-            at: nowISO,
-            createdAt: nowISO,
-            updatedAt: nowISO,
-            date: dueISO,
-            paidAt: dueISO,
-            cashDate: dueISO,
-            status: "PAGA",
-            value: parseMoney(payment.cashValue || payment.netValue || payment.amount),
-            grossValue: parseMoney(payment.grossValue || payment.amount),
-            method: payment.payMethod || plan.payMethod || "Cartão de crédito",
-            desc: `Baixa automática de crédito • ${plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
-            source: "autoCreditSettlement"
-          };
-          db.payments.push(rec);
-        }else{
-          rec.date = dueISO;
-          rec.paidAt = dueISO;
-          rec.cashDate = dueISO;
-          rec.status = "PAGA";
-          rec.at = nowISO;
-          rec.updatedAt = nowISO;
-          rec.value = parseMoney(payment.cashValue || payment.netValue || payment.amount);
-          rec.grossValue = parseMoney(payment.grossValue || payment.amount);
-          rec.method = payment.payMethod || plan.payMethod || rec.method || "Cartão de crédito";
-          rec.source = rec.source || "autoCreditSettlement";
-        }
-
-        markFichaItemsPaidByFinancialPlan(entry, plan);
-        count++;
-      });
-    });
-
-    // Parcelamentos legados ainda usados em alguns registros antigos.
-    try{ ensureInstallmentsForEntry(entry); }catch(_){ }
-    (entry.installments || []).forEach(inst=>{
-      if(!inst || financialPaymentPaid(inst)) return;
-      if(!paymentLooksLikeCredit(inst, inst.payMethod || entry.installPlan?.payMethod || "")) return;
-      const dueISO = cronosISOFromAny(inst.dueDate || inst.due || "");
-      if(!dueISO || dueISO > todayKey) return;
-      inst.status = "PAGA";
-      inst.paidAt = dueISO;
-      inst.cashDate = dueISO;
-      inst.autoCreditSettlement = true;
-      inst.manualPayment = false;
-      markFinancialMutation(entry, null, inst, nowISO);
-      count++;
-    });
-  });
-
-  if(count){
-    try{ syncFinancialPlansFromLedger(db); }catch(_){ }
-    try{ syncInstallmentTasks(db, actor); }catch(_){ }
-  }
-  return count;
-}
-
-let __cronosAutoCreditLastRun = 0;
-function runAutoCreditSettlementsIfNeeded(force=false){
-  const now = Date.now();
-  if(!force && now - __cronosAutoCreditLastRun < 30000) return 0;
-  __cronosAutoCreditLastRun = now;
-  const db = loadDB();
-  const count = autoSettleDueCreditPayments(db, currentActor());
-  if(count){
-    try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(_){ }
-    try{ saveDB(db, { immediate:true }); }catch(_){ }
-  }
-  return count;
 }
 
 function canManageFinancialSensitiveActions(actor=currentActor()){
@@ -1770,454 +1605,6 @@ function askPaymentCashDate({title="Data do pagamento", subtitle="", defaultDate
   });
 }
 
-
-function normalizeCreditMethodText(value){
-  return String(value || "")
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
-}
-
-function isCreditPaymentMethod(method){
-  const m = normalizeCreditMethodText(method);
-  if(!m) return false;
-  if(m.includes("debito")) return false;
-  return m.includes("credito") || (m.includes("cartao") && !m.includes("debito"));
-}
-
-function creditAnticipationKey(type, entryId, planId, paymentIdOrNumber){
-  return [type, entryId || "", planId || "", paymentIdOrNumber || ""].map(v=>String(v).replace(/\|/g,"_")).join("|");
-}
-
-function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey="", query=""){
-  const masterId = actor?.masterId || actor?.clinicId || "";
-  const q = normalizeCreditMethodText(query || "");
-  const mk = String(monthKey || "").slice(0,7);
-  const contactsById = new Map((db.contacts || [])
-    .filter(c=>!masterId || !c.masterId || c.masterId === masterId)
-    .map(c=>[String(c.id), c]));
-  const candidates = [];
-
-  function contactMatches(contact){
-    if(!q) return true;
-    const hay = normalizeCreditMethodText(`${contact?.name || ""} ${contact?.phone || ""} ${contact?.cpf || ""}`);
-    return hay.includes(q);
-  }
-  function monthMatches(dueDate){
-    if(scope !== "month") return true;
-    return !!mk && String(dueDate || "").slice(0,7) === mk;
-  }
-  function scopeAllowsContact(contact){
-    if(scope === "patient") return contactMatches(contact);
-    if(scope === "search") return contactMatches(contact);
-    return true;
-  }
-
-  (db.entries || [])
-    .filter(e=>!masterId || !e.masterId || e.masterId === masterId)
-    .forEach(entry=>{
-      const contact = contactsById.get(String(entry.contactId)) || {name:"(sem nome)", phone:""};
-      if(!scopeAllowsContact(contact)) return;
-
-      ensureFinancialPlans(entry).forEach(plan=>{
-        renumberFinancialPlanPayments(plan);
-        (plan.payments || []).forEach(payment=>{
-          if(!payment.id) payment.id = uid("pay");
-          if(financialPaymentPaid(payment)) return;
-          if(!isCreditPaymentMethod(payment.payMethod || plan.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
-          const dueDate = payment.dueDate || payment.due || "";
-          if(!monthMatches(dueDate)) return;
-          const amount = parseMoney(payment.amount);
-          if(amount <= 0) return;
-          candidates.push({
-            key: creditAnticipationKey("financial", entry.id, plan.id, payment.id),
-            type: "financial",
-            entry, plan, payment, contact,
-            amount,
-            dueDate,
-            method: payment.payMethod || plan.payMethod || "Cartão de crédito",
-            label: `${contact.name || "Sem nome"} • ${plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
-            patientKey: String(contact.id || entry.contactId || contact.name || entry.id)
-          });
-        });
-      });
-
-      if(entry.installPlan && !entry.installPlan.migratedToFinancialPlanId){
-        try{ ensureInstallmentsForEntry(entry); }catch(_){ }
-        (entry.installments || []).forEach(inst=>{
-          if(inst.paidAt || inst.cashDate || String(inst.status || "").toUpperCase() === "PAGA") return;
-          if(!isCreditPaymentMethod(inst.payMethod || entry.installPlan?.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
-          const dueDate = inst.dueDate || inst.due || "";
-          if(!monthMatches(dueDate)) return;
-          const amount = parseMoney(inst.amount);
-          if(amount <= 0) return;
-          candidates.push({
-            key: creditAnticipationKey("legacy", entry.id, "legacy", inst.number),
-            type: "legacy",
-            entry,
-            plan: null,
-            payment: inst,
-            contact,
-            amount,
-            dueDate,
-            method: inst.payMethod || entry.installPlan?.payMethod || "Cartão de crédito",
-            label: `${contact.name || "Sem nome"} • Parcelamento • ${inst.number || ""}/${inst.total || ""}`,
-            patientKey: String(contact.id || entry.contactId || contact.name || entry.id)
-          });
-        });
-      }
-    });
-
-  candidates.sort((a,b)=>String(a.contact?.name || "").localeCompare(String(b.contact?.name || ""), "pt-BR") || String(a.dueDate || "9999-99-99").localeCompare(String(b.dueDate || "9999-99-99")) || String(a.label).localeCompare(String(b.label)));
-  return candidates;
-}
-
-function openCreditAnticipationModal(){
-  const actor = currentActor();
-  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
-  const db = loadDB();
-  const old = document.getElementById("cronosCreditAnticipationModal");
-  if(old) old.remove();
-
-  const monthValue = (el("instMonth")?.value || todayISO().slice(0,7)).slice(0,7);
-  const searchValue = (el("instSearch")?.value || "").trim();
-  let candidates = [];
-
-  const overlay = document.createElement("div");
-  overlay.id = "cronosCreditAnticipationModal";
-  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(6px)";
-  overlay.innerHTML = `
-    <div style="width:min(780px,96vw);max-height:92vh;overflow:auto;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:var(--shadow);padding:18px;color:var(--text)">
-      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap">
-        <div>
-          <div style="font-size:20px;font-weight:950">Antecipação de crédito</div>
-          <div class="muted" style="font-size:13px;line-height:1.45;margin-top:4px">Dê baixa em lote nas parcelas de cartão de crédito e informe a taxa para o Cronos registrar o valor líquido recebido.</div>
-        </div>
-        <button type="button" class="btn" id="cronosCreditAnticipationClose">Fechar</button>
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px">
-        <label style="display:block">
-          <span class="muted" style="font-size:12px;font-weight:800">Data da baixa</span>
-          <input id="creditAntDate" class="input" type="date" value="${escapeHTML(todayISO())}" style="width:100%;margin-top:6px">
-        </label>
-        <label style="display:block">
-          <span class="muted" style="font-size:12px;font-weight:800">Taxa do cartão (%)</span>
-          <input id="creditAntFee" class="input" type="text" inputmode="decimal" value="0" placeholder="Ex.: 3,49" style="width:100%;margin-top:6px">
-        </label>
-        <label style="display:block">
-          <span class="muted" style="font-size:12px;font-weight:800">Parcelas consideradas</span>
-          <select id="creditAntScope" class="input" style="width:100%;margin-top:6px">
-            <option value="month">Crédito pendente do mês selecionado</option>
-            <option value="patient">Paciente específico</option>
-            <option value="search">Crédito pendente da busca atual</option>
-            <option value="all">Todos os créditos pendentes</option>
-          </select>
-        </label>
-      </div>
-
-      <div id="creditAntPatientBox" style="display:none;margin:0 0 12px">
-        <label style="display:block">
-          <span class="muted" style="font-size:12px;font-weight:800">Buscar paciente</span>
-          <input id="creditAntPatientSearch" class="input" type="text" placeholder="Digite nome, telefone ou CPF" style="width:100%;margin-top:6px">
-        </label>
-        <div class="muted" style="font-size:12px;margin-top:6px">Ao selecionar “Paciente específico”, use a busca e marque todos para baixar todas as parcelas pendentes de crédito desse paciente.</div>
-      </div>
-
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.035)">
-        <label style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:13px">
-          <input type="checkbox" id="creditAntSelectAll" checked>
-          Marcar todos
-        </label>
-        <div class="muted" id="creditAntContext" style="font-size:12px"></div>
-      </div>
-
-      <div id="creditAntList" style="border:1px solid var(--line);border-radius:16px;overflow:auto;max-height:300px"></div>
-
-      <div id="creditAntSummary" style="margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(34,197,94,.08)"></div>
-
-      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;flex-wrap:wrap">
-        <button type="button" class="btn" id="creditAntCancel">Cancelar</button>
-        <button type="button" class="btn ok" id="creditAntConfirm">Confirmar antecipação</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  const listEl = document.getElementById("creditAntList");
-  const summaryEl = document.getElementById("creditAntSummary");
-  const scopeEl = document.getElementById("creditAntScope");
-  const feeEl = document.getElementById("creditAntFee");
-  const selectAllEl = document.getElementById("creditAntSelectAll");
-  const contextEl = document.getElementById("creditAntContext");
-  const patientBoxEl = document.getElementById("creditAntPatientBox");
-  const patientSearchEl = document.getElementById("creditAntPatientSearch");
-
-  function selectedKeys(){
-    return new Set(Array.from(listEl.querySelectorAll('input[data-credit-ant-item]:checked')).map(i=>i.value));
-  }
-
-  function updateSummary(){
-    const keys = selectedKeys();
-    const selected = candidates.filter(c=>keys.has(c.key));
-    const gross = selected.reduce((sum,c)=>sum + parseMoney(c.amount), 0);
-    const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
-    const feeAmount = gross * (feePercent / 100);
-    const net = Math.max(0, gross - feeAmount);
-    summaryEl.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
-        <div><div class="muted" style="font-size:11px;font-weight:800">Selecionadas</div><div style="font-weight:950">${selected.length}</div></div>
-        <div><div class="muted" style="font-size:11px;font-weight:800">Valor bruto</div><div style="font-weight:950">${moneyBR(gross)}</div></div>
-        <div><div class="muted" style="font-size:11px;font-weight:800">Taxa/desconto</div><div style="font-weight:950">${moneyBR(feeAmount)}</div></div>
-        <div><div class="muted" style="font-size:11px;font-weight:800">Valor líquido</div><div style="font-weight:950;color:var(--success, #16a34a)">${moneyBR(net)}</div></div>
-      </div>
-      <div class="muted" style="font-size:12px;margin-top:8px">A baixa marcará as parcelas como pagas, mantendo o valor bruto no plano e registrando o valor líquido no caixa/recebimentos. Se o plano vinculado ficar totalmente pago, somente os procedimentos vinculados a esse recebimento serão marcados como pagos.</div>
-    `;
-  }
-
-  function renderCandidates(){
-    const scope = scopeEl.value || "month";
-    const patientQuery = String(patientSearchEl?.value || "").trim();
-    if(patientBoxEl) patientBoxEl.style.display = scope === "patient" ? "block" : "none";
-    const queryForScope = scope === "patient" ? patientQuery : (scope === "search" ? searchValue : "");
-    candidates = collectCreditAnticipationCandidates(db, actor, scope, monthValue, queryForScope);
-    const context = scope === "month"
-      ? `Mês: ${monthValue.split("-").reverse().join("/")}`
-      : scope === "patient"
-        ? `Paciente: ${patientQuery || "digite para buscar"}`
-        : scope === "search"
-          ? `Busca: ${searchValue || "sem texto — todos os pendentes"}`
-          : "Todos os créditos pendentes";
-    contextEl.textContent = context;
-
-    if(!candidates.length){
-      listEl.innerHTML = `<div class="muted" style="padding:14px">Nenhuma parcela pendente de cartão de crédito encontrada para esse critério.${(scopeEl.value === "patient" && !(patientSearchEl?.value||"").trim()) ? " Digite o nome, telefone ou CPF do paciente para filtrar." : ""}</div>`;
-      selectAllEl.checked = false;
-      updateSummary();
-      return;
-    }
-
-    selectAllEl.checked = true;
-    listEl.innerHTML = candidates.map((c, idx)=>{
-      const feePreview = Math.max(0, parseBRNum(feeEl.value) || 0);
-      const netPreview = Math.max(0, c.amount - (c.amount * feePreview / 100));
-      return `
-        <label style="display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:center;padding:11px 12px;border-bottom:1px solid var(--line);cursor:pointer">
-          <input type="checkbox" data-credit-ant-item value="${escapeHTML(c.key)}" checked>
-          <span style="min-width:0">
-            <span style="display:block;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(c.label)}</span>
-            <span class="muted" style="display:block;font-size:12px">Venc.: ${c.dueDate ? fmtBR(c.dueDate) : "—"} • ${escapeHTML(c.method || "Cartão de crédito")}</span>
-          </span>
-          <span style="text-align:right;white-space:nowrap">
-            <b>${moneyBR(c.amount)}</b>
-            <span class="muted" style="display:block;font-size:11px">líq. ${moneyBR(netPreview)}</span>
-          </span>
-        </label>
-      `;
-    }).join("");
-    listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>ch.addEventListener("change", updateSummary));
-    updateSummary();
-  }
-
-  document.getElementById("cronosCreditAnticipationClose")?.addEventListener("click", ()=>overlay.remove());
-  document.getElementById("creditAntCancel")?.addEventListener("click", ()=>overlay.remove());
-  overlay.addEventListener("click", ev=>{ if(ev.target === overlay) overlay.remove(); });
-  scopeEl.addEventListener("change", renderCandidates);
-  patientSearchEl?.addEventListener("input", debounce(renderCandidates, 180));
-  feeEl.addEventListener("input", renderCandidates);
-  selectAllEl.addEventListener("change", ()=>{
-    listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>{ ch.checked = selectAllEl.checked; });
-    updateSummary();
-  });
-  const confirmBtn = document.getElementById("creditAntConfirm");
-  confirmBtn?.addEventListener("click", async ()=>{
-    if(confirmBtn.dataset.busy === "1") return;
-
-    const date = String(document.getElementById("creditAntDate")?.value || "").slice(0,10);
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Data inválida", "Escolha a data da baixa da antecipação.");
-
-    const keys = selectedKeys();
-    const selected = candidates.filter(c=>keys.has(c.key));
-    if(!selected.length) return toast("Nada selecionado", "Marque pelo menos uma parcela de crédito para antecipar.");
-
-    const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
-    const ok = confirm(`Confirmar antecipação de ${selected.length} parcela(s) em ${fmtBR(date)}?\n\nTaxa: ${feePercent.toLocaleString("pt-BR", {maximumFractionDigits:4})}%`);
-    if(!ok) return;
-
-    const originalText = confirmBtn.textContent;
-    confirmBtn.dataset.busy = "1";
-    confirmBtn.disabled = true;
-    confirmBtn.textContent = "Processando...";
-    toast("Processando antecipação", "Aguarde a confirmação da baixa e da sincronização na nuvem.");
-
-    try{
-      await applyCreditAnticipation(db, selected, date, feePercent);
-      overlay.remove();
-    }catch(err){
-      console.error("Erro ao confirmar antecipação de crédito", err);
-      toast("Erro ao antecipar crédito", err?.message || "Não foi possível concluir a baixa antecipada. Tente novamente.");
-      confirmBtn.dataset.busy = "0";
-      confirmBtn.disabled = false;
-      confirmBtn.textContent = originalText || "Confirmar antecipação";
-    }
-  });
-
-  renderCandidates();
-}
-
-async function applyCreditAnticipation(db, candidates, settlementDate, feePercent=0){
-  const actor = currentActor();
-  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
-  db.payments = db.payments || [];
-  const nowISO = new Date().toISOString();
-  let count = 0;
-  let grossTotal = 0;
-  let feeTotal = 0;
-  let netTotal = 0;
-  const affectedFinancialPlans = new Map();
-
-  candidates.forEach(c=>{
-    const payment = c.payment;
-    if(!payment || financialPaymentPaid(payment)) return;
-    const gross = parseMoney(payment.amount);
-    if(gross <= 0) return;
-    const feeAmount = Number((gross * (Math.max(0, feePercent) / 100)).toFixed(2));
-    const net = Number(Math.max(0, gross - feeAmount).toFixed(2));
-    grossTotal += gross;
-    feeTotal += feeAmount;
-    netTotal += net;
-    count++;
-
-    payment.status = "PAGA";
-    payment.paidAt = settlementDate;
-    payment.cashDate = settlementDate;
-    payment.manualPayment = true;
-    payment.autoCreditSettlement = false;
-    payment.creditAnticipated = true;
-    payment.settlementType = "antecipacao_credito";
-    payment.grossValue = gross;
-    payment.cashValue = net;
-    payment.netValue = net;
-    payment.cardFeePercent = Math.max(0, feePercent);
-    payment.cardFeeAmount = feeAmount;
-    payment.updatedAt = nowISO;
-    payment.lastUpdateAt = nowISO;
-
-    if(c.type === "financial"){
-      markFinancialMutation(c.entry, c.plan, payment, nowISO);
-      if(c.entry && c.plan) affectedFinancialPlans.set(`${c.entry.id}|${c.plan.id}`, { entry:c.entry, plan:c.plan });
-      let rec = findFinancePaymentRecord(db, c.entry.id, c.plan.id, payment.id);
-      if(!rec){
-        rec = {
-          id: uid("p"),
-          masterId: actor.masterId,
-          entryId: c.entry.id,
-          contactId: c.entry.contactId || "",
-          financialPlanId: c.plan.id,
-          financialPaymentId: payment.id,
-          at: nowISO,
-          createdAt: nowISO,
-          updatedAt: nowISO,
-          date: settlementDate,
-          paidAt: settlementDate,
-          cashDate: settlementDate,
-          status: "PAGA",
-          value: net,
-          grossValue: gross,
-          cardFeePercent: Math.max(0, feePercent),
-          cardFeeAmount: feeAmount,
-          method: payment.payMethod || c.method || "Cartão de crédito",
-          desc: `Antecipação de crédito • ${c.plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
-          source: "creditAnticipation",
-          settlementType: "antecipacao_credito"
-        };
-        db.payments.push(rec);
-      }else{
-        rec.date = settlementDate;
-        rec.paidAt = settlementDate;
-        rec.cashDate = settlementDate;
-        rec.status = "PAGA";
-        rec.at = nowISO;
-        rec.updatedAt = nowISO;
-        rec.value = net;
-        rec.grossValue = gross;
-        rec.cardFeePercent = Math.max(0, feePercent);
-        rec.cardFeeAmount = feeAmount;
-        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
-        rec.source = "creditAnticipation";
-        rec.settlementType = "antecipacao_credito";
-      }
-    }else{
-      markFinancialMutation(c.entry, null, payment, nowISO);
-      c.entry.valuePaid = parseMoney(c.entry.valuePaid) + gross;
-      c.entry.valueClosed = (c.entry.status === "Fechou") ? c.entry.valuePaid : c.entry.valueClosed;
-      const legacyNum = String(payment.number || "");
-      let rec = db.payments.find(x=>String(x.entryId)===String(c.entry.id) && String(x.legacyInstallmentNumber || "") === legacyNum);
-      if(!rec){
-        rec = {
-          id: uid("p"),
-          masterId: actor.masterId,
-          entryId: c.entry.id,
-          contactId: c.entry.contactId || "",
-          at: nowISO,
-          createdAt: nowISO,
-          updatedAt: nowISO,
-          date: settlementDate,
-          paidAt: settlementDate,
-          cashDate: settlementDate,
-          status: "PAGA",
-          value: net,
-          grossValue: gross,
-          cardFeePercent: Math.max(0, feePercent),
-          cardFeeAmount: feeAmount,
-          method: payment.payMethod || c.method || "Cartão de crédito",
-          desc: `Antecipação de crédito • Parcela ${payment.number || ""}/${payment.total || ""}`,
-          source: "creditAnticipation",
-          settlementType: "antecipacao_credito",
-          legacyInstallmentNumber: payment.number
-        };
-        db.payments.push(rec);
-      }else{
-        rec.date = settlementDate;
-        rec.paidAt = settlementDate;
-        rec.cashDate = settlementDate;
-        rec.status = "PAGA";
-        rec.at = nowISO;
-        rec.updatedAt = nowISO;
-        rec.value = net;
-        rec.grossValue = gross;
-        rec.cardFeePercent = Math.max(0, feePercent);
-        rec.cardFeeAmount = feeAmount;
-        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
-        rec.source = "creditAnticipation";
-        rec.settlementType = "antecipacao_credito";
-      }
-    }
-  });
-
-  affectedFinancialPlans.forEach(({entry, plan})=>{
-    markFichaItemsPaidByFinancialPlan(entry, plan);
-    markFinancialMutation(entry, plan, null, nowISO);
-  });
-
-  if(!count) return toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
-  try{ syncFinancialPlansFromLedger(db); }catch(e){ console.warn("Falha ao conciliar antecipação com a ficha:", e); }
-  try{ syncInstallmentTasks(db, actor); }catch(_){ }
-  let cloudOk = false;
-  try{
-    cloudOk = await saveDB(db, { immediate:true });
-  }catch(err){
-    console.error("Falha ao salvar antecipação de crédito na nuvem", err);
-    try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(_){ }
-  }
-  if(cloudOk){
-    toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
-  }else{
-    toast("Antecipação salva no navegador", "A nuvem ainda não confirmou. Clique em Atualizar depois de alguns segundos para conferir a sincronização.");
-  }
-  renderAll();
-}
-
 async function payFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   const db = loadDB();
@@ -2234,13 +1621,9 @@ async function payFinancialPayment(entryId, planId, paymentId){
   });
   if(!payDate) return;
 
-  const nowISO = new Date().toISOString();
   payment.status = "PAGA";
   payment.paidAt = payDate;
   payment.cashDate = payDate;
-  payment.manualPayment = true;
-  payment.autoCreditSettlement = false;
-  markFinancialMutation(entry, plan, payment, nowISO);
 
   db.payments = db.payments || [];
   let rec = findFinancePaymentRecord(db, entryId, planId, paymentId);
@@ -2252,9 +1635,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
       contactId: entry.contactId || "",
       financialPlanId: planId,
       financialPaymentId: paymentId,
-      at: nowISO,
-      createdAt: nowISO,
-      updatedAt: nowISO,
+      at: new Date().toISOString(),
       date: payDate,
       paidAt: payDate,
       cashDate: payDate,
@@ -2270,8 +1651,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
     rec.paidAt = payDate;
     rec.cashDate = payDate;
     rec.status = "PAGA";
-    rec.at = nowISO;
-    rec.updatedAt = nowISO;
+    rec.at = new Date().toISOString();
     rec.value = parseMoney(payment.amount);
     rec.method = payment.payMethod || rec.method || "";
   }
@@ -2279,24 +1659,19 @@ async function payFinancialPayment(entryId, planId, paymentId){
   syncInstallmentTasks(db, actor);
   if(Array.isArray(plan.fichaItemIds)){
     const fullyPaid = financialPlanIsFullyPaid(plan);
-    markFichaItemsPaidByFinancialPlan(entry, plan);
+    ensureFicha(entry).plano.forEach(item=>{
+      if(plan.fichaItemIds.map(String).includes(String(item.id))){
+        item.pago = !!fullyPaid;
+        item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
+      }
+    });
   }
 
-  let cloudOk = false;
-  try{
-    cloudOk = await saveDB(db, { immediate:true });
-  }catch(err){
-    console.error("Falha ao salvar baixa financeira", err);
-    try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(_){ }
-  }
-  if(cloudOk){
-    toast("Baixa feita ✅", `${moneyBR(payment.amount)} • salvo na nuvem • caixa em ${fmtBR(payDate)}`);
-  }else{
-    toast("Baixa salva no navegador", "A nuvem ainda não confirmou. Evite atualizar a página e tente clicar em Atualizar antes de sair.");
-  }
+  saveDB(db, { immediate:true });
+  toast("Baixa feita ✅", `${moneyBR(payment.amount)} • caixa em ${fmtBR(payDate)}`);
   renderAll();
 }
-async function undoFinancialPayment(entryId, planId, paymentId){
+function undoFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -2305,21 +1680,23 @@ async function undoFinancialPayment(entryId, planId, paymentId){
   const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
   if(!payment) return toast("Erro", "Pagamento não encontrado.");
 
-  const nowISO = new Date().toISOString();
   payment.status = "PENDENTE";
   payment.paidAt = "";
   payment.cashDate = "";
-  payment.manualPayment = false;
-  markFinancialMutation(entry, plan, payment, nowISO);
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
 
   if(Array.isArray(plan.fichaItemIds)){
-    markFichaItemsPaidByFinancialPlan(entry, plan);
+    ensureFicha(entry).plano.forEach(item=>{
+      if(plan.fichaItemIds.map(String).includes(String(item.id))){
+        item.pago = false;
+        item.financeStatus = "em_pagamento";
+      }
+    });
   }
 
   syncInstallmentTasks(db, actor);
-  const cloudOk = await saveDB(db, { immediate:true });
-  toast(cloudOk ? "Baixa desfeita" : "Baixa desfeita localmente", cloudOk ? "Pagamento voltou para pendente." : "A nuvem ainda não confirmou a alteração.");
+  saveDB(db, { immediate:true });
+  toast("Baixa desfeita", "Pagamento voltou para pendente.");
   renderAll();
 }
 
@@ -2327,8 +1704,8 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
-  const {entry, plan} = getFinancialPlan(db, entryId, planId);
-  if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
+  const {plan} = getFinancialPlan(db, entryId, planId);
+  if(!plan) return toast("Erro", "Recebimento não encontrado.");
   const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
   if(!payment || !financialPaymentPaid(payment)) return toast("Transferência", "Só dá para transferir pagamento baixado.");
   const current = cronosPaymentCashISO(payment, false) || todayISO();
@@ -2339,24 +1716,21 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   });
   if(!next) return;
 
-  const nowISO = new Date().toISOString();
   payment.cashDate = next;
   payment.paidAt = next;
-  markFinancialMutation(entry, plan, payment, nowISO);
   const rec = findFinancePaymentRecord(db, entryId, planId, paymentId);
   if(rec){
     rec.date = next;
     rec.cashDate = next;
     rec.paidAt = next;
     rec.status = "PAGA";
-    rec.at = nowISO;
-    rec.updatedAt = nowISO;
+    rec.at = `${next}T12:00:00.000`;
   }
-  const cloudOk = await saveDB(db, { immediate:true });
-  toast(cloudOk ? "Data transferida ✅" : "Data transferida localmente", cloudOk ? `Caixa: ${fmtBR(next)}` : "A nuvem ainda não confirmou a alteração.");
+  saveDB(db, { immediate:true });
+  toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
   renderAll();
 }
-async function deleteFinancialPayment(entryId, planId, paymentId){
+function deleteFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   if(!confirm("Excluir este pagamento/parcela?")) return;
@@ -2369,16 +1743,15 @@ async function deleteFinancialPayment(entryId, planId, paymentId){
   const after = plan.payments.length;
   if(before === after) return toast("Atenção", "Não encontrei essa parcela para excluir.");
 
-  const nowISO = new Date().toISOString();
   renumberFinancialPlanPayments(plan);
-  markFinancialMutation(entry, plan, null, nowISO);
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
   syncInstallmentTasks(db, actor);
-  const cloudOk = await saveDB(db, { immediate:true });
-  toast(cloudOk ? "Pagamento removido" : "Pagamento removido localmente", cloudOk ? "Alteração salva na nuvem." : "A nuvem ainda não confirmou a alteração.");
+  const cloudPromise = saveDB(db, { immediate:true });
+  toast("Pagamento removido");
   try{ renderNewFinancialInstallmentApp(); }catch(_){}
   try{ renderInstallmentsView(); }catch(_){}
   try{ renderDashboard(); }catch(_){}
+  Promise.resolve(cloudPromise).catch(err=>console.warn("Falha ao salvar exclusão de pagamento:", err));
 }
 
 function openNewFinancialInstallment(entryId="", planId=""){
@@ -2707,6 +2080,7 @@ window.CRONOS_NEW_FIN_UI = {
       item.financeStatus = "recebimento_criado";
       item.pago = false;
     });
+    try{ syncFichaFinancialLinks(entry); }catch(_){}
     window.__newFinancialInstallmentState.planId = plan.id;
     window.__newFinancialInstallmentState.fichaItemIds = [];
     saveDB(db, { immediate:true });
@@ -3085,7 +2459,7 @@ function renderInstallmentTable(entry, contact){
         <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod||pmDefault||"—")}</td>
-        <td>${st} ${cashISO?`<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>`:""}${(p.creditAnticipated || p.settlementType === "antecipacao_credito") ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
+        <td>${st} ${cashISO?`<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>`:""}</td>
         <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${wa} ${deleteBtn}</td>
       </tr>
     `;
@@ -3137,13 +2511,9 @@ async function payInstallment(entryId, number){
   });
   if(!payDate) return;
 
-  const nowISO = new Date().toISOString();
   p.paidAt = payDate;
   p.cashDate = payDate;
   p.status = "PAGA";
-  p.manualPayment = true;
-  p.autoCreditSettlement = false;
-  markFinancialMutation(entry, null, p, nowISO);
 
   entry.valuePaid = parseMoney(entry.valuePaid) + parseMoney(p.amount);
   entry.valueClosed = (entry.status==="Fechou") ? entry.valuePaid : null;
@@ -3154,9 +2524,7 @@ async function payInstallment(entryId, number){
     masterId: actor.masterId,
     entryId,
     contactId: entry.contactId,
-    at: nowISO,
-    createdAt: nowISO,
-    updatedAt: nowISO,
+    at: new Date().toISOString(),
     date: payDate,
     paidAt: payDate,
     cashDate: payDate,
@@ -3168,18 +2536,15 @@ async function payInstallment(entryId, number){
     legacyInstallmentNumber: p.number
   });
 
+  saveDB(db);
+  toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • caixa em ${fmtBR(payDate)}`);
   try {
     syncInstallmentTasks(db, actor);
+    saveDB(db);
   } catch {}
-  const cloudOk = await saveDB(db, { immediate:true });
-  if(cloudOk){
-    toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • salvo na nuvem • caixa em ${fmtBR(payDate)}`);
-  }else{
-    toast("Baixa salva no navegador", "A nuvem ainda não confirmou. Evite atualizar a página e tente clicar em Atualizar antes de sair.");
-  }
   renderAll();
 }
-async function undoInstallmentPay(entryId, number){
+function undoInstallmentPay(entryId, number){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -3191,20 +2556,16 @@ async function undoInstallmentPay(entryId, number){
   if(!(p.paidAt || p.cashDate || p.status==="PAGA")) return toast("Nada a desfazer", "Essa parcela não está paga.");
   const amt = parseMoney(p.amount);
   entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - amt);
-  const nowISO = new Date().toISOString();
   p.paidAt = "";
   p.cashDate = "";
   p.status = "PENDENTE";
-  p.manualPayment = false;
-  p.autoCreditSettlement = false;
-  markFinancialMutation(entry, null, p, nowISO);
   db.payments = db.payments || [];
-  const idx = db.payments.findIndex(x=>String(x.entryId)===String(entryId) && (String(x.legacyInstallmentNumber||"")===String(number) || String(x.desc||"").includes(`Parcela ${number}/`)));
+  const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (String(x.legacyInstallmentNumber||"")===String(number) || (x.desc||"").includes(`Parcela ${number}/`)));
   if(idx>=0) db.payments.splice(idx,1);
 
-  try{ syncInstallmentTasks(db, actor); }catch{}
-  const cloudOk = await saveDB(db, { immediate:true });
-  toast(cloudOk ? "Baixa desfeita" : "Baixa desfeita localmente", cloudOk ? `Parcela ${number}/${p.total} voltou para pendente.` : "A nuvem ainda não confirmou a alteração.");
+  saveDB(db);
+  toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
+  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
   setTimeout(() => {
   if (typeof renderAll === "function") renderAll();
 }, 50);
@@ -3229,25 +2590,22 @@ async function transferInstallmentCashDate(entryId, number){
   });
   if(!next) return;
 
-  const nowISO = new Date().toISOString();
   p.cashDate = next;
   p.paidAt = next;
-  markFinancialMutation(entry, null, p, nowISO);
 
   const amt = parseMoney(p.amount);
   db.payments = db.payments || [];
-  const rec = db.payments.find(x=>String(x.entryId)===String(entryId) && (String(x.legacyInstallmentNumber||"")===String(number) || String(x.desc||"").includes(`Parcela ${number}/`)));
+  const rec = db.payments.find(x=>String(x.entryId)===String(entryId) && parseMoney(x.value)===amt && (String(x.legacyInstallmentNumber||"")===String(number) || String(x.desc||"").includes(`Parcela ${number}/`)));
   if(rec){
     rec.date = next;
     rec.cashDate = next;
     rec.paidAt = next;
     rec.status = "PAGA";
-    rec.at = nowISO;
-    rec.updatedAt = nowISO;
+    rec.at = `${next}T12:00:00.000`;
   }
 
-  const cloudOk = await saveDB(db, { immediate:true });
-  toast(cloudOk ? "Data transferida ✅" : "Data transferida localmente", cloudOk ? `Caixa: ${fmtBR(next)}` : "A nuvem ainda não confirmou a alteração.");
+  saveDB(db, { immediate:true });
+  toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
   renderAll();
 }
 
@@ -3659,24 +3017,6 @@ function formatCPF(v){
   const s = String(v||"").replace(/\D/g,"").slice(0,11);
   if(s.length !== 11) return String(v||"").trim();
   return s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-}
-function maskCPFInput(v){
-  const s = String(v||"").replace(/\D/g,"").slice(0,11);
-  if(s.length <= 3) return s;
-  if(s.length <= 6) return `${s.slice(0,3)}.${s.slice(3)}`;
-  if(s.length <= 9) return `${s.slice(0,3)}.${s.slice(3,6)}.${s.slice(6)}`;
-  return `${s.slice(0,3)}.${s.slice(3,6)}.${s.slice(6,9)}-${s.slice(9)}`;
-}
-function formatPhoneBR(v){
-  let s = String(v||"").replace(/\D/g,"");
-  if(s.length > 11 && s.startsWith("55")) s = s.slice(2);
-  s = s.slice(0,11);
-  if(s.length <= 2) return s ? `(${s}` : "";
-  const ddd = s.slice(0,2);
-  const rest = s.slice(2);
-  if(rest.length <= 4) return `(${ddd}) ${rest}`;
-  if(s.length <= 10) return `(${ddd}) ${rest.slice(0,4)}-${rest.slice(4)}`;
-  return `(${ddd}) ${rest.slice(0,5)}-${rest.slice(5)}`;
 }
 function calcAgeFromISO(iso){
   const s = String(iso||"").trim();
@@ -4107,7 +3447,6 @@ function normalizeDBShape(db){
   }
   if(!out.version) out.version = "cloud_v2";
   if(!out.createdAt) out.createdAt = new Date().toISOString();
-  try{ syncFinancialPlansFromLedger(out); }catch(e){ console.warn("Falha ao conciliar recebimentos com financeiro:", e); }
   return out;
 }
 
@@ -7013,12 +6352,12 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div class="suggest">
         <label>Telefone/WhatsApp *</label>
-        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Ex: (98) 99999-0000" autocomplete="off"/>
+        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(c.phone||"")}" placeholder="Ex: 98999990000" autocomplete="off"/>
       </div>
 
       <div>
         <label>CPF</label>
-        <input id="lf_cpf" ${ro?"disabled":""} value="${escapeHTML(maskCPFInput(c.cpf||""))}" placeholder="Ex: 123.456.789-00" autocomplete="off"/>
+        <input id="lf_cpf" ${ro?"disabled":""} value="${escapeHTML(formatCPF(c.cpf||""))}" placeholder="Ex: 123.456.789-00" autocomplete="off"/>
       </div>
 
       <div>
@@ -7033,8 +6372,8 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div>
         <label>Mês/Ano</label>
-        <input id="lf_month" type="month" ${ro?"disabled":""} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : new Date().toISOString().slice(0,7)))}" class="mono"/>
-        <div class="help muted" style="font-size:12px">Editável. Use o mês correto do registro (ex: 2026-01).</div>
+        <input id="lf_month" ${isNew?"":"disabled"} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : new Date().toISOString().slice(0,7)))}" class="mono"/>
+        <div class="help muted" style="font-size:12px">Formato: YYYY-MM (ex: 2026-01).</div>
       </div>
 
       <div>
@@ -7522,34 +6861,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
   const nameInp = el("lf_name");
   const phoneInp = el("lf_phone");
-  const cpfInp = el("lf_cpf");
-  const firstInp = el("lf_first");
-  const monthInp = el("lf_month");
-
-  if(phoneInp){
-    phoneInp.value = formatPhoneBR(phoneInp.value);
-    phoneInp.addEventListener("input", ()=>{
-      const masked = formatPhoneBR(phoneInp.value);
-      if(phoneInp.value !== masked) phoneInp.value = masked;
-    });
-  }
-  if(cpfInp){
-    cpfInp.value = maskCPFInput(cpfInp.value);
-    cpfInp.addEventListener("input", ()=>{
-      const masked = maskCPFInput(cpfInp.value);
-      if(cpfInp.value !== masked) cpfInp.value = masked;
-    });
-  }
-
-  let monthEditedManually = false;
-  monthInp?.addEventListener("input", ()=>{ monthEditedManually = true; });
-  firstInp?.addEventListener("change", ()=>{
-    const mk = monthKeyFromDate(firstInp.value || "");
-    if(monthInp && /^\d{4}-\d{2}$/.test(mk) && !monthEditedManually){
-      monthInp.value = mk;
-    }
-  });
-
   const showSuggest = ()=>{
     const html = buildSuggestList(actor, nameInp.value, phoneInp.value);
     if(!html){ suggestBox.classList.remove("show"); suggestBox.innerHTML=""; return; }
@@ -7659,8 +6970,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
       cpf: String(val("lf_cpf") || "").replace(/\D/g, ""),
       birthDate: val("lf_birth") || "",
       firstSeenAt: val("lf_first") || todayISO(),
-      lastSeenAt: val("lf_first") || todayISO(),
-      updatedAt: now
+      lastSeenAt: val("lf_first") || todayISO()
     };
 
     let existingIndex = -1;
@@ -7718,16 +7028,12 @@ function wireLeadModal(actor, editingEntryId, isNew){
       db.contacts[existingIndex].cpf = contactDraft.cpf;
       db.contacts[existingIndex].birthDate = contactDraft.birthDate;
       db.contacts[existingIndex].lastSeenAt = contactDraft.lastSeenAt;
-      db.contacts[existingIndex].updatedAt = now;
-      if(!db.contacts[existingIndex].createdAt) db.contacts[existingIndex].createdAt = db.contacts[existingIndex].firstSeenAt || now;
       if(!db.contacts[existingIndex].firstSeenAt) db.contacts[existingIndex].firstSeenAt = contactDraft.firstSeenAt;
       contact = db.contacts[existingIndex];
     }else{
       contact = {
         ...contactDraft,
-        id: (crypto.randomUUID ? crypto.randomUUID() : uid("c")),
-        createdAt: now,
-        updatedAt: now
+        id: (crypto.randomUUID ? crypto.randomUUID() : uid("c"))
       };
       db.contacts.push(contact);
     }
@@ -7772,22 +7078,13 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const rescueDate = paymentDate || realToday;
     const rescueMonthKey = String(rescueDate).slice(0,7);
     const hadBefore = db.entries.some(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey !== rescueMonthKey);
-    const existingThisMonth = db.entries.find(e=>
-      e.masterId===actor.masterId &&
-      e.contactId===contact.id &&
-      e.monthKey === monthKey &&
-      (!editingEntryId || String(e.id) !== String(editingEntryId))
-    );
+    const existingThisMonth = db.entries.find(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey === monthKey);
 
     if(isNew && existingThisMonth){
       saveDB(db);
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
       closeModal();
       openLeadEntry(existingThisMonth.id);
-      return;
-    }
-    if(!isNew && existingThisMonth){
-      toast("Já existe outro registro neste mês", "Abra o lead desse mês para editar ou escolha outro mês/ano.");
       return;
     }
 
@@ -7797,7 +7094,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
       if(!entry) return toast("Erro", "Entrada não encontrada");
       entry.contactId = contact.id;
     }else{
-      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [], createdAt: now, updatedAt: now };
+      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [] };
       db.entries.push(entry);
     }
 
@@ -7817,11 +7114,9 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const fromStatus = shouldRegisterRescue ? originalStatus : (entry.status || "");
     const toStatus = shouldRegisterRescue ? originalStatus : status;
 
-    entry.monthKey = monthKey;
+    entry.monthKey = editingEntryId ? (originalMonthKey || monthKey) : monthKey;
     entry.firstContactAt = firstContactAt;
     entry.lastUpdateAt = now;
-    entry.updatedAt = now;
-    if(!entry.createdAt) entry.createdAt = now;
     entry.status = shouldRegisterRescue ? originalStatus : status;
     entry.origin = origin;
     entry.originOther = originOther;
@@ -7874,14 +7169,12 @@ function wireLeadModal(actor, editingEntryId, isNew){
       const rescuePrevPaid = rescueEntry ? getEntryPaidValue(rescueEntry) : 0;
       const rescuePrevStatus = rescueEntry ? String(rescueEntry.status || "") : "";
       if(!rescueEntry){
-        rescueEntry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey: rescueMonthKey, statusLog: [], tags: [], createdAt: now, updatedAt: now };
+        rescueEntry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey: rescueMonthKey, statusLog: [], tags: [] };
         db.entries.push(rescueEntry);
       }
 
       rescueEntry.firstContactAt = rescueEntry.firstContactAt || rescueDate;
       rescueEntry.lastUpdateAt = now;
-      rescueEntry.updatedAt = now;
-      if(!rescueEntry.createdAt) rescueEntry.createdAt = now;
       rescueEntry.status = status;
       rescueEntry.origin = origin;
       rescueEntry.originOther = originOther;
@@ -8020,8 +7313,8 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   };
 
   setIf("lf_name", c.name || latest?.name || "");
-  setIf("lf_phone", formatPhoneBR(c.phone || ""));
-  setIf("lf_cpf", maskCPFInput(c.cpf || ""));
+  setIf("lf_phone", c.phone || "");
+  setIf("lf_cpf", formatCPF(c.cpf || ""));
   setIf("lf_birth", c.birthDate || "");
   if(el("lf_name")) el("lf_name").dataset.contactId = String(c.id || "");
   if(el("lf_phone")) el("lf_phone").dataset.contactId = String(c.id || "");
@@ -9494,8 +8787,6 @@ function bindAuth(){
   });
 }
 function renderAll(){
-  try{ runAutoCreditSettlementsIfNeeded(false); }catch(_){ }
-
   setTimeout(() => {
     try{ updateSidebarPills(); }catch(_){ }
     try{ renderInstallmentsView(); }catch(_){ }
@@ -10639,8 +9930,7 @@ document.addEventListener("DOMContentLoaded", () => {
       {value:'L/P', label:'Lingual/Palatina'},
       {value:'M', label:'Mesial'},
       {value:'D', label:'Distal'},
-      {value:'O', label:'Oclusal'},
-      {value:'I', label:'Incisal'}
+      {value:'O/I', label:'Oclusal/Incisal'}
     ];
 
     const TOOTH_ROWS = {
@@ -10833,6 +10123,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if(item.financialPlanId && !item.recebimentoId) item.recebimentoId = item.financialPlanId;
       });
 
+      try{ syncFichaFinancialLinks(entry); }catch(_){}
       return entry.ficha;
     }
     function deriveToothType(tooth){
@@ -10856,7 +10147,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const totalBase = plano.reduce((s,x)=>s + Number(x.valorBase||0), 0);
       const totalFechado = plano.reduce((s,x)=>s + Number(x.valorFechado||0), 0);
       const totalDesconto = totalBase - totalFechado;
-      const totalPago = plano.filter(x=>isFichaItemFinancialPaid(entry, x)).reduce((s,x)=>s + Number(x.valorFechado||0), 0);
+      const totalPago = fichaLinkedFinancialPaidTotal(entry, plano);
       const totalFeito = plano.filter(x=>!!x.feito).reduce((s,x)=>s + Number(x.valorFechado||0), 0);
       const emAberto = totalFechado - totalPago;
       return {
@@ -10884,28 +10175,14 @@ document.addEventListener("DOMContentLoaded", () => {
       return `Avaliação ${n}`;
     }
 
-    function financialPlanHasExplicitFichaItems(plan){
-      return Array.isArray(plan?.fichaItemIds) && plan.fichaItemIds.map(String).filter(Boolean).length > 0;
-    }
-
-    function fichaItemBelongsToFinancialPlan(item, plan){
-      if(!item || !plan) return false;
-      const itemId = String(item.id || "");
-      const planId = String(plan.id || "");
-      const explicitIds = new Set((Array.isArray(plan.fichaItemIds) ? plan.fichaItemIds : []).map(String).filter(Boolean));
-      if(explicitIds.size) return explicitIds.has(itemId);
-      return String(item.financialPlanId || item.recebimentoId || "") === planId;
-    }
-
     function getFinancialPlanForFichaItem(entry, item){
       if(!entry || !item) return null;
-      const plans = ensureFinancialPlans(entry);
-      const directPlanId = String(item?.financialPlanId || item?.recebimentoId || "").trim();
-      if(directPlanId){
-        const plan = plans.find(p=>String(p.id)===directPlanId) || null;
-        if(plan && fichaItemBelongsToFinancialPlan(item, plan)) return plan;
+      const plan = findFinancialPlanByFichaItem(entry, item);
+      if(plan){
+        item.financialPlanId = String(plan.id);
+        item.recebimentoId = String(plan.id);
       }
-      return plans.find(plan=>fichaItemBelongsToFinancialPlan(item, plan)) || null;
+      return plan;
     }
 
     function financialPlanIsFullyPaid(plan){
@@ -11043,6 +10320,7 @@ document.addEventListener("DOMContentLoaded", () => {
         item.financeStatus = type === 'avista' ? 'pago' : 'em_pagamento';
         item.pago = type === 'avista';
       });
+      try{ syncFichaFinancialLinks(entry); }catch(_){}
 
       if(type === 'avista'){
         db.payments = db.payments || [];
@@ -11625,7 +10903,7 @@ window.CRONOS_PROC_UI = {
     function getItemVisualState(entry, item){
       if(!item) return '';
       if(item.feito) return 'done';
-      if(item.pago) return 'paid';
+      if(isFichaItemFinancialPaid(entry, item)) return 'paid';
       const teeth = String(item.dente||'').split(',').map(s=>s.trim()).filter(Boolean);
       if(teeth.length){
         const hasAbsent = teeth.some(t=>isToothAbsent(entry, t));
@@ -12466,6 +11744,7 @@ window.CRONOS_PROC_UI = {
       const patientPhone = escapeHTML(contact?.phone || entry?.phone || '—');
       const patientCpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
       const patientBirthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
+      const patientCity = escapeHTML(entry?.city || '—');
       const patientTreatment = escapeHTML(entry?.treatment || '—');
       const obs = escapeHTML(String(ficha?.observacoes || entry?.obs || '').trim() || '');
       const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
@@ -12476,29 +11755,28 @@ window.CRONOS_PROC_UI = {
 
       const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha - ${patientName}</title>
         <style>
-          :root{--line:#6b7280;--line-soft:#cbd5e1;--text:#111827;--muted:#4b5563}
-          body{font-family:Arial,sans-serif;padding:24px;color:var(--text);margin:0}
-          .sheet{border:1px solid var(--line-soft);padding:22px 24px 28px}
-          .head{display:grid;grid-template-columns:120px 1fr 220px;gap:16px;align-items:center;border-bottom:1.5px solid var(--line);padding-bottom:14px}
+          body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0}
+          .sheet{border:1px solid #d7dde7;padding:22px 24px 28px}
+          .head{display:grid;grid-template-columns:120px 1fr 220px;gap:16px;align-items:center;border-bottom:2px solid #111;padding-bottom:14px}
           .logo{width:140px;height:84px;display:flex;align-items:center;justify-content:flex-start;text-align:center;font-size:12px;font-weight:700}
           .logo img{width:auto;height:76px;max-width:140px;display:block;object-fit:contain}
-          .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:var(--muted);letter-spacing:.08em}
+          .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:#444;letter-spacing:.08em}
           .meta{text-align:right;font-size:12px;line-height:1.7}
-          .patient{margin-top:12px;display:grid;grid-template-columns:1.45fr .95fr .95fr 1fr;gap:10px}
-          .field{border:1px solid var(--line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
+          .patient{margin-top:12px;display:grid;grid-template-columns:1.3fr .9fr .9fr 1fr 1fr;gap:10px}
+          .field{border:1px solid #111;min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
           .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px}
-          .boxWrap{border:1.25px solid var(--line);padding:10px}
-          .odonto{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid var(--line-soft);border-radius:10px;overflow:hidden;background:#f8fafc}
-          .odonto img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;opacity:.72}
+          .boxWrap{border:1.5px solid #111;padding:10px}
+          .odonto{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#eef1f5}
+          .odonto img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
           .overlay{position:absolute;inset:0}
           .box{position:absolute;width:34px;height:34px;border-radius:999px;border:2px solid transparent;background:rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;color:#111827;transform:translate(-50%,0)}
           .box.paid,.box.plan,.box.closed{background:#ffd400;border-color:#b7791f;color:#111827}.box.done{background:#16a34a;border-color:#166534;color:#fff}.box.absent{background:#dc2626;border-color:#991b1b;color:#fff}
-          .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-soft);padding:5px 9px;border-radius:999px}
+          .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#555}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;padding:5px 9px;border-radius:999px}
           .chip{width:10px;height:10px;border-radius:999px;display:inline-block}.cp1{background:#ffd400}.cp2{background:#16a34a}.cp3{background:#dc2626}
-          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--line);padding:6px 7px;vertical-align:top}th{background:#f5f7fa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
-          .summary{border-top:1.25px solid var(--line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid var(--line);padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:var(--muted);font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}
-          .obs{margin-top:14px;border:1.25px solid var(--line);padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
-          .foot{margin-top:16px;font-size:11px;color:var(--muted)}
+          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #111;padding:6px 7px;vertical-align:top}th{background:#f5f5f5;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
+          .summary{border-top:1.5px solid #111;margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid #111;padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}
+          .obs{margin-top:14px;border:1.5px solid #111;padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
+          .foot{margin-top:16px;font-size:11px;color:#333}
           @media print{body{padding:0}.sheet{border:none}tr.done td{background:#bbf7d0 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.paid td,tr.closed td{background:#fef08a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.absent td{background:#fecaca !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.box.paid,.box.plan,.box.closed,.box.done,.box.absent{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>
         <div class="sheet">
@@ -12512,6 +11790,7 @@ window.CRONOS_PROC_UI = {
             <div class="field"><span class="lbl">Telefone</span><span class="val">${patientPhone}</span></div>
             <div class="field"><span class="lbl">CPF</span><span class="val">${patientCpf}</span></div>
             <div class="field"><span class="lbl">Nascimento</span><span class="val">${patientBirthAge}</span></div>
+            <div class="field"><span class="lbl">Cidade</span><span class="val">${patientCity}</span></div>
           </div>
 
           <div class="boxWrap" style="margin-top:16px">
@@ -12523,7 +11802,7 @@ window.CRONOS_PROC_UI = {
           <div style="border:1.5px solid #111;display:flex;flex-direction:column;margin-top:16px">
             <table>
               <thead><tr><th>Nº</th><th>Procedimento</th><th>Dente</th><th>Face</th><th>Tabela</th><th>Fechado</th><th>Pago</th></tr></thead>
-              <tbody>${ficha.plano.length ? ficha.plano.map((item, idx)=>`<tr class="${getItemVisualState(entry, item)}"><td class="center">${idx+1}</td><td>${escapeHTML(item.procedimento || '')}</td><td class="center">${escapeHTML(item.dente || '—')}</td><td class="center">${escapeHTML(item.face || '—')}</td><td class="right">${moneyBR(item.valorBase || 0)}</td><td class="right">${moneyBR(item.valorFechado || 0)}</td><td class="right">${item.pago ? moneyBR(item.valorFechado || 0) : moneyBR(0)}</td></tr>`).join('') : `<tr><td colspan="7">Nenhum item cadastrado.</td></tr>`}</tbody>
+              <tbody>${ficha.plano.length ? ficha.plano.map((item, idx)=>`<tr class="${getItemVisualState(entry, item)}"><td class="center">${idx+1}</td><td>${escapeHTML(item.procedimento || '')}</td><td class="center">${escapeHTML(item.dente || '—')}</td><td class="center">${escapeHTML(item.face || '—')}</td><td class="right">${moneyBR(item.valorBase || 0)}</td><td class="right">${moneyBR(item.valorFechado || 0)}</td><td class="right">${isFichaItemFinancialPaid(entry, item) ? moneyBR(item.valorFechado || 0) : moneyBR(0)}</td></tr>`).join('') : `<tr><td colspan="7">Nenhum item cadastrado.</td></tr>`}</tbody>
             </table>
             <div class="summary">
               <div class="sum"><div class="lbl">Valor tabela</div><div class="val">${moneyBR(totals.totalBase)}</div></div>
