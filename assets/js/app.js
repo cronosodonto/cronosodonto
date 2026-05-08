@@ -10226,7 +10226,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const totalFechado = plano.reduce((s,x)=>s + Number(x.valorFechado||0), 0);
       const totalDesconto = totalBase - totalFechado;
       const totalPago = fichaLinkedFinancialPaidTotal(entry, plano);
-      const totalFeito = plano.filter(x=>!!x.feito).reduce((s,x)=>s + Number(x.valorFechado||0), 0);
+      const totalFeito = plano.filter(x=>isFichaItemClinicallyDone(entry, x)).reduce((s,x)=>s + Number(x.valorFechado||0), 0);
       const emAberto = totalFechado - totalPago;
       return {
         totalBase, totalFechado, totalDesconto, totalPago, totalFeito,
@@ -10292,6 +10292,22 @@ document.addEventListener("DOMContentLoaded", () => {
     function isFichaItemFinancialPaid(entry, item){
       const st = getFichaItemFinancialStatus(entry, item);
       return st.key === 'paid' || st.key === 'paid_legacy';
+    }
+
+    function isFichaItemFinancialLinked(entry, item){
+      const st = getFichaItemFinancialStatus(entry, item);
+      return st.key !== 'open';
+    }
+
+    function isFichaItemClinicallyDone(entry, item){
+      if(!item) return false;
+      if(item.feito) return true;
+      if(!entry) return false;
+      const teeth = String(item.dente || '').split(',').map(s=>s.trim()).filter(Boolean);
+      return teeth.some(tooth=>{
+        const meta = getToothMeta(entry, tooth);
+        return meta?.status === 'done' || meta?.status === 'realizado';
+      });
     }
 
     function isFichaItemAvailableForReceiving(entry, item){
@@ -10970,8 +10986,8 @@ window.CRONOS_PROC_UI = {
       if(meta?.status === 'paid' || meta?.status === 'pago' || meta?.status === 'closed' || meta?.status === 'plan') return 'paid';
 
       const planForTooth = ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
-      if(planForTooth.some(x=>x.feito)) return 'done';
-      if(planForTooth.some(x=>x.pago)) return 'paid';
+      if(planForTooth.some(x=>isFichaItemClinicallyDone(entry, x))) return 'done';
+      if(planForTooth.some(x=>x.pago || isFichaItemFinancialLinked(entry, x))) return 'paid';
       return '';
     }
     function getToothVisualState(entry, tooth){
@@ -10980,8 +10996,8 @@ window.CRONOS_PROC_UI = {
     }
     function getItemVisualState(entry, item){
       if(!item) return '';
-      if(item.feito) return 'done';
-      if(isFichaItemFinancialPaid(entry, item)) return 'paid';
+      if(isFichaItemClinicallyDone(entry, item)) return 'done';
+      if(isFichaItemFinancialLinked(entry, item)) return 'paid';
       const teeth = String(item.dente||'').split(',').map(s=>s.trim()).filter(Boolean);
       if(teeth.length){
         const hasAbsent = teeth.some(t=>isToothAbsent(entry, t));
@@ -11084,7 +11100,7 @@ window.CRONOS_PROC_UI = {
               </div>
               <div class="odontoLegend">
                 <span class="legendPill"><span class="legendDot" style="background:transparent;border:1px solid var(--line)"></span>Neutro</span>
-                <span class="legendPill lp-paid"><span class="legendDot"></span>Pago</span>
+                <span class="legendPill lp-paid"><span class="legendDot"></span>Pago / em pagamento</span>
                 <span class="legendPill lp-done"><span class="legendDot"></span>Realizado</span>
                 <span class="legendPill lp-absent"><span class="legendDot"></span>Perda dentária / ausente</span>
               </div>
@@ -11147,13 +11163,13 @@ window.CRONOS_PROC_UI = {
               <button class="btn primary" style="width:100%; margin-top:12px" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
 
               <div class="sideActions">
-                <button class="btn small" onclick="CRONOS_FICHA_UI.markSelectedProgress('paid')">Marcar pago</button>
+                <button class="btn small" onclick="CRONOS_FICHA_UI.markSelectedProgress('paid')">Marcar pago/em pagamento</button>
                 <button class="btn ok small" onclick="CRONOS_FICHA_UI.markSelectedProgress('done')">Marcar realizado</button>
                 <button class="btn danger small" onclick="CRONOS_FICHA_UI.setAbsentForSelection()">Marcar ausente</button>
                 <button class="btn small" onclick="CRONOS_FICHA_UI.clearSelection()">Limpar seleção</button>
                 <button class="btn small" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
               </div>
-              <div class="small muted" style="margin-top:10px">Pago/realizado são andamento. Ausente é condição clínica separada.</div>
+              <div class="small muted" style="margin-top:10px">Pago/em pagamento e realizado são andamentos separados. Ausente é condição clínica separada.</div>
             </div>
           </div>
         </div>
@@ -11194,7 +11210,7 @@ window.CRONOS_PROC_UI = {
                   const available = isFichaItemAvailableForReceiving(entry, item);
                   const checked = selectedFichaItemIds.has(String(item.id));
                   return `
-                  <tr class="${(()=>{ const _st = getItemVisualState(entry, item); return _st==='done' ? 'fichaDone' : (isFichaItemFinancialPaid(entry, item) ? 'fichaPaid' : (_st==='absent' ? 'fichaAbsent' : '')); })()}">
+                  <tr class="${(()=>{ const _st = getItemVisualState(entry, item); return _st==='done' ? 'fichaDone' : (_st==='paid' ? 'fichaPaid' : (_st==='absent' ? 'fichaAbsent' : '')); })()}">
                     <td><input type="checkbox" ${checked ? 'checked' : ''} ${available ? '' : 'disabled'} onchange="CRONOS_FICHA_UI.toggleItemSelection('${escapeHTML(item.id)}')"></td>
                     <td>${idx+1}</td>
                     <td><div><b>${escapeHTML(item.avaliacaoLabel || 'Avaliação')}</b></div><div class="small muted">${fmtBR(item.avaliacaoData || '')}</div></td>
