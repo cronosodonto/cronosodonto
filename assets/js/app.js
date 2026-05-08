@@ -1435,7 +1435,10 @@ function ensureNewInstallmentButton(){
         <div style="font-weight:900">Recebimentos</div>
         <div class="muted" style="font-size:12px">Escolha o paciente, vincule procedimentos da ficha e lance pagamentos à vista ou parcelados.</div>
       </div>
-      <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">+ Novo recebimento</button>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn ok" type="button" onclick="openCreditAnticipationModal()">Antecipar crédito</button>
+        <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">+ Novo recebimento</button>
+      </div>
     `;
     list.parentNode.insertBefore(bar, list);
   }catch(e){
@@ -1583,7 +1586,7 @@ function renderFinancialPaymentTable(entry, plan, contact){
         <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod || "—")}</td>
-        <td>${st}${cashISO ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}</td>
+        <td>${st}${cashISO ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}${(p.creditAnticipated || p.settlementType === "antecipacao_credito") ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
         <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${deleteBtn}</td>
       </tr>
     `;
@@ -1674,6 +1677,481 @@ function askPaymentCashDate({title="Data do pagamento", subtitle="", defaultDate
       setTimeout(()=>{ try{ input.showPicker(); }catch(_){} }, 120);
     }
   });
+}
+
+
+
+/* Antecipação de crédito */
+function markFinancialMutation(entry, plan=null, payment=null, nowISO=new Date().toISOString()){
+  if(entry){
+    entry.updatedAt = nowISO;
+    entry.lastUpdateAt = nowISO;
+    entry.financeUpdatedAt = nowISO;
+  }
+  if(plan){
+    plan.updatedAt = nowISO;
+    plan.lastUpdateAt = nowISO;
+  }
+  if(payment){
+    payment.updatedAt = nowISO;
+    payment.lastUpdateAt = nowISO;
+  }
+}
+
+function normalizeCreditMethodText(value){
+  return String(value || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isCreditPaymentMethod(method){
+  const m = normalizeCreditMethodText(method);
+  if(!m) return false;
+  if(m.includes("debito")) return false;
+  return m.includes("credito") || (m.includes("cartao") && !m.includes("debito"));
+}
+
+function creditAnticipationKey(type, entryId, planId, paymentIdOrNumber){
+  return [type, entryId || "", planId || "", paymentIdOrNumber || ""].map(v=>String(v).replace(/\|/g,"_")).join("|");
+}
+
+function cronosISOFromAny(raw){
+  if(!raw) return "";
+  try{
+    if(typeof pickISOFlexible === "function"){
+      const picked = pickISOFlexible(raw);
+      if(picked) return picked;
+    }
+  }catch(_){ }
+  const s = String(raw || "").trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if(br) return `${br[3]}-${br[2]}-${br[1]}`;
+  return "";
+}
+
+function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey="", query=""){
+  const masterId = actor?.masterId || actor?.clinicId || "";
+  const q = normalizeCreditMethodText(query || "");
+  const mk = String(monthKey || "").slice(0,7);
+  const contactsById = new Map((db.contacts || [])
+    .filter(c=>!masterId || !c.masterId || c.masterId === masterId)
+    .map(c=>[String(c.id), c]));
+  const candidates = [];
+
+  function contactMatches(contact){
+    if(!q) return true;
+    const hay = normalizeCreditMethodText(`${contact?.name || ""} ${contact?.phone || ""} ${contact?.cpf || ""}`);
+    return hay.includes(q);
+  }
+  function monthMatches(dueDate){
+    if(scope !== "month") return true;
+    return !!mk && String(dueDate || "").slice(0,7) === mk;
+  }
+  function scopeAllowsContact(contact){
+    if(scope === "patient") return contactMatches(contact);
+    if(scope === "search") return contactMatches(contact);
+    return true;
+  }
+
+  (db.entries || [])
+    .filter(e=>!masterId || !e.masterId || e.masterId === masterId)
+    .forEach(entry=>{
+      const contact = contactsById.get(String(entry.contactId)) || {name:"(sem nome)", phone:""};
+      if(!scopeAllowsContact(contact)) return;
+
+      ensureFinancialPlans(entry).forEach(plan=>{
+        renumberFinancialPlanPayments(plan);
+        (plan.payments || []).forEach(payment=>{
+          if(!payment.id) payment.id = uid("pay");
+          if(financialPaymentPaid(payment)) return;
+          if(!isCreditPaymentMethod(payment.payMethod || plan.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
+          const dueDate = cronosISOFromAny(payment.dueDate || payment.due || "");
+          if(!monthMatches(dueDate)) return;
+          const amount = parseMoney(payment.amount);
+          if(amount <= 0) return;
+          candidates.push({
+            key: creditAnticipationKey("financial", entry.id, plan.id, payment.id),
+            type: "financial",
+            entry, plan, payment, contact,
+            amount,
+            dueDate,
+            method: payment.payMethod || plan.payMethod || "Cartão de crédito",
+            label: `${contact.name || "Sem nome"} • ${plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
+            patientKey: String(contact.id || entry.contactId || contact.name || entry.id)
+          });
+        });
+      });
+
+      if(entry.installPlan && !entry.installPlan.migratedToFinancialPlanId){
+        try{ ensureInstallmentsForEntry(entry); }catch(_){ }
+        (entry.installments || []).forEach(inst=>{
+          if(inst.paidAt || inst.cashDate || String(inst.status || "").toUpperCase() === "PAGA") return;
+          if(!isCreditPaymentMethod(inst.payMethod || entry.installPlan?.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
+          const dueDate = cronosISOFromAny(inst.dueDate || inst.due || "");
+          if(!monthMatches(dueDate)) return;
+          const amount = parseMoney(inst.amount);
+          if(amount <= 0) return;
+          candidates.push({
+            key: creditAnticipationKey("legacy", entry.id, "legacy", inst.number),
+            type: "legacy",
+            entry,
+            plan: null,
+            payment: inst,
+            contact,
+            amount,
+            dueDate,
+            method: inst.payMethod || entry.installPlan?.payMethod || "Cartão de crédito",
+            label: `${contact.name || "Sem nome"} • Parcelamento • ${inst.number || ""}/${inst.total || ""}`,
+            patientKey: String(contact.id || entry.contactId || contact.name || entry.id)
+          });
+        });
+      }
+    });
+
+  candidates.sort((a,b)=>String(a.contact?.name || "").localeCompare(String(b.contact?.name || ""), "pt-BR") || String(a.dueDate || "9999-99-99").localeCompare(String(b.dueDate || "9999-99-99")) || String(a.label).localeCompare(String(b.label)));
+  return candidates;
+}
+
+function openCreditAnticipationModal(){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  const db = loadDB();
+  const old = document.getElementById("cronosCreditAnticipationModal");
+  if(old) old.remove();
+
+  const monthValue = (el("instMonth")?.value || todayISO().slice(0,7)).slice(0,7);
+  const searchValue = (el("instSearch")?.value || "").trim();
+  let candidates = [];
+
+  const overlay = document.createElement("div");
+  overlay.id = "cronosCreditAnticipationModal";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(6px)";
+  overlay.innerHTML = `
+    <div style="width:min(780px,96vw);max-height:92vh;overflow:auto;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:var(--shadow);padding:18px;color:var(--text)">
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:20px;font-weight:950">Antecipação de crédito</div>
+          <div class="muted" style="font-size:13px;line-height:1.45;margin-top:4px">Dê baixa em lote nas parcelas de cartão de crédito e informe a taxa para o Cronos registrar o valor líquido recebido.</div>
+        </div>
+        <button type="button" class="btn" id="cronosCreditAnticipationClose">Fechar</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px">
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Data da baixa</span>
+          <input id="creditAntDate" class="input" type="date" value="${escapeHTML(todayISO())}" style="width:100%;margin-top:6px">
+        </label>
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Taxa do cartão (%)</span>
+          <input id="creditAntFee" class="input" type="text" inputmode="decimal" value="0" placeholder="Ex.: 3,49" style="width:100%;margin-top:6px">
+        </label>
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Parcelas consideradas</span>
+          <select id="creditAntScope" class="input" style="width:100%;margin-top:6px">
+            <option value="month">Crédito pendente do mês selecionado</option>
+            <option value="patient">Paciente específico</option>
+            <option value="search">Crédito pendente da busca atual</option>
+            <option value="all">Todos os créditos pendentes</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="creditAntPatientBox" style="display:none;margin:0 0 12px">
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Buscar paciente</span>
+          <input id="creditAntPatientSearch" class="input" type="text" placeholder="Digite nome, telefone ou CPF" style="width:100%;margin-top:6px">
+        </label>
+        <div class="muted" style="font-size:12px;margin-top:6px">Ao selecionar “Paciente específico”, use a busca e marque todos para baixar todas as parcelas pendentes de crédito desse paciente.</div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.035)">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:13px">
+          <input type="checkbox" id="creditAntSelectAll" checked>
+          Marcar todos
+        </label>
+        <div class="muted" id="creditAntContext" style="font-size:12px"></div>
+      </div>
+
+      <div id="creditAntList" style="border:1px solid var(--line);border-radius:16px;overflow:auto;max-height:300px"></div>
+
+      <div id="creditAntSummary" style="margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(34,197,94,.08)"></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;flex-wrap:wrap">
+        <button type="button" class="btn" id="creditAntCancel">Cancelar</button>
+        <button type="button" class="btn ok" id="creditAntConfirm">Confirmar antecipação</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const listEl = document.getElementById("creditAntList");
+  const summaryEl = document.getElementById("creditAntSummary");
+  const scopeEl = document.getElementById("creditAntScope");
+  const feeEl = document.getElementById("creditAntFee");
+  const selectAllEl = document.getElementById("creditAntSelectAll");
+  const contextEl = document.getElementById("creditAntContext");
+  const patientBoxEl = document.getElementById("creditAntPatientBox");
+  const patientSearchEl = document.getElementById("creditAntPatientSearch");
+
+  function selectedKeys(){
+    return new Set(Array.from(listEl.querySelectorAll('input[data-credit-ant-item]:checked')).map(i=>i.value));
+  }
+
+  function updateSummary(){
+    const keys = selectedKeys();
+    const selected = candidates.filter(c=>keys.has(c.key));
+    const gross = selected.reduce((s,c)=>s+c.amount,0);
+    const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
+    const fee = gross * feePercent / 100;
+    const net = Math.max(0, gross - fee);
+    summaryEl.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+        <div><div class="muted" style="font-size:12px;font-weight:800">Selecionadas</div><b>${selected.length}</b></div>
+        <div><div class="muted" style="font-size:12px;font-weight:800">Valor bruto</div><b>${moneyBR(gross)}</b></div>
+        <div><div class="muted" style="font-size:12px;font-weight:800">Taxa/desconto</div><b>${moneyBR(fee)}</b></div>
+        <div><div class="muted" style="font-size:12px;font-weight:800">Valor líquido</div><b style="color:#22c55e">${moneyBR(net)}</b></div>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">A baixa marcará as parcelas como pagas, mantendo o valor bruto no plano e registrando o valor líquido no caixa/recebimentos. A ficha acompanha o financeiro vinculado.</div>
+    `;
+  }
+
+  function renderCandidates(){
+    const scope = scopeEl.value || "month";
+    const patientQuery = String(patientSearchEl?.value || "").trim();
+    const queryForScope = scope === "patient" ? patientQuery : (scope === "search" ? searchValue : "");
+    patientBoxEl.style.display = scope === "patient" ? "block" : "none";
+    candidates = collectCreditAnticipationCandidates(db, actor, scope, monthValue, queryForScope);
+    contextEl.textContent = scope === "patient"
+      ? (patientQuery ? `Paciente: ${patientQuery}` : "Digite para buscar o paciente")
+      : scope === "search"
+        ? `Busca atual: ${searchValue || "sem busca"}`
+        : scope === "all"
+          ? "Todos os créditos pendentes"
+          : `Mês: ${monthValue}`;
+    if(scope === "patient" && !patientQuery){
+      listEl.innerHTML = `<div class="muted" style="padding:14px">Digite o nome, telefone ou CPF para listar as parcelas de crédito desse paciente.</div>`;
+      updateSummary();
+      return;
+    }
+    if(!candidates.length){
+      listEl.innerHTML = `<div class="muted" style="padding:14px">Nenhuma parcela de cartão de crédito pendente encontrada.</div>`;
+      updateSummary();
+      return;
+    }
+    const feePreview = Math.max(0, parseBRNum(feeEl.value) || 0);
+    listEl.innerHTML = candidates.map(c=>{
+      const netPreview = Math.max(0, c.amount - (c.amount * feePreview / 100));
+      return `
+        <label style="display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:center;padding:11px 12px;border-bottom:1px solid var(--line);cursor:pointer">
+          <input type="checkbox" data-credit-ant-item value="${escapeHTML(c.key)}" checked>
+          <span style="min-width:0">
+            <span style="display:block;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(c.label)}</span>
+            <span class="muted" style="display:block;font-size:12px">Venc.: ${c.dueDate ? fmtBR(c.dueDate) : "—"} • ${escapeHTML(c.method || "Cartão de crédito")}</span>
+          </span>
+          <span style="text-align:right;white-space:nowrap">
+            <b>${moneyBR(c.amount)}</b>
+            <span class="muted" style="display:block;font-size:11px">líq. ${moneyBR(netPreview)}</span>
+          </span>
+        </label>
+      `;
+    }).join("");
+    listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>ch.addEventListener("change", updateSummary));
+    updateSummary();
+  }
+
+  document.getElementById("cronosCreditAnticipationClose")?.addEventListener("click", ()=>overlay.remove());
+  document.getElementById("creditAntCancel")?.addEventListener("click", ()=>overlay.remove());
+  overlay.addEventListener("click", ev=>{ if(ev.target === overlay) overlay.remove(); });
+  scopeEl.addEventListener("change", renderCandidates);
+  patientSearchEl?.addEventListener("input", debounce(renderCandidates, 180));
+  feeEl.addEventListener("input", renderCandidates);
+  selectAllEl.addEventListener("change", ()=>{
+    listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>{ ch.checked = selectAllEl.checked; });
+    updateSummary();
+  });
+  const confirmBtn = document.getElementById("creditAntConfirm");
+  confirmBtn?.addEventListener("click", async ()=>{
+    if(confirmBtn.dataset.busy === "1") return;
+
+    const date = String(document.getElementById("creditAntDate")?.value || "").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Data inválida", "Escolha a data da baixa da antecipação.");
+
+    const keys = selectedKeys();
+    const selected = candidates.filter(c=>keys.has(c.key));
+    if(!selected.length) return toast("Nada selecionado", "Marque pelo menos uma parcela de crédito para antecipar.");
+
+    const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
+    const ok = confirm(`Confirmar antecipação de ${selected.length} parcela(s) em ${fmtBR(date)}?\n\nTaxa: ${feePercent.toLocaleString("pt-BR", {maximumFractionDigits:4})}%`);
+    if(!ok) return;
+
+    const originalText = confirmBtn.textContent;
+    confirmBtn.dataset.busy = "1";
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Processando...";
+    toast("Processando antecipação", "Aguarde a confirmação da baixa e da sincronização na nuvem.");
+
+    try{
+      await applyCreditAnticipation(db, selected, date, feePercent);
+      overlay.remove();
+    }catch(err){
+      console.error("Erro ao confirmar antecipação de crédito", err);
+      toast("Erro ao antecipar crédito", err?.message || "Não foi possível concluir a baixa antecipada. Tente novamente.");
+      confirmBtn.dataset.busy = "0";
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = originalText || "Confirmar antecipação";
+    }
+  });
+
+  renderCandidates();
+}
+
+async function applyCreditAnticipation(db, candidates, settlementDate, feePercent=0){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  db.payments = db.payments || [];
+  const nowISO = new Date().toISOString();
+  let count = 0;
+  let grossTotal = 0;
+  let feeTotal = 0;
+  let netTotal = 0;
+  const affectedEntries = new Set();
+
+  candidates.forEach(c=>{
+    const payment = c.payment;
+    if(!payment || financialPaymentPaid(payment)) return;
+    const gross = parseMoney(payment.amount);
+    if(gross <= 0) return;
+    const feeAmount = Number((gross * (Math.max(0, feePercent) / 100)).toFixed(2));
+    const net = Number(Math.max(0, gross - feeAmount).toFixed(2));
+    grossTotal += gross;
+    feeTotal += feeAmount;
+    netTotal += net;
+    count++;
+
+    payment.status = "PAGA";
+    payment.paidAt = settlementDate;
+    payment.cashDate = settlementDate;
+    payment.manualPayment = true;
+    payment.autoCreditSettlement = false;
+    payment.creditAnticipated = true;
+    payment.settlementType = "antecipacao_credito";
+    payment.grossValue = gross;
+    payment.cashValue = net;
+    payment.netValue = net;
+    payment.cardFeePercent = Math.max(0, feePercent);
+    payment.cardFeeAmount = feeAmount;
+    markFinancialMutation(c.entry, c.plan, payment, nowISO);
+    if(c.entry) affectedEntries.add(c.entry);
+
+    if(c.type === "financial"){
+      let rec = findFinancePaymentRecord(db, c.entry.id, c.plan.id, payment.id);
+      if(!rec){
+        rec = {
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId: c.entry.id,
+          contactId: c.entry.contactId || "",
+          financialPlanId: c.plan.id,
+          financialPaymentId: payment.id,
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          date: settlementDate,
+          paidAt: settlementDate,
+          cashDate: settlementDate,
+          status: "PAGA",
+          value: net,
+          grossValue: gross,
+          cardFeePercent: Math.max(0, feePercent),
+          cardFeeAmount: feeAmount,
+          method: payment.payMethod || c.method || "Cartão de crédito",
+          desc: `Antecipação de crédito • ${c.plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
+          source: "creditAnticipation",
+          settlementType: "antecipacao_credito"
+        };
+        db.payments.push(rec);
+      }else{
+        rec.date = settlementDate;
+        rec.paidAt = settlementDate;
+        rec.cashDate = settlementDate;
+        rec.status = "PAGA";
+        rec.at = nowISO;
+        rec.updatedAt = nowISO;
+        rec.value = net;
+        rec.grossValue = gross;
+        rec.cardFeePercent = Math.max(0, feePercent);
+        rec.cardFeeAmount = feeAmount;
+        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
+        rec.source = "creditAnticipation";
+        rec.settlementType = "antecipacao_credito";
+      }
+    }else{
+      c.entry.valuePaid = parseMoney(c.entry.valuePaid) + gross;
+      c.entry.valueClosed = (c.entry.status === "Fechou") ? c.entry.valuePaid : c.entry.valueClosed;
+      const legacyNum = String(payment.number || "");
+      let rec = db.payments.find(x=>String(x.entryId)===String(c.entry.id) && String(x.legacyInstallmentNumber || "") === legacyNum);
+      if(!rec){
+        rec = {
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId: c.entry.id,
+          contactId: c.entry.contactId || "",
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          date: settlementDate,
+          paidAt: settlementDate,
+          cashDate: settlementDate,
+          status: "PAGA",
+          value: net,
+          grossValue: gross,
+          cardFeePercent: Math.max(0, feePercent),
+          cardFeeAmount: feeAmount,
+          method: payment.payMethod || c.method || "Cartão de crédito",
+          desc: `Antecipação de crédito • Parcela ${payment.number || ""}/${payment.total || ""}`,
+          source: "creditAnticipation",
+          settlementType: "antecipacao_credito",
+          legacyInstallmentNumber: payment.number
+        };
+        db.payments.push(rec);
+      }else{
+        rec.date = settlementDate;
+        rec.paidAt = settlementDate;
+        rec.cashDate = settlementDate;
+        rec.status = "PAGA";
+        rec.at = nowISO;
+        rec.updatedAt = nowISO;
+        rec.value = net;
+        rec.grossValue = gross;
+        rec.cardFeePercent = Math.max(0, feePercent);
+        rec.cardFeeAmount = feeAmount;
+        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
+        rec.source = "creditAnticipation";
+        rec.settlementType = "antecipacao_credito";
+      }
+    }
+  });
+
+  if(!count) return toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
+  affectedEntries.forEach(entry=>{
+    try{ syncFichaFinancialLinks(entry); }catch(e){ console.warn("Falha ao conciliar antecipação com a ficha:", e); }
+  });
+  try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar antecipação de crédito na nuvem", err);
+    try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(_){ }
+  }
+  if(cloudOk){
+    toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
+  }else{
+    toast("Antecipação salva no navegador", "A nuvem ainda não confirmou. Clique em Atualizar depois de alguns segundos para conferir a sincronização.");
+  }
+  renderAll();
 }
 
 async function payFinancialPayment(entryId, planId, paymentId){
@@ -1992,7 +2470,7 @@ function renderNewFinancialInstallmentApp(){
             <div style="border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.025);margin-bottom:12px">
               <div style="font-weight:900;margin-bottom:6px">Procedimentos disponíveis da ficha</div>
               <div class="small muted" style="margin-bottom:8px">Selecione um ou mais procedimentos para gerar um recebimento vinculado. Os que já estão pagos ou em pagamento não aparecem aqui.</div>
-              <div style="display:grid;gap:8px;max-height:190px;overflow:auto">
+              <div data-cronos-scroll-key="new-fin-ficha-items" style="display:grid;gap:8px;max-height:190px;overflow:auto">
                 ${fichaSelectableItems.map(item=>`
                   <label class="recebFichaItem" style="display:grid;grid-template-columns:28px minmax(0,1fr) 120px;align-items:center;gap:10px;border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.035);cursor:pointer">
                     <input type="checkbox" style="margin:0;width:18px;height:18px" ${selectedNewFinFichaIds.has(String(item.id)) ? 'checked' : ''} onchange="CRONOS_NEW_FIN_UI.toggleFichaItem('${escapeHTML(item.id)}')">
@@ -2068,8 +2546,8 @@ function renderNewFinancialInstallmentApp(){
 window.CRONOS_NEW_FIN_UI = {
   search(v){
     window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {search:String(v||""), entryId:"", planId:""});
-    renderNewFinancialInstallmentApp();
-    requestAnimationFrame(()=>{ try{ el("newFinSearch")?.focus(); el("newFinSearch")?.setSelectionRange(String(v||"").length,String(v||"").length); }catch(_){} });
+    __cronosRenderNewFinancialPreservingScroll({focusId:'newFinSearch'});
+    requestAnimationFrame(()=>{ try{ el("newFinSearch")?.focus({preventScroll:true}); el("newFinSearch")?.setSelectionRange(String(v||"").length,String(v||"").length); }catch(_){} });
   },
   selectPatientFromEvent(ev, entryId){
     try{
@@ -2119,7 +2597,7 @@ window.CRONOS_NEW_FIN_UI = {
     const idx = st.fichaItemIds.indexOf(id);
     if(idx >= 0) st.fichaItemIds.splice(idx,1); else st.fichaItemIds.push(id);
     window.__newFinancialInstallmentState = st;
-    renderNewFinancialInstallmentApp();
+    __cronosRenderNewFinancialPreservingScroll();
   },
   createPlan(){
     const actor = currentActor();
@@ -10718,6 +11196,75 @@ document.addEventListener("DOMContentLoaded", () => {
         }catch(_){}
       });
     }
+
+
+    /* Mantém a posição de rolagem quando uma mini alteração redesenha a ficha/modal.
+       Sem isso, editar valor ou marcar checkbox joga o usuário para o topo — o famoso elevador quebrado do JavaScript. */
+    function __cronosCaptureModalScrollState(){
+      const nodes = [];
+      const addNode = (key, node)=>{
+        if(!node) return;
+        nodes.push({ key, top:Number(node.scrollTop || 0), left:Number(node.scrollLeft || 0) });
+      };
+      addNode('modalBody', el('modalBody'));
+      addNode('modalInner', qs('#modalBg .modalInner'));
+      addNode('fichaApp', el('fichaApp'));
+      addNode('newFinancialInstallmentApp', el('newFinancialInstallmentApp'));
+      try{
+        document.querySelectorAll('[data-cronos-scroll-key]').forEach(node=>{
+          addNode(String(node.getAttribute('data-cronos-scroll-key') || ''), node);
+        });
+      }catch(_){}
+      const active = document.activeElement;
+      return {
+        nodes,
+        activeId: active && active.id ? String(active.id) : '',
+        selectionStart: active && typeof active.selectionStart === 'number' ? active.selectionStart : null,
+        selectionEnd: active && typeof active.selectionEnd === 'number' ? active.selectionEnd : null
+      };
+    }
+    function __cronosRestoreModalScrollState(state, opts={}){
+      if(!state) return;
+      requestAnimationFrame(()=>{
+        try{
+          (state.nodes || []).forEach(item=>{
+            let node = null;
+            if(item.key === 'modalBody') node = el('modalBody');
+            else if(item.key === 'modalInner') node = qs('#modalBg .modalInner');
+            else if(item.key === 'fichaApp') node = el('fichaApp');
+            else if(item.key === 'newFinancialInstallmentApp') node = el('newFinancialInstallmentApp');
+            else node = document.querySelector(`[data-cronos-scroll-key="${String(item.key).replace(/"/g,'\\"')}"]`);
+            if(node){
+              node.scrollTop = Number(item.top || 0);
+              node.scrollLeft = Number(item.left || 0);
+            }
+          });
+          const focusId = opts.focusId || state.activeId;
+          if(focusId){
+            const input = el(focusId);
+            if(input){
+              input.focus({ preventScroll:true });
+              if(typeof input.setSelectionRange === 'function'){
+                const len = String(input.value || '').length;
+                const start = opts.selectionStart ?? state.selectionStart ?? len;
+                const end = opts.selectionEnd ?? state.selectionEnd ?? start;
+                input.setSelectionRange(Math.min(start, len), Math.min(end, len));
+              }
+            }
+          }
+        }catch(_){}
+      });
+    }
+    function __cronosRenderFichaPreservingScroll(opts={}){
+      const scrollState = __cronosCaptureModalScrollState();
+      renderFichaApp();
+      __cronosRestoreModalScrollState(scrollState, opts);
+    }
+    function __cronosRenderNewFinancialPreservingScroll(opts={}){
+      const scrollState = __cronosCaptureModalScrollState();
+      renderNewFinancialInstallmentApp();
+      __cronosRestoreModalScrollState(scrollState, opts);
+    }
     function __cronosThemeIsDark(){
       try{
         const root = document.documentElement;
@@ -11191,7 +11738,7 @@ window.CRONOS_PROC_UI = {
               <button class="btn small" type="button" onclick="CRONOS_FICHA_UI.refreshPlanBaseValues()">Atualizar valores de tabela</button>
             </div>
           </div>
-          <div class="fichaTableWrap">
+          <div class="fichaTableWrap" data-cronos-scroll-key="ficha-table-wrap">
             <table class="fichaTable">
               <thead>
                 <tr>
@@ -11216,14 +11763,14 @@ window.CRONOS_PROC_UI = {
                   const checked = selectedFichaItemIds.has(String(item.id));
                   return `
                   <tr class="${(()=>{ const _st = getItemVisualState(entry, item); return _st==='done' ? 'fichaDone' : (_st==='paid' ? 'fichaPaid' : (_st==='absent' ? 'fichaAbsent' : '')); })()}">
-                    <td><input type="checkbox" ${checked ? 'checked' : ''} ${available ? '' : 'disabled'} onchange="CRONOS_FICHA_UI.toggleItemSelection('${escapeHTML(item.id)}')"></td>
+                    <td><input id="fichaSel_${escapeHTML(item.id)}" type="checkbox" ${checked ? 'checked' : ''} ${available ? '' : 'disabled'} onchange="CRONOS_FICHA_UI.toggleItemSelection('${escapeHTML(item.id)}')"></td>
                     <td>${idx+1}</td>
                     <td><div><b>${escapeHTML(item.avaliacaoLabel || 'Avaliação')}</b></div><div class="small muted">${fmtBR(item.avaliacaoData || '')}</div></td>
                     <td>${escapeHTML(item.procedimento || '—')}</td>
                     <td>${escapeHTML(item.dente || '—')}</td>
-                    <td><input type="text" value="${escapeHTML(item.face || '')}" placeholder="Ex: M, O/I" oninput="CRONOS_FICHA_UI.updateFace('${escapeHTML(item.id)}', this.value)"></td>
+                    <td><input id="fichaFace_${escapeHTML(item.id)}" type="text" value="${escapeHTML(item.face || '')}" placeholder="Ex: M, O/I" oninput="CRONOS_FICHA_UI.updateFace('${escapeHTML(item.id)}', this.value)"></td>
                     <td>${moneyBR(item.valorBase || 0)}</td>
-                    <td><input type="number" step="0.01" value="${escapeHTML(String(Number(item.valorFechado||0)))}" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value)"></td>
+                    <td><input id="fichaValue_${escapeHTML(item.id)}" type="number" step="0.01" value="${escapeHTML(String(Number(item.valorFechado||0)))}" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value)"></td>
                     <td>${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span></td>
                     <td><button class="btn small ${item.feito ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.toggleDone('${escapeHTML(item.id)}')">${item.feito ? 'Feito' : 'Pendente'}</button></td>
                     <td>
@@ -11473,7 +12020,7 @@ window.CRONOS_PROC_UI = {
         if(!item) return;
         item.valorFechado = parseMoneyInput(v);
         saveDB(db);
-        renderFichaApp();
+        __cronosRenderFichaPreservingScroll({focusId:`fichaValue_${itemId}`});
         try{ renderLeadsTable(filteredEntries()); }catch(_){ }
       },
       updateFace(itemId, v){
@@ -11513,7 +12060,7 @@ window.CRONOS_PROC_UI = {
         s.selectedItemIds = Array.isArray(s.selectedItemIds) ? s.selectedItemIds : [];
         const idx = s.selectedItemIds.indexOf(id);
         if(idx >= 0) s.selectedItemIds.splice(idx,1); else s.selectedItemIds.push(id);
-        renderFichaApp();
+        __cronosRenderFichaPreservingScroll({focusId:`fichaSel_${itemId}`});
       },
       openReceivingForItems(itemIds){
         const s = getFichaState(); if(!s) return;
