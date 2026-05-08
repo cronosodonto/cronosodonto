@@ -1551,11 +1551,7 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
             <div class="instBtns">
               <button class="btn" onclick="openLeadEntry('${entry.id}')">Abrir lead</button>
               <button class="btn primary" onclick="openNewFinancialInstallment('${entry.id}','${plan.id}')">Gerenciar</button>
-              <button class="btn" data-toggle-inst="${rowId}" onclick="toggleFinancialPlanRow('${rowId}')">Ver pagamentos</button>
             </div>
-          </div>
-          <div class="instBody">
-            ${renderFinancialPaymentTable(entry, plan, contact)}
           </div>
         </div>
       `;
@@ -1617,6 +1613,14 @@ function toggleFinancialPlanRow(rowId){
   window.__instOpen[rowId] = row.classList.contains("open");
   const btn = row.querySelector(`[data-toggle-inst="${rowId}"]`);
   if(btn) btn.textContent = row.classList.contains("open") ? "Fechar pagamentos" : "Ver pagamentos";
+}
+
+function refreshFinancialUIAfterPayment(){
+  try{ renderNewFinancialInstallmentApp(); }catch(_){ }
+  try{ renderInstallmentsView(); }catch(_){ }
+  try{ renderDashboard(); }catch(_){ }
+  try{ renderFichaApp(); }catch(_){ }
+  try{ updateSidebarPills(); }catch(_){ }
 }
 
 function findFinancePaymentRecord(db, entryId, planId, paymentId){
@@ -2217,10 +2221,12 @@ async function payFinancialPayment(entryId, planId, paymentId){
   }
 
   try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
-  saveDB(db, { immediate:true });
+  const cloudPromise = saveDB(db, { immediate:true });
   toast("Baixa feita ✅", `${moneyBR(payment.amount)} • caixa em ${fmtBR(payDate)}`);
-  renderAll();
-  try{ renderFichaApp(); }catch(_){}
+  refreshFinancialUIAfterPayment();
+  Promise.resolve(cloudPromise).then(()=>{
+    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
+  }).catch(err=>console.warn("Falha ao salvar baixa financeira:", err));
 }
 function undoFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
@@ -2246,9 +2252,12 @@ function undoFinancialPayment(entryId, planId, paymentId){
   }
 
   syncInstallmentTasks(db, actor);
-  saveDB(db, { immediate:true });
+  const cloudPromise = saveDB(db, { immediate:true });
   toast("Baixa desfeita", "Pagamento voltou para pendente.");
-  renderAll();
+  refreshFinancialUIAfterPayment();
+  Promise.resolve(cloudPromise).then(()=>{
+    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
+  }).catch(err=>console.warn("Falha ao salvar desfazer baixa financeira:", err));
 }
 
 async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
@@ -2277,9 +2286,12 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
     rec.status = "PAGA";
     rec.at = `${next}T12:00:00.000`;
   }
-  saveDB(db, { immediate:true });
+  const cloudPromise = saveDB(db, { immediate:true });
   toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
-  renderAll();
+  refreshFinancialUIAfterPayment();
+  Promise.resolve(cloudPromise).then(()=>{
+    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
+  }).catch(err=>console.warn("Falha ao salvar transferência financeira:", err));
 }
 function deleteFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
@@ -2299,10 +2311,10 @@ function deleteFinancialPayment(entryId, planId, paymentId){
   syncInstallmentTasks(db, actor);
   const cloudPromise = saveDB(db, { immediate:true });
   toast("Pagamento removido");
-  try{ renderNewFinancialInstallmentApp(); }catch(_){}
-  try{ renderInstallmentsView(); }catch(_){}
-  try{ renderDashboard(); }catch(_){}
-  Promise.resolve(cloudPromise).catch(err=>console.warn("Falha ao salvar exclusão de pagamento:", err));
+  refreshFinancialUIAfterPayment();
+  Promise.resolve(cloudPromise).then(()=>{
+    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
+  }).catch(err=>console.warn("Falha ao salvar exclusão de pagamento:", err));
 }
 
 function openNewFinancialInstallment(entryId="", planId=""){
@@ -3091,13 +3103,13 @@ async function payInstallment(entryId, number){
     legacyInstallmentNumber: p.number
   });
 
-  saveDB(db);
+  try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  const cloudPromise = saveDB(db, { immediate:true });
   toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • caixa em ${fmtBR(payDate)}`);
-  try {
-    syncInstallmentTasks(db, actor);
-    saveDB(db);
-  } catch {}
-  renderAll();
+  refreshFinancialUIAfterPayment();
+  Promise.resolve(cloudPromise).then(()=>{
+    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
+  }).catch(err=>console.warn("Falha ao salvar baixa de parcela legada:", err));
 }
 function undoInstallmentPay(entryId, number){
   const actor = currentActor();
@@ -3118,12 +3130,13 @@ function undoInstallmentPay(entryId, number){
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (String(x.legacyInstallmentNumber||"")===String(number) || (x.desc||"").includes(`Parcela ${number}/`)));
   if(idx>=0) db.payments.splice(idx,1);
 
-  saveDB(db);
+  try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  const cloudPromise = saveDB(db, { immediate:true });
   toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
-  try{ syncInstallmentTasks(db, actor); saveDB(db);}catch{}
-  setTimeout(() => {
-  if (typeof renderAll === "function") renderAll();
-}, 50);
+  refreshFinancialUIAfterPayment();
+  Promise.resolve(cloudPromise).then(()=>{
+    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
+  }).catch(err=>console.warn("Falha ao salvar desfazer baixa legada:", err));
 }
 
 
@@ -3159,9 +3172,12 @@ async function transferInstallmentCashDate(entryId, number){
     rec.at = `${next}T12:00:00.000`;
   }
 
-  saveDB(db, { immediate:true });
+  const cloudPromise = saveDB(db, { immediate:true });
   toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
-  renderAll();
+  refreshFinancialUIAfterPayment();
+  Promise.resolve(cloudPromise).then(()=>{
+    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
+  }).catch(err=>console.warn("Falha ao salvar transferência financeira:", err));
 }
 
 function normalizeInstallmentsAfterMutation(entry){
