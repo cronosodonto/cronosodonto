@@ -10340,17 +10340,18 @@ document.addEventListener("DOMContentLoaded", () => {
       }).join('');
     }
 
-    function buildFichaReceivingPayments({total, type, date, method, count, obs}){
+    function buildFichaReceivingPayments({total, type, date, method, count, obs, recordPaidNow=false}){
       total = parseMoney(total);
       const payments = [];
       const n = type === 'parcelado' ? Math.max(1, parseInt(count || 1, 10) || 1) : 1;
       const base = Math.floor((total / n) * 100) / 100;
       let acc = 0;
+      const shouldRegisterAsPaidNow = (type === 'avista') && recordPaidNow === true;
       for(let i=1;i<=n;i++){
         const amount = i === n ? Number((total - acc).toFixed(2)) : Number(base.toFixed(2));
         acc += amount;
         const dueDate = addMonthsISO(date, i-1);
-        const paid = type === 'avista';
+        const paid = shouldRegisterAsPaidNow;
         payments.push({
           id: uid('pay'),
           amount,
@@ -10360,6 +10361,7 @@ document.addEventListener("DOMContentLoaded", () => {
           status: paid ? 'PAGA' : 'PENDENTE',
           paidAt: paid ? date : '',
           cashDate: paid ? date : '',
+          receivedNow: paid,
           createdAt: new Date().toISOString(),
           source: 'ficha'
         });
@@ -10385,12 +10387,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const total = items.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
       if(total <= 0) return toast('Recebimento', 'Os procedimentos selecionados precisam ter valor maior que zero.');
 
-      const type = String(options.type || 'avista');
+      const type = String(options.type || 'parcelado');
       const date = String(options.date || todayISO()).slice(0,10);
       if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Data inválida', 'Use uma data válida.');
       const count = type === 'parcelado' ? Math.max(1, parseInt(options.count || 1, 10) || 1) : 1;
       const method = String(options.method || '').trim();
       const obs = String(options.obs || '').trim();
+      const recordPaidNow = options.recordPaidNow === true || options.recordPaidNow === 'true' || options.recordPaidNow === 'on';
 
       const evalLabel = items[0]?.avaliacaoLabel || 'Avaliação';
       const plan = {
@@ -10398,27 +10401,28 @@ document.addEventListener("DOMContentLoaded", () => {
         title: `${type === 'parcelado' ? 'Recebimento parcelado' : 'Recebimento à vista'} • ${evalLabel}`,
         dentist: '',
         amount: total,
-        status: 'Aprovado',
+        status: recordPaidNow ? 'Aprovado' : 'Aguardando',
         createdAt: new Date().toISOString(),
         createdBy: actor?.name || '',
         source: 'ficha',
+        receivedNow: recordPaidNow,
         fichaItemIds: ids,
         evaluationIds: Array.from(new Set(items.map(i=>i.avaliacaoId).filter(Boolean))),
-        payments: buildFichaReceivingPayments({total, type, date, method, count, obs})
+        payments: buildFichaReceivingPayments({total, type, date, method, count, obs, recordPaidNow})
       };
 
       ensureFinancialPlans(entry).push(plan);
       items.forEach(item=>{
         item.financialPlanId = plan.id;
         item.recebimentoId = plan.id;
-        item.financeStatus = type === 'avista' ? 'pago' : 'em_pagamento';
-        item.pago = type === 'avista';
+        item.financeStatus = recordPaidNow ? 'pago' : 'em_pagamento';
+        item.pago = recordPaidNow;
       });
       try{ syncFichaFinancialLinks(entry); }catch(_){}
 
-      if(type === 'avista'){
+      if(recordPaidNow){
         db.payments = db.payments || [];
-        plan.payments.forEach(p=>{
+        plan.payments.filter(p=>String(p.status||'').toUpperCase()==='PAGA').forEach(p=>{
           db.payments.push({
             id: uid('p'),
             masterId: actor.masterId,
@@ -10431,7 +10435,8 @@ document.addEventListener("DOMContentLoaded", () => {
             value: parseMoney(p.amount),
             method: p.payMethod || method || '',
             desc: `Recebimento da ficha • ${evalLabel}`,
-            source: 'financialPlan'
+            source: 'financialPlan',
+            receivedNow: true
           });
         });
       }
@@ -11534,29 +11539,38 @@ window.CRONOS_PROC_UI = {
               <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">
                 <div>
                   <label>Tipo</label>
-                  <select id="fr_type" onchange="document.getElementById('fr_count_wrap').style.display=this.value==='parcelado'?'block':'none'">
+                  <select id="fr_type" onchange="document.getElementById('fr_count_wrap').style.display=this.value==='parcelado'?'block':'none';document.getElementById('fr_record_wrap').style.display=this.value==='avista'?'block':'none'">
+                    <option value="parcelado" selected>Em pagamento / Parcelado</option>
                     <option value="avista">À vista</option>
-                    <option value="parcelado">Parcelado</option>
                   </select>
                 </div>
                 <div>
                   <label>Forma de pagamento</label>
                   <select id="fr_method">
+                    <option>Carnê/Boleto</option>
                     <option>Pix</option>
                     <option>Dinheiro</option>
                     <option>Cartão de crédito</option>
                     <option>Cartão de débito</option>
-                    <option>Carnê/Boleto</option>
                   </select>
                 </div>
                 <div>
-                  <label>Data do pagamento / 1º vencimento</label>
+                  <label>Data do 1º vencimento / pagamento</label>
                   <input id="fr_date" type="date" value="${todayISO()}">
                 </div>
-                <div id="fr_count_wrap" style="display:none">
+                <div id="fr_count_wrap">
                   <label>Parcelas</label>
                   <input id="fr_count" type="number" min="1" step="1" value="1">
                 </div>
+              </div>
+              <div id="fr_record_wrap" style="display:none;border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.035)">
+                <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;margin:0">
+                  <input id="fr_record_paid" type="checkbox" style="width:18px;height:18px;margin-top:2px">
+                  <span>
+                    <b>Registrar como recebido agora</b><br>
+                    <span class="muted small">Use apenas quando o dinheiro já entrou. Se deixar desmarcado, o Cronos cria a cobrança/plano, marca como em pagamento e não lança no gráfico.</span>
+                  </span>
+                </label>
               </div>
               <div>
                 <label>Observação</label>
@@ -11564,7 +11578,7 @@ window.CRONOS_PROC_UI = {
               </div>
             </div>
           `,
-          footHTML:`<button class="btn" onclick="closeModal()">Cancelar</button><button class="btn ok" onclick="CRONOS_FICHA_UI.confirmReceiving()">Salvar recebimento</button>`,
+          footHTML:`<button class="btn" onclick="closeModal()">Cancelar</button><button class="btn ok" onclick="CRONOS_FICHA_UI.confirmReceiving()">Criar cobrança</button>`,
           maxWidth:'min(96vw, 860px)'
         });
       },
@@ -11575,11 +11589,12 @@ window.CRONOS_PROC_UI = {
       confirmReceiving(){
         const draft = window.__fichaReceivingDraft || {};
         const plan = createFichaReceiving(draft.entryId, draft.itemIds, {
-          type: val('fr_type') || 'avista',
+          type: val('fr_type') || 'parcelado',
           method: val('fr_method') || '',
           date: val('fr_date') || todayISO(),
           count: val('fr_count') || '1',
-          obs: val('fr_obs') || ''
+          obs: val('fr_obs') || '',
+          recordPaidNow: !!el('fr_record_paid')?.checked
         });
         if(!plan) return;
         closeModal();
@@ -11588,7 +11603,8 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
         try{ renderInstallmentsView(); }catch(_){}
         try{ renderDashboard(); }catch(_){}
-        toast('Recebimento criado ✅', `${moneyBR(plan.amount)} • ${plan.payments.length} lançamento(s)`);
+        const alreadyReceived = plan?.receivedNow === true;
+        toast(alreadyReceived ? 'Recebimento registrado ✅' : 'Cobrança criada ✅', `${moneyBR(plan.amount)} • ${plan.payments.length} lançamento(s)${alreadyReceived ? '' : ' pendente(s)'}`);
       },
       setActiveEvaluation(evalId){
         const s = getFichaState(); if(!s) return;
