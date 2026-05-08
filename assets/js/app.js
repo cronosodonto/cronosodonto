@@ -2174,9 +2174,11 @@ async function payFinancialPayment(entryId, planId, paymentId){
   });
   if(!payDate) return;
 
+  const nowISO = new Date().toISOString();
   payment.status = "PAGA";
   payment.paidAt = payDate;
   payment.cashDate = payDate;
+  payment.paid = true;
 
   db.payments = db.payments || [];
   let rec = findFinancePaymentRecord(db, entryId, planId, paymentId);
@@ -2188,7 +2190,10 @@ async function payFinancialPayment(entryId, planId, paymentId){
       contactId: entry.contactId || "",
       financialPlanId: planId,
       financialPaymentId: paymentId,
-      at: new Date().toISOString(),
+      at: nowISO,
+      createdAt: nowISO,
+      updatedAt: nowISO,
+      lastUpdateAt: nowISO,
       date: payDate,
       paidAt: payDate,
       cashDate: payDate,
@@ -2204,31 +2209,45 @@ async function payFinancialPayment(entryId, planId, paymentId){
     rec.paidAt = payDate;
     rec.cashDate = payDate;
     rec.status = "PAGA";
-    rec.at = new Date().toISOString();
+    rec.at = nowISO;
+    rec.updatedAt = nowISO;
+    rec.lastUpdateAt = nowISO;
     rec.value = parseMoney(payment.amount);
     rec.method = payment.payMethod || rec.method || "";
   }
 
+  markFinancialMutation(entry, plan, payment, nowISO);
+  if(financialPlanIsFullyPaid(plan)) plan.status = "Concluído";
   syncInstallmentTasks(db, actor);
   if(Array.isArray(plan.fichaItemIds)){
     const fullyPaid = financialPlanIsFullyPaid(plan);
+    const linked = plan.fichaItemIds.map(String);
     ensureFicha(entry).plano.forEach(item=>{
-      if(plan.fichaItemIds.map(String).includes(String(item.id))){
+      if(linked.includes(String(item.id))){
         item.pago = !!fullyPaid;
         item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
+        item.updatedAt = nowISO;
       }
     });
   }
 
   try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
-  const cloudPromise = saveDB(db, { immediate:true });
-  toast("Baixa feita ✅", `${moneyBR(payment.amount)} • caixa em ${fmtBR(payDate)}`);
   refreshFinancialUIAfterPayment();
-  Promise.resolve(cloudPromise).then(()=>{
-    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
-  }).catch(err=>console.warn("Falha ao salvar baixa financeira:", err));
+  toast("Salvando baixa...", "Registrando no navegador e sincronizando com a nuvem.");
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar baixa financeira:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk){
+    toast("Baixa feita ✅", `${moneyBR(payment.amount)} • caixa em ${fmtBR(payDate)}`);
+  }else{
+    toast("Baixa salva no navegador", "A nuvem ainda não confirmou. O Cronos marcou a versão local como mais recente para não perder no F5.");
+  }
 }
-function undoFinancialPayment(entryId, planId, paymentId){
+async function undoFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -2237,35 +2256,50 @@ function undoFinancialPayment(entryId, planId, paymentId){
   const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
   if(!payment) return toast("Erro", "Pagamento não encontrado.");
 
+  const nowISO = new Date().toISOString();
   payment.status = "PENDENTE";
   payment.paidAt = "";
   payment.cashDate = "";
+  payment.paid = false;
+  payment.updatedAt = nowISO;
+  payment.lastUpdateAt = nowISO;
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
 
   if(Array.isArray(plan.fichaItemIds)){
+    const linked = plan.fichaItemIds.map(String);
     ensureFicha(entry).plano.forEach(item=>{
-      if(plan.fichaItemIds.map(String).includes(String(item.id))){
+      if(linked.includes(String(item.id))){
         item.pago = false;
         item.financeStatus = "em_pagamento";
+        item.updatedAt = nowISO;
       }
     });
   }
 
+  markFinancialMutation(entry, plan, payment, nowISO);
+  if(String(plan.status || "").toLowerCase().includes("concl")) plan.status = "Aguardando";
   syncInstallmentTasks(db, actor);
-  const cloudPromise = saveDB(db, { immediate:true });
-  toast("Baixa desfeita", "Pagamento voltou para pendente.");
   refreshFinancialUIAfterPayment();
-  Promise.resolve(cloudPromise).then(()=>{
-    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
-  }).catch(err=>console.warn("Falha ao salvar desfazer baixa financeira:", err));
+  toast("Salvando alteração...", "Desfazendo a baixa e sincronizando.");
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar desfazer baixa financeira:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk){
+    toast("Baixa desfeita", "Pagamento voltou para pendente.");
+  }else{
+    toast("Baixa desfeita no navegador", "A nuvem ainda não confirmou. Atualize depois para conferir.");
+  }
 }
-
 async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
-  const {plan} = getFinancialPlan(db, entryId, planId);
-  if(!plan) return toast("Erro", "Recebimento não encontrado.");
+  const {entry, plan} = getFinancialPlan(db, entryId, planId);
+  if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
   const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
   if(!payment || !financialPaymentPaid(payment)) return toast("Transferência", "Só dá para transferir pagamento baixado.");
   const current = cronosPaymentCashISO(payment, false) || todayISO();
@@ -2276,24 +2310,34 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   });
   if(!next) return;
 
+  const nowISO = new Date().toISOString();
   payment.cashDate = next;
   payment.paidAt = next;
+  payment.status = "PAGA";
+  payment.paid = true;
   const rec = findFinancePaymentRecord(db, entryId, planId, paymentId);
   if(rec){
     rec.date = next;
     rec.cashDate = next;
     rec.paidAt = next;
     rec.status = "PAGA";
-    rec.at = `${next}T12:00:00.000`;
+    rec.at = nowISO;
+    rec.updatedAt = nowISO;
+    rec.lastUpdateAt = nowISO;
   }
-  const cloudPromise = saveDB(db, { immediate:true });
-  toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
+  markFinancialMutation(entry, plan, payment, nowISO);
   refreshFinancialUIAfterPayment();
-  Promise.resolve(cloudPromise).then(()=>{
-    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
-  }).catch(err=>console.warn("Falha ao salvar transferência financeira:", err));
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar transferência financeira:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk) toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
+  else toast("Data transferida no navegador", "A nuvem ainda não confirmou.");
 }
-function deleteFinancialPayment(entryId, planId, paymentId){
+async function deleteFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   if(!confirm("Excluir este pagamento/parcela?")) return;
@@ -2301,6 +2345,7 @@ function deleteFinancialPayment(entryId, planId, paymentId){
   const {entry, plan} = getFinancialPlan(db, entryId, planId);
   if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
 
+  const nowISO = new Date().toISOString();
   const before = Array.isArray(plan.payments) ? plan.payments.length : 0;
   plan.payments = (plan.payments||[]).filter(p=>String(p.id)!==String(paymentId));
   const after = plan.payments.length;
@@ -2308,15 +2353,19 @@ function deleteFinancialPayment(entryId, planId, paymentId){
 
   renumberFinancialPlanPayments(plan);
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
+  markFinancialMutation(entry, plan, null, nowISO);
   syncInstallmentTasks(db, actor);
-  const cloudPromise = saveDB(db, { immediate:true });
-  toast("Pagamento removido");
   refreshFinancialUIAfterPayment();
-  Promise.resolve(cloudPromise).then(()=>{
-    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
-  }).catch(err=>console.warn("Falha ao salvar exclusão de pagamento:", err));
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar exclusão de pagamento:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk) toast("Pagamento removido");
+  else toast("Pagamento removido no navegador", "A nuvem ainda não confirmou.");
 }
-
 function openNewFinancialInstallment(entryId="", planId=""){
   let finalPlanId = String(planId||"");
   try{
@@ -3078,12 +3127,19 @@ async function payInstallment(entryId, number){
   });
   if(!payDate) return;
 
+  const nowISO = new Date().toISOString();
   p.paidAt = payDate;
   p.cashDate = payDate;
   p.status = "PAGA";
+  p.paid = true;
+  p.updatedAt = nowISO;
+  p.lastUpdateAt = nowISO;
 
   entry.valuePaid = parseMoney(entry.valuePaid) + parseMoney(p.amount);
   entry.valueClosed = (entry.status==="Fechou") ? entry.valuePaid : null;
+  entry.updatedAt = nowISO;
+  entry.lastUpdateAt = nowISO;
+  entry.financeUpdatedAt = nowISO;
 
   db.payments = db.payments || [];
   db.payments.push({
@@ -3091,7 +3147,10 @@ async function payInstallment(entryId, number){
     masterId: actor.masterId,
     entryId,
     contactId: entry.contactId,
-    at: new Date().toISOString(),
+    at: nowISO,
+    createdAt: nowISO,
+    updatedAt: nowISO,
+    lastUpdateAt: nowISO,
     date: payDate,
     paidAt: payDate,
     cashDate: payDate,
@@ -3104,14 +3163,22 @@ async function payInstallment(entryId, number){
   });
 
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
-  const cloudPromise = saveDB(db, { immediate:true });
-  toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • caixa em ${fmtBR(payDate)}`);
   refreshFinancialUIAfterPayment();
-  Promise.resolve(cloudPromise).then(()=>{
-    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
-  }).catch(err=>console.warn("Falha ao salvar baixa de parcela legada:", err));
+  toast("Salvando baixa...", "Registrando no navegador e sincronizando com a nuvem.");
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar baixa de parcela legada:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk){
+    toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • caixa em ${fmtBR(payDate)}`);
+  }else{
+    toast("Baixa salva no navegador", "A nuvem ainda não confirmou. A versão local foi marcada como mais recente para não perder no F5.");
+  }
 }
-function undoInstallmentPay(entryId, number){
+async function undoInstallmentPay(entryId, number){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -3121,25 +3188,34 @@ function undoInstallmentPay(entryId, number){
   const p = (entry.installments||[]).find(x=>x.number===number);
   if(!p) return toast("Erro", "Parcela não encontrada");
   if(!(p.paidAt || p.cashDate || p.status==="PAGA")) return toast("Nada a desfazer", "Essa parcela não está paga.");
+  const nowISO = new Date().toISOString();
   const amt = parseMoney(p.amount);
   entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - amt);
+  entry.updatedAt = nowISO;
+  entry.lastUpdateAt = nowISO;
+  entry.financeUpdatedAt = nowISO;
   p.paidAt = "";
   p.cashDate = "";
   p.status = "PENDENTE";
+  p.paid = false;
+  p.updatedAt = nowISO;
+  p.lastUpdateAt = nowISO;
   db.payments = db.payments || [];
   const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (String(x.legacyInstallmentNumber||"")===String(number) || (x.desc||"").includes(`Parcela ${number}/`)));
   if(idx>=0) db.payments.splice(idx,1);
 
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
-  const cloudPromise = saveDB(db, { immediate:true });
-  toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
   refreshFinancialUIAfterPayment();
-  Promise.resolve(cloudPromise).then(()=>{
-    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
-  }).catch(err=>console.warn("Falha ao salvar desfazer baixa legada:", err));
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar desfazer baixa legada:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk) toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
+  else toast("Baixa desfeita no navegador", "A nuvem ainda não confirmou.");
 }
-
-
 async function transferInstallmentCashDate(entryId, number){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
@@ -3158,8 +3234,16 @@ async function transferInstallmentCashDate(entryId, number){
   });
   if(!next) return;
 
+  const nowISO = new Date().toISOString();
   p.cashDate = next;
   p.paidAt = next;
+  p.status = "PAGA";
+  p.paid = true;
+  p.updatedAt = nowISO;
+  p.lastUpdateAt = nowISO;
+  entry.updatedAt = nowISO;
+  entry.lastUpdateAt = nowISO;
+  entry.financeUpdatedAt = nowISO;
 
   const amt = parseMoney(p.amount);
   db.payments = db.payments || [];
@@ -3169,17 +3253,22 @@ async function transferInstallmentCashDate(entryId, number){
     rec.cashDate = next;
     rec.paidAt = next;
     rec.status = "PAGA";
-    rec.at = `${next}T12:00:00.000`;
+    rec.at = nowISO;
+    rec.updatedAt = nowISO;
+    rec.lastUpdateAt = nowISO;
   }
 
-  const cloudPromise = saveDB(db, { immediate:true });
-  toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
   refreshFinancialUIAfterPayment();
-  Promise.resolve(cloudPromise).then(()=>{
-    try{ refreshFinancialUIAfterPayment(); }catch(_){ }
-  }).catch(err=>console.warn("Falha ao salvar transferência financeira:", err));
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar transferência financeira:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk) toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
+  else toast("Data transferida no navegador", "A nuvem ainda não confirmou.");
 }
-
 function normalizeInstallmentsAfterMutation(entry){
   entry.installments = Array.isArray(entry.installments) ? entry.installments : [];
   const total = entry.installments.length;
