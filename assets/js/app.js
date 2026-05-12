@@ -1530,9 +1530,31 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
 
   if(!rows.length) return "";
 
+  window.__instFinancialState = window.__instFinancialState || { page:1, sig:"" };
+  const finSig = `${mk}|${filter}|${q}`;
+  if(window.__instFinancialState.sig !== finSig){
+    window.__instFinancialState.sig = finSig;
+    window.__instFinancialState.page = 1;
+  }
+  const finPageSize = 10;
+  const finTotalPages = Math.max(1, Math.ceil(rows.length / finPageSize));
+  const finPage = Math.min(finTotalPages, Math.max(1, window.__instFinancialState.page || 1));
+  window.__instFinancialState.page = finPage;
+  const finStart = (finPage - 1) * finPageSize;
+  const renderRows = rows.slice(finStart, finStart + finPageSize);
+  const finPagerHtml = finTotalPages > 1 ? `
+    <div class="instPager" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 16px;">
+      <div class="muted">Novo modelo: página ${finPage} de ${finTotalPages} • ${rows.length} registro(s)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn small" ${finPage<=1 ? 'disabled' : ''} onclick="window.__instFinancialState.page=Math.max(1,(window.__instFinancialState.page||1)-1);renderInstallmentsView();">Anterior</button>
+        <button class="btn small" ${finPage>=finTotalPages ? 'disabled' : ''} onclick="window.__instFinancialState.page=Math.min(${finTotalPages},(window.__instFinancialState.page||1)+1);renderInstallmentsView();">Próxima</button>
+      </div>
+    </div>
+  ` : '';
+
   return `
     <div style="margin-bottom:10px;font-weight:900">Novo modelo de orçamentos</div>
-    ${rows.map(({entry, contact, plan, monthPayments, paidSum, pendingSum, lateSum, futureSum, paidCount, pendingCount, lateCount, futureCount})=>{
+    ${renderRows.map(({entry, contact, plan, monthPayments, paidSum, pendingSum, lateSum, futureSum, paidCount, pendingCount, lateCount, futureCount})=>{
       const totals = financialPlanTotals(plan);
       const nextDue = financialPlanNextDue(plan);
       const rowId = `finrow_${entry.id}_${plan.id}`;
@@ -1580,6 +1602,7 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
         </div>
       `;
     }).join("")}
+    ${finPagerHtml}
     <div style="height:10px"></div>
   `;
 }
@@ -3452,21 +3475,6 @@ showView = function(view){
     __showView(view);
   }
   try{ relabelInstallmentsToRecebimentos(); }catch(e){}
-
-  console.log("VIEW:", view);
-  if(view==="dashboard"){
-    setTimeout(() => {
-      renderDashboard();
-    }, 50);
-  }
-  if(view==="installments" && typeof renderInstallmentsView === "function"){
-    renderInstallmentsView();
-  }
-  if(view==="kanban"){
-    setTimeout(() => {
-      renderKanban();
-    }, 50);
-  }
 }
 
 document.addEventListener("DOMContentLoaded", ()=>{
@@ -3742,6 +3750,21 @@ function applyTheme(theme){
   const root = document.documentElement;
   const body = document.body;
   const isLight = theme === "light";
+
+  // Evita o "flash cinza" nas contagens do menu lateral durante troca de tema.
+  // A classe dura só o tempo da troca visual e congela as pílulas no estado correto.
+  try{
+    clearTimeout(window.__CRONOS_THEME_SWITCH_TIMER__);
+    root.classList.add("cronos-theme-switching");
+    if(body) body.classList.add("cronos-theme-switching");
+    window.__CRONOS_THEME_SWITCH_TIMER__ = setTimeout(()=>{
+      try{
+        root.classList.remove("cronos-theme-switching");
+        if(document.body) document.body.classList.remove("cronos-theme-switching");
+      }catch(_){ }
+    }, 260);
+  }catch(_){ }
+
   if(isLight){
     root.classList.add("light");
     if(body) body.classList.add("light");
@@ -7384,6 +7407,13 @@ function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWi
 
   el("modalBg").classList.add("show");
   el("modalBg").setAttribute("aria-hidden","false");
+  try{
+    const __isFichaModal = /(^|\s)modalFichaWide(\s|$)/.test(String(modalClass || ""));
+    document.documentElement.classList.toggle("cronos-ficha-open", __isFichaModal);
+    document.body.classList.toggle("cronos-ficha-open", __isFichaModal);
+    document.documentElement.classList.remove("cronos-ficha-scrolling");
+    document.body.classList.remove("cronos-ficha-scrolling");
+  }catch(_){ }
   if(typeof onMount==="function") onMount();
 }
 function closeModal(){
@@ -7395,9 +7425,49 @@ function closeModal(){
     __modalRoot.style.maxWidth = '';
     __modalRoot.style.width = '';
   }
+  try{
+    document.documentElement.classList.remove("cronos-ficha-open", "cronos-ficha-scrolling");
+    document.body.classList.remove("cronos-ficha-open", "cronos-ficha-scrolling");
+  }catch(_){ }
 }
 el("modalClose").addEventListener("click", closeModal);
 el("modalBg").addEventListener("click", (e)=>{ if(e.target===el("modalBg")) closeModal(); });
+
+/* Cronos — sinaliza rolagem da Ficha sem interferir no turbo das telas principais. */
+(function(){
+  if(window.__CRONOS_FICHA_SCROLL_MARKER_BOUND__) return;
+  window.__CRONOS_FICHA_SCROLL_MARKER_BOUND__ = true;
+  let __fichaScrollTimer = null;
+  function fichaOpen(){
+    return !!(document.body && document.body.classList.contains('cronos-ficha-open'));
+  }
+  function targetIsFicha(target){
+    try{
+      if(!target) return false;
+      if(target === document || target === document.documentElement || target === document.body) return fichaOpen();
+      if(target.id === 'modalBody') return true;
+      return !!(target.closest && target.closest('.modalFichaWide, #fichaApp, .fichaTableWrap'));
+    }catch(_){ return false; }
+  }
+  function markFichaScrolling(ev){
+    if(!fichaOpen() || !targetIsFicha(ev && ev.target)) return;
+    try{
+      document.documentElement.classList.add('cronos-ficha-scrolling');
+      document.body.classList.add('cronos-ficha-scrolling');
+      clearTimeout(__fichaScrollTimer);
+      __fichaScrollTimer = setTimeout(function(){
+        try{
+          document.documentElement.classList.remove('cronos-ficha-scrolling');
+          document.body.classList.remove('cronos-ficha-scrolling');
+        }catch(_){ }
+      }, 180);
+    }catch(_){ }
+  }
+  document.addEventListener('scroll', markFichaScrolling, {capture:true, passive:true});
+  document.addEventListener('wheel', markFichaScrolling, {capture:true, passive:true});
+  document.addEventListener('touchmove', markFichaScrolling, {capture:true, passive:true});
+})();
+
 
 /* -------- Lead create/edit -------- */
 function leadEntryFormHTML(entry, contact, mode, suggestHTML){
@@ -9186,6 +9256,7 @@ const db = loadDB();
 const board = el("kanbanBoard");
 if(!board) return;
 
+const contactsById = (typeof getContactsByIdMap === "function") ? getContactsByIdMap(db) : new Map((db.contacts||[]).map(c=>[String(c.id), c]));
 const rows = filteredEntries().slice(); // respects filters + month
 
 function currentStatus(entry){
@@ -9225,7 +9296,7 @@ const total = list.reduce((sum,e)=>{
           ${list.length ? list
             .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""))
             .map(e=>{
-              const c = db.contacts.find(x=>x.id===e.contactId);
+              const c = contactsById.get(String(e.contactId || ""));
               const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid))) ? Number(e.valuePaid) : 0;
               const budget = (e.valueBudget!=null && !isNaN(Number(e.valueBudget))) ? Number(e.valueBudget) : 0;
               const open = Math.max(0, budget - paid);
