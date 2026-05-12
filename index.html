@@ -4801,3 +4801,380 @@
   setTimeout(syncTodayBadgeNeutral,600);
 })();
 </script>
+</style>
+
+<!-- Cronos: fluidez do modo claro sem alterar o visual estático -->
+<style id="cronos-light-performance-visual-preserve">
+  /*
+    Modo claro turbo:
+    o visual original fica preservado quando a tela está parada.
+    Durante a rolagem, só nas telas densas, o Cronos troca a textura translúcida
+    por superfícies opacas temporárias para não repintar gradiente/blur/sombra em massa.
+  */
+  #view-dashboard .card,
+  #view-leads .leadCard,
+  #view-installments .instRow,
+  #view-kanban .kanCol,
+  #view-kanban .kanCard{
+    backface-visibility:hidden;
+  }
+
+  #view-leads .leadCard,
+  #view-installments .instRow,
+  #view-kanban .kanCard{
+    contain:layout paint style;
+  }
+
+  @supports (content-visibility:auto){
+    #view-leads .leadCard,
+    #view-installments .instRow,
+    #view-kanban .kanCard{
+      content-visibility:auto;
+      contain-intrinsic-size:140px;
+    }
+  }
+
+  /* A parte que resolve de verdade: textura original só sai ENQUANTO rola. */
+  html.light body.cronos-is-scrolling,
+  :root.light body.cronos-is-scrolling,
+  body.light.cronos-is-scrolling{
+    background:linear-gradient(135deg,#dbeafe,#dcfce7) !important;
+  }
+
+  html.light body.cronos-is-scrolling #view-dashboard *,
+  html.light body.cronos-is-scrolling #view-leads *,
+  html.light body.cronos-is-scrolling #view-installments *,
+  html.light body.cronos-is-scrolling #view-kanban *,
+  :root.light body.cronos-is-scrolling #view-dashboard *,
+  :root.light body.cronos-is-scrolling #view-leads *,
+  :root.light body.cronos-is-scrolling #view-installments *,
+  :root.light body.cronos-is-scrolling #view-kanban *,
+  body.light.cronos-is-scrolling #view-dashboard *,
+  body.light.cronos-is-scrolling #view-leads *,
+  body.light.cronos-is-scrolling #view-installments *,
+  body.light.cronos-is-scrolling #view-kanban *{
+    transition:none !important;
+    animation:none !important;
+    will-change:auto !important;
+  }
+
+  html.light body.cronos-is-scrolling .stickyFilters,
+  :root.light body.cronos-is-scrolling .stickyFilters,
+  body.light.cronos-is-scrolling .stickyFilters,
+  html.light body.cronos-is-scrolling #view-dashboard .card,
+  html.light body.cronos-is-scrolling #view-dashboard .kpi,
+  html.light body.cronos-is-scrolling #view-dashboard .tableWrap,
+  html.light body.cronos-is-scrolling #view-leads .card,
+  html.light body.cronos-is-scrolling #view-leads .leadCard,
+  html.light body.cronos-is-scrolling #view-leads .kv,
+  html.light body.cronos-is-scrolling #view-installments .card,
+  html.light body.cronos-is-scrolling #view-installments .instRow,
+  html.light body.cronos-is-scrolling #view-kanban .card,
+  html.light body.cronos-is-scrolling #view-kanban .kanCol,
+  html.light body.cronos-is-scrolling #view-kanban .kanCard,
+  html.light body.cronos-is-scrolling #view-kanban .kanHead,
+  :root.light body.cronos-is-scrolling .stickyFilters,
+  :root.light body.cronos-is-scrolling #view-dashboard .card,
+  :root.light body.cronos-is-scrolling #view-dashboard .kpi,
+  :root.light body.cronos-is-scrolling #view-dashboard .tableWrap,
+  :root.light body.cronos-is-scrolling #view-leads .card,
+  :root.light body.cronos-is-scrolling #view-leads .leadCard,
+  :root.light body.cronos-is-scrolling #view-leads .kv,
+  :root.light body.cronos-is-scrolling #view-installments .card,
+  :root.light body.cronos-is-scrolling #view-installments .instRow,
+  :root.light body.cronos-is-scrolling #view-kanban .card,
+  :root.light body.cronos-is-scrolling #view-kanban .kanCol,
+  :root.light body.cronos-is-scrolling #view-kanban .kanCard,
+  :root.light body.cronos-is-scrolling #view-kanban .kanHead,
+  body.light.cronos-is-scrolling .stickyFilters,
+  body.light.cronos-is-scrolling #view-dashboard .card,
+  body.light.cronos-is-scrolling #view-dashboard .kpi,
+  body.light.cronos-is-scrolling #view-dashboard .tableWrap,
+  body.light.cronos-is-scrolling #view-leads .card,
+  body.light.cronos-is-scrolling #view-leads .leadCard,
+  body.light.cronos-is-scrolling #view-leads .kv,
+  body.light.cronos-is-scrolling #view-installments .card,
+  body.light.cronos-is-scrolling #view-installments .instRow,
+  body.light.cronos-is-scrolling #view-kanban .card,
+  body.light.cronos-is-scrolling #view-kanban .kanCol,
+  body.light.cronos-is-scrolling #view-kanban .kanCard,
+  body.light.cronos-is-scrolling #view-kanban .kanHead{
+    background:#ffffff !important;
+    background-image:none !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+    box-shadow:none !important;
+    transform:none !important;
+  }
+
+  html.light body.cronos-is-scrolling #view-dashboard th,
+  html.light body.cronos-is-scrolling #view-leads th,
+  html.light body.cronos-is-scrolling #view-installments th,
+  html.light body.cronos-is-scrolling #view-kanban th,
+  :root.light body.cronos-is-scrolling #view-dashboard th,
+  :root.light body.cronos-is-scrolling #view-leads th,
+  :root.light body.cronos-is-scrolling #view-installments th,
+  :root.light body.cronos-is-scrolling #view-kanban th,
+  body.light.cronos-is-scrolling #view-dashboard th,
+  body.light.cronos-is-scrolling #view-leads th,
+  body.light.cronos-is-scrolling #view-installments th,
+  body.light.cronos-is-scrolling #view-kanban th{
+    background:#ffffff !important;
+    background-image:none !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+    box-shadow:none !important;
+  }
+
+  html.light body.cronos-is-scrolling #view-dashboard .kpiPct,
+  html.light body.cronos-is-scrolling #view-leads .badge,
+  html.light body.cronos-is-scrolling #view-installments .chip,
+  html.light body.cronos-is-scrolling #view-kanban .chip,
+  :root.light body.cronos-is-scrolling #view-dashboard .kpiPct,
+  :root.light body.cronos-is-scrolling #view-leads .badge,
+  :root.light body.cronos-is-scrolling #view-installments .chip,
+  :root.light body.cronos-is-scrolling #view-kanban .chip,
+  body.light.cronos-is-scrolling #view-dashboard .kpiPct,
+  body.light.cronos-is-scrolling #view-leads .badge,
+  body.light.cronos-is-scrolling #view-installments .chip,
+  body.light.cronos-is-scrolling #view-kanban .chip{
+    box-shadow:none !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+  }
+</style>
+<script id="cronos-light-scroll-performance-flag">
+(function(){
+  if(window.__CRONOS_LIGHT_SCROLL_PERFORMANCE_FLAG__) return;
+  window.__CRONOS_LIGHT_SCROLL_PERFORMANCE_FLAG__ = true;
+  var timer = 0;
+  var last = 0;
+  function isLightMode(){
+    return document.documentElement.classList.contains('light') ||
+           document.body.classList.contains('light') ||
+           (document.querySelector(':root.light') !== null);
+  }
+  function isDenseView(){
+    var active = document.querySelector('.view:not(.hidden)');
+    if(!active) return true;
+    return /view-(dashboard|leads|installments|kanban)/.test(active.id || '');
+  }
+  function markScrolling(){
+    if(!document.body || !isLightMode() || !isDenseView()) return;
+    var now = Date.now();
+    if(now - last > 48){
+      document.body.classList.add('cronos-is-scrolling');
+      last = now;
+    }else if(!document.body.classList.contains('cronos-is-scrolling')){
+      document.body.classList.add('cronos-is-scrolling');
+    }
+    clearTimeout(timer);
+    timer = setTimeout(function(){
+      if(document.body) document.body.classList.remove('cronos-is-scrolling');
+    }, 240);
+  }
+  document.addEventListener('scroll', markScrolling, {passive:true, capture:true});
+  document.addEventListener('wheel', markScrolling, {passive:true, capture:true});
+  document.addEventListener('touchmove', markScrolling, {passive:true, capture:true});
+})();
+</script>
+
+<style id="cronos-instant-sidebar-nav-fix-css">
+  /* Seleção lateral instantânea: evita o rastro da borda do botão anterior no mobile/touch. */
+  .sidebar .nav button{
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .sidebar .nav button:focus,
+  .sidebar .nav button:focus-visible{
+    outline:0 !important;
+  }
+  body.cronos-nav-switching .sidebar .nav button,
+  body.cronos-nav-switching .sidebar .nav button *,
+  body.cronos-nav-switching .nav button,
+  body.cronos-nav-switching .nav button *{
+    transition-duration:0s !important;
+    transition-delay:0s !important;
+  }
+  body.cronos-nav-switching .sidebar .nav button:not(.active),
+  body.cronos-nav-switching .nav button:not(.active){
+    box-shadow:none !important;
+    transform:none !important;
+    filter:none !important;
+  }
+  @media (hover:none), (pointer:coarse){
+    .sidebar .nav button:not(.active):hover,
+    .nav button:not(.active):hover,
+    html.light .sidebar .nav button:not(.active):hover,
+    :root.light .sidebar .nav button:not(.active):hover,
+    body.light .sidebar .nav button:not(.active):hover,
+    html:not(.light) .sidebar .nav button:not(.active):hover,
+    :root:not(.light) .sidebar .nav button:not(.active):hover,
+    body:not(.light) .sidebar .nav button:not(.active):hover{
+      border-color:var(--line) !important;
+      box-shadow:none !important;
+      transform:none !important;
+      filter:none !important;
+    }
+  }
+</style>
+<script id="cronos-instant-sidebar-nav-fix-js">
+(function(){
+  if(window.__CRONOS_INSTANT_SIDEBAR_NAV_FIX__) return;
+  window.__CRONOS_INSTANT_SIDEBAR_NAV_FIX__ = true;
+
+  var mainViews = {
+    dashboard:1,
+    leads:1,
+    kanban:1,
+    tasks:1,
+    installments:1,
+    users:1,
+    settings:1
+  };
+  var switchTimer = 0;
+
+  function markSwitching(){
+    try{
+      document.body.classList.add('cronos-nav-switching');
+      clearTimeout(switchTimer);
+      switchTimer = setTimeout(function(){
+        try{ document.body.classList.remove('cronos-nav-switching'); }catch(_){ }
+      }, 180);
+    }catch(_){ }
+  }
+
+  function isAllowedNavButton(btn){
+    if(!btn) return false;
+    if(btn.id === 'navHojeCronos' || btn.id === 'navCreditoSimulator') return true;
+    var view = btn.dataset && btn.dataset.view ? String(btn.dataset.view) : '';
+    return !!mainViews[view];
+  }
+
+  function clearInlineNavResidue(btn){
+    if(!btn) return;
+    try{
+      btn.style.boxShadow = '';
+      btn.style.borderColor = '';
+      btn.style.transform = '';
+      btn.style.filter = '';
+    }catch(_){ }
+  }
+
+  function paintInstant(btn){
+    if(!isAllowedNavButton(btn)) return;
+    markSwitching();
+
+    try{
+      var active = document.activeElement;
+      if(active && active !== btn && typeof active.blur === 'function') active.blur();
+    }catch(_){ }
+
+    try{
+      document.querySelectorAll('.sidebar .nav button, .nav button').forEach(function(other){
+        if(other !== btn){
+          other.classList.remove('active');
+          clearInlineNavResidue(other);
+        }
+      });
+      btn.classList.add('active');
+      clearInlineNavResidue(btn);
+    }catch(_){ }
+
+    // Em telas touch, o :hover pode ficar "grudado" no botão anterior. Força limpeza visual rápida.
+    setTimeout(function(){
+      try{
+        document.querySelectorAll('.sidebar .nav button:not(.active), .nav button:not(.active)').forEach(clearInlineNavResidue);
+        if(document.activeElement && document.activeElement.closest && document.activeElement.closest('.sidebar .nav button, .nav button')){
+          document.activeElement.blur();
+        }
+      }catch(_){ }
+    }, 80);
+  }
+
+  function getNavButtonFromEvent(ev){
+    try{
+      return ev.target && ev.target.closest ? ev.target.closest('.sidebar .nav button, .nav button') : null;
+    }catch(_){ return null; }
+  }
+
+  document.addEventListener('pointerdown', function(ev){
+    var btn = getNavButtonFromEvent(ev);
+    if(btn) paintInstant(btn);
+  }, true);
+
+  document.addEventListener('click', function(ev){
+    var btn = getNavButtonFromEvent(ev);
+    if(btn) paintInstant(btn);
+  }, true);
+
+  document.addEventListener('keydown', function(ev){
+    if(ev.key !== 'Enter' && ev.key !== ' ') return;
+    var btn = getNavButtonFromEvent(ev);
+    if(btn) paintInstant(btn);
+  }, true);
+})();
+</script>
+
+<style id="cronos-theme-badge-flicker-fix">
+/* =====================================================
+   Cronos — correção do flash cinza nas contagens ao trocar tema
+   ===================================================== */
+html.cronos-theme-switching .sidebar .nav button .pill,
+html.cronos-theme-switching .sidebar .nav #navHojeCronos .todayNavBadge,
+body.cronos-theme-switching .sidebar .nav button .pill,
+body.cronos-theme-switching .sidebar .nav #navHojeCronos .todayNavBadge,
+html.cronos-theme-switching .sidebar .nav button .pill *,
+html.cronos-theme-switching .sidebar .nav #navHojeCronos .todayNavBadge *,
+body.cronos-theme-switching .sidebar .nav button .pill *,
+body.cronos-theme-switching .sidebar .nav #navHojeCronos .todayNavBadge *{
+  transition:none !important;
+  animation:none !important;
+  filter:none !important;
+  opacity:1 !important;
+}
+
+html.light.cronos-theme-switching .sidebar .nav button.active .pill,
+html.light.cronos-theme-switching .sidebar .nav #navHojeCronos.active .todayNavBadge,
+body.light.cronos-theme-switching .sidebar .nav button.active .pill,
+body.light.cronos-theme-switching .sidebar .nav #navHojeCronos.active .todayNavBadge{
+  color:#ffffff !important;
+  -webkit-text-fill-color:#ffffff !important;
+  background:rgba(255,255,255,.20) !important;
+  border-color:rgba(255,255,255,.32) !important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.08) !important;
+}
+
+html.light.cronos-theme-switching .sidebar .nav button:not(.active) .pill,
+html.light.cronos-theme-switching .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
+body.light.cronos-theme-switching .sidebar .nav button:not(.active) .pill,
+body.light.cronos-theme-switching .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge{
+  color:#475569 !important;
+  -webkit-text-fill-color:#475569 !important;
+  background:rgba(37,99,235,.065) !important;
+  border-color:rgba(37,99,235,.14) !important;
+  box-shadow:none !important;
+}
+
+html:not(.light).cronos-theme-switching .sidebar .nav button.active .pill,
+html:not(.light).cronos-theme-switching .sidebar .nav #navHojeCronos.active .todayNavBadge,
+body:not(.light).cronos-theme-switching .sidebar .nav button.active .pill,
+body:not(.light).cronos-theme-switching .sidebar .nav #navHojeCronos.active .todayNavBadge{
+  color:#f8f7ff !important;
+  -webkit-text-fill-color:#f8f7ff !important;
+  background:rgba(255,255,255,.18) !important;
+  border-color:rgba(255,255,255,.24) !important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06) !important;
+}
+
+html:not(.light).cronos-theme-switching .sidebar .nav button:not(.active) .pill,
+html:not(.light).cronos-theme-switching .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
+body:not(.light).cronos-theme-switching .sidebar .nav button:not(.active) .pill,
+body:not(.light).cronos-theme-switching .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge{
+  color:rgba(226,232,240,.74) !important;
+  -webkit-text-fill-color:rgba(226,232,240,.74) !important;
+  background:rgba(15,23,42,.26) !important;
+  border-color:rgba(148,163,184,.20) !important;
+  box-shadow:none !important;
+}
+</style>
