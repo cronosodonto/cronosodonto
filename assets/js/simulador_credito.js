@@ -590,7 +590,7 @@
   function hide(){
     const v=$(VIEW_ID);
     if(v){v.classList.add('hidden');v.style.display='none'}
-    const b=$(NAV_ID); if(b)b.classList.remove('active');
+    const b=$(NAV_ID); if(b){b.classList.remove('active');try{window.CRONOS_SET_NAV_ACTIVE_VISUAL?.(b,false)}catch(_){}}
   }
   function hideOthers(){
     const host=mainHost();
@@ -609,7 +609,10 @@
     if(sticky){sticky.classList.add('hidden');sticky.dataset.creditoHidden='1'}
     const today=$('view-todayCronos');
     if(today){today.classList.add('hidden');today.style.display='none'}
-    qsa('.nav button').forEach(b=>b.classList.toggle('active',b.id===NAV_ID));
+    try{
+      if(typeof window.CRONOS_SYNC_NAV_ACTIVE==='function') window.CRONOS_SYNC_NAV_ACTIVE(b=>b.id===NAV_ID);
+      else qsa('.nav button').forEach(b=>b.classList.toggle('active',b.id===NAV_ID));
+    }catch(_){qsa('.nav button').forEach(b=>b.classList.toggle('active',b.id===NAV_ID));}
   }
   function recoverBind(){
     if(window.__CRONOS_CREDITO_RECOVERY__)return;

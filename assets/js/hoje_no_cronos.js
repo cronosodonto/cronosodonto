@@ -552,7 +552,10 @@
       view.style.display = "none";
     }
     const navBtn = $(NAV_ID);
-    if(navBtn) navBtn.classList.remove("active");
+    if(navBtn){
+      navBtn.classList.remove("active");
+      try{ window.CRONOS_SET_NAV_ACTIVE_VISUAL?.(navBtn, false); }catch(_){ }
+    }
   }
 
   function hideOtherViews(){
@@ -590,9 +593,12 @@
       today.style.background = "transparent";
     }
 
-    qsa(".nav button, nav button, [data-view]").forEach(b=>{
-      b.classList.toggle("active", b.id === NAV_ID);
-    });
+    try{
+      if(typeof window.CRONOS_SYNC_NAV_ACTIVE === "function") window.CRONOS_SYNC_NAV_ACTIVE(b=>b.id === NAV_ID);
+      else qsa(".nav button, nav button, [data-view]").forEach(b=>b.classList.toggle("active", b.id === NAV_ID));
+    }catch(_){
+      qsa(".nav button, nav button, [data-view]").forEach(b=>b.classList.toggle("active", b.id === NAV_ID));
+    }
   }
 
   function bindNativeNavRecovery(){
@@ -629,9 +635,12 @@
               v.style.display = "none";
             }
           });
-          qsa(".nav button, nav button, [data-view]").forEach(navBtn=>{
-            navBtn.classList.toggle("active", navBtn === btn);
-          });
+          try{
+            if(typeof window.CRONOS_SYNC_NAV_ACTIVE === "function") window.CRONOS_SYNC_NAV_ACTIVE(navBtn=>navBtn === btn);
+            else qsa(".nav button, nav button, [data-view]").forEach(navBtn=>navBtn.classList.toggle("active", navBtn === btn));
+          }catch(_){
+            qsa(".nav button, nav button, [data-view]").forEach(navBtn=>navBtn.classList.toggle("active", navBtn === btn));
+          }
         }
       }catch(_){}
 

@@ -63,7 +63,31 @@ window.__CRONOS_BOOTING__ = true;
    ========================= */
 
 function parseMoney(v){
-  const n = Number(v);
+  if(v == null || v === "") return 0;
+  if(typeof v === "number") return (isFinite(v) && !isNaN(v)) ? v : 0;
+  const raw = String(v).trim();
+  if(!raw) return 0;
+  const cleaned = raw.replace(/[^0-9,.-]/g, "");
+  if(!cleaned || cleaned === "-" || cleaned === "," || cleaned === ".") return 0;
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  let normalized = cleaned;
+  if(lastComma >= 0 && lastDot >= 0){
+    // BR: 1.234,56 | US: 1,234.56
+    normalized = lastComma > lastDot
+      ? cleaned.replace(/\./g, "").replace(/,/g, ".")
+      : cleaned.replace(/,/g, "");
+  }else if(lastComma >= 0){
+    normalized = cleaned.replace(/\./g, "").replace(/,/g, ".");
+  }else if(lastDot >= 0){
+    const parts = cleaned.split(".");
+    const last = parts[parts.length - 1] || "";
+    // Se parece milhar puro (1.000 / 12.000), remove separador. Se parece decimal, preserva.
+    normalized = (parts.length > 1 && last.length === 3 && parts.slice(1).every(x=>x.length===3))
+      ? cleaned.replace(/\./g, "")
+      : cleaned;
+  }
+  const n = Number(normalized);
   return (isFinite(n) && !isNaN(n)) ? n : 0;
 }
 function parseBRNum(v){
@@ -3664,6 +3688,23 @@ function moneyBR(v){
 function normPhone(s){
   return String(s||"").replace(/\D/g,"");
 }
+function formatPhoneBR(v){
+  const s = normPhone(v).slice(0, 11);
+  if(!s) return "";
+  if(s.length <= 2) return `(${s}`;
+  const ddd = s.slice(0, 2);
+  const rest = s.slice(2);
+  if(s.length <= 6) return `(${ddd}) ${rest}`;
+  if(s.length <= 10) return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+  return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5, 9)}`;
+}
+function formatCPFInput(v){
+  const s = String(v||"").replace(/\D/g,"").slice(0, 11);
+  if(s.length <= 3) return s;
+  if(s.length <= 6) return `${s.slice(0, 3)}.${s.slice(3)}`;
+  if(s.length <= 9) return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6)}`;
+  return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9, 11)}`;
+}
 function monthKeyFromDate(iso){
   if(!iso) return new Date().toISOString().slice(0,7);
   return iso.slice(0,7);
@@ -3675,7 +3716,7 @@ function monthLabel(key){
 }
 function formatCPF(v){
   const s = String(v||"").replace(/\D/g,"").slice(0,11);
-  if(s.length !== 11) return String(v||"").trim();
+  if(s.length !== 11) return formatCPFInput(v);
   return s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 }
 function calcAgeFromISO(iso){
@@ -3699,14 +3740,23 @@ function birthWithAgeLabel(iso){
 /* -------- Tema claro/escuro -------- */
 function applyTheme(theme){
   const root = document.documentElement;
-  if(theme === "light"){
+  const body = document.body;
+  const isLight = theme === "light";
+  if(isLight){
     root.classList.add("light");
+    if(body) body.classList.add("light");
     setThemeIcons("☾");
   }else{
     root.classList.remove("light");
+    if(body) body.classList.remove("light");
     setThemeIcons("☼");
   }
-  localStorage.setItem(THEMEKEY, theme);
+  try{ root.style.colorScheme = isLight ? "light" : "dark"; }catch(_){ }
+  try{
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if(meta) meta.setAttribute("content", isLight ? "#dbeafe" : "#0f172a");
+  }catch(_){ }
+  localStorage.setItem(THEMEKEY, isLight ? "light" : "dark");
 
   const syncInjectedThemeBits = ()=>{
     try{
@@ -5102,6 +5152,7 @@ function showAuth(){
   hideBootSplash();
   window.__CRONOS_SESSION_CHECKING__ = false;
   window.__CRONOS_BOOTING__ = false;
+  try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
   el("authView").classList.remove("hidden");
   el("appView").classList.add("hidden");
   hideAccessGate();
@@ -5128,6 +5179,7 @@ function showApp(actor){
   window.__CRONOS_SESSION_CHECKING__ = false;
   window.__CRONOS_BOOTING__ = false;
   window.__CRONOS_ACCESS_BLOCK__ = null;
+  try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
   setSupportEntryLoading(false);
   el("authView").classList.add("hidden");
   el("appView").classList.remove("hidden");
@@ -5176,41 +5228,73 @@ function masterName(masterId){
 
 /* -------- Filtros principais -------- */
 const FILTERKEY = "cronoscrm_phase1_filters";
-function loadFilters(){
-  const raw = localStorage.getItem(FILTERKEY);
+function defaultFilters(){
   const now = new Date();
-  const def = {
+  return {
     year: String(now.getFullYear()),
     monthKey: now.toISOString().slice(0,7), // YYYY-MM or "all"
     search:"",
     status:"",
+    campaign:"",
     treatment:"",
     origin:"",
     periodFrom:"",
     periodTo:"",
     order:"recent"
   };
-  if(!raw) return def;
-  try{
-    const parsed = JSON.parse(raw) || {};
-    const out = {...def, ...parsed};
-    if(!out.year){
-      const mk = String(out.monthKey||def.monthKey);
-      out.year = mk && mk!=="all" ? mk.slice(0,4) : def.year;
-    }
-    if(!out.periodFrom && (parsed.firstFrom||parsed.apptFrom)) out.periodFrom = parsed.firstFrom || parsed.apptFrom || "";
-    if(!out.periodTo && (parsed.firstTo||parsed.apptTo)) out.periodTo = parsed.firstTo || parsed.apptTo || "";
-    if(!out.order) out.order = "recent";
-    if(!out.monthKey || out.monthKey === "all"){
-      out.monthKey = def.monthKey;
-      out.year = def.year;
-    }
-    return out;
-  }catch{
-    return def;
-  }
 }
-function saveFilters(f){ localStorage.setItem(FILTERKEY, JSON.stringify(f)); }
+function normalizeFiltersShape(raw={}){
+  const def = defaultFilters();
+  const parsed = raw && typeof raw === "object" ? raw : {};
+  const out = {...def, ...parsed};
+  if(!out.year){
+    const mk = String(out.monthKey||def.monthKey);
+    out.year = mk && mk!=="all" ? mk.slice(0,4) : def.year;
+  }
+  if(!out.periodFrom && (parsed.firstFrom||parsed.apptFrom)) out.periodFrom = parsed.firstFrom || parsed.apptFrom || "";
+  if(!out.periodTo && (parsed.firstTo||parsed.apptTo)) out.periodTo = parsed.firstTo || parsed.apptTo || "";
+  if(!out.order) out.order = "recent";
+  if(!out.monthKey || out.monthKey === "all"){
+    out.monthKey = def.monthKey;
+    out.year = def.year;
+  }
+  return out;
+}
+function loadFilters(){
+  // Filtros são estado temporário da tela. Não persistem em F5, login ou logout.
+  try{ localStorage.removeItem(FILTERKEY); }catch(_){ }
+  return normalizeFiltersShape(window.__CRONOS_FILTERS_CURRENT__ || null);
+}
+function saveFilters(f){
+  window.__CRONOS_FILTERS_CURRENT__ = normalizeFiltersShape(f || {});
+  try{ localStorage.removeItem(FILTERKEY); }catch(_){ }
+}
+function resetFiltersToDefault({ui=false, keepMonth=false} = {}){
+  const base = defaultFilters();
+  if(keepMonth){
+    const current = getUIFilters ? getUIFilters() : {};
+    base.year = current.year || base.year;
+    base.monthKey = current.monthKey || base.monthKey;
+  }
+  window.__CRONOS_FILTERS_CURRENT__ = {...base};
+  window.__KPI_ACTIVE = null;
+  window.__DASH_STATUS_ACTIVE = "";
+  try{ window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null; }catch(_){ }
+  try{ localStorage.removeItem(FILTERKEY); }catch(_){ }
+  try{ currentPage = 1; }catch(_){ }
+  if(ui){
+    try{
+      ensureYearOptions();
+      setUIFilters(base);
+      ensureMonthOptions();
+      setUIFilters(base);
+    }catch(_){
+      try{ setUIFilters(base); }catch(__){ }
+    }
+  }
+  return base;
+}
+window.CRONOS_RESET_FILTERS = resetFiltersToDefault;
 
 function getUIFilters(){
   return {
@@ -5227,17 +5311,17 @@ function getUIFilters(){
   };
 }
 function setUIFilters(f){
-  const now = new Date();
-  setVal("fYear", f.year || String(now.getFullYear()));
-  setVal("fMonth", f.monthKey || now.toISOString().slice(0,7));
-  setVal("fSearch", f.search || "");
-  setVal("fStatus", f.status || "");
-  setVal("fCampaign", f.campaign || "");
-  setVal("fTreatment", f.treatment || "");
-  setVal("fOrigin", f.origin || "");
-  setVal("fPeriodFrom", f.periodFrom || "");
-  setVal("fPeriodTo", f.periodTo || "");
-  setVal("fOrder", f.order || "recent");
+  const normalized = normalizeFiltersShape(f || {});
+  setVal("fYear", normalized.year);
+  setVal("fMonth", normalized.monthKey);
+  setVal("fSearch", normalized.search || "");
+  setVal("fStatus", normalized.status || "");
+  setVal("fCampaign", normalized.campaign || "");
+  setVal("fTreatment", normalized.treatment || "");
+  setVal("fOrigin", normalized.origin || "");
+  setVal("fPeriodFrom", normalized.periodFrom || "");
+  setVal("fPeriodTo", normalized.periodTo || "");
+  setVal("fOrder", normalized.order || "recent");
 }
 
 function ensureYearOptions(){
@@ -5415,7 +5499,7 @@ function filteredEntries(){
     else if(order==="za") rows.sort((a,b)=> nameOf(b).localeCompare(nameOf(a)));
   }catch(_){}
 
-  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = { db, key: filterCacheKey, rows: rows.slice() };
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = { db, key: filterCacheKey, rows };
   return rows;
 }
 
@@ -5484,19 +5568,19 @@ function getEntryBudgetValue(e){
 
   try{
     const plans = Array.isArray(e.financialPlans) ? e.financialPlans : [];
-    const totalPlans = plans.reduce((sum,p)=>sum + Number(p.amount || p.total || 0), 0);
+    const totalPlans = plans.reduce((sum,p)=>sum + Math.max(parseMoney(p.amount || 0), parseMoney(p.total || 0)), 0);
     if(totalPlans > 0) return totalPlans;
   }catch(_){}
 
   try{
     const items = Array.isArray(e?.ficha?.plano) ? e.ficha.plano : [];
-    const fichaTotal = items.reduce((sum,item)=>sum + Number(item.valorFechado ?? item.valorBase ?? 0), 0);
+    const fichaTotal = items.reduce((sum,item)=>sum + Math.max(parseMoney(item.valorFechado ?? 0), parseMoney(item.valorBase ?? 0), parseMoney(item.valor ?? 0), parseMoney(item.value ?? 0)), 0);
     if(fichaTotal > 0) return fichaTotal;
   }catch(_){}
 
-  return (e.valueBudget!=null && !isNaN(Number(e.valueBudget)))
-    ? Number(e.valueBudget)
-    : ((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
+  const budget = parseMoney(e.valueBudget ?? e.budget ?? e.orcamento ?? e.valorOrcamento ?? 0);
+  if(budget > 0) return budget;
+  return parseMoney(e.valueEstimated ?? 0);
 }
 function getEntryPaidValue(e){
   if(!e) return 0;
@@ -5507,15 +5591,119 @@ function getEntryPaidValue(e){
       const pays = Array.isArray(p.payments) ? p.payments : [];
       return sum + pays
         .filter(pay=>!!pay.paidAt || pay.status === "PAGA" || pay.paid === true)
-        .reduce((s,pay)=>s + Number(pay.amount || 0), 0);
+        .reduce((s,pay)=>s + parseMoney(pay.amount || 0), 0);
     }, 0);
     if(totalPaidPlans > 0) return totalPaidPlans;
   }catch(_){}
 
-  return (e.valuePaid!=null && !isNaN(Number(e.valuePaid)))
-    ? Number(e.valuePaid)
-    : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
+  return (e.valuePaid!=null && !isNaN(parseMoney(e.valuePaid)))
+    ? parseMoney(e.valuePaid)
+    : ((e.valueClosed!=null && !isNaN(parseMoney(e.valueClosed))) ? parseMoney(e.valueClosed) : 0);
 }
+
+function cronosEntryFinancialSummary(entry, db=null){
+  if(!entry) return {budget:0, paid:0, open:0, source:"empty"};
+
+  const max0 = n => Math.max(0, Number(n || 0));
+  const paidLike = p => {
+    const st = String(p?.status || "").trim().toUpperCase();
+    return !!(p?.paidAt || p?.cashDate || p?.paidDate || p?.paymentDate || p?.paid === true || st === "PAGA" || st === "PAGO");
+  };
+
+  // 1) Recebimentos novos (financialPlans) — fonte principal depois da ficha.
+  let planTotal = 0;
+  let planPaid = 0;
+  try{
+    const plans = Array.isArray(entry.financialPlans) ? entry.financialPlans : [];
+    plans.forEach(plan=>{
+      const t = (typeof financialPlanTotals === "function") ? financialPlanTotals(plan) : null;
+      const payments = Array.isArray(plan?.payments) ? plan.payments : [];
+      const scheduled = t ? parseMoney(t.scheduled) : payments.reduce((s,p)=>s + parseMoney(p.amount), 0);
+      const paid = t ? parseMoney(t.paid) : payments.filter(paidLike).reduce((s,p)=>s + parseMoney(p.amount), 0);
+      const declaredTotal = parseMoney(plan?.amount ?? plan?.total ?? plan?.valor ?? plan?.value ?? 0);
+      planTotal += Math.max(declaredTotal, scheduled, paid);
+      planPaid += paid;
+    });
+  }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler recebimentos", e); }
+
+  // 2) Caixa/recebimentos globais — fallback para baixas antigas que ainda não ficaram dentro do plano.
+  let dbPaid = 0;
+  try{
+    if(db && Array.isArray(db.payments)){
+      const eid = String(entry.id || "");
+      db.payments.forEach(p=>{
+        if(String(p?.entryId || "") !== eid) return;
+        const st = String(p?.status || "").trim().toUpperCase();
+        if(st && st !== "PAGA" && st !== "PAGO" && p?.paid !== true && !p?.paidAt && !p?.cashDate && !p?.date) return;
+        dbPaid += (typeof cronosPaymentAmount === "function") ? parseMoney(cronosPaymentAmount(p)) : parseMoney(p?.value ?? p?.amount ?? p?.valor ?? 0);
+      });
+    }
+  }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler caixa", e); }
+
+  // 3) Parcelamentos legados não migrados para Recebimentos.
+  let legacyInstallTotal = 0;
+  let legacyInstallPaid = 0;
+  try{
+    const migrated = !!(entry.installPlan && entry.installPlan.migratedToFinancialPlanId);
+    if(entry.installPlan && !migrated){
+      const inst = Array.isArray(entry.installments) ? entry.installments : [];
+      const instTotal = inst.reduce((s,p)=>s + parseMoney(p.amount ?? p.value ?? p.valor ?? 0), 0);
+      const instPaid = inst.filter(paidLike).reduce((s,p)=>s + parseMoney(p.amount ?? p.value ?? p.valor ?? 0), 0);
+      legacyInstallTotal = Math.max(parseMoney(entry.installPlan.amount ?? entry.installPlan.total ?? 0), instTotal, instPaid);
+      legacyInstallPaid = instPaid;
+    }
+  }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler parcelamento legado", e); }
+
+  // 4) Ficha/plano de tratamento. Ela define o orçamento quando ainda não existe recebimento criado.
+  let fichaTotal = 0;
+  try{
+    const fichaItems = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
+    fichaTotal = fichaItems.reduce((sum,item)=>{
+      return sum + parseMoney(item?.valorFechado ?? item?.valorBase ?? item?.valor ?? item?.value ?? item?.amount ?? 0);
+    }, 0);
+  }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler ficha", e); }
+
+  // 5) Campos antigos do lead. Mantidos como fallback para não sumir histórico.
+  const legacyBudget = Math.max(
+    parseMoney(entry.valueBudget ?? 0),
+    parseMoney(entry.valueEstimated ?? 0),
+    parseMoney(entry.budget ?? 0),
+    parseMoney(entry.orcamento ?? 0),
+    parseMoney(entry.valorOrcamento ?? 0)
+  );
+
+  const explicitLegacyPaid = Math.max(
+    parseMoney(entry.valuePaid ?? 0),
+    parseMoney(entry.valorPago ?? 0),
+    parseMoney(entry.valorRecebido ?? 0),
+    parseMoney(entry.totalRecebido ?? 0),
+    parseMoney(entry.paidValue ?? 0),
+    parseMoney(entry.receivedValue ?? 0),
+    parseMoney(entry.amountPaid ?? 0),
+    parseMoney(entry.paidAmount ?? 0),
+    parseMoney(entry.totalPaid ?? 0),
+    parseMoney(entry.received ?? 0),
+    parseMoney(entry.pago ?? 0)
+  );
+
+  const legacyClosedFallback = parseMoney(entry.valueClosed ?? entry.valueClosedGross ?? 0);
+  const receiptPaid = Math.max(planPaid, dbPaid) + legacyInstallPaid;
+
+  const budget = max0(Math.max(legacyBudget, fichaTotal, planTotal + legacyInstallTotal));
+  let paid = max0(Math.max(receiptPaid, explicitLegacyPaid));
+
+  // Compatibilidade: em leads antigos, valueClosed às vezes era usado como “pago”.
+  // Só entra se não houver ficha/recebimento/parcelamento para evitar pintar orçamento novo como recebido no chute.
+  if(paid <= 0 && legacyClosedFallback > 0 && fichaTotal <= 0 && planTotal <= 0 && legacyInstallTotal <= 0){
+    paid = legacyClosedFallback;
+  }
+
+  paid = Math.min(paid, budget > 0 ? Math.max(budget, paid) : paid);
+  const open = max0((budget || 0) - (paid || 0));
+  const source = planTotal > 0 ? "recebimentos" : (fichaTotal > 0 ? "ficha" : (legacyInstallTotal > 0 ? "parcelamento" : "legado"));
+  return {budget, paid, open, source, planTotal, planPaid, dbPaid, fichaTotal, legacyBudget, legacyInstallTotal, legacyInstallPaid};
+}
+window.cronosEntryFinancialSummary = cronosEntryFinancialSummary;
 
 
 function getEntryCashPaidValue(e){
@@ -6047,12 +6235,13 @@ const previewLimit = window.DASH_PREVIEW_LIMIT || 10;
 const prev = previewSource.slice(0, previewLimit);
 
 const box = el("dashPreview");
+const dashContactsById = (typeof getContactsByIdMap === "function") ? getContactsByIdMap(db) : new Map((db.contacts||[]).map(c=>[String(c.id), c]));
 if(!prev.length){
   box.innerHTML = `<div class="muted">Nenhum lead encontrado${dashStatusActivePreview ? ` para <b>${escapeHTML(dashStatusLabel(dashStatusActivePreview))}</b>` : ""}.</div>`;
 } else {
   box.innerHTML =
     prev.map(e=>{
-      const c = db.contacts.find(x=>x.id===e.contactId);
+      const c = dashContactsById.get(String(e.contactId || ""));
       const tagRes = e.tags?.includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : "";
       return `
         <div class="card" style="padding:10px; margin-bottom:10px">
@@ -6096,7 +6285,7 @@ if(!prev.length){
 
 try{ __bindKpiClicks(); }catch(_){}
 
-requestAnimationFrame(()=>renderDashboardCharts(rows, dashRevenue));
+requestAnimationFrame(()=>renderDashboardCharts(rows));
 }
 function statusDotClass(status){
   const s = (status||"").trim();
@@ -6135,14 +6324,14 @@ function chipTreatment(e){
 window.DASH_PREVIEW_LIMIT = 10;
 
 /* -------- Dashboard charts (Canvas, sem biblioteca) -------- */
-function renderDashboardCharts(rows, precomputedRevenueData){
+function renderDashboardCharts(rows){
   const line = el("chartRevenueLine");
   const bar = el("chartStatusBars");
   if(!line || !bar) return;
 
   const actor = currentActor();
   const db = loadDB();
-  const revenueData = precomputedRevenueData || buildDashboardRevenueData(rows, db, actor, getUIFilters());
+  const revenueData = buildDashboardRevenueData(rows, db, actor, getUIFilters());
 
   const by = new Map();
   rows.forEach(e=> by.set(e.status||"—", (by.get(e.status||"—")||0)+1));
@@ -6170,6 +6359,7 @@ function renderDashboardCharts(rows, precomputedRevenueData){
 
   requestAnimationFrame(() => {
     __doDrawDashCharts();
+    setTimeout(__doDrawDashCharts, 120);
   });
 }
 function clearCanvas(canvas){
@@ -6563,10 +6753,7 @@ function renderLeadsTable(list){
 
   list = fullList.slice(start, end);
 
-  const firstLeadBatchSize = 18;
-  const immediateList = list.slice(0, firstLeadBatchSize);
-  const deferredList = list.slice(firstLeadBatchSize);
-  const buildLeadCardHTML = (e)=>{
+  const cardsHtml = (list||[]).map((e)=>{
     const c = e?.contactId ? _getContact(e.contactId) : null;
 
     const name = escapeHTML(c?.name || e.name || e.lead || e.nome || '—');
@@ -6608,9 +6795,12 @@ function renderLeadsTable(list){
     const apptTime = (e.apptTime || e.agendamentoHora || e.appointmentTime || c?.apptTime || c?.agendamentoHora || c?.appointmentTime || '').toString().trim();
     const apptText = (apptDate || apptTime) ? `${escapeHTML(apptDate)}${apptTime ? ' ' + escapeHTML(apptTime) : ''}` : '—';
 
-    const budgetVal = Number((e.valueBudget ?? e.budget ?? e.orcamento ?? e.valorOrcamento ?? 0)) || 0;
-    const paidVal   = Number((e.valuePaid ?? e.value_paid ?? e.valorPago ?? e.valor_pago ?? e.paid ?? e.pago ?? e.received ?? 0)) || 0;
-    const openVal   = Number((e.open ?? e.emAberto ?? e.aberto ?? (budgetVal - paidVal))) || 0;
+    const financeSummary = (typeof cronosEntryFinancialSummary === "function")
+      ? cronosEntryFinancialSummary(e, db)
+      : { budget:0, paid:0, open:0 };
+    const budgetVal = parseMoney(financeSummary.budget);
+    const paidVal   = parseMoney(financeSummary.paid);
+    const openVal   = parseMoney(financeSummary.open);
 
     const statusPill = chipStatus(e);
 
@@ -6658,28 +6848,10 @@ function renderLeadsTable(list){
         </div>
       </div>
     `;
-  };
-
-  const cardsHtml = (immediateList||[]).map(buildLeadCardHTML).join('');
+  }).join('');
 
   if(cardsWrap){
     cardsWrap.innerHTML = cardsHtml || `<div class="muted">Nenhum lead encontrado.</div>`;
-    if(deferredList.length){
-      window.__CRONOS_LEADS_APPEND_TOKEN__ = (window.__CRONOS_LEADS_APPEND_TOKEN__ || 0) + 1;
-      const appendToken = window.__CRONOS_LEADS_APPEND_TOKEN__;
-      const appendRest = ()=>{
-        if(appendToken !== window.__CRONOS_LEADS_APPEND_TOKEN__) return;
-        if(!document.body.contains(cardsWrap)) return;
-        cardsWrap.insertAdjacentHTML('beforeend', deferredList.map(buildLeadCardHTML).join(''));
-      };
-      if(typeof requestIdleCallback === 'function'){
-        requestIdleCallback(appendRest, {timeout:400});
-      }else if(typeof requestAnimationFrame === 'function'){
-        requestAnimationFrame(()=>setTimeout(appendRest, 0));
-      }else{
-        setTimeout(appendRest, 0);
-      }
-    }
   }else{
     tbody.innerHTML = cardsHtml || `<tr><td colspan="6" class="emptyCell">Nenhum lead encontrado.</td></tr>`;
   }
@@ -7005,6 +7177,35 @@ function scheduleSidebarPillsUpdate(){
   }
 }
 
+function showInstallmentsLoadingHint(){
+  const list = document.getElementById("instList");
+  if(list && !String(list.innerHTML || "").trim()){
+    list.innerHTML = `<div class="muted" style="padding:14px">Carregando recebimentos...</div>`;
+  }
+}
+
+function scheduleInstallmentsRender(){
+  window.__CRONOS_INSTALLMENTS_RENDER_TOKEN__ = (window.__CRONOS_INSTALLMENTS_RENDER_TOKEN__ || 0) + 1;
+  const token = window.__CRONOS_INSTALLMENTS_RENDER_TOKEN__;
+  showInstallmentsLoadingHint();
+
+  const run = ()=>{
+    if(token !== window.__CRONOS_INSTALLMENTS_RENDER_TOKEN__) return;
+    try{ renderInstallmentsView(); }
+    catch(err){
+      console.error('Recebimentos: falha ao renderizar', err);
+      const list = document.getElementById('instList');
+      if(list) list.innerHTML = `<div class="muted" style="padding:14px">Não foi possível carregar os recebimentos agora.</div>`;
+    }
+  };
+
+  if(typeof requestAnimationFrame === 'function'){
+    requestAnimationFrame(()=>setTimeout(run, 0));
+  }else{
+    setTimeout(run, 0);
+  }
+}
+
 function renderActiveViewOnly(view){
   scheduleSidebarPillsUpdate();
 
@@ -7025,7 +7226,7 @@ function renderActiveViewOnly(view){
     return;
   }
   if(view === "installments"){
-    try{ renderInstallmentsView(); }catch(_){ }
+    scheduleInstallmentsRender();
     return;
   }
   if(view === "users"){
@@ -7040,10 +7241,65 @@ function renderActiveViewOnly(view){
   try{ renderAll(); }catch(_){ }
 }
 
+
+function clearCronosNavInlineVisuals(btn){
+  if(!btn) return;
+  try{
+    btn.style.color = "";
+    btn.style.webkitTextFillColor = "";
+    btn.style.filter = "";
+  }catch(_){ }
+  try{
+    btn.querySelectorAll("span, span *, svg, .pill, .todayNavBadge, .credNavIcon").forEach(node=>{
+      try{
+        node.style.color = "";
+        node.style.webkitTextFillColor = "";
+        if(!String(node.getAttribute("style") || "").trim()) node.removeAttribute("style");
+      }catch(_){ }
+    });
+  }catch(_){ }
+}
+
+function setCronosNavActiveVisual(btn, isActive){
+  if(!btn) return;
+  try{ btn.classList.toggle("active", !!isActive); }catch(_){ }
+  clearCronosNavInlineVisuals(btn);
+  if(isActive){
+    try{
+      btn.style.color = "#fff";
+      btn.style.webkitTextFillColor = "#fff";
+      btn.querySelectorAll("span, span *, svg, .pill, .todayNavBadge, .credNavIcon").forEach(node=>{
+        try{
+          node.style.color = "#fff";
+          node.style.webkitTextFillColor = "#fff";
+        }catch(_){ }
+      });
+    }catch(_){ }
+  }
+}
+
+function syncCronosNavActive(matchFn){
+  const matcher = typeof matchFn === "function" ? matchFn : ()=>false;
+  try{
+    qsa(".sidebar .nav button, .nav button").forEach(btn=>{
+      let active = false;
+      try{ active = !!matcher(btn); }catch(_){ active = false; }
+      setCronosNavActiveVisual(btn, active);
+    });
+  }catch(_){ }
+}
+
+try{
+  window.CRONOS_SET_NAV_ACTIVE_VISUAL = setCronosNavActiveVisual;
+  window.CRONOS_SYNC_NAV_ACTIVE = syncCronosNavActive;
+  window.CRONOS_CLEAR_NAV_INLINE_VISUALS = clearCronosNavInlineVisuals;
+}catch(_){ }
+
 function applyActiveViewShell(targetView){
   if(!targetView || !APP_VIEWS.includes(targetView)) return;
 
-  qsa(".nav button").forEach(b=> b.classList.toggle("active", b.dataset.view===targetView));
+  try{ document.body.classList.add("cronos-route-changing"); }catch(_){ }
+  syncCronosNavActive(b=>b.dataset.view === targetView);
 
   APP_VIEWS.forEach(v=>{
     const node = el(`view-${v}`);
@@ -7059,6 +7315,9 @@ function applyActiveViewShell(targetView){
     sticky.classList.toggle("hidden", !viewsWithGlobalFilters.has(targetView));
     sticky.style.display = "";
   }
+  try{
+    requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove("cronos-route-changing")));
+  }catch(_){ try{ document.body.classList.remove("cronos-route-changing"); }catch(__){} }
 }
 
 function scheduleActiveViewRender(targetView){
@@ -7106,16 +7365,23 @@ function setActiveView(view){
 }
 
 /* -------- Modal helpers -------- */
-function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWidth="720px", width=null}){
+function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWidth=null, width=null, modalClass=""}){
   el("modalTitle").textContent = title;
   el("modalSub").textContent = sub;
   el("modalBody").innerHTML = bodyHTML;
   el("modalFoot").innerHTML = footHTML;
-  const __modalInner = document.querySelector('#modalBg .modalInner');
-  if(__modalInner){
-    __modalInner.style.maxWidth = maxWidth || '720px';
-    __modalInner.style.width = width || '';
+
+  // O modal real do Cronos é #modalBg > .modal.
+  // Antes a largura tentava mirar em .modalInner, que não existe nesse modal principal;
+  // por isso Ficha/Recebimentos pediam tela larga, mas continuavam presos em ~980px.
+  const __modalRoot = document.querySelector('#modalBg > .modal');
+  if(__modalRoot){
+    __modalRoot.className = 'modal';
+    if(modalClass) __modalRoot.classList.add(modalClass);
+    __modalRoot.style.maxWidth = maxWidth || '';
+    __modalRoot.style.width = width || '';
   }
+
   el("modalBg").classList.add("show");
   el("modalBg").setAttribute("aria-hidden","false");
   if(typeof onMount==="function") onMount();
@@ -7123,10 +7389,11 @@ function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWi
 function closeModal(){
   el("modalBg").classList.remove("show");
   el("modalBg").setAttribute("aria-hidden","true");
-  const __modalInner = document.querySelector('#modalBg .modalInner');
-  if(__modalInner){
-    __modalInner.style.maxWidth = '720px';
-    __modalInner.style.width = '';
+  const __modalRoot = document.querySelector('#modalBg > .modal');
+  if(__modalRoot){
+    __modalRoot.className = 'modal';
+    __modalRoot.style.maxWidth = '';
+    __modalRoot.style.width = '';
   }
 }
 el("modalClose").addEventListener("click", closeModal);
@@ -7167,12 +7434,12 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div class="suggest">
         <label>Telefone/WhatsApp *</label>
-        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(c.phone||"")}" placeholder="Ex: 98999990000" autocomplete="off"/>
+        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Ex: (98) 99999-0000" inputmode="numeric" autocomplete="off"/>
       </div>
 
       <div>
         <label>CPF</label>
-        <input id="lf_cpf" ${ro?"disabled":""} value="${escapeHTML(formatCPF(c.cpf||""))}" placeholder="Ex: 123.456.789-00" autocomplete="off"/>
+        <input id="lf_cpf" ${ro?"disabled":""} value="${escapeHTML(formatCPF(c.cpf||""))}" placeholder="Ex: 123.456.789-00" inputmode="numeric" autocomplete="off"/>
       </div>
 
       <div>
@@ -7187,8 +7454,8 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div>
         <label>Mês/Ano</label>
-        <input id="lf_month" ${isNew?"":"disabled"} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : new Date().toISOString().slice(0,7)))}" class="mono"/>
-        <div class="help muted" style="font-size:12px">Formato: YYYY-MM (ex: 2026-01).</div>
+        <input id="lf_month" type="month" ${ro?"disabled":""} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : new Date().toISOString().slice(0,7)))}" class="mono"/>
+        <div class="help muted" style="font-size:12px">Agora é editável. Use para corrigir leads salvos no mês errado.</div>
       </div>
 
       <div>
@@ -7676,6 +7943,42 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
   const nameInp = el("lf_name");
   const phoneInp = el("lf_phone");
+  const cpfInp = el("lf_cpf");
+  const monthInp = el("lf_month");
+  const firstInp = el("lf_first");
+
+  const applyMaskedValue = (input, formatter)=>{
+    if(!input) return;
+    const raw = input.value || "";
+    const start = input.selectionStart ?? raw.length;
+    const digitsBefore = raw.slice(0, start).replace(/\D/g, "").length;
+    const formatted = formatter(raw);
+    input.value = formatted;
+    let seen = 0;
+    let pos = formatted.length;
+    if(digitsBefore <= 0){
+      pos = 0;
+    }else{
+      for(let i=0; i<formatted.length; i++){
+        if(/\d/.test(formatted[i])) seen++;
+        if(seen >= digitsBefore){ pos = i + 1; break; }
+      }
+    }
+    requestAnimationFrame(()=>{
+      try{ input.setSelectionRange(pos, pos); }catch(_){}
+    });
+  };
+
+  phoneInp?.addEventListener("input", ()=> applyMaskedValue(phoneInp, formatPhoneBR));
+  cpfInp?.addEventListener("input", ()=> applyMaskedValue(cpfInp, formatCPFInput));
+
+  if(firstInp && monthInp){
+    firstInp.addEventListener("change", ()=>{
+      const mk = monthKeyFromDate(firstInp.value);
+      if(mk && (!monthInp.value || isNew)) monthInp.value = mk;
+    });
+  }
+
   const showSuggest = ()=>{
     const html = buildSuggestList(actor, nameInp.value, phoneInp.value);
     if(!html){ suggestBox.classList.remove("show"); suggestBox.innerHTML=""; return; }
@@ -7929,7 +8232,24 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const fromStatus = shouldRegisterRescue ? originalStatus : (entry.status || "");
     const toStatus = shouldRegisterRescue ? originalStatus : status;
 
-    entry.monthKey = editingEntryId ? (originalMonthKey || monthKey) : monthKey;
+    if(editingEntryId && originalMonthKey && originalMonthKey !== monthKey){
+      const duplicateMonthEntry = db.entries.find(e=>
+        e.masterId===actor.masterId &&
+        e.contactId===contact.id &&
+        e.monthKey===monthKey &&
+        String(e.id)!==String(editingEntryId)
+      );
+      if(duplicateMonthEntry){
+        const okMove = confirm(
+          "Já existe outro registro deste paciente em " + monthLabel(monthKey) + ".\n\n" +
+          "OK = salvar mesmo assim nesse mês.\n" +
+          "Cancelar = voltar e escolher outro mês."
+        );
+        if(!okMove) return;
+      }
+    }
+
+    entry.monthKey = monthKey;
     entry.firstContactAt = firstContactAt;
     entry.lastUpdateAt = now;
     entry.status = shouldRegisterRescue ? originalStatus : status;
@@ -8128,7 +8448,7 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   };
 
   setIf("lf_name", c.name || latest?.name || "");
-  setIf("lf_phone", c.phone || "");
+  setIf("lf_phone", formatPhoneBR(c.phone || ""));
   setIf("lf_cpf", formatCPF(c.cpf || ""));
   setIf("lf_birth", c.birthDate || "");
   if(el("lf_name")) el("lf_name").dataset.contactId = String(c.id || "");
@@ -9414,6 +9734,7 @@ function bindActions(){
     clearSupportContext();
     clearClinicAccessState();
     clearSession();
+    try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
     toast("Saiu");
     showAuth();
   };
@@ -9425,6 +9746,7 @@ function bindActions(){
     clearSupportContext();
     clearClinicAccessState();
     clearSession();
+    try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
     showAuth();
   };
   const btnCloseAccessNotice = el("btnCloseAccessNotice");
@@ -9438,6 +9760,7 @@ function bindActions(){
     DB = null;
     resetCloudContext();
     clearSession();
+    try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
     toast("Modo suporte encerrado");
     window.location.href = "/superadmin/";
   };
@@ -9666,10 +9989,11 @@ async function boot(){
 
   fillSelectOptions();
 
-  const f = loadFilters();
+  const f = resetFiltersToDefault({ ui:false });
   ensureYearOptions();
   setUIFilters(f);
   ensureMonthOptions();
+  setUIFilters(f);
 
   try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db); }catch(e){}
 
@@ -10258,6 +10582,7 @@ async function verificarSessao() {
   }
 
   clearSession();
+  try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
   resetCloudContext();
   DB = null;
   showAuth();
@@ -10787,13 +11112,32 @@ document.addEventListener("DOMContentLoaded", () => {
       style.textContent = `
         .btnFicha{border-color: rgba(99,102,241,.35)!important}
         .procCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
-        .procGrid{display:grid;grid-template-columns:minmax(260px,1.55fr) minmax(190px,1fr) minmax(110px,.7fr) minmax(120px,.75fr) minmax(120px,.75fr) minmax(130px,.8fr);gap:10px;align-items:end}
-        .procCatalogTable{min-width:1120px}
-        .procCatalogTable td,.procCatalogTable th{font-size:13px; white-space:nowrap}
-        .procCatalogTable td:first-child,.procCatalogTable th:first-child{white-space:normal}
-        .procCatalogTable .miniBtn{padding:5px 8px;font-size:12px}
-        .procCatalogTable th:last-child,.procCatalogTable td:last-child{position:sticky;right:0;z-index:2;background:var(--panel2);min-width:170px;white-space:nowrap}
-        .procCatalogTable td:last-child>button+button,.procCatalogTable td:last-child .miniBtn+.miniBtn{margin-left:8px}
+        .procGrid{display:grid;grid-template-columns:minmax(320px,1.55fr) minmax(220px,.9fr) minmax(130px,.55fr) minmax(130px,.55fr) minmax(130px,.55fr) minmax(140px,.6fr);gap:12px;align-items:end}
+        .procCatalogModal #modalBody{max-height:calc(92vh - 142px); overflow:auto; padding-right:8px}
+        .procCatalogModal .modalFoot{padding-top:10px;margin-top:10px}
+        .procCatalogModal .tableWrap{overflow-x:auto; max-width:100%}
+        .procCatalogTable{width:100%;min-width:0;table-layout:fixed}
+        .procCatalogTable td,.procCatalogTable th{font-size:13px;white-space:normal;vertical-align:middle;line-height:1.25;word-break:normal}
+        .procCatalogTable th:nth-child(1),.procCatalogTable td:nth-child(1){width:22%}
+        .procCatalogTable th:nth-child(2),.procCatalogTable td:nth-child(2){width:9%}
+        .procCatalogTable th:nth-child(3),.procCatalogTable td:nth-child(3){width:8%;white-space:nowrap}
+        .procCatalogTable th:nth-child(4),.procCatalogTable td:nth-child(4),
+        .procCatalogTable th:nth-child(5),.procCatalogTable td:nth-child(5){width:5%;white-space:nowrap;text-align:center}
+        .procCatalogTable th:nth-child(6),.procCatalogTable td:nth-child(6){width:6%;white-space:nowrap;text-align:center}
+        .procCatalogTable th:nth-child(7),.procCatalogTable td:nth-child(7){width:9%}
+        .procCatalogTable th:nth-child(8),.procCatalogTable td:nth-child(8){width:10%}
+        .procCatalogTable th:nth-child(9),.procCatalogTable td:nth-child(9){width:8%}
+        .procCatalogTable th:nth-child(10),.procCatalogTable td:nth-child(10){width:6%;white-space:nowrap;text-align:center}
+        .procCatalogTable th:nth-child(11),.procCatalogTable td:nth-child(11){width:12%;white-space:nowrap}
+        .procCatalogTable .miniBtn{padding:6px 8px;font-size:12px}
+        .procCatalogTable th:last-child,.procCatalogTable td:last-child{position:sticky;right:0;z-index:2;background:var(--panel2);min-width:150px;box-shadow:-10px 0 16px rgba(15,23,42,.04)}
+        .procCatalogTable td:last-child>button+button,.procCatalogTable td:last-child .miniBtn+.miniBtn{margin-left:6px}
+        html.light .procNameSuggestPanel,body.light .procNameSuggestPanel,:root.light .procNameSuggestPanel{background:#ffffff!important;color:#0f172a!important;border-color:rgba(15,23,42,.16)!important;box-shadow:0 20px 48px rgba(15,23,42,.20)!important}
+        html:not(.light) .procNameSuggestPanel,body:not(.light) .procNameSuggestPanel,:root:not(.light) .procNameSuggestPanel{background:#111827!important;color:#e5edf8!important;border-color:rgba(148,163,184,.26)!important;box-shadow:0 20px 48px rgba(0,0,0,.44)!important}
+        .procNameSuggestPanel{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;isolation:isolate}
+        .procNameSuggestPanel .miniBtn{background:rgba(148,163,184,.08);border-color:rgba(148,163,184,.20);display:flex;align-items:center;gap:8px}
+        .procNameSuggestPanel .miniBtn:hover{background:rgba(124,92,255,.14)}
+        @media(max-width:1120px){.procGrid{grid-template-columns:1fr 1fr}.procCatalogTable{min-width:1180px;table-layout:auto}.procCatalogTable th,.procCatalogTable td{white-space:nowrap}.procCatalogTable td:first-child,.procCatalogTable th:first-child{white-space:normal}}
         .brandCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
         .brandRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
         .brandPreview{width:72px;height:72px;border:1px dashed var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:rgba(255,255,255,.03)}
@@ -10816,8 +11160,29 @@ document.addEventListener("DOMContentLoaded", () => {
         .financialPaymentTable td:last-child{display:flex;gap:8px;align-items:center;flex-wrap:nowrap}
         @media(max-width:760px){.newBudgetGrid{grid-template-columns:1fr!important;max-width:100%!important}.newPayLayout{grid-template-columns:1fr!important;max-width:100%!important}.newPayTopGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.newPayObsGrid{grid-template-columns:1fr!important}}
         .fichaPlanToolbar{border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.025)}
+        .modalFichaWide{width:min(99vw,1880px)!important;max-width:min(99vw,1880px)!important}
+        .modalFichaWide #modalBody{max-height:calc(92vh - 142px)}
         .fichaTableWrap{overflow:auto;border:1px solid var(--line);border-radius:16px}
-        .fichaTable{width:100%;border-collapse:collapse;min-width:1480px;background:rgba(255,255,255,.02)}
+        .fichaTable{width:100%;border-collapse:collapse;min-width:1260px;background:rgba(255,255,255,.02)}
+        @media(min-width:1200px){
+          .modalFichaWide .fichaTable{min-width:0;table-layout:fixed}
+          .modalFichaWide .fichaTable th,.modalFichaWide .fichaTable td{padding:10px 10px;font-size:12.5px;overflow-wrap:anywhere}
+          .modalFichaWide .fichaTable th:nth-child(1),.modalFichaWide .fichaTable td:nth-child(1){width:3%}
+          .modalFichaWide .fichaTable th:nth-child(2),.modalFichaWide .fichaTable td:nth-child(2){width:3%}
+          .modalFichaWide .fichaTable th:nth-child(3),.modalFichaWide .fichaTable td:nth-child(3){width:8%}
+          .modalFichaWide .fichaTable th:nth-child(4),.modalFichaWide .fichaTable td:nth-child(4){width:22%;white-space:normal}
+          .modalFichaWide .fichaTable th:nth-child(5),.modalFichaWide .fichaTable td:nth-child(5){width:5%;text-align:center}
+          .modalFichaWide .fichaTable th:nth-child(6),.modalFichaWide .fichaTable td:nth-child(6){width:10%}
+          .modalFichaWide .fichaTable th:nth-child(7),.modalFichaWide .fichaTable td:nth-child(7){width:8%}
+          .modalFichaWide .fichaTable th:nth-child(8),.modalFichaWide .fichaTable td:nth-child(8){width:10%}
+          .modalFichaWide .fichaTable th:nth-child(9),.modalFichaWide .fichaTable td:nth-child(9){width:7%}
+          .modalFichaWide .fichaTable th:nth-child(10),.modalFichaWide .fichaTable td:nth-child(10){width:7%}
+          .modalFichaWide .fichaTable th:nth-child(11),.modalFichaWide .fichaTable td:nth-child(11){width:11%}
+          .modalFichaWide .fichaTable th:nth-child(12),.modalFichaWide .fichaTable td:nth-child(12){width:6%}
+          .modalFichaWide .fichaTable input[type="number"],
+          .modalFichaWide .fichaTable input[type="text"]{width:100%;box-sizing:border-box;min-width:0}
+          .modalFichaWide .fichaTable .miniBtn,.modalFichaWide .fichaTable .btn.small{padding:7px 9px;font-size:12px;white-space:nowrap}
+        }
         /* Ações não ficam mais fixas: agora rolam junto com a tabela, evitando sobreposição em linhas coloridas */
         .fichaTable th:last-child,.fichaTable td:last-child{position:static;right:auto;z-index:auto;background:inherit}
         .fichaTable th,.fichaTable td{padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
@@ -10838,7 +11203,20 @@ document.addEventListener("DOMContentLoaded", () => {
         .odontoPanel input,.odontoPanel select{width:100%;box-sizing:border-box}
         .odontoPanel .sideFormGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         .odontoPanel .sideFormGrid .full{grid-column:1 / -1}
-        .odontoPanel .sideActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+        .odontoPanel .sideActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+        .odontoPanel .fichaQuickActions{margin-top:12px;align-items:center}
+        .odontoPanel .fichaQuickActions .btn{width:auto;min-height:38px}
+        .odontoPanel .fichaAddPlanBtn{flex:1 1 220px;max-width:300px;justify-content:center}
+        .odontoPanel .fichaQuickActions .btn.small{flex:0 0 auto}
+        .fichaQuickActions .fichaPaidAction{border-color:rgba(245,158,11,.52);background:rgba(245,158,11,.14);color:var(--text)}
+        .fichaQuickActions .fichaDoneAction{border-color:rgba(34,197,94,.52);background:rgba(34,197,94,.14);color:var(--text)}
+        .fichaQuickActions .fichaAbsentAction{border-color:rgba(239,68,68,.52);background:rgba(239,68,68,.14);color:var(--text)}
+        .fichaQuickActions .fichaNeutralAction{border-color:var(--line);background:rgba(255,255,255,.035);color:var(--text)}
+        .light .fichaQuickActions .fichaPaidAction{border-color:#d97706;background:#f59e0b;color:#111827}
+        .light .fichaQuickActions .fichaDoneAction{border-color:#16a34a;background:#22c55e;color:#052e16}
+        .light .fichaQuickActions .fichaAbsentAction{border-color:#dc2626;background:#ef4444;color:#fff}
+        .light .fichaQuickActions .fichaNeutralAction{background:#ffffff;color:#0f172a}
+        .fichaMoneyInput{font-variant-numeric:tabular-nums}
         .faceChipWrap{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
         .faceChip{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);border-radius:999px;padding:8px 10px;font-weight:800;font-size:12px;cursor:pointer;transition:.15s ease}
         .faceChip:hover{background:rgba(124,92,255,.12);border-color:rgba(124,92,255,.45)}
@@ -10973,7 +11351,17 @@ document.addEventListener("DOMContentLoaded", () => {
       return 'Dente';
     }
     function parseMoneyInput(v){
-      const n = Number(String(v ?? '').replace(',', '.'));
+      const raw = String(v ?? '').trim();
+      if(!raw) return 0;
+      let normalized = raw.replace(/\s/g,'').replace(/R\$/gi,'');
+      const hasComma = normalized.includes(',');
+      const hasDot = normalized.includes('.');
+      if(hasComma && hasDot){
+        normalized = normalized.replace(/\./g,'').replace(',', '.');
+      }else if(hasComma){
+        normalized = normalized.replace(',', '.');
+      }
+      const n = Number(normalized);
       return Number.isFinite(n) ? n : 0;
     }
     function percent(num, den){
@@ -11097,6 +11485,23 @@ document.addEventListener("DOMContentLoaded", () => {
           ${escapeHTML(av.label || 'Avaliação')} • ${fmtBR(av.date)} • ${row.count} item(ns) • ${moneyBR(row.total)}
         </button>`;
       }).join('');
+    }
+
+    function getFichaEvaluationItems(ficha, evaluationId){
+      const evalId = String(evaluationId || ficha?.activeEvaluationId || 'eval_1');
+      return (Array.isArray(ficha?.plano) ? ficha.plano : []).filter(item=>String(item.avaliacaoId || 'eval_1') === evalId);
+    }
+
+    function resetFichaTransientSelection(state){
+      if(!state) return;
+      state.selectedItemIds = [];
+      state.selectedTeeth = [];
+      state.selectedTooth = null;
+      state.selectedFace = '';
+      state.selectedProcId = '';
+      state.procSearch = '';
+      state.procMenuOpen = false;
+      state.price = '';
     }
 
     function buildFichaReceivingPayments({total, type, date, method, count, obs, recordPaidNow=false}){
@@ -11342,7 +11747,9 @@ document.addEventListener("DOMContentLoaded", () => {
         bodyHTML:'<div id="procCatalogApp" style="width:100%"></div>',
         footHTML:'<button class="btn" onclick="closeModal()">Fechar</button>',
         onMount: renderProcedureCatalogApp,
-        maxWidth:'min(99vw, 1880px)'
+        maxWidth:'min(99vw, 1880px)',
+        width:'min(99vw, 1880px)',
+        modalClass:'procCatalogModal'
       });
     }
 
@@ -11367,7 +11774,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <div style="position:relative">
             <label>Nome do procedimento</label>
             <input id="procName" type="text" autocomplete="new-password" spellcheck="false" placeholder="Ex: Restauração de resina 1 face" value="${escapeHTML(editItem?.nome || '')}" oninput="CRONOS_PROC_UI.nameInput(this.value)" onfocus="CRONOS_PROC_UI.nameInput(this.value)" onblur="CRONOS_PROC_UI.hideNameSuggestions()">
-            <div id="procNameSuggestions" style="display:none; position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:80"></div>
+            <div id="procNameSuggestions" style="display:none; position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:9999"></div>
           </div>
           <div>
             <label>Categoria</label>
@@ -11600,7 +12007,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       host.style.display = 'block';
       host.innerHTML = `
-        <div style="border:1px solid rgba(148,163,184,.30); border-radius:14px; padding:8px; background:var(--panel, rgba(15,23,42,.96)); box-shadow:0 18px 44px rgba(15,23,42,.24); max-height:190px; overflow:auto">
+        <div class="procNameSuggestPanel" style="border:1px solid rgba(148,163,184,.30); border-radius:14px; padding:8px; background:#ffffff; box-shadow:0 18px 44px rgba(15,23,42,.24); max-height:240px; overflow:auto">
           <div class="small muted" style="margin-bottom:6px">Procedimentos parecidos:</div>
           <div style="display:grid; gap:6px">
             ${matches.map(item=>`
@@ -11804,6 +12211,57 @@ window.CRONOS_PROC_UI = {
     function lineDiscountPct(item){
       return percent(lineDiscount(item), Number(item.valorBase||0));
     }
+    let __fichaValueLeadsTimer = null;
+    function __scheduleFichaLeadsFinancialRefresh(){
+      try{ clearTimeout(__fichaValueLeadsTimer); }catch(_){}
+      __fichaValueLeadsTimer = setTimeout(()=>{
+        try{ renderLeadsTable(filteredEntries()); }catch(_){}
+      }, 260);
+    }
+    function __setFichaText(id, text){
+      const node = el(id);
+      if(node) node.textContent = text;
+    }
+    function __setFichaHTML(id, html){
+      const node = el(id);
+      if(node) node.innerHTML = html;
+    }
+    function refreshFichaLiveFinancialSummary(entry, changedItemId=''){
+      try{
+        const state = getFichaState();
+        if(!state || !entry) return;
+        const ficha = ensureFicha(entry);
+        const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+        const visiblePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
+        const totals = calcFichaTotals(visiblePlan || [], entry);
+        __setFichaText('fichaTotalBase', moneyBR(totals.totalBase));
+        __setFichaText('fichaTotalFechado', moneyBR(totals.totalFechado));
+        __setFichaText('fichaTotalDesconto', moneyBR(totals.totalDesconto));
+        __setFichaText('fichaTotalDescontoPct', `${totals.descontoPct.toFixed(2)}%`);
+        __setFichaText('fichaTotalFeito', moneyBR(totals.totalFeito));
+        __setFichaText('fichaTotalPago', moneyBR(totals.totalPago));
+        __setFichaText('fichaTotalAberto', moneyBR(totals.emAberto));
+
+        if(changedItemId){
+          const item = (Array.isArray(ficha.plano) ? ficha.plano : []).find(x=>String(x.id) === String(changedItemId));
+          if(item){
+            __setFichaHTML(`fichaDiscount_${String(changedItemId)}`, `${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span>`);
+          }
+        }
+
+        const visiblePlanIds = new Set(visiblePlan.map(item=>String(item.id)));
+        const selectedIds = new Set((Array.isArray(state.selectedItemIds) ? state.selectedItemIds.map(String) : []).filter(id=>visiblePlanIds.has(id)));
+        const selectedItems = visiblePlan.filter(item=>selectedIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
+        const selectedTotal = selectedItems.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
+        const btn = el('fichaGenerateReceivingBtn');
+        if(btn){
+          btn.textContent = `Gerar recebimento (${selectedItems.length}) • ${moneyBR(selectedTotal)}`;
+          btn.disabled = !selectedItems.length;
+        }
+      }catch(err){
+        console.warn('Falha ao atualizar resumo financeiro da ficha:', err);
+      }
+    }
     function getToothMeta(entry, tooth){
       const ficha = ensureFicha(entry);
       return ficha.odontograma?.[String(tooth)] || {};
@@ -11891,13 +12349,16 @@ window.CRONOS_PROC_UI = {
       const selectedProc = getSelectedProc(state, db);
       const catalogAll = getProcedureCatalog(db).filter(x=>x.ativo !== false);
       const catalog = catalogAll;
-      const totals = calcFichaTotals(ficha.plano || [], entry);
       const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
-      const selectedFichaItemIds = new Set(Array.isArray(state.selectedItemIds) ? state.selectedItemIds.map(String) : []);
-      const selectedFichaItems = ficha.plano.filter(item=>selectedFichaItemIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
+      const visiblePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
+      const visiblePlanIds = new Set(visiblePlan.map(item=>String(item.id)));
+      const totals = calcFichaTotals(visiblePlan || [], entry);
+      const selectedFichaItemIds = new Set((Array.isArray(state.selectedItemIds) ? state.selectedItemIds.map(String) : []).filter(id=>visiblePlanIds.has(id)));
+      state.selectedItemIds = Array.from(selectedFichaItemIds);
+      const selectedFichaItems = visiblePlan.filter(item=>selectedFichaItemIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
       const selectedFichaTotal = selectedFichaItems.reduce((s,item)=>s + Number(item.valorFechado || 0), 0);
       const selectedToothMeta = state.selectedTooth ? (ficha.odontograma?.[state.selectedTooth] || {}) : {};
-      const selectedToothPlan = state.selectedTooth ? ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(state.selectedTooth))) : [];
+      const selectedToothPlan = state.selectedTooth ? visiblePlan.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(state.selectedTooth))) : [];
       const selectedPrice = state.price !== '' ? String(state.price) : (selectedProc ? String(Number(selectedProc.valorBase||0)) : '');
       const selectedProcLabel = selectedProc ? procLabel(selectedProc) : '';
       const procInputValue = state.procSearch !== '' ? state.procSearch : selectedProcLabel;
@@ -11914,7 +12375,7 @@ window.CRONOS_PROC_UI = {
       const selectedTeeth = Array.isArray(state.selectedTeeth) ? state.selectedTeeth.slice() : [];
       const selectedTeethLabel = selectedTeeth.length ? selectedTeeth.join(', ') : 'Nenhum dente selecionado';
       const selectedPlanCount = selectedTeeth.length
-        ? ficha.plano.filter(item=>{
+        ? visiblePlan.filter(item=>{
             const dentesItem = String(item.dente || '').split(',').map(s=>s.trim()).filter(Boolean);
             return selectedTeeth.some(t=>dentesItem.includes(String(t)));
           }).length
@@ -11940,12 +12401,12 @@ window.CRONOS_PROC_UI = {
               <div style="margin-top:12px" class="small">Clique nos números para selecionar um ou vários dentes. Depois escolha o procedimento no painel ao lado. Andamento e ausência também ficam no painel, sem misturar as coisas.</div>
 
               <div class="totalsGrid fichaTotalsUnderOdonto">
-                <div class="totalBox"><span class="label">Valor de tabela</span><div class="value">${moneyBR(totals.totalBase)}</div></div>
-                <div class="totalBox"><span class="label">Valor de orçamento</span><div class="value">${moneyBR(totals.totalFechado)}</div></div>
-                <div class="totalBox"><span class="label">Desconto total</span><div class="value">${moneyBR(totals.totalDesconto)}</div><div class="small">${totals.descontoPct.toFixed(2)}%</div></div>
-                <div class="totalBox"><span class="label">Total realizado</span><div class="value">${moneyBR(totals.totalFeito)}</div></div>
-                <div class="totalBox"><span class="label">Total pago</span><div class="value">${moneyBR(totals.totalPago)}</div></div>
-                <div class="totalBox"><span class="label">Em aberto</span><div class="value">${moneyBR(totals.emAberto)}</div></div>
+                <div class="totalBox"><span class="label">Valor de tabela</span><div class="value" id="fichaTotalBase">${moneyBR(totals.totalBase)}</div></div>
+                <div class="totalBox"><span class="label">Valor de orçamento</span><div class="value" id="fichaTotalFechado">${moneyBR(totals.totalFechado)}</div></div>
+                <div class="totalBox"><span class="label">Desconto total</span><div class="value" id="fichaTotalDesconto">${moneyBR(totals.totalDesconto)}</div><div class="small" id="fichaTotalDescontoPct">${totals.descontoPct.toFixed(2)}%</div></div>
+                <div class="totalBox"><span class="label">Total realizado</span><div class="value" id="fichaTotalFeito">${moneyBR(totals.totalFeito)}</div></div>
+                <div class="totalBox"><span class="label">Total pago</span><div class="value" id="fichaTotalPago">${moneyBR(totals.totalPago)}</div></div>
+                <div class="totalBox"><span class="label">Em aberto</span><div class="value" id="fichaTotalAberto">${moneyBR(totals.emAberto)}</div></div>
               </div>
             </div>
 
@@ -11993,14 +12454,13 @@ window.CRONOS_PROC_UI = {
                 </div>
               </div>
 
-              <button class="btn primary" style="width:100%; margin-top:12px" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
-
-              <div class="sideActions">
-                <button class="btn small" onclick="CRONOS_FICHA_UI.markSelectedProgress('paid')">Marcar pago/em pagamento</button>
-                <button class="btn ok small" onclick="CRONOS_FICHA_UI.markSelectedProgress('done')">Marcar realizado</button>
-                <button class="btn danger small" onclick="CRONOS_FICHA_UI.setAbsentForSelection()">Marcar ausente</button>
-                <button class="btn small" onclick="CRONOS_FICHA_UI.clearSelection()">Limpar seleção</button>
-                <button class="btn small" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
+              <div class="sideActions fichaQuickActions">
+                <button class="btn primary fichaAddPlanBtn" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
+                <button class="btn small fichaPaidAction" onclick="CRONOS_FICHA_UI.markSelectedProgress('paid')">Marcar pago/em pagamento</button>
+                <button class="btn small fichaDoneAction" onclick="CRONOS_FICHA_UI.markSelectedProgress('done')">Marcar realizado</button>
+                <button class="btn small fichaAbsentAction" onclick="CRONOS_FICHA_UI.setAbsentForSelection()">Marcar ausente</button>
+                <button class="btn small fichaNeutralAction" onclick="CRONOS_FICHA_UI.clearSelection()">Limpar seleção</button>
+                <button class="btn small fichaNeutralAction" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
               </div>
               <div class="small muted" style="margin-top:10px">Pago/em pagamento e realizado são andamentos separados. Ausente é condição clínica separada.</div>
             </div>
@@ -12010,12 +12470,12 @@ window.CRONOS_PROC_UI = {
         <div class="fichaLayout">
           <div class="fichaPlanToolbar" style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;margin:0 0 10px">
             <div>
-              <div style="font-weight:900">Plano de tratamento</div>
-              <div class="small muted">Cada procedimento tem avaliação, data e vínculo financeiro. Selecione procedimentos sem recebimento para gerar cobrança à vista ou parcelada.</div>
+              <div style="font-weight:900">Plano de tratamento • ${escapeHTML(activeEvaluation.label || 'Avaliação')} ${activeEvaluation.date ? `(${fmtBR(activeEvaluation.date)})` : ''}</div>
+              <div class="small muted">Mostrando apenas os procedimentos desta avaliação. Use os botões abaixo para alternar entre avaliações anteriores.</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${fichaEvaluationSummaryHTML(ficha)}</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-              <button class="btn primary small" type="button" onclick="CRONOS_FICHA_UI.openReceivingForSelected()" ${selectedFichaItems.length ? '' : 'disabled'}>Gerar recebimento (${selectedFichaItems.length}) • ${moneyBR(selectedFichaTotal)}</button>
+              <button id="fichaGenerateReceivingBtn" class="btn primary small" type="button" onclick="CRONOS_FICHA_UI.openReceivingForSelected()" ${selectedFichaItems.length ? '' : 'disabled'}>Gerar recebimento (${selectedFichaItems.length}) • ${moneyBR(selectedFichaTotal)}</button>
               <button class="btn small" type="button" onclick="CRONOS_FICHA_UI.refreshPlanBaseValues()">Atualizar valores de tabela</button>
             </div>
           </div>
@@ -12038,7 +12498,7 @@ window.CRONOS_PROC_UI = {
                 </tr>
               </thead>
               <tbody>
-                ${ficha.plano.length ? ficha.plano.map((item, idx)=>{
+                ${visiblePlan.length ? visiblePlan.map((item, idx)=>{
                   const finance = getFichaItemFinancialStatus(entry, item);
                   const available = isFichaItemAvailableForReceiving(entry, item);
                   const checked = selectedFichaItemIds.has(String(item.id));
@@ -12051,8 +12511,8 @@ window.CRONOS_PROC_UI = {
                     <td>${escapeHTML(item.dente || '—')}</td>
                     <td><input id="fichaFace_${escapeHTML(item.id)}" type="text" value="${escapeHTML(item.face || '')}" placeholder="Ex: M, O/I" oninput="CRONOS_FICHA_UI.updateFace('${escapeHTML(item.id)}', this.value)"></td>
                     <td>${moneyBR(item.valorBase || 0)}</td>
-                    <td><input id="fichaValue_${escapeHTML(item.id)}" type="number" step="0.01" value="${escapeHTML(String(Number(item.valorFechado||0)))}" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value)"></td>
-                    <td>${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span></td>
+                    <td><input id="fichaValue_${escapeHTML(item.id)}" class="fichaMoneyInput" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(Number(item.valorFechado||0)).replace('.', ','))}" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value, this)" onblur="CRONOS_FICHA_UI.formatValue('${escapeHTML(item.id)}', this)"></td>
+                    <td id="fichaDiscount_${escapeHTML(item.id)}">${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span></td>
                     <td><button class="btn small ${item.feito ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.toggleDone('${escapeHTML(item.id)}')">${item.feito ? 'Feito' : 'Pendente'}</button></td>
                     <td>
                       ${fichaFinanceBadge(entry, item)}
@@ -12060,7 +12520,7 @@ window.CRONOS_PROC_UI = {
                     </td>
                     <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="miniBtn danger" onclick="CRONOS_FICHA_UI.removeItem('${escapeHTML(item.id)}')">Excluir</button></div></td>
                   </tr>
-                `}).join('') : `<tr><td colspan="12"><div class="fichaEmpty">Nenhum item no plano ainda.</div></td></tr>`}
+                `}).join('') : `<tr><td colspan="12"><div class="fichaEmpty">Nenhum procedimento nesta avaliação ainda. É aqui que a reavaliação começa limpa, sem misturar com a anterior.</div></td></tr>`}
               </tbody>
             </table>
           </div>
@@ -12223,7 +12683,13 @@ window.CRONOS_PROC_UI = {
             valorFechado,
             feito:false,
             pago:false,
-            observacao:''
+            observacao:'',
+            avaliacaoId: evalInfo.id,
+            avaliacaoLabel: evalInfo.label,
+            avaliacaoData: evalInfo.date,
+            createdAt: new Date().toISOString(),
+            financialPlanId:'',
+            recebimentoId:''
           });
         }
         saveDB(db);
@@ -12292,17 +12758,26 @@ window.CRONOS_PROC_UI = {
         const msg = `${updated} atualizado(s) • ${unchanged} sem mudança${notFound ? ` • ${notFound} não encontrado(s)` : ''}`;
         toast('Valores de tabela atualizados ✅', msg);
       },
-      updateValue(itemId, v){
+      updateValue(itemId, v, node=null){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
         const entry = getEntryById(s.entryId);
         if(!entry) return;
-        const item = ensureFicha(entry).plano.find(x=>x.id===itemId);
+        const item = ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId));
         if(!item) return;
         item.valorFechado = parseMoneyInput(v);
         saveDB(db);
-        __cronosRenderFichaPreservingScroll({focusId:`fichaValue_${itemId}`});
-        try{ renderLeadsTable(filteredEntries()); }catch(_){ }
+        refreshFichaLiveFinancialSummary(entry, itemId);
+        __scheduleFichaLeadsFinancialRefresh();
+      },
+      formatValue(itemId, node=null){
+        const s = getFichaState(); if(!s) return;
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const item = ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId));
+        if(!item) return;
+        if(node) node.value = String(Number(item.valorFechado || 0)).replace('.', ',');
+        refreshFichaLiveFinancialSummary(entry, itemId);
       },
       updateFace(itemId, v){
         const s = getFichaState(); if(!s) return;
@@ -12442,6 +12917,7 @@ window.CRONOS_PROC_UI = {
         const ficha = ensureFicha(entry);
         if(ficha.avaliacoes.some(a=>String(a.id)===String(evalId))){
           ficha.activeEvaluationId = String(evalId);
+          resetFichaTransientSelection(s);
           saveDB(db, { immediate:true });
         }
         renderFichaApp();
@@ -12458,6 +12934,7 @@ window.CRONOS_PROC_UI = {
         const av = { id: uid('eval'), label: nextFichaEvaluationLabel(ficha), date, createdAt:new Date().toISOString() };
         ficha.avaliacoes.push(av);
         ficha.activeEvaluationId = av.id;
+        resetFichaTransientSelection(s);
         saveDB(db, { immediate:true });
         renderFichaApp();
         toast('Nova avaliação criada ✅', `${av.label} • ${fmtBR(date)}`);
@@ -12641,7 +13118,8 @@ window.CRONOS_PROC_UI = {
         footHTML:`<button class="btn" onclick="printFicha('${escapeHTML(String(entryId))}')">🖨️ Imprimir ficha</button><button class="btn" onclick="closeModal()">Fechar</button>`,
         onMount: renderFichaApp,
         maxWidth:'min(99vw, 1880px)',
-        width:'min(99vw, 1880px)'
+        width:'min(99vw, 1880px)',
+        modalClass:'modalFichaWide'
       });
     };
 
