@@ -2105,79 +2105,13 @@ body.light .modal,
 }
 
 /* =====================================================
-   Cronos — barras de rolagem mais suaves e estáveis
+   Cronos — rolagem leve e estável
    ===================================================== */
-html{
-  scroll-behavior:smooth;
-}
+html{ scroll-behavior:auto; }
 
-/* Scrollbar global: mais fina, arredondada e discreta. */
-*{
-  scrollbar-width:thin;
-  scrollbar-color:rgba(148,163,184,.42) transparent;
-}
-
-*::-webkit-scrollbar{
-  width:10px;
-  height:10px;
-}
-*::-webkit-scrollbar-track{
-  background:transparent;
-}
-*::-webkit-scrollbar-thumb{
-  border-radius:999px;
-  border:3px solid transparent;
-  background-clip:padding-box;
-  background-color:rgba(148,163,184,.36);
-}
-*::-webkit-scrollbar-thumb:hover{
-  background-color:rgba(148,163,184,.58);
-}
-*::-webkit-scrollbar-corner{
-  background:transparent;
-}
-
-/* No tema claro, a barra ganha um tom azul/cinza leve sem ficar pesada. */
-:root.light *,
-html.light *,
-body.light *{
-  scrollbar-color:rgba(37,99,235,.34) rgba(15,23,42,.035);
-}
-:root.light *::-webkit-scrollbar-track,
-html.light *::-webkit-scrollbar-track,
-body.light *::-webkit-scrollbar-track{
-  background:rgba(15,23,42,.025);
-  border-radius:999px;
-}
-:root.light *::-webkit-scrollbar-thumb,
-html.light *::-webkit-scrollbar-thumb,
-body.light *::-webkit-scrollbar-thumb{
-  background-color:rgba(37,99,235,.30);
-}
-:root.light *::-webkit-scrollbar-thumb:hover,
-html.light *::-webkit-scrollbar-thumb:hover,
-body.light *::-webkit-scrollbar-thumb:hover{
-  background-color:rgba(37,99,235,.48);
-}
-
-/* No tema escuro, mantém o visual discreto e sem brilho exagerado. */
-:root:not(.light) *,
-html:not(.light) *,
-body:not(.light) *{
-  scrollbar-color:rgba(148,163,184,.40) transparent;
-}
-:root:not(.light) *::-webkit-scrollbar-thumb,
-html:not(.light) *::-webkit-scrollbar-thumb,
-body:not(.light) *::-webkit-scrollbar-thumb{
-  background-color:rgba(148,163,184,.34);
-}
-:root:not(.light) *::-webkit-scrollbar-thumb:hover,
-html:not(.light) *::-webkit-scrollbar-thumb:hover,
-body:not(.light) *::-webkit-scrollbar-thumb:hover{
-  background-color:rgba(226,232,240,.52);
-}
-
-/* Áreas com rolagem: evita “pulo” quando a barra aparece e melhora toque/trackpad. */
+/* Evita aplicar pintura de scrollbar em absolutamente tudo. Isso pesava em listas/cards no tema claro. */
+html,
+body,
 .sidebar,
 .main,
 .tableWrap,
@@ -2192,28 +2126,261 @@ body:not(.light) *::-webkit-scrollbar-thumb:hover{
 .modalBody,
 .drawerBody,
 [data-cronos-scroll-key]{
-  scroll-behavior:smooth;
-  -webkit-overflow-scrolling:touch;
-  overscroll-behavior-x:contain;overscroll-behavior-y:auto;
-  scrollbar-gutter:stable;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(148,163,184,.42) transparent;
 }
 
-/* Barras horizontais ficam mais baixas para não parecerem uma régua de obra. */
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.sidebar::-webkit-scrollbar,
+.main::-webkit-scrollbar,
+.tableWrap::-webkit-scrollbar,
+.hscrollTop::-webkit-scrollbar,
+#leadsTopScroll::-webkit-scrollbar,
+#dashPreview::-webkit-scrollbar,
+#creditAntList::-webkit-scrollbar,
+.fichaTableWrap::-webkit-scrollbar,
+.procSuggestMenu::-webkit-scrollbar,
+.perfTableScroll::-webkit-scrollbar,
+.modal-body::-webkit-scrollbar,
+.modalBody::-webkit-scrollbar,
+.drawerBody::-webkit-scrollbar,
+[data-cronos-scroll-key]::-webkit-scrollbar{
+  width:10px;
+  height:10px;
+}
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+.sidebar::-webkit-scrollbar-track,
+.main::-webkit-scrollbar-track,
+.tableWrap::-webkit-scrollbar-track,
+.hscrollTop::-webkit-scrollbar-track,
+#leadsTopScroll::-webkit-scrollbar-track,
+#dashPreview::-webkit-scrollbar-track,
+#creditAntList::-webkit-scrollbar-track,
+.fichaTableWrap::-webkit-scrollbar-track,
+.procSuggestMenu::-webkit-scrollbar-track,
+.perfTableScroll::-webkit-scrollbar-track,
+.modal-body::-webkit-scrollbar-track,
+.modalBody::-webkit-scrollbar-track,
+.drawerBody::-webkit-scrollbar-track,
+[data-cronos-scroll-key]::-webkit-scrollbar-track{ background:transparent; }
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+.sidebar::-webkit-scrollbar-thumb,
+.main::-webkit-scrollbar-thumb,
+.tableWrap::-webkit-scrollbar-thumb,
+.hscrollTop::-webkit-scrollbar-thumb,
+#leadsTopScroll::-webkit-scrollbar-thumb,
+#dashPreview::-webkit-scrollbar-thumb,
+#creditAntList::-webkit-scrollbar-thumb,
+.fichaTableWrap::-webkit-scrollbar-thumb,
+.procSuggestMenu::-webkit-scrollbar-thumb,
+.perfTableScroll::-webkit-scrollbar-thumb,
+.modal-body::-webkit-scrollbar-thumb,
+.modalBody::-webkit-scrollbar-thumb,
+.drawerBody::-webkit-scrollbar-thumb,
+[data-cronos-scroll-key]::-webkit-scrollbar-thumb{
+  border-radius:999px;
+  border:3px solid transparent;
+  background-clip:padding-box;
+  background-color:rgba(148,163,184,.36);
+}
+
+:root.light,
+html.light,
+body.light{
+  scrollbar-color:rgba(37,99,235,.28) rgba(15,23,42,.02);
+}
+
+.sidebar,
+.main,
+.tableWrap,
+.hscrollTop,
+#leadsTopScroll,
+#dashPreview,
+#creditAntList,
+.fichaTableWrap,
+.procSuggestMenu,
+.perfTableScroll,
+.modal-body,
+.modalBody,
+.drawerBody,
+[data-cronos-scroll-key]{
+  scroll-behavior:auto;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-x:contain;
+  overscroll-behavior-y:auto;
+}
+
 .tableWrap::-webkit-scrollbar:horizontal,
 .hscrollTop::-webkit-scrollbar,
-#leadsTopScroll::-webkit-scrollbar{
-  height:8px;
+#leadsTopScroll::-webkit-scrollbar{ height:8px; }
+
+
+
+/* =====================================================
+   Cronos — base de performance para telas densas
+   ===================================================== */
+#view-dashboard .card,
+#view-leads .leadCard,
+#view-installments .instRow,
+#view-kanban .kanCol,
+#view-kanban .kanCard{
+  backface-visibility:hidden;
+}
+#view-leads .leadCard,
+#view-installments .instRow,
+#view-kanban .kanCard{
+  contain:layout paint style;
+}
+@supports (content-visibility:auto){
+  #view-leads .leadCard,
+  #view-installments .instRow,
+  #view-kanban .kanCard{
+    content-visibility:auto;
+    contain-intrinsic-size:140px;
+  }
 }
 
-/* A sidebar no modo claro fica com rolagem menos chamativa. */
-:root.light .sidebar::-webkit-scrollbar-thumb,
-html.light .sidebar::-webkit-scrollbar-thumb,
-body.light .sidebar::-webkit-scrollbar-thumb{
-  background-color:rgba(37,99,235,.24);
-}
-:root.light .sidebar::-webkit-scrollbar-thumb:hover,
-html.light .sidebar::-webkit-scrollbar-thumb:hover,
-body.light .sidebar::-webkit-scrollbar-thumb:hover{
-  background-color:rgba(37,99,235,.42);
+/* =====================================================
+   Cronos — Ficha/Prontuário mais leve sem quebrar o turbo geral
+   Base: mantém a correção que já funcionou nas telas principais.
+   Aqui o foco é só a ficha: odontograma, tabela e modal.
+   ===================================================== */
+#modalBg.show .modal.modalFichaWide,
+.modalFichaWide{
+  transform:translateZ(0);
+  backface-visibility:hidden;
 }
 
+/* O blur do fundo do modal pesa durante a rolagem da ficha nos dois temas. */
+html.cronos-ficha-open #modalBg.modalBg,
+body.cronos-ficha-open #modalBg.modalBg,
+#modalBg.show:has(.modalFichaWide){
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+
+.modalFichaWide #modalBody{
+  scroll-behavior:auto !important;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  will-change:scroll-position;
+}
+
+/* A ficha usava o th global do Cronos: sticky + blur. Bonito, mas caro pra rolar. */
+.modalFichaWide .fichaTable th{
+  position:static !important;
+  top:auto !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+  box-shadow:none !important;
+}
+.modalFichaWide .fichaTable th,
+.modalFichaWide .fichaTable td{
+  will-change:auto !important;
+}
+
+/* O odontograma carregava a versão clara e a escura ao mesmo tempo via opacity.
+   Agora só a imagem do tema ativo participa da pintura. */
+.modalFichaWide .odontoRefStage .odontoBaseLight{
+  display:none !important;
+  opacity:1 !important;
+}
+.modalFichaWide .odontoRefStage .odontoBaseDark{
+  display:block !important;
+  opacity:1 !important;
+}
+html.light .modalFichaWide .odontoRefStage .odontoBaseLight,
+body.light .modalFichaWide .odontoRefStage .odontoBaseLight,
+:root.light .modalFichaWide .odontoRefStage .odontoBaseLight{
+  display:block !important;
+}
+html.light .modalFichaWide .odontoRefStage .odontoBaseDark,
+body.light .modalFichaWide .odontoRefStage .odontoBaseDark,
+:root.light .modalFichaWide .odontoRefStage .odontoBaseDark{
+  display:none !important;
+}
+
+/* Remove transformação animada dos botões dos dentes, que repinta o odontograma inteiro em máquinas mais fracas. */
+.modalFichaWide .toothOverlayBox{
+  transition:background-color .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease !important;
+  box-shadow:none !important;
+}
+.modalFichaWide .toothOverlayBox:hover{
+  transform:translate(-50%,0) !important;
+}
+.modalFichaWide .toothOverlayBox.active{
+  box-shadow:0 0 0 3px rgba(124,92,255,.18) !important;
+}
+
+/* Só durante a rolagem da ficha: corta firula visual, sem tocar Dashboard/Leads/Recebimentos/Funil. */
+html.cronos-ficha-scrolling .modalFichaWide,
+body.cronos-ficha-scrolling .modalFichaWide{
+  box-shadow:none !important;
+}
+html.cronos-ficha-scrolling .modalFichaWide .fichaHead .cardMini,
+body.cronos-ficha-scrolling .modalFichaWide .fichaHead .cardMini,
+html.cronos-ficha-scrolling .modalFichaWide .fichaAddWrap,
+body.cronos-ficha-scrolling .modalFichaWide .fichaAddWrap,
+html.cronos-ficha-scrolling .modalFichaWide .fichaPlanToolbar,
+body.cronos-ficha-scrolling .modalFichaWide .fichaPlanToolbar,
+html.cronos-ficha-scrolling .modalFichaWide .fichaTableWrap,
+body.cronos-ficha-scrolling .modalFichaWide .fichaTableWrap,
+html.cronos-ficha-scrolling .modalFichaWide .odontoFull,
+body.cronos-ficha-scrolling .modalFichaWide .odontoFull,
+html.cronos-ficha-scrolling .modalFichaWide .odontoPanel,
+body.cronos-ficha-scrolling .modalFichaWide .odontoPanel,
+html.cronos-ficha-scrolling .modalFichaWide .totalBox,
+body.cronos-ficha-scrolling .modalFichaWide .totalBox{
+  box-shadow:none !important;
+  filter:none !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html.cronos-ficha-scrolling .modalFichaWide *,
+body.cronos-ficha-scrolling .modalFichaWide *{
+  animation:none !important;
+}
+
+
+/* =====================================================
+   Cronos — seleção lateral instantânea, sem rastro de borda
+   ===================================================== */
+.sidebar .nav button{
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.sidebar .nav button:focus,
+.sidebar .nav button:focus-visible{
+  outline:0 !important;
+}
+body.cronos-nav-switching .sidebar .nav button,
+body.cronos-nav-switching .sidebar .nav button *,
+body.cronos-nav-switching .nav button,
+body.cronos-nav-switching .nav button *{
+  transition-duration:0s !important;
+  transition-delay:0s !important;
+}
+body.cronos-nav-switching .sidebar .nav button:not(.active),
+body.cronos-nav-switching .nav button:not(.active){
+  box-shadow:none !important;
+  transform:none !important;
+  filter:none !important;
+}
+@media (hover:none), (pointer:coarse){
+  .sidebar .nav button:not(.active):hover,
+  .nav button:not(.active):hover,
+  html.light .sidebar .nav button:not(.active):hover,
+  :root.light .sidebar .nav button:not(.active):hover,
+  body.light .sidebar .nav button:not(.active):hover,
+  html:not(.light) .sidebar .nav button:not(.active):hover,
+  :root:not(.light) .sidebar .nav button:not(.active):hover,
+  body:not(.light) .sidebar .nav button:not(.active):hover{
+    border-color:var(--line) !important;
+    box-shadow:none !important;
+    transform:none !important;
+    filter:none !important;
+  }
+}
