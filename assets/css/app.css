@@ -186,6 +186,26 @@
   -webkit-text-fill-color:#fff !important;
 }
 
+/* Correção: botão desativado não pode herdar texto branco do estado ativo anterior */
+.sidebar .nav button:not(.active),
+.sidebar .nav button:not(.active) > span:first-child,
+.sidebar .nav button:not(.active) > span:first-child *,
+.nav button:not(.active),
+.nav button:not(.active) > span:first-child,
+.nav button:not(.active) > span:first-child *{
+  color:var(--text) !important;
+  -webkit-text-fill-color:var(--text) !important;
+}
+.sidebar .nav button.active,
+.sidebar .nav button.active > span:first-child,
+.sidebar .nav button.active > span:first-child *,
+.nav button.active,
+.nav button.active > span:first-child,
+.nav button.active > span:first-child *{
+  color:#fff !important;
+  -webkit-text-fill-color:#fff !important;
+}
+
     .pill{
       font-size:12px; color:var(--muted);
       border:1px solid var(--line);
@@ -2084,60 +2104,116 @@ body.light .modal,
   box-shadow: 0 24px 70px rgba(15, 23, 42, .22) !important;
 }
 
+/* =====================================================
+   Cronos — barras de rolagem mais suaves e estáveis
+   ===================================================== */
+html{
+  scroll-behavior:smooth;
+}
 
+/* Scrollbar global: mais fina, arredondada e discreta. */
+*{
+  scrollbar-width:thin;
+  scrollbar-color:rgba(148,163,184,.42) transparent;
+}
 
-/* Performance do tema claro: mantém o visual limpo sem obrigar o navegador a pintar frescura cara em toda troca de aba */
-:root.light{
-  --panel:#ffffff;
-  --panel2:#ffffff;
-  --shadow:0 4px 14px rgba(15,23,42,.07);
+*::-webkit-scrollbar{
+  width:10px;
+  height:10px;
 }
-:root.light body{
-  background:linear-gradient(135deg, #eaf3ff, #edfdf4) fixed !important;
+*::-webkit-scrollbar-track{
+  background:transparent;
 }
-:root.light .sidebar,
-:root.light .card,
-:root.light .kpi,
-:root.light #view-leads .leadCard{
-  background:#ffffff !important;
+*::-webkit-scrollbar-thumb{
+  border-radius:999px;
+  border:3px solid transparent;
+  background-clip:padding-box;
+  background-color:rgba(148,163,184,.36);
 }
-:root.light .card,
-:root.light .kpi,
-:root.light .brand,
-:root.light #view-leads .leadCard{
-  box-shadow:0 3px 10px rgba(15,23,42,.06) !important;
+*::-webkit-scrollbar-thumb:hover{
+  background-color:rgba(148,163,184,.58);
 }
-:root.light .stickyFilters,
-:root.light th,
-:root.light .toast,
-:root.light .modalBg,
-:root.light #featureBlockedOverlay{
-  backdrop-filter:none !important;
-  -webkit-backdrop-filter:none !important;
+*::-webkit-scrollbar-corner{
+  background:transparent;
 }
-:root.light .nav button,
-:root.light .btn,
-:root.light .iconBtn,
-:root.light .miniBtn,
-:root.light #view-leads .leadCard{
-  transition-property: background-color, border-color, color, box-shadow !important;
-  transition-duration:.10s !important;
+
+/* No tema claro, a barra ganha um tom azul/cinza leve sem ficar pesada. */
+:root.light *,
+html.light *,
+body.light *{
+  scrollbar-color:rgba(37,99,235,.34) rgba(15,23,42,.035);
 }
-:root.light .nav button:hover,
-:root.light .btn:hover,
-:root.light .iconBtn:hover,
-:root.light .miniBtn:hover,
-:root.light #view-leads .leadCard:hover{
-  transform:none !important;
-  filter:none !important;
+:root.light *::-webkit-scrollbar-track,
+html.light *::-webkit-scrollbar-track,
+body.light *::-webkit-scrollbar-track{
+  background:rgba(15,23,42,.025);
+  border-radius:999px;
 }
-:root.light #view-leads .leadsCards{
-  contain:layout paint style;
+:root.light *::-webkit-scrollbar-thumb,
+html.light *::-webkit-scrollbar-thumb,
+body.light *::-webkit-scrollbar-thumb{
+  background-color:rgba(37,99,235,.30);
 }
-:root.light #view-leads .leadCard{
-  content-visibility:auto;
-  contain-intrinsic-size:150px;
+:root.light *::-webkit-scrollbar-thumb:hover,
+html.light *::-webkit-scrollbar-thumb:hover,
+body.light *::-webkit-scrollbar-thumb:hover{
+  background-color:rgba(37,99,235,.48);
 }
-:root.light #view-leads .kv{
-  box-shadow:none !important;
+
+/* No tema escuro, mantém o visual discreto e sem brilho exagerado. */
+:root:not(.light) *,
+html:not(.light) *,
+body:not(.light) *{
+  scrollbar-color:rgba(148,163,184,.40) transparent;
 }
+:root:not(.light) *::-webkit-scrollbar-thumb,
+html:not(.light) *::-webkit-scrollbar-thumb,
+body:not(.light) *::-webkit-scrollbar-thumb{
+  background-color:rgba(148,163,184,.34);
+}
+:root:not(.light) *::-webkit-scrollbar-thumb:hover,
+html:not(.light) *::-webkit-scrollbar-thumb:hover,
+body:not(.light) *::-webkit-scrollbar-thumb:hover{
+  background-color:rgba(226,232,240,.52);
+}
+
+/* Áreas com rolagem: evita “pulo” quando a barra aparece e melhora toque/trackpad. */
+.sidebar,
+.main,
+.tableWrap,
+.hscrollTop,
+#leadsTopScroll,
+#dashPreview,
+#creditAntList,
+.fichaTableWrap,
+.procSuggestMenu,
+.perfTableScroll,
+.modal-body,
+.modalBody,
+.drawerBody,
+[data-cronos-scroll-key]{
+  scroll-behavior:smooth;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-x:contain;overscroll-behavior-y:auto;
+  scrollbar-gutter:stable;
+}
+
+/* Barras horizontais ficam mais baixas para não parecerem uma régua de obra. */
+.tableWrap::-webkit-scrollbar:horizontal,
+.hscrollTop::-webkit-scrollbar,
+#leadsTopScroll::-webkit-scrollbar{
+  height:8px;
+}
+
+/* A sidebar no modo claro fica com rolagem menos chamativa. */
+:root.light .sidebar::-webkit-scrollbar-thumb,
+html.light .sidebar::-webkit-scrollbar-thumb,
+body.light .sidebar::-webkit-scrollbar-thumb{
+  background-color:rgba(37,99,235,.24);
+}
+:root.light .sidebar::-webkit-scrollbar-thumb:hover,
+html.light .sidebar::-webkit-scrollbar-thumb:hover,
+body.light .sidebar::-webkit-scrollbar-thumb:hover{
+  background-color:rgba(37,99,235,.42);
+}
+
