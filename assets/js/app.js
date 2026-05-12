@@ -11092,6 +11092,7 @@ document.addEventListener("DOMContentLoaded", () => {
       {value:'M', label:'Mesial'},
       {value:'D', label:'Distal'},
       {value:'O', label:'Oclusal'},
+      {value:'C', label:'Cervical'},
       {value:'I', label:'Incisal'}
     ];
 
