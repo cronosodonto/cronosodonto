@@ -614,6 +614,27 @@
 
       restoreNativeViews();
       hideTodayView();
+
+      try{
+        const targetView = btn?.dataset?.view || "";
+        const targetId = targetView ? `view-${targetView}` : "";
+        const host = findMainHost();
+        if(targetId){
+          qsa('[id^="view-"], .view', host).forEach(v=>{
+            if(v.id === targetId){
+              v.classList.remove("hidden");
+              v.style.display = "";
+            }else if(v.id !== VIEW_ID){
+              v.classList.add("hidden");
+              v.style.display = "none";
+            }
+          });
+          qsa(".nav button, nav button, [data-view]").forEach(navBtn=>{
+            navBtn.classList.toggle("active", navBtn === btn);
+          });
+        }
+      }catch(_){}
+
       scheduleScrollCronosToTop();
     };
 

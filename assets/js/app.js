@@ -4662,6 +4662,8 @@ function loadDB(){
 }
 function saveDB(db, options={}){
   DB = normalizeDBShape(db);
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
 
   if(isSupportMode()){
     setSupportDB(DB);
@@ -5311,6 +5313,18 @@ function filteredEntries(){
   const f = getUIFilters();
 
   const rawSearch = String(el("fSearch")?.value ?? f.search ?? "").trim();
+  const filterCacheKey = JSON.stringify({
+    masterId: actor.masterId || "",
+    filters: f || {},
+    search: rawSearch,
+    entriesLength: Array.isArray(db.entries) ? db.entries.length : 0,
+    contactsLength: Array.isArray(db.contacts) ? db.contacts.length : 0,
+    version: window.__CRONOS_DATA_VERSION__ || 0
+  });
+  const cached = window.__CRONOS_FILTERED_ENTRIES_CACHE__;
+  if(cached && cached.db === db && cached.key === filterCacheKey && Array.isArray(cached.rows)){
+    return cached.rows;
+  }
 
   function normText(v){
     return String(v ?? "")
@@ -5339,7 +5353,7 @@ function filteredEntries(){
     return e.firstContactAt || e.apptDate || e.createdAt || e.updatedAt || (e.monthKey ? (String(e.monthKey).slice(0,7) + "-01") : "");
   }
 
-  const contactsById = new Map((db.contacts || []).map(c=>[String(c.id), c]));
+  const contactsById = getContactsByIdMap(db);
 
   let rows = (db.entries || [])
     .filter(e=>e.masterId === actor.masterId);
@@ -5401,6 +5415,7 @@ function filteredEntries(){
     else if(order==="za") rows.sort((a,b)=> nameOf(b).localeCompare(nameOf(a)));
   }catch(_){}
 
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = { db, key: filterCacheKey, rows: rows.slice() };
   return rows;
 }
 
@@ -5666,9 +5681,33 @@ function buildDashboardRevenueData(rows, db, actor, filters){
   const monthNamesShort = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
   const fromISO = String(filters?.periodFrom||"").trim();
   const toISO = String(filters?.periodTo||"").trim();
+  const rowsSafe = Array.isArray(rows) ? rows : [];
+
+  const cacheKey = JSON.stringify({
+    masterId: actor?.masterId || actor?.clinicId || "",
+    monthKey: filters?.monthKey || "",
+    year: filters?.year || currentYear,
+    fromISO,
+    toISO,
+    rowsLength: rowsSafe.length,
+    entriesLength: Array.isArray(db?.entries) ? db.entries.length : 0,
+    contactsLength: Array.isArray(db?.contacts) ? db.contacts.length : 0,
+    paymentsLength: Array.isArray(db?.payments) ? db.payments.length : 0
+  });
+  const cache = window.__CRONOS_DASH_REVENUE_CACHE__;
+  if(cache && cache.rows === rowsSafe && cache.db === db && cache.key === cacheKey && (Date.now() - cache.ts) < 1500){
+    return cache.data;
+  }
 
   const entries = Array.isArray(db?.entries) ? db.entries : [];
   const contacts = Array.isArray(db?.contacts) ? db.contacts : [];
+  const entryById = new Map(entries.map(e=>[String(e?.id||""), e]));
+  const entryByContact = new Map();
+  entries.forEach(e=>{
+    const cid = String(e?.contactId || "");
+    if(cid && !entryByContact.has(cid)) entryByContact.set(cid, e);
+  });
+  const contactById = (typeof getContactsByIdMap === "function") ? getContactsByIdMap(db) : new Map(contacts.map(c=>[String(c?.id||""), c]));
 
   const entryKey = (obj)=>{
     const entryId = String(obj?.entryId || obj?.id || "").trim();
@@ -5680,21 +5719,16 @@ function buildDashboardRevenueData(rows, db, actor, filters){
 
   const findEntryFrom = (obj)=>{
     const entryId = String(obj?.entryId || obj?.id || "").trim();
-    if(entryId){
-      const e = entries.find(x=>String(x?.id||"")===entryId);
-      if(e) return e;
-    }
+    if(entryId && entryById.has(entryId)) return entryById.get(entryId);
     const contactId = String(obj?.contactId || "").trim();
-    if(contactId){
-      return entries.find(x=>String(x?.contactId||"")===contactId) || null;
-    }
+    if(contactId && entryByContact.has(contactId)) return entryByContact.get(contactId);
     return null;
   };
 
   const contactNameFrom = (obj)=>{
     const entry = findEntryFrom(obj);
     const contactId = String(obj?.contactId || entry?.contactId || "").trim();
-    const contact = contactId ? contacts.find(c=>String(c?.id||"")===contactId) : null;
+    const contact = contactId ? contactById.get(contactId) : null;
     return contact?.name || obj?.contactName || obj?.name || entry?.name || "Sem paciente vinculado";
   };
 
@@ -5710,35 +5744,53 @@ function buildDashboardRevenueData(rows, db, actor, filters){
     source: String(obj?.source || "").trim()
   });
 
-  function computeMonthData(monthKey, monthRows){
-    const daysInMonth = new Date(Number(monthKey.slice(0,4)), Number(monthKey.slice(5,7)), 0).getDate();
-    const grossSeries = Array.from({length: daysInMonth}, ()=>0);
-    const receivedSeries = Array.from({length: daysInMonth}, ()=>0);
-    const grossDetails = Array.from({length: daysInMonth}, ()=>[]);
-    const receivedDetails = Array.from({length: daysInMonth}, ()=>[]);
-    const isCurrentMonth = monthKey === currentMonthKey;
-    const monthRowsSafe = (monthRows||[]).filter(e=>String(e?.monthKey||"")===monthKey);
-    const monthStartISO = `${monthKey}-01`;
-    const monthEndISO = `${monthKey}-${String(daysInMonth).padStart(2,"0")}`;
-    const effectiveFromISO = fromISO && fromISO > monthStartISO ? fromISO : monthStartISO;
-    const effectiveToISO = toISO && toISO < monthEndISO ? toISO : monthEndISO;
-    const monthPaymentsAll = getReceivedEventsForPeriod(db, actor, effectiveFromISO, effectiveToISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+  function finish(data){
+    window.__CRONOS_DASH_REVENUE_CACHE__ = { rows: rowsSafe, db, key: cacheKey, ts: Date.now(), data };
+    return data;
+  }
 
-    (monthRowsSafe||[]).forEach(e=>{
+  function addGrossToSeries(monthKey, series, details, monthRows){
+    const daysMode = series.length > 12;
+    (monthRows||[]).forEach(e=>{
       const budget = getEntryBudgetValue(e);
       if(!budget) return;
       const iso = getDashboardEntryDate(e);
       if(!iso || iso.slice(0,7)!==monthKey) return;
       if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
-      const day = Number(iso.slice(8,10));
-      if(day>=1 && day<=daysInMonth){
-        grossSeries[day-1] += budget;
-        grossDetails[day-1].push(detailItem("gross", budget, e, iso, "Orçamento/plano do lead"));
+      if(daysMode){
+        const day = Number(iso.slice(8,10));
+        if(day>=1 && day<=series.length){
+          series[day-1] += budget;
+          details[day-1].push(detailItem("gross", budget, e, iso, "Orçamento/plano do lead"));
+        }
+      }else{
+        const idx = Number(monthKey.slice(5,7)) - 1;
+        if(idx>=0 && idx<12){
+          series[idx] += budget;
+          details[idx].push(detailItem("gross", budget, e, iso, "Orçamento/plano do lead"));
+        }
       }
     });
+  }
 
-    let monthPayments = monthPaymentsAll;
-    if(isCurrentMonth) monthPayments = monthPayments.filter(p=>p.iso <= todayISO);
+  if(filters?.monthKey && filters.monthKey !== "all"){
+    const monthKey = filters.monthKey;
+    const [y,m] = String(monthKey).split("-").map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const labels = Array.from({length: daysInMonth}, (_,i)=>String(i+1).padStart(2,"0"));
+    const grossSeries = Array.from({length: daysInMonth}, ()=>0);
+    const receivedSeries = Array.from({length: daysInMonth}, ()=>0);
+    const grossDetails = Array.from({length: daysInMonth}, ()=>[]);
+    const receivedDetails = Array.from({length: daysInMonth}, ()=>[]);
+    const monthStartISO = `${monthKey}-01`;
+    const monthEndISO = `${monthKey}-${String(daysInMonth).padStart(2,"0")}`;
+    const effectiveFromISO = fromISO && fromISO > monthStartISO ? fromISO : monthStartISO;
+    const effectiveToISO = toISO && toISO < monthEndISO ? toISO : monthEndISO;
+    const monthRowsSafe = rowsSafe.filter(e=>String(e?.monthKey||"")===monthKey);
+    addGrossToSeries(monthKey, grossSeries, grossDetails, monthRowsSafe);
+
+    let monthPayments = getReceivedEventsForPeriod(db, actor, effectiveFromISO, effectiveToISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+    if(monthKey === currentMonthKey) monthPayments = monthPayments.filter(p=>p.iso <= todayISO);
 
     monthPayments.forEach(p=>{
       const val = Number(p.value || p.amount || 0);
@@ -5750,26 +5802,18 @@ function buildDashboardRevenueData(rows, db, actor, filters){
       }
     });
 
-    return { grossSeries, receivedSeries, grossDetails, receivedDetails };
-  }
-
-  if(filters?.monthKey && filters.monthKey !== "all"){
-    const monthKey = filters.monthKey;
-    const labels = Array.from({length: new Date(Number(monthKey.slice(0,4)), Number(monthKey.slice(5,7)), 0).getDate()}, (_,i)=>String(i+1).padStart(2,"0"));
-    const monthData = computeMonthData(monthKey, rows || []);
-
-    return {
+    return finish({
       mode: "daily",
       axisLabelPrefix: "Dia",
       labels,
-      grossSeries: monthData.grossSeries,
-      receivedSeries: monthData.receivedSeries,
-      grossDetails: monthData.grossDetails,
-      receivedDetails: monthData.receivedDetails,
-      totalReceived: monthData.receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
+      grossSeries,
+      receivedSeries,
+      grossDetails,
+      receivedDetails,
+      totalReceived: receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
       titleText: "Receita (R$) por dia",
       hintText: "(bruto/orçado por dia • recebido por dia • clique no ponto para ver a origem)"
-    };
+    });
   }
 
   const selectedYear = String(filters?.year || currentYear);
@@ -5778,18 +5822,35 @@ function buildDashboardRevenueData(rows, db, actor, filters){
   const receivedSeries = Array.from({length: 12}, ()=>0);
   const grossDetails = Array.from({length: 12}, ()=>[]);
   const receivedDetails = Array.from({length: 12}, ()=>[]);
+  const rowsByMonth = new Map();
 
-  for(let monthIndex=0; monthIndex<12; monthIndex++){
-    const monthKey = `${selectedYear}-${String(monthIndex+1).padStart(2,"0")}`;
-    const monthRows = (rows||[]).filter(e=>String(e?.monthKey||"")===monthKey);
-    const monthData = computeMonthData(monthKey, monthRows);
-    grossSeries[monthIndex] = monthData.grossSeries.reduce((sum,v)=>sum + (Number(v)||0), 0);
-    receivedSeries[monthIndex] = monthData.receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0);
-    grossDetails[monthIndex] = monthData.grossDetails.flat();
-    receivedDetails[monthIndex] = monthData.receivedDetails.flat();
-  }
+  rowsSafe.forEach(e=>{
+    const mk = String(e?.monthKey||"").slice(0,7);
+    if(!/^\d{4}-\d{2}$/.test(mk) || !mk.startsWith(`${selectedYear}-`)) return;
+    if(!rowsByMonth.has(mk)) rowsByMonth.set(mk, []);
+    rowsByMonth.get(mk).push(e);
+  });
 
-  return {
+  rowsByMonth.forEach((monthRows, monthKey)=>{
+    addGrossToSeries(monthKey, grossSeries, grossDetails, monthRows);
+  });
+
+  const yearStartISO = `${selectedYear}-01-01`;
+  const yearEndISO = `${selectedYear}-12-31`;
+  const effectiveYearFromISO = fromISO && fromISO > yearStartISO ? fromISO : yearStartISO;
+  const effectiveYearToISO = toISO && toISO < yearEndISO ? toISO : yearEndISO;
+  const yearPayments = getReceivedEventsForPeriod(db, actor, effectiveYearFromISO, effectiveYearToISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+
+  yearPayments.forEach(p=>{
+    const iso = p.iso || p.__iso || "";
+    const idx = Number(String(iso).slice(5,7)) - 1;
+    if(idx<0 || idx>11) return;
+    const val = Number(p.value || p.amount || 0);
+    receivedSeries[idx] += val;
+    receivedDetails[idx].push(detailItem("received", val, p, iso, p.desc || "Lançamento no caixa/recebimentos"));
+  });
+
+  return finish({
     mode: "monthly",
     axisLabelPrefix: "Mês",
     labels,
@@ -5800,7 +5861,7 @@ function buildDashboardRevenueData(rows, db, actor, filters){
     totalReceived: receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
     titleText: "Receita (R$) por mês",
     hintText: "(bruto/orçado por mês • recebido por mês • clique no ponto para ver a origem)"
-  };
+  });
 }
 function renderDashboard(){
   const rows = filteredEntries();
@@ -6035,7 +6096,7 @@ if(!prev.length){
 
 try{ __bindKpiClicks(); }catch(_){}
 
-requestAnimationFrame(()=>renderDashboardCharts(rows));
+requestAnimationFrame(()=>renderDashboardCharts(rows, dashRevenue));
 }
 function statusDotClass(status){
   const s = (status||"").trim();
@@ -6074,14 +6135,14 @@ function chipTreatment(e){
 window.DASH_PREVIEW_LIMIT = 10;
 
 /* -------- Dashboard charts (Canvas, sem biblioteca) -------- */
-function renderDashboardCharts(rows){
+function renderDashboardCharts(rows, precomputedRevenueData){
   const line = el("chartRevenueLine");
   const bar = el("chartStatusBars");
   if(!line || !bar) return;
 
   const actor = currentActor();
   const db = loadDB();
-  const revenueData = buildDashboardRevenueData(rows, db, actor, getUIFilters());
+  const revenueData = precomputedRevenueData || buildDashboardRevenueData(rows, db, actor, getUIFilters());
 
   const by = new Map();
   rows.forEach(e=> by.set(e.status||"—", (by.get(e.status||"—")||0)+1));
@@ -6109,7 +6170,6 @@ function renderDashboardCharts(rows){
 
   requestAnimationFrame(() => {
     __doDrawDashCharts();
-    setTimeout(__doDrawDashCharts, 120);
   });
 }
 function clearCanvas(canvas){
@@ -6484,13 +6544,13 @@ function renderLeadsTable(list){
   const cardsWrap = document.getElementById('leadsCards');
   const tbody = document.getElementById('leadsTbody'); // fallback antigo (se existir)
   const db = loadDB();
-  const _contactsById = new Map((db.contacts||[]).map(c=>[String(c.id), c]));
+  const _contactsById = getContactsByIdMap(db);
   const _getContact = (cid)=> _contactsById.get(String(cid||''));
 
   const target = cardsWrap || tbody;
   if(!target) return;
 
-  const fullList = Array.isArray(list) ? [...list] : [];
+  const fullList = Array.isArray(list) ? list : [];
 
   const totalLeads = fullList.length;
   const totalPages = Math.max(1, Math.ceil(totalLeads / leadsPerPage));
@@ -6503,7 +6563,10 @@ function renderLeadsTable(list){
 
   list = fullList.slice(start, end);
 
-  const cardsHtml = (list||[]).map((e)=>{
+  const firstLeadBatchSize = 18;
+  const immediateList = list.slice(0, firstLeadBatchSize);
+  const deferredList = list.slice(firstLeadBatchSize);
+  const buildLeadCardHTML = (e)=>{
     const c = e?.contactId ? _getContact(e.contactId) : null;
 
     const name = escapeHTML(c?.name || e.name || e.lead || e.nome || '—');
@@ -6595,10 +6658,28 @@ function renderLeadsTable(list){
         </div>
       </div>
     `;
-  }).join('');
+  };
+
+  const cardsHtml = (immediateList||[]).map(buildLeadCardHTML).join('');
 
   if(cardsWrap){
     cardsWrap.innerHTML = cardsHtml || `<div class="muted">Nenhum lead encontrado.</div>`;
+    if(deferredList.length){
+      window.__CRONOS_LEADS_APPEND_TOKEN__ = (window.__CRONOS_LEADS_APPEND_TOKEN__ || 0) + 1;
+      const appendToken = window.__CRONOS_LEADS_APPEND_TOKEN__;
+      const appendRest = ()=>{
+        if(appendToken !== window.__CRONOS_LEADS_APPEND_TOKEN__) return;
+        if(!document.body.contains(cardsWrap)) return;
+        cardsWrap.insertAdjacentHTML('beforeend', deferredList.map(buildLeadCardHTML).join(''));
+      };
+      if(typeof requestIdleCallback === 'function'){
+        requestIdleCallback(appendRest, {timeout:400});
+      }else if(typeof requestAnimationFrame === 'function'){
+        requestAnimationFrame(()=>setTimeout(appendRest, 0));
+      }else{
+        setTimeout(appendRest, 0);
+      }
+    }
   }else{
     tbody.innerHTML = cardsHtml || `<tr><td colspan="6" class="emptyCell">Nenhum lead encontrado.</td></tr>`;
   }
@@ -6853,34 +6934,86 @@ function closeAuxiliaryViews(){
 }
 
 
+
+function getContactsByIdMap(db){
+  const contacts = Array.isArray(db?.contacts) ? db.contacts : [];
+  const cache = window.__CRONOS_CONTACTS_BY_ID_CACHE__;
+  if(cache && cache.source === contacts && cache.length === contacts.length){
+    return cache.map;
+  }
+  const map = new Map(contacts.map(c=>[String(c.id), c]));
+  window.__CRONOS_CONTACTS_BY_ID_CACHE__ = { source: contacts, length: contacts.length, map };
+  return map;
+}
+
+function getCurrentMainView(){
+  try{
+    const active = document.querySelector('.nav button.active[data-view]')?.dataset?.view;
+    if(active) return active;
+    const visible = APP_VIEWS.find(v=>{
+      const node = el(`view-${v}`);
+      return node && !node.classList.contains('hidden') && node.style.display !== 'none';
+    });
+    if(visible) return visible;
+  }catch(_){ }
+  return 'dashboard';
+}
+
+function showLeadsLoadingHint(){
+  const wrap = document.getElementById('leadsCards');
+  if(wrap && !String(wrap.innerHTML || '').trim()){
+    wrap.innerHTML = `<div class="muted" style="padding:14px">Carregando leads...</div>`;
+  }
+}
+
+function scheduleLeadsRender(){
+  window.__CRONOS_LEADS_RENDER_TOKEN__ = (window.__CRONOS_LEADS_RENDER_TOKEN__ || 0) + 1;
+  const token = window.__CRONOS_LEADS_RENDER_TOKEN__;
+  showLeadsLoadingHint();
+
+  const run = ()=>{
+    if(token !== window.__CRONOS_LEADS_RENDER_TOKEN__) return;
+    try{
+      const rows = filteredEntries();
+      if(token !== window.__CRONOS_LEADS_RENDER_TOKEN__) return;
+      renderLeadsTable(rows);
+    }catch(err){
+      console.error('Leads: falha ao renderizar', err);
+      const wrap = document.getElementById('leadsCards');
+      if(wrap) wrap.innerHTML = `<div class="muted" style="padding:14px">Não foi possível carregar os leads agora.</div>`;
+    }
+  };
+
+  if(typeof requestAnimationFrame === 'function'){
+    requestAnimationFrame(()=>setTimeout(run, 0));
+  }else{
+    setTimeout(run, 0);
+  }
+}
+
+function scheduleSidebarPillsUpdate(){
+  window.__CRONOS_PILLS_UPDATE_TOKEN__ = (window.__CRONOS_PILLS_UPDATE_TOKEN__ || 0) + 1;
+  const token = window.__CRONOS_PILLS_UPDATE_TOKEN__;
+  const run = ()=>{
+    if(token !== window.__CRONOS_PILLS_UPDATE_TOKEN__) return;
+    try{ updateSidebarPills(); }catch(_){ }
+  };
+  if(typeof requestIdleCallback === "function"){
+    requestIdleCallback(run, {timeout:600});
+  }else{
+    setTimeout(run, 80);
+  }
+}
+
 function renderActiveViewOnly(view){
-  try{ updateSidebarPills(); }catch(_){ }
+  scheduleSidebarPillsUpdate();
 
   if(view === "dashboard"){
     try{ renderDashboard(); }catch(_){ }
     return;
   }
   if(view === "leads"){
-    try{
-      renderLeadsTable(filteredEntries());
-
-      setTimeout(()=>{
-        try{
-          const viewNode = document.getElementById("view-leads");
-          const cards = document.getElementById("leadsCards");
-          const tbody = document.getElementById("leadsTbody");
-          const visible = viewNode && !viewNode.classList.contains("hidden") && viewNode.style.display !== "none";
-          const emptyCards = cards && !String(cards.innerHTML || "").trim();
-          const emptyTable = tbody && !String(tbody.innerHTML || "").trim();
-          if(visible && (emptyCards || emptyTable)){
-            renderLeadsTable(filteredEntries());
-          }
-        }catch(err){ console.warn("Leads: retry visual falhou", err); }
-      }, 80);
-    }catch(err){
-      console.error("Leads: falha ao renderizar", err);
-      setTimeout(()=>{ try{ renderLeadsTable(filteredEntries()); }catch(_){ } }, 120);
-    }
+    scheduleLeadsRender();
     return;
   }
   if(view === "kanban"){
@@ -6907,6 +7040,43 @@ function renderActiveViewOnly(view){
   try{ renderAll(); }catch(_){ }
 }
 
+function applyActiveViewShell(targetView){
+  if(!targetView || !APP_VIEWS.includes(targetView)) return;
+
+  qsa(".nav button").forEach(b=> b.classList.toggle("active", b.dataset.view===targetView));
+
+  APP_VIEWS.forEach(v=>{
+    const node = el(`view-${v}`);
+    if(node){
+      node.classList.toggle("hidden", v!==targetView);
+      node.style.display = "";
+    }
+  });
+
+  const sticky = el("stickyFilters");
+  if(sticky){
+    const viewsWithGlobalFilters = new Set(["dashboard","leads","kanban"]);
+    sticky.classList.toggle("hidden", !viewsWithGlobalFilters.has(targetView));
+    sticky.style.display = "";
+  }
+}
+
+function scheduleActiveViewRender(targetView){
+  window.__CRONOS_ACTIVE_VIEW_RENDER_TOKEN__ = (window.__CRONOS_ACTIVE_VIEW_RENDER_TOKEN__ || 0) + 1;
+  const token = window.__CRONOS_ACTIVE_VIEW_RENDER_TOKEN__;
+
+  const run = ()=>{
+    if(token !== window.__CRONOS_ACTIVE_VIEW_RENDER_TOKEN__) return;
+    try{ renderActiveViewOnly(targetView); }catch(err){ console.error("Falha ao renderizar aba", targetView, err); }
+  };
+
+  if(typeof requestAnimationFrame === "function"){
+    requestAnimationFrame(()=>setTimeout(run, 0));
+  }else{
+    setTimeout(run, 0);
+  }
+}
+
 function setActiveView(view){
   if(!view || !APP_VIEWS.includes(view)){
     if(view === "todayCronos" && window.CRONOS_TODAY && typeof window.CRONOS_TODAY.show === "function"){
@@ -6931,23 +7101,8 @@ function setActiveView(view){
   }
 
   applyRoleVisibility(actor);
-  qsa(".nav button").forEach(b=> b.classList.toggle("active", b.dataset.view===targetView));
-  APP_VIEWS.forEach(v=>{
-    const node = el(`view-${v}`);
-    if(node){
-      node.classList.toggle("hidden", v!==targetView);
-      node.style.display = "";
-    }
-  });
-
-  const sticky = el("stickyFilters");
-  if(sticky){
-    const viewsWithGlobalFilters = new Set(["dashboard","leads","kanban"]);
-    sticky.classList.toggle("hidden", !viewsWithGlobalFilters.has(targetView));
-    sticky.style.display = "";
-  }
-
-  renderActiveViewOnly(targetView);
+  applyActiveViewShell(targetView);
+  scheduleActiveViewRender(targetView);
 }
 
 /* -------- Modal helpers -------- */
@@ -9216,7 +9371,19 @@ function bindNav(){
   window.__navBound = true;
 
   qsa(".nav button").forEach(b=>{
-    b.addEventListener("click", ()=>setActiveView(b.dataset.view));
+    b.addEventListener("pointerdown", ()=>{
+      const view = b.dataset.view;
+      if(!view || !APP_VIEWS.includes(view)) return;
+      try{
+        if(typeof isFeatureHidden === "function" && isFeatureHidden(view)) return;
+        if(typeof isFeatureLocked === "function" && isFeatureLocked(view)) return;
+      }catch(_){ }
+      applyActiveViewShell(view);
+    }, {capture:true});
+    b.addEventListener("click", (ev)=>{
+      try{ ev.preventDefault(); }catch(_){ }
+      setActiveView(b.dataset.view);
+    });
   });
 
 const bKan = el("btnNewLeadKanban"); if(bKan) bKan.addEventListener("click", openNewLead);
@@ -9447,13 +9614,22 @@ function bindAuth(){
   });
 }
 function renderAll(){
+  const activeView = (typeof getCurrentMainView === "function") ? getCurrentMainView() : "dashboard";
+
   setTimeout(() => {
     try{ updateSidebarPills(); }catch(_){ }
-    try{ renderInstallmentsView(); }catch(_){ }
+    try{
+      if(activeView === "installments") renderInstallmentsView();
+    }catch(_){ }
   }, 100);
 
+  if(activeView && typeof renderActiveViewOnly === "function"){
+    try{ renderActiveViewOnly(activeView); }catch(_){ }
+    return;
+  }
+
   try{ renderDashboard(); }catch(_){ }
-  try{ renderLeadsTable(filteredEntries()); }catch(_){ }
+  try{ scheduleLeadsRender(); }catch(_){ }
   try{ renderKanban(); }catch(_){ }
   try{ renderTasks(); }catch(_){ }
   try{ renderUsers(); }catch(_){ }
