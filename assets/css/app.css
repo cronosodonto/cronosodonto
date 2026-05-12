@@ -168,6 +168,24 @@
       box-shadow: 0 10px 22px rgba(37,99,235,.12);
     }
 
+
+/* Navegação: feedback visual instantâneo no clique, sem esperar render pesado da aba */
+.nav button,
+.nav button span{
+  transition-property: background, border-color, box-shadow, transform, filter, opacity;
+  transition-duration:.15s;
+  transition-timing-function:ease;
+}
+.nav button.active > span:first-child{
+  color:#fff !important;
+  -webkit-text-fill-color:#fff !important;
+}
+.nav button.active .pill,
+.nav button.active .todayNavBadge{
+  color:#fff !important;
+  -webkit-text-fill-color:#fff !important;
+}
+
     .pill{
       font-size:12px; color:var(--muted);
       border:1px solid var(--line);
@@ -2066,3 +2084,60 @@ body.light .modal,
   box-shadow: 0 24px 70px rgba(15, 23, 42, .22) !important;
 }
 
+
+
+/* Performance do tema claro: mantém o visual limpo sem obrigar o navegador a pintar frescura cara em toda troca de aba */
+:root.light{
+  --panel:#ffffff;
+  --panel2:#ffffff;
+  --shadow:0 4px 14px rgba(15,23,42,.07);
+}
+:root.light body{
+  background:linear-gradient(135deg, #eaf3ff, #edfdf4) fixed !important;
+}
+:root.light .sidebar,
+:root.light .card,
+:root.light .kpi,
+:root.light #view-leads .leadCard{
+  background:#ffffff !important;
+}
+:root.light .card,
+:root.light .kpi,
+:root.light .brand,
+:root.light #view-leads .leadCard{
+  box-shadow:0 3px 10px rgba(15,23,42,.06) !important;
+}
+:root.light .stickyFilters,
+:root.light th,
+:root.light .toast,
+:root.light .modalBg,
+:root.light #featureBlockedOverlay{
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+:root.light .nav button,
+:root.light .btn,
+:root.light .iconBtn,
+:root.light .miniBtn,
+:root.light #view-leads .leadCard{
+  transition-property: background-color, border-color, color, box-shadow !important;
+  transition-duration:.10s !important;
+}
+:root.light .nav button:hover,
+:root.light .btn:hover,
+:root.light .iconBtn:hover,
+:root.light .miniBtn:hover,
+:root.light #view-leads .leadCard:hover{
+  transform:none !important;
+  filter:none !important;
+}
+:root.light #view-leads .leadsCards{
+  contain:layout paint style;
+}
+:root.light #view-leads .leadCard{
+  content-visibility:auto;
+  contain-intrinsic-size:150px;
+}
+:root.light #view-leads .kv{
+  box-shadow:none !important;
+}
