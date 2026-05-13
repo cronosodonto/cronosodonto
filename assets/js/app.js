@@ -2509,15 +2509,164 @@ function renderFinancialPlanPaymentEditor(entry, selectedPlan, contact, remainin
   `;
 }
 
+function cronosNewFinNorm(value){
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function cronosNewFinDigits(value){
+  return String(value || "").replace(/\D/g, "");
+}
+
+function cronosNewFinContactFromEntry(entry, contactsById){
+  const contact = contactsById.get(String(entry?.contactId || ""));
+  if(contact) return contact;
+  return {
+    id: entry?.contactId || "",
+    name: entry?.contactName || entry?.patientName || entry?.nomePaciente || entry?.name || entry?.nome || entry?.lead || entry?.paciente || "(sem nome)",
+    phone: entry?.contactPhone || entry?.patientPhone || entry?.telefone || entry?.phone || entry?.whatsapp || entry?.contato || "",
+    cpf: entry?.cpf || entry?.patientCpf || entry?.contactCpf || ""
+  };
+}
+
+function cronosNewFinSameClinic(entry, contact, actor){
+  const masterId = String(actor?.masterId || "");
+  if(!masterId) return true;
+  const entryMaster = String(entry?.masterId || "");
+  const contactMaster = String(contact?.masterId || "");
+  return !entryMaster || entryMaster === masterId || !contactMaster || contactMaster === masterId;
+}
+
+function cronosNewFinEntryDateKey(entry){
+  return String(entry?.lastUpdateAt || entry?.updatedAt || entry?.createdAt || entry?.firstContactAt || entry?.monthKey || "");
+}
+
+function cronosNewFinLatestEntryForContact(db, actor, contactId){
+  const cid = String(contactId || "").trim();
+  if(!cid) return null;
+  const masterId = String(actor?.masterId || "");
+  const rows = (db.entries || [])
+    .filter(e=>String(e?.contactId || "") === cid)
+    .filter(e=>!masterId || !e?.masterId || String(e.masterId) === masterId)
+    .sort((a,b)=>cronosNewFinEntryDateKey(b).localeCompare(cronosNewFinEntryDateKey(a)));
+  return rows[0] || null;
+}
+
+function cronosNewFinMatchesQuery(contact, entry, qText, qDigits){
+  const textHay = cronosNewFinNorm([
+    contact?.name, contact?.phone, contact?.cpf,
+    entry?.name, entry?.nome, entry?.lead, entry?.paciente, entry?.patientName, entry?.contactName, entry?.nomePaciente,
+    entry?.phone, entry?.telefone, entry?.whatsapp, entry?.contato, entry?.city, entry?.notes,
+    entry?.treatment, entry?.treatmentOther, entry?.origin, entry?.originOther, entry?.status,
+    entry?.monthKey, entry?.firstContactAt, entry?.apptDate,
+    ...(Array.isArray(contact?.tags) ? contact.tags : []),
+    ...(Array.isArray(entry?.tags) ? entry.tags : [])
+  ].filter(Boolean).join(" "));
+
+  const digitHay = cronosNewFinDigits([
+    contact?.phone, contact?.cpf, entry?.phone, entry?.telefone, entry?.whatsapp, entry?.contato, entry?.cpf
+  ].filter(Boolean).join(" "));
+
+  const textOk = qText ? textHay.includes(qText) : false;
+  const digitOk = qDigits ? digitHay.includes(qDigits) : false;
+  return textOk || digitOk;
+}
+
+function buildNewFinancialPatientSuggestions(db, actor, query){
+  const qText = cronosNewFinNorm(query);
+  const qDigits = cronosNewFinDigits(query);
+  if(!qText && !qDigits) return [];
+
+  const contactsById = (typeof getContactsByIdMap === "function")
+    ? getContactsByIdMap(db)
+    : new Map((db.contacts || []).map(c=>[String(c.id), c]));
+
+  const masterId = String(actor?.masterId || "");
+  const seen = new Set();
+  const rows = [];
+
+  const addRow = (entry, contact, source="entry")=>{
+    if(!entry) return;
+    contact = contact || cronosNewFinContactFromEntry(entry, contactsById);
+    if(!cronosNewFinSameClinic(entry, contact, actor)) return;
+    if(!cronosNewFinMatchesQuery(contact, entry, qText, qDigits)) return;
+    const key = String(entry?.id || entry?.contactId || `${contact?.name || ""}|${contact?.phone || ""}`);
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    rows.push({entry, contact, source});
+  };
+
+  // 1) Procura nos leads/entradas, incluindo campos legados do próprio lead.
+  (db.entries || []).forEach(entry=>{
+    const contact = cronosNewFinContactFromEntry(entry, contactsById);
+    addRow(entry, contact, "entry");
+  });
+
+  // 2) Procura também na tabela de contatos. Antes a busca dependia do nome estar
+  // repetido dentro do entry; em bases antigas, o nome fica só no contact.
+  (db.contacts || [])
+    .filter(contact=>!masterId || !contact?.masterId || String(contact.masterId) === masterId)
+    .forEach(contact=>{
+      if(!cronosNewFinMatchesQuery(contact, null, qText, qDigits)) return;
+      const entry = cronosNewFinLatestEntryForContact(db, actor, contact.id);
+      if(entry) addRow(entry, contact, "contact");
+    });
+
+  rows.sort((a,b)=>{
+    const an = cronosNewFinNorm(a.contact?.name || "");
+    const bn = cronosNewFinNorm(b.contact?.name || "");
+    const aStarts = qText && an.startsWith(qText) ? 0 : 1;
+    const bStarts = qText && bn.startsWith(qText) ? 0 : 1;
+    if(aStarts !== bStarts) return aStarts - bStarts;
+    return cronosNewFinEntryDateKey(b.entry).localeCompare(cronosNewFinEntryDateKey(a.entry));
+  });
+
+  return rows.slice(0, 12);
+}
+
+function cronosNewFinRenderSafe(opts={}){
+  try{
+    if(typeof __cronosRenderNewFinancialPreservingScroll === "function"){
+      __cronosRenderNewFinancialPreservingScroll(opts);
+    }else{
+      renderNewFinancialInstallmentApp();
+    }
+  }catch(err){
+    console.warn("Falha ao renderizar busca de recebimento; usando fallback.", err);
+    try{ renderNewFinancialInstallmentApp(); }catch(e){ console.error(e); }
+  }
+}
+
+function cronosNewFinWireSearchInput(){
+  const input = el("newFinSearch");
+  if(!input || input.dataset.cronosNewFinWired === "1") return;
+  input.dataset.cronosNewFinWired = "1";
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off");
+  input.setAttribute("autocapitalize", "off");
+  input.setAttribute("spellcheck", "false");
+  const handler = ()=>{
+    try{ window.CRONOS_NEW_FIN_UI?.search(input.value); }catch(err){ console.error("Erro na busca de Novo recebimento:", err); }
+  };
+  input.addEventListener("input", handler, {passive:true});
+  input.addEventListener("keyup", handler, {passive:true});
+  input.addEventListener("change", handler, {passive:true});
+}
+
 function renderNewFinancialInstallmentApp(){
   const box = el("newFinancialInstallmentApp");
   if(!box) return;
   const actor = currentActor();
   const db = loadDB();
   const st = window.__newFinancialInstallmentState || {search:"",entryId:"",planId:""};
-  const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===actor.masterId).map(c=>[String(c.id),c]));
+  const contactsById = (typeof getContactsByIdMap === "function")
+    ? getContactsByIdMap(db)
+    : new Map((db.contacts||[]).map(c=>[String(c.id),c]));
   const entry = (db.entries||[]).find(e=>String(e.id)===String(st.entryId));
-  const contact = entry ? contactsById.get(String(entry.contactId)) : null;
+  const contact = entry ? cronosNewFinContactFromEntry(entry, contactsById) : null;
   const plans = entry ? ensureFinancialPlans(entry) : [];
   let selectedPlan = plans.find(p=>String(p.id)===String(st.planId)) || null;
   if(entry && !selectedPlan && plans.length){
@@ -2526,15 +2675,9 @@ function renderNewFinancialInstallmentApp(){
     window.__newFinancialInstallmentState = st;
   }
   const canSensitive = canManageFinancialSensitiveActions();
-  const q = String(st.search||"").trim().toLowerCase();
+  const q = String(st.search||"").trim();
 
-  const suggestions = !entry && q
-    ? (db.entries||[])
-        .filter(e=>e.masterId===actor.masterId)
-        .map(e=>({entry:e, contact:contactsById.get(String(e.contactId)) || {name:"(sem nome)", phone:""}}))
-        .filter(x=>`${x.contact.name||""} ${x.contact.phone||""}`.toLowerCase().includes(q))
-        .slice(0,10)
-    : [];
+  const suggestions = !entry && q ? buildNewFinancialPatientSuggestions(db, actor, q) : [];
 
   const fichaForRecebimentos = entry ? ensureFichaForRecebimentos(entry) : null;
   const fichaSelectableItems = fichaForRecebimentos ? fichaForRecebimentos.plano.filter(item=>isFichaItemAvailableForRecebimentos(entry, item)) : [];
@@ -2559,13 +2702,13 @@ function renderNewFinancialInstallmentApp(){
           </div>
         ` : `
           <label>Buscar paciente/lead</label>
-          <input id="newFinSearch" value="${escapeHTML(st.search||"")}" placeholder="Digite nome ou telefone" oninput="CRONOS_NEW_FIN_UI.search(this.value)">
+          <input id="newFinSearch" value="${escapeHTML(st.search||"")}" placeholder="Digite nome ou telefone" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="cronos_new_fin_search_${Date.now()}" oninput="CRONOS_NEW_FIN_UI.search(this.value)">
           <div style="display:grid;gap:8px;margin-top:10px">
             ${suggestions.length ? suggestions.map(x=>`
-              <button type="button" class="btn" style="text-align:left;justify-content:flex-start" onpointerdown="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(x.entry.id)}')" onclick="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(x.entry.id)}')">
+              <button type="button" class="btn" style="text-align:left;justify-content:flex-start" onpointerdown="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')" onclick="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')">
                 <b>${escapeHTML(x.contact.name || "(sem nome)")}</b> <span class="muted">• ${escapeHTML(x.contact.phone||"")} • ${monthLabel(x.entry.monthKey||new Date().toISOString().slice(0,7))}</span>
               </button>
-            `).join("") : `<div class="muted">Digite para encontrar um lead já cadastrado.</div>`}
+            `).join("") : `<div class="muted">${q ? 'Nenhum lead encontrado com esse termo.' : 'Digite para encontrar um lead já cadastrado.'}</div>`}
           </div>
         `}
       </div>
@@ -2649,13 +2792,15 @@ function renderNewFinancialInstallmentApp(){
       ${""}
     </div>
   `;
+  requestAnimationFrame(cronosNewFinWireSearchInput);
 }
 
 window.CRONOS_NEW_FIN_UI = {
   search(v){
-    window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {search:String(v||""), entryId:"", planId:""});
-    __cronosRenderNewFinancialPreservingScroll({focusId:'newFinSearch'});
-    requestAnimationFrame(()=>{ try{ el("newFinSearch")?.focus({preventScroll:true}); el("newFinSearch")?.setSelectionRange(String(v||"").length,String(v||"").length); }catch(_){} });
+    const value = String(v||"");
+    window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {search:value, entryId:"", planId:""});
+    cronosNewFinRenderSafe({focusId:'newFinSearch'});
+    requestAnimationFrame(()=>{ try{ const input = el("newFinSearch"); input?.focus({preventScroll:true}); input?.setSelectionRange(value.length,value.length); }catch(_){} });
   },
   selectPatientFromEvent(ev, entryId){
     try{
@@ -2705,7 +2850,7 @@ window.CRONOS_NEW_FIN_UI = {
     const idx = st.fichaItemIds.indexOf(id);
     if(idx >= 0) st.fichaItemIds.splice(idx,1); else st.fichaItemIds.push(id);
     window.__newFinancialInstallmentState = st;
-    __cronosRenderNewFinancialPreservingScroll();
+    cronosNewFinRenderSafe();
   },
   createPlan(){
     const actor = currentActor();
@@ -2861,6 +3006,16 @@ window.CRONOS_NEW_FIN_UI = {
     try{ renderFichaApp(); }catch(_){}
   }
 };
+
+if(!window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__){
+  window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__ = true;
+  document.addEventListener("input", function(ev){
+    const target = ev && ev.target;
+    if(target && target.id === "newFinSearch"){
+      try{ window.CRONOS_NEW_FIN_UI?.search(target.value); }catch(err){ console.error("Erro na busca de Novo recebimento:", err); }
+    }
+  }, true);
+}
 
 
 function renderInstallmentsView(){
@@ -11519,14 +11674,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function isFichaItemClinicallyDone(entry, item){
+      // Status clínico é do PROCEDIMENTO, não do dente inteiro.
+      // Antes, se o dente 46 estivesse marcado como realizado, qualquer item do 46
+      // ficava verde também. Isso misturava odontograma com plano de tratamento.
       if(!item) return false;
-      if(item.feito) return true;
-      if(!entry) return false;
-      const teeth = String(item.dente || '').split(',').map(s=>s.trim()).filter(Boolean);
-      return teeth.some(tooth=>{
-        const meta = getToothMeta(entry, tooth);
-        return meta?.status === 'done' || meta?.status === 'realizado';
-      });
+      return item.feito === true
+        || String(item.status || '').toLowerCase() === 'feito'
+        || String(item.statusClinico || '').toLowerCase() === 'feito'
+        || String(item.clinicalStatus || '').toLowerCase() === 'done';
     }
 
     function isFichaItemAvailableForReceiving(entry, item){
@@ -12349,6 +12504,8 @@ window.CRONOS_PROC_UI = {
       if(meta?.status === 'paid' || meta?.status === 'pago' || meta?.status === 'closed' || meta?.status === 'plan') return 'paid';
 
       const planForTooth = ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
+      // O dente pode ficar verde/azul como RESUMO visual, mas isso não deve contaminar
+      // a cor/status das outras linhas da tabela. Cada procedimento continua independente.
       if(planForTooth.some(x=>isFichaItemClinicallyDone(entry, x))) return 'done';
       if(planForTooth.some(x=>x.pago || isFichaItemFinancialLinked(entry, x))) return 'paid';
       return '';
@@ -12359,16 +12516,12 @@ window.CRONOS_PROC_UI = {
     }
     function getItemVisualState(entry, item){
       if(!item) return '';
+      // A linha deve refletir o próprio procedimento.
+      // Se outro procedimento do mesmo dente foi feito/pago, esta linha não herda a cor.
       if(isFichaItemClinicallyDone(entry, item)) return 'done';
       if(isFichaItemFinancialLinked(entry, item)) return 'paid';
       const teeth = String(item.dente||'').split(',').map(s=>s.trim()).filter(Boolean);
-      if(teeth.length){
-        const hasAbsent = teeth.some(t=>isToothAbsent(entry, t));
-        if(hasAbsent) return 'absent';
-        const states = teeth.map(t => getToothProgressStatus(entry, t)).filter(Boolean);
-        if(states.includes('done')) return 'done';
-        if(states.includes('paid')) return 'paid';
-      }
+      if(teeth.length && teeth.some(t=>isToothAbsent(entry, t))) return 'absent';
       return '';
     }
     function buildFichaHeader(entry, contact){
