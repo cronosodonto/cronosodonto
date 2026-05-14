@@ -1429,6 +1429,25 @@ function fichaLinkedFinancialPaidTotal(entry, plano=[]){
   });
 
   const totalFechado = (plano || []).reduce((s,x)=>s + Number(x.valorFechado || 0), 0);
+
+  // Sincroniza o resumo da Ficha com o mesmo resumo financeiro usado nos cards.
+  // Antes, a Ficha lia só pagamentos vinculados/financeiros e o card também aceitava
+  // baixas antigas/campos legados do lead. Resultado: o mesmo paciente podia aparecer
+  // como Pago 530 na Ficha e Pago 630 no card. A Ficha agora usa o maior valor oficial
+  // quando a avaliação visível representa o orçamento completo do lead, sem pintar itens
+  // individualmente como pagos no chute.
+  try{
+    const allFichaItems = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
+    const allFichaTotal = allFichaItems.reduce((s,x)=>s + Number(x?.valorFechado || 0), 0);
+    const visibleIsWholeFicha = !allFichaTotal || !totalFechado || Math.abs(allFichaTotal - totalFechado) < 0.01;
+    if(visibleIsWholeFicha && typeof cronosEntryFinancialSummary === 'function'){
+      const dbRef = (typeof loadDB === 'function') ? loadDB() : null;
+      const summary = cronosEntryFinancialSummary(entry, dbRef);
+      const summaryPaid = parseMoney(summary?.paid || 0);
+      if(summaryPaid > total) total = summaryPaid;
+    }
+  }catch(_){ }
+
   return Math.min(total, totalFechado || total);
 }
 
@@ -1746,6 +1765,38 @@ function markFinancialMutation(entry, plan=null, payment=null, nowISO=new Date()
   if(payment){
     payment.updatedAt = nowISO;
     payment.lastUpdateAt = nowISO;
+  }
+}
+
+function pruneOrphanFinancialPaymentRecords(db, entry=null){
+  try{
+    if(!db || !Array.isArray(db.payments)) return 0;
+    const entries = entry ? [entry] : (Array.isArray(db.entries) ? db.entries : []);
+    const entryById = new Map(entries.filter(Boolean).map(e=>[String(e.id || ""), e]));
+    let removed = 0;
+    db.payments = db.payments.filter(p=>{
+      const entryId = String(p?.entryId || "");
+      const target = entryById.get(entryId);
+      if(!target) return true;
+      const planId = String(p?.financialPlanId || "");
+      if(!planId) return true;
+      const plans = Array.isArray(target.financialPlans) ? target.financialPlans : [];
+      const plan = plans.find(x=>String(x?.id || "") === planId);
+      if(!plan){ removed++; return false; }
+      const payId = String(p?.financialPaymentId || "");
+      if(payId){
+        const pay = (Array.isArray(plan.payments) ? plan.payments : []).find(x=>String(x?.id || "") === payId);
+        if(!pay || !(financialPaymentPaid ? financialPaymentPaid(pay) : (!!pay.paidAt || !!pay.cashDate || String(pay.status||"").toUpperCase()==="PAGA"))){
+          removed++;
+          return false;
+        }
+      }
+      return true;
+    });
+    return removed;
+  }catch(err){
+    console.warn("Falha ao limpar pagamentos financeiros órfãos:", err);
+    return 0;
   }
 }
 
@@ -2400,6 +2451,8 @@ async function deleteFinancialPayment(entryId, planId, paymentId){
 
   renumberFinancialPlanPayments(plan);
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
+  try{ pruneOrphanFinancialPaymentRecords(db, entry); }catch(_){ }
+  try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após excluir pagamento:", err); }
   markFinancialMutation(entry, plan, null, nowISO);
   syncInstallmentTasks(db, actor);
   refreshFinancialUIAfterPayment();
@@ -2921,10 +2974,23 @@ window.CRONOS_NEW_FIN_UI = {
     const removedPlan = ensureFinancialPlans(entry).find(p=>String(p.id)===String(planId));
     entry.financialPlans = ensureFinancialPlans(entry).filter(p=>String(p.id)!==String(planId));
     db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entry.id) && String(p.financialPlanId)===String(planId)));
+    try{ pruneOrphanFinancialPaymentRecords(db, entry); }catch(_){ }
     if(entry.installPlan && String(entry.installPlan.migratedToFinancialPlanId||"")===String(planId)){
       delete entry.installPlan.migratedToFinancialPlanId;
     }
+    if(Array.isArray(entry?.ficha?.plano)){
+      entry.ficha.plano.forEach(item=>{
+        if(String(item.financialPlanId || item.recebimentoId || "") === String(planId)){
+          item.financialPlanId = "";
+          item.recebimentoId = "";
+          item.financeStatus = "";
+          item.pago = false;
+          item.updatedAt = new Date().toISOString();
+        }
+      });
+    }
     if(String(st.planId)===String(planId)) st.planId = "";
+    try{ syncFichaFinancialLinks(entry); }catch(_){ }
     syncInstallmentTasks(db, actor);
     saveDB(db, { immediate:true });
     toast(removedPlan?.source === "legacyInstallments" ? "Recebimento legado removido" : "Recebimento removido");
@@ -5765,13 +5831,14 @@ function getEntryPaidValue(e){
 
   try{
     const plans = Array.isArray(e.financialPlans) ? e.financialPlans : [];
-    const totalPaidPlans = plans.reduce((sum,p)=>{
-      const pays = Array.isArray(p.payments) ? p.payments : [];
-      return sum + pays
-        .filter(pay=>!!pay.paidAt || pay.status === "PAGA" || pay.paid === true)
-        .reduce((s,pay)=>s + parseMoney(pay.amount || 0), 0);
-    }, 0);
-    if(totalPaidPlans > 0) return totalPaidPlans;
+    if(plans.length){
+      return plans.reduce((sum,p)=>{
+        const pays = Array.isArray(p.payments) ? p.payments : [];
+        return sum + pays
+          .filter(pay=>financialPaymentPaid ? financialPaymentPaid(pay) : (!!pay.paidAt || !!pay.cashDate || pay.status === "PAGA" || pay.paid === true))
+          .reduce((s,pay)=>s + parseMoney(pay.amount || 0), 0);
+      }, 0);
+    }
   }catch(_){}
 
   return (e.valuePaid!=null && !isNaN(parseMoney(e.valuePaid)))
@@ -5788,14 +5855,26 @@ function cronosEntryFinancialSummary(entry, db=null){
     return !!(p?.paidAt || p?.cashDate || p?.paidDate || p?.paymentDate || p?.paid === true || st === "PAGA" || st === "PAGO");
   };
 
-  // 1) Recebimentos novos (financialPlans) — fonte principal depois da ficha.
+  // 1) Recebimentos novos (financialPlans) — fonte principal e AUTORITATIVA.
+  // O espelho em db.payments serve para caixa/auditoria, mas não pode somar por cima
+  // nem manter valor pago depois que a parcela/recebimento foi excluído.
   let planTotal = 0;
   let planPaid = 0;
+  let hasFinancialPlans = false;
+  const validFinancialPlanIds = new Set();
+  const validFinancialPaymentKeys = new Set();
   try{
     const plans = Array.isArray(entry.financialPlans) ? entry.financialPlans : [];
+    hasFinancialPlans = plans.length > 0;
     plans.forEach(plan=>{
+      const planId = String(plan?.id || "");
+      if(planId) validFinancialPlanIds.add(planId);
       const t = (typeof financialPlanTotals === "function") ? financialPlanTotals(plan) : null;
       const payments = Array.isArray(plan?.payments) ? plan.payments : [];
+      payments.forEach(pay=>{
+        const payId = String(pay?.id || "");
+        if(planId && payId && paidLike(pay)) validFinancialPaymentKeys.add(`${planId}::${payId}`);
+      });
       const scheduled = t ? parseMoney(t.scheduled) : payments.reduce((s,p)=>s + parseMoney(p.amount), 0);
       const paid = t ? parseMoney(t.paid) : payments.filter(paidLike).reduce((s,p)=>s + parseMoney(p.amount), 0);
       const declaredTotal = parseMoney(plan?.amount ?? plan?.total ?? plan?.valor ?? plan?.value ?? 0);
@@ -5804,13 +5883,22 @@ function cronosEntryFinancialSummary(entry, db=null){
     });
   }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler recebimentos", e); }
 
-  // 2) Caixa/recebimentos globais — fallback para baixas antigas que ainda não ficaram dentro do plano.
+  // 2) Caixa/recebimentos globais — fallback para baixas antigas NÃO espelhadas em financialPlans.
+  // Regra: se o pagamento aponta para um financialPlan existente, quem manda é o plano.
+  // Se a parcela foi removida do plano, o registro espelho não entra mais no total pago.
   let dbPaid = 0;
   try{
     if(db && Array.isArray(db.payments)){
       const eid = String(entry.id || "");
       db.payments.forEach(p=>{
         if(String(p?.entryId || "") !== eid) return;
+        const planId = String(p?.financialPlanId || "");
+        const payId = String(p?.financialPaymentId || "");
+        if(planId){
+          if(validFinancialPlanIds.has(planId)) return;
+          if(hasFinancialPlans && String(p?.source || "").toLowerCase().includes("financial")) return;
+        }
+        if(planId && payId && !validFinancialPaymentKeys.has(`${planId}::${payId}`)) return;
         const st = String(p?.status || "").trim().toUpperCase();
         if(st && st !== "PAGA" && st !== "PAGO" && p?.paid !== true && !p?.paidAt && !p?.cashDate && !p?.date) return;
         dbPaid += (typeof cronosPaymentAmount === "function") ? parseMoney(cronosPaymentAmount(p)) : parseMoney(p?.value ?? p?.amount ?? p?.valor ?? 0);
@@ -5841,7 +5929,7 @@ function cronosEntryFinancialSummary(entry, db=null){
     }, 0);
   }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler ficha", e); }
 
-  // 5) Campos antigos do lead. Mantidos como fallback para não sumir histórico.
+  // 5) Campos antigos do lead. São fallback; não podem superar financialPlans ativos.
   const legacyBudget = Math.max(
     parseMoney(entry.valueBudget ?? 0),
     parseMoney(entry.valueEstimated ?? 0),
@@ -5865,10 +5953,12 @@ function cronosEntryFinancialSummary(entry, db=null){
   );
 
   const legacyClosedFallback = parseMoney(entry.valueClosed ?? entry.valueClosedGross ?? 0);
-  const receiptPaid = Math.max(planPaid, dbPaid) + legacyInstallPaid;
+  const receiptPaid = (hasFinancialPlans ? planPaid : Math.max(planPaid, dbPaid)) + legacyInstallPaid;
 
   const budget = max0(Math.max(legacyBudget, fichaTotal, planTotal + legacyInstallTotal));
-  let paid = max0(Math.max(receiptPaid, explicitLegacyPaid));
+  let paid = hasFinancialPlans
+    ? max0(receiptPaid)
+    : max0(Math.max(receiptPaid, explicitLegacyPaid));
 
   // Compatibilidade: em leads antigos, valueClosed às vezes era usado como “pago”.
   // Só entra se não houver ficha/recebimento/parcelamento para evitar pintar orçamento novo como recebido no chute.
@@ -12500,14 +12590,23 @@ window.CRONOS_PROC_UI = {
     function getToothProgressStatus(entry, tooth){
       const ficha = ensureFicha(entry);
       const meta = getToothMeta(entry, tooth);
+      const planForTooth = ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
+
+      if(planForTooth.length){
+        // Quando existe procedimento ligado ao dente, o odontograma deve refletir
+        // o estado REAL desses itens. Pagamento/em pagamento fica amarelo;
+        // verde só quando TODOS os procedimentos daquele dente estiverem feitos.
+        // Isso evita meta antiga/manual deixar o dente verde enquanto a linha ainda
+        // está Pendente/Em pagamento. O caos até tenta, mas aqui não passa.
+        const allClinicallyDone = planForTooth.every(x=>isFichaItemClinicallyDone(entry, x));
+        if(allClinicallyDone) return 'done';
+        if(planForTooth.some(x=>x.pago || isFichaItemFinancialLinked(entry, x))) return 'paid';
+        return '';
+      }
+
+      // Sem item ligado ao dente, mantém a marcação manual do odontograma.
       if(meta?.status === 'done' || meta?.status === 'realizado') return 'done';
       if(meta?.status === 'paid' || meta?.status === 'pago' || meta?.status === 'closed' || meta?.status === 'plan') return 'paid';
-
-      const planForTooth = ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
-      // O dente pode ficar verde/azul como RESUMO visual, mas isso não deve contaminar
-      // a cor/status das outras linhas da tabela. Cada procedimento continua independente.
-      if(planForTooth.some(x=>isFichaItemClinicallyDone(entry, x))) return 'done';
-      if(planForTooth.some(x=>x.pago || isFichaItemFinancialLinked(entry, x))) return 'paid';
       return '';
     }
     function getToothVisualState(entry, tooth){
@@ -12990,17 +13089,38 @@ window.CRONOS_PROC_UI = {
         if(!entry) return;
         const item = ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId));
         if(!item) return;
-        item.valorFechado = parseMoneyInput(v);
+
+        const raw = String(v ?? '').trim();
+        const oldDigits = String(item.valorFechado ?? '').replace(/\D/g, '');
+        const newDigits = raw.replace(/\D/g, '');
+        const isEditing = !!node && document.activeElement === node;
+
+        // Evita salvar estado intermediário quando o usuário apaga um dígito para substituir.
+        // Ex.: 130 -> apaga o 3 -> 10 -> digita 2 -> 120. Antes, o Cronos salvava o 10.
+        if(isEditing && raw !== '' && oldDigits && newDigits.length < oldDigits.length){
+          node.dataset.cronosPendingValue = raw;
+          return;
+        }
+
+        item.valorFechado = parseMoneyInput(raw);
+        if(node) delete node.dataset.cronosPendingValue;
         saveDB(db);
         refreshFichaLiveFinancialSummary(entry, itemId);
         __scheduleFichaLeadsFinancialRefresh();
       },
       formatValue(itemId, node=null){
         const s = getFichaState(); if(!s) return;
+        const db = loadDB();
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const item = ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId));
         if(!item) return;
+        if(node && node.dataset && node.dataset.cronosPendingValue != null){
+          item.valorFechado = parseMoneyInput(node.value);
+          delete node.dataset.cronosPendingValue;
+          saveDB(db);
+          __scheduleFichaLeadsFinancialRefresh();
+        }
         if(node) node.value = String(Number(item.valorFechado || 0)).replace('.', ',');
         refreshFichaLiveFinancialSummary(entry, itemId);
       },
