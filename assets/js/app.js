@@ -1638,7 +1638,7 @@ function renderFinancialPaymentTable(entry, plan, contact){
       ? (canSensitive
           ? `<a class="miniLink" href="javascript:void(0)" onclick="undoFinancialPayment('${entry.id}','${plan.id}','${p.id}')">Desfazer</a>`
           : `<span class="muted" style="font-size:12px">Pago</span>`)
-      : `<button type="button" class="btn ok" onclick="payFinancialPayment('${entry.id}','${plan.id}','${p.id}')">Dar baixa</button>`;
+      : `<button type="button" class="btn ok" data-fin-action="pay" data-entry-id="${escapeHTML(entry.id)}" data-plan-id="${escapeHTML(plan.id)}" data-payment-id="${escapeHTML(p.id)}">Dar baixa</button>`;
     const transfer = (paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferFinancialPaymentCashDate('${entry.id}','${plan.id}','${p.id}')">Transferir data</a>` : "";
     const cashISO = cronosPaymentCashISO(p, false);
     const deleteBtn = canSensitive ? `<button type="button" class="miniBtn danger" onclick="deleteFinancialPayment('${entry.id}','${plan.id}','${p.id}')" title="Excluir pagamento">🗑️</button>` : "";
@@ -1691,6 +1691,19 @@ function refreshFinancialUIAfterPayment(){
 
 function findFinancePaymentRecord(db, entryId, planId, paymentId){
   return (db.payments||[]).find(p=>String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId));
+}
+
+function persistLocalDBNow(db){
+  try{
+    DB = normalizeDBShape(db || DB || freshDB());
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    localStorage.setItem(DBKEY, JSON.stringify(DB));
+    return true;
+  }catch(err){
+    console.warn("Falha ao persistir localmente:", err);
+    return false;
+  }
 }
 
 function canManageFinancialSensitiveActions(actor=currentActor()){
@@ -1766,6 +1779,27 @@ function markFinancialMutation(entry, plan=null, payment=null, nowISO=new Date()
     payment.updatedAt = nowISO;
     payment.lastUpdateAt = nowISO;
   }
+}
+
+
+function markFichaMutation(entry, item=null, nowISO=new Date().toISOString()){
+  if(!entry || typeof entry !== "object") return nowISO;
+  entry.updatedAt = nowISO;
+  entry.fichaUpdatedAt = nowISO;
+  if(entry.ficha && typeof entry.ficha === "object"){
+    entry.ficha.updatedAt = nowISO;
+    entry.ficha.lastSyncAt = nowISO;
+  }
+  if(item && typeof item === "object"){
+    item.updatedAt = nowISO;
+    item.lastUpdateAt = nowISO;
+  }
+  return nowISO;
+}
+
+function saveFichaMutation(db, entry, options={}){
+  try{ markFichaMutation(entry); }catch(_){ }
+  return saveDB(db, { immediate:true, ...(options || {}) });
 }
 
 function pruneOrphanFinancialPaymentRecords(db, entry=null){
@@ -2330,6 +2364,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
   }
 
   try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
+  persistLocalDBNow(db);
   refreshFinancialUIAfterPayment();
   toast("Salvando baixa...", "Registrando no navegador e sincronizando com a nuvem.");
   let cloudOk = false;
@@ -2345,6 +2380,25 @@ async function payFinancialPayment(entryId, planId, paymentId){
     toast("Baixa salva no navegador", "A nuvem ainda não confirmou. O Cronos marcou a versão local como mais recente para não perder no F5.");
   }
 }
+try{ window.payFinancialPayment = payFinancialPayment; }catch(_){ }
+
+document.addEventListener('click', function(ev){
+  const btn = ev.target && ev.target.closest ? ev.target.closest('[data-fin-action="pay"]') : null;
+  if(!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if(typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+  if(btn.__cronosPayClickLock) return;
+  btn.__cronosPayClickLock = true;
+  setTimeout(()=>{ try{ btn.__cronosPayClickLock = false; }catch(_){} }, 1200);
+  const entryId = btn.dataset.entryId;
+  const planId = btn.dataset.planId;
+  const paymentId = btn.dataset.paymentId;
+  if(entryId && planId && paymentId && typeof window.payFinancialPayment === 'function'){
+    window.payFinancialPayment(entryId, planId, paymentId);
+  }
+}, true);
+
 async function undoFinancialPayment(entryId, planId, paymentId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
@@ -3332,7 +3386,7 @@ function renderInstallmentTable(entry, contact){
     const st = paid ? `<span class="badge ok">PAGO</span>` : (late ? `<span class="badge late">ATRASADO</span>` : `<span class="badge pending">PENDENTE</span>`);
     const action = paid
       ? (canSensitive ? `<a class="miniLink" href="javascript:void(0)" onclick="undoInstallmentPay('${entry.id}', ${p.number})">Desfazer</a>` : `<span class="muted" style="font-size:12px">Pago</span>`)
-      : `<button class="btn ok" onclick="payInstallment('${entry.id}', ${p.number})">Dar baixa</button>`;
+      : `<button class="btn ok" type="button" data-inst-action="pay" data-entry-id="${escapeHTML(entry.id)}" data-number="${Number(p.number)||0}">Dar baixa</button>`;
     const transfer = (paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferInstallmentCashDate('${entry.id}', ${p.number})">Transferir data</a>` : "";
     const wa = !paid ? `<a class="waChargeBtn" href="${waChargeLink(contact.phone, contact.name, entry, p)}" target="_blank"><span class="waChargeIcon">☎</span><span>Cobrar</span></a>` : "";
     const deleteBtn = canSensitive ? `<button class="miniBtn danger" onclick="deleteInstallment('${entry.id}', ${p.number})" title="Excluir parcela">🗑️</button>` : "";
@@ -3431,6 +3485,7 @@ async function payInstallment(entryId, number){
   });
 
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  persistLocalDBNow(db);
   refreshFinancialUIAfterPayment();
   toast("Salvando baixa...", "Registrando no navegador e sincronizando com a nuvem.");
   let cloudOk = false;
@@ -3446,6 +3501,24 @@ async function payInstallment(entryId, number){
     toast("Baixa salva no navegador", "A nuvem ainda não confirmou. A versão local foi marcada como mais recente para não perder no F5.");
   }
 }
+try{ window.payInstallment = payInstallment; }catch(_){ }
+
+document.addEventListener('click', function(ev){
+  const btn = ev.target && ev.target.closest ? ev.target.closest('[data-inst-action="pay"]') : null;
+  if(!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if(typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+  if(btn.__cronosLegacyPayClickLock) return;
+  btn.__cronosLegacyPayClickLock = true;
+  setTimeout(()=>{ try{ btn.__cronosLegacyPayClickLock = false; }catch(_){} }, 1200);
+  const entryId = btn.dataset.entryId;
+  const number = Number(btn.dataset.number || 0);
+  if(entryId && number && typeof window.payInstallment === 'function'){
+    window.payInstallment(entryId, number);
+  }
+}, true);
+
 async function undoInstallmentPay(entryId, number){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
@@ -4637,13 +4710,46 @@ function buildClinicStatePayload(db, user){
 
 function __cronosItemTime(item){
   if(!item || typeof item !== "object") return 0;
-  const candidates = [item.updatedAt, item.lastUpdateAt, item.at, item.createdAt, item.lastSeenAt, item.firstSeenAt, item.date, item.dueDate];
-  for(const v of candidates){
-    if(!v) continue;
-    const t = Date.parse(String(v).length === 10 ? String(v)+"T00:00:00" : String(v));
-    if(Number.isFinite(t)) return t;
-  }
-  return 0;
+
+  const parseTime = (v)=>{
+    if(!v) return 0;
+    const raw = String(v);
+    const t = Date.parse(raw.length === 10 ? raw + "T00:00:00" : raw);
+    return Number.isFinite(t) ? t : 0;
+  };
+
+  // Antes o merge olhava praticamente só o horário do objeto principal.
+  // Quando a alteração era dentro da ficha/parcelamento, o item filho podia estar novo,
+  // mas o lead pai antigo fazia a nuvem vencer e apagar o local. Aqui usamos o maior
+  // horário encontrado na árvore relevante do registro.
+  let latest = 0;
+  const direct = [
+    item.updatedAt, item.lastUpdateAt, item.at, item.createdAt, item.lastSeenAt, item.firstSeenAt,
+    item.date, item.dueDate, item.cashDate, item.paidAt, item.fichaUpdatedAt, item.financeUpdatedAt
+  ];
+  direct.forEach(v=>{ latest = Math.max(latest, parseTime(v)); });
+
+  const visit = (value, depth=0)=>{
+    if(!value || depth > 4) return;
+    if(Array.isArray(value)){
+      value.forEach(child=>visit(child, depth + 1));
+      return;
+    }
+    if(typeof value !== "object") return;
+    [
+      value.updatedAt, value.lastUpdateAt, value.createdAt, value.deletedAt, value.at,
+      value.date, value.dueDate, value.cashDate, value.paidAt, value.fichaUpdatedAt, value.financeUpdatedAt
+    ].forEach(v=>{ latest = Math.max(latest, parseTime(v)); });
+
+    // Campos que costumam carregar dados preenchíveis/nested do Cronos.
+    [
+      value.ficha?.plano, value.ficha?.avaliacoes, value.ficha?.odontograma,
+      value.financialPlans, value.installments, value.statusLog, value.payments, value.tasks
+    ].forEach(child=>visit(child, depth + 1));
+  };
+  visit(item, 0);
+
+  return latest;
 }
 function __cronosMergeArrayById(cloudArr, localArr){
   const out = new Map();
@@ -4857,9 +4963,25 @@ function scheduleCloudSave(immediate=false){
     return run();
   }
 
-  __cloudSaveTimer = setTimeout(run, 650);
+  __cloudSaveTimer = setTimeout(run, 300);
   return Promise.resolve(true);
 }
+
+function flushPendingCloudSaveOnExit(){
+  try{
+    if(!DB || typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
+    if(__cloudSaveTimer){
+      clearTimeout(__cloudSaveTimer);
+      __cloudSaveTimer = null;
+      scheduleCloudSave(true);
+    }
+  }catch(_){ }
+}
+try{
+  window.addEventListener('pagehide', flushPendingCloudSaveOnExit);
+  window.addEventListener('beforeunload', flushPendingCloudSaveOnExit);
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'hidden') flushPendingCloudSaveOnExit(); });
+}catch(_){ }
 
 async function ensureCloudDBLoaded(force=false){
   if(DB && CLOUD_DB_READY && !force) return DB;
@@ -4912,7 +5034,10 @@ async function ensureCloudDBLoaded(force=false){
   }
 
   if(ctx?.row?.data){
-    let loaded = ensureMasterRecordByEmail(normalizeDBShape(ctx.row.data), ctx.ownerEmail || user.email || "");
+    const localBeforePull = normalizeDBShape(getLegacyLocalDB() || freshDB());
+    const cloudBeforePull = normalizeDBShape(ctx.row.data);
+    let loaded = mergeCloudAndLocalDB(cloudBeforePull, localBeforePull);
+    loaded = ensureMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "");
     const cloudClinicName = String(ctx.row.clinic_name || "").trim();
     if(cloudClinicName){
       const master = getMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "") || loaded.masters?.[0];
@@ -4924,6 +5049,19 @@ async function ensureCloudDBLoaded(force=false){
     DB = loaded;
     CLOUD_DB_READY = true;
     localStorage.setItem(DBKEY, JSON.stringify(DB));
+
+    // Se havia alteração local mais recente que ainda não tinha subido, sobe de volta
+    // depois do pull. Isso protege ficha, parcelamentos e demais campos preenchíveis
+    // contra o clássico: salva no PC A, F5, outro PC não vê, e depois some do PC A.
+    try{
+      const localSig = JSON.stringify(localBeforePull);
+      const cloudSig = JSON.stringify(cloudBeforePull);
+      const mergedSig = JSON.stringify(DB);
+      if(mergedSig !== cloudSig && localSig !== cloudSig){
+        setTimeout(()=>{ try{ scheduleCloudSave(true); }catch(err){ console.warn("Falha ao reenviar alterações locais após pull:", err); } }, 180);
+      }
+    }catch(_){ }
+
     return DB;
   }
 
@@ -7299,6 +7437,12 @@ async function refreshCloudDataNow({ force=false, reason="" } = {}){
   }
   const run = (async ()=>{
     try{
+      // Antes de puxar a nuvem, tenta enviar mudanças locais pendentes.
+      // Isso evita que procedimentos recém-lançados na ficha sejam apagados por um refresh
+      // quando ainda estavam só no navegador.
+      if(DB && typeof supabaseClient !== "undefined" && supabaseClient?.auth){
+        try{ await scheduleCloudSave(true); }catch(err){ console.warn("Não foi possível enviar alterações locais antes do refresh:", err); }
+      }
       await ensureCloudDBLoaded(true);
       await syncCurrentCloudActor();
       window.__CRONOS_LAST_CLOUD_PULL_AT__ = Date.now();
@@ -8461,12 +8605,17 @@ function wireLeadModal(actor, editingEntryId, isNew){
       db.contacts[existingIndex].cpf = contactDraft.cpf;
       db.contacts[existingIndex].birthDate = contactDraft.birthDate;
       db.contacts[existingIndex].lastSeenAt = contactDraft.lastSeenAt;
+      db.contacts[existingIndex].updatedAt = now;
+      db.contacts[existingIndex].lastUpdateAt = now;
       if(!db.contacts[existingIndex].firstSeenAt) db.contacts[existingIndex].firstSeenAt = contactDraft.firstSeenAt;
       contact = db.contacts[existingIndex];
     }else{
       contact = {
         ...contactDraft,
-        id: (crypto.randomUUID ? crypto.randomUUID() : uid("c"))
+        id: (crypto.randomUUID ? crypto.randomUUID() : uid("c")),
+        createdAt: now,
+        updatedAt: now,
+        lastUpdateAt: now
       };
       db.contacts.push(contact);
     }
@@ -12958,7 +13107,7 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
       },
       setPrice(v){ const s = getFichaState(); if(!s) return; s.price = v; },
-      setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; ensureFicha(entry).observacoes = String(v || ''); saveDB(db); },
+      setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; ensureFicha(entry).observacoes = String(v || ''); saveFichaMutation(db, entry); },
       addToPlan(){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
@@ -12992,6 +13141,7 @@ window.CRONOS_PROC_UI = {
               avaliacaoLabel: evalInfo.label,
               avaliacaoData: evalInfo.date,
               createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
               financialPlanId:'',
               recebimentoId:''
             });
@@ -13016,7 +13166,7 @@ window.CRONOS_PROC_UI = {
             recebimentoId:''
           });
         }
-        saveDB(db);
+        saveFichaMutation(db, entry);
 
         s.selectedTeeth = [];
         s.selectedTooth = null;
@@ -13075,7 +13225,7 @@ window.CRONOS_PROC_UI = {
           }
         });
 
-        saveDB(db);
+        saveFichaMutation(db, entry);
         renderFichaApp();
         try{ renderLeadsTable(filteredEntries()); }catch(_){}
 
@@ -13104,7 +13254,8 @@ window.CRONOS_PROC_UI = {
 
         item.valorFechado = parseMoneyInput(raw);
         if(node) delete node.dataset.cronosPendingValue;
-        saveDB(db);
+        markFichaMutation(entry, item);
+        saveDB(db, { immediate:true });
         refreshFichaLiveFinancialSummary(entry, itemId);
         __scheduleFichaLeadsFinancialRefresh();
       },
@@ -13118,7 +13269,8 @@ window.CRONOS_PROC_UI = {
         if(node && node.dataset && node.dataset.cronosPendingValue != null){
           item.valorFechado = parseMoneyInput(node.value);
           delete node.dataset.cronosPendingValue;
-          saveDB(db);
+          markFichaMutation(entry, item);
+          saveDB(db, { immediate:true });
           __scheduleFichaLeadsFinancialRefresh();
         }
         if(node) node.value = String(Number(item.valorFechado || 0)).replace('.', ',');
@@ -13132,7 +13284,8 @@ window.CRONOS_PROC_UI = {
         const item = ensureFicha(entry).plano.find(x=>x.id===itemId);
         if(!item) return;
         item.face = String(v || '');
-        saveDB(db);
+        markFichaMutation(entry, item);
+        saveDB(db, { immediate:true });
       },
       toggleDone(itemId){
         const s = getFichaState(); if(!s) return;
@@ -13142,7 +13295,8 @@ window.CRONOS_PROC_UI = {
         const item = ensureFicha(entry).plano.find(x=>x.id===itemId);
         if(!item) return;
         item.feito = !item.feito;
-        saveDB(db);
+        markFichaMutation(entry, item);
+        saveDB(db, { immediate:true });
         renderFichaApp();
       },
       togglePaid(itemId){
@@ -13263,7 +13417,7 @@ window.CRONOS_PROC_UI = {
         if(ficha.avaliacoes.some(a=>String(a.id)===String(evalId))){
           ficha.activeEvaluationId = String(evalId);
           resetFichaTransientSelection(s);
-          saveDB(db, { immediate:true });
+          saveFichaMutation(db, entry);
         }
         renderFichaApp();
       },
@@ -13280,7 +13434,7 @@ window.CRONOS_PROC_UI = {
         ficha.avaliacoes.push(av);
         ficha.activeEvaluationId = av.id;
         resetFichaTransientSelection(s);
-        saveDB(db, { immediate:true });
+        saveFichaMutation(db, entry);
         renderFichaApp();
         toast('Nova avaliação criada ✅', `${av.label} • ${fmtBR(date)}`);
       },
@@ -13292,7 +13446,7 @@ window.CRONOS_PROC_UI = {
         if(!entry) return;
         const ficha = ensureFicha(entry);
         ficha.plano = ficha.plano.filter(x=>x.id!==itemId);
-        saveDB(db);
+        saveFichaMutation(db, entry);
         renderFichaApp();
         try{ renderLeadsTable(filteredEntries()); }catch(_){ }
       },
@@ -13313,7 +13467,7 @@ window.CRONOS_PROC_UI = {
         if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
         else ficha.odontograma[key] = meta;
         s.selectedTooth = key;
-        saveDB(db);
+        saveFichaMutation(db, entry);
         renderFichaApp();
       },
       toggleAbsent(tooth){
@@ -13331,7 +13485,7 @@ window.CRONOS_PROC_UI = {
         if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
         else ficha.odontograma[key] = meta;
         s.selectedTooth = key;
-        saveDB(db);
+        saveFichaMutation(db, entry);
         renderFichaApp();
       },
       useSelectedToothForPlan(){
@@ -13371,7 +13525,7 @@ window.CRONOS_PROC_UI = {
           if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
           else ficha.odontograma[key] = meta;
         });
-        saveDB(db);
+        saveFichaMutation(db, entry);
         renderFichaApp();
       },
       setAbsentForSelection(){
@@ -13392,7 +13546,7 @@ window.CRONOS_PROC_UI = {
           if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
           else ficha.odontograma[key] = meta;
         });
-        saveDB(db);
+        saveFichaMutation(db, entry);
         renderFichaApp();
       },
       saveToothMeta(){
