@@ -13499,35 +13499,48 @@ window.CRONOS_PROC_UI = {
       const actor = currentActor();
       const contact = getContactForEntry(entry);
       const ficha = ensureFicha(entry);
-      const totals = calcFichaTotals(ficha.plano || [], entry);
+      const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+      const printablePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
+      const totals = calcFichaTotals(printablePlan, entry);
       const branding = getClinicBranding(db, actor);
       const clinicName = escapeHTML(getClinicDisplayName(db, actor));
       const patientName = escapeHTML(contact?.name || entry?.name || 'Paciente');
       const patientPhone = escapeHTML(contact?.phone || entry?.phone || '—');
       const patientCpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
       const patientBirthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
-      const patientCity = escapeHTML(entry?.city || '—');
       const patientTreatment = escapeHTML(entry?.treatment || '—');
+      const patientEvaluation = escapeHTML(`${activeEvaluation?.label || 'Avaliação'}${activeEvaluation?.date ? ` • ${fmtBR(activeEvaluation.date)}` : ''}`);
       const obs = escapeHTML(String(ficha?.observacoes || entry?.obs || '').trim() || '');
       const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
       const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
+      function getPrintToothVisualState(tooth){
+        if(isToothAbsent(entry, tooth)) return 'absent';
+        const planForTooth = printablePlan.filter(item=>String(item.dente || '').split(',').map(x=>x.trim()).filter(Boolean).includes(String(tooth)));
+        if(planForTooth.length){
+          if(planForTooth.every(item=>isFichaItemClinicallyDone(entry, item))) return 'done';
+          if(planForTooth.some(item=>item.pago || isFichaItemFinancialLinked(entry, item))) return 'paid';
+          return '';
+        }
+        return '';
+      }
       function overlayBoxes(list, y){
-        return list.map((tooth, i)=>`<div class="box ${getToothVisualState(entry, tooth)}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%">${tooth}</div>`).join('');
+        return list.map((tooth, i)=>`<div class="box ${getPrintToothVisualState(tooth)}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%">${tooth}</div>`).join('');
       }
 
       const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha - ${patientName}</title>
         <style>
+          :root{--print-line:rgba(17,24,39,.42);--print-line-soft:rgba(17,24,39,.18)}
           body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0}
-          .sheet{border:1px solid #d7dde7;padding:22px 24px 28px}
-          .head{display:grid;grid-template-columns:120px 1fr 220px;gap:16px;align-items:center;border-bottom:2px solid #111;padding-bottom:14px}
+          .sheet{border:1px solid var(--print-line-soft);padding:22px 24px 28px}
+          .head{display:grid;grid-template-columns:120px 1fr 220px;gap:16px;align-items:center;border-bottom:1.5px solid var(--print-line);padding-bottom:14px}
           .logo{width:140px;height:84px;display:flex;align-items:center;justify-content:flex-start;text-align:center;font-size:12px;font-weight:700}
           .logo img{width:auto;height:76px;max-width:140px;display:block;object-fit:contain}
           .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:#444;letter-spacing:.08em}
           .meta{text-align:right;font-size:12px;line-height:1.7}
-          .patient{margin-top:12px;display:grid;grid-template-columns:1.3fr .9fr .9fr 1fr 1fr;gap:10px}
-          .field{border:1px solid #111;min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
+          .patient{margin-top:12px;display:grid;grid-template-columns:1.35fr .9fr .9fr 1fr;gap:10px}
+          .field{border:1px solid var(--print-line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
           .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px}
-          .boxWrap{border:1.5px solid #111;padding:10px}
+          .boxWrap{border:1.25px solid var(--print-line);padding:10px}
           .odonto{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#eef1f5}
           .odonto img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
           .overlay{position:absolute;inset:0}
@@ -13535,9 +13548,9 @@ window.CRONOS_PROC_UI = {
           .box.paid,.box.plan,.box.closed{background:#ffd400;border-color:#b7791f;color:#111827}.box.done{background:#16a34a;border-color:#166534;color:#fff}.box.absent{background:#dc2626;border-color:#991b1b;color:#fff}
           .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#555}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;padding:5px 9px;border-radius:999px}
           .chip{width:10px;height:10px;border-radius:999px;display:inline-block}.cp1{background:#ffd400}.cp2{background:#16a34a}.cp3{background:#dc2626}
-          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #111;padding:6px 7px;vertical-align:top}th{background:#f5f5f5;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
-          .summary{border-top:1.5px solid #111;margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid #111;padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}
-          .obs{margin-top:14px;border:1.5px solid #111;padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
+          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--print-line);padding:6px 7px;vertical-align:top}th{background:#f7f8fa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
+          .summary{border-top:1.25px solid var(--print-line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid var(--print-line);padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}
+          .obs{margin-top:14px;border:1.25px solid var(--print-line);padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
           .foot{margin-top:16px;font-size:11px;color:#333}
           @media print{body{padding:0}.sheet{border:none}tr.done td{background:#bbf7d0 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.paid td,tr.closed td{background:#fef08a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.absent td{background:#fecaca !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.box.paid,.box.plan,.box.closed,.box.done,.box.absent{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>
@@ -13545,14 +13558,13 @@ window.CRONOS_PROC_UI = {
           <div class="head">
             <div class="logo">${branding?.logoDataUri ? `<img src="${branding.logoDataUri}" alt="${clinicName}">` : `${clinicName}`}</div>
             <div class="title"><h2>FICHA DE AVALIAÇÃO</h2><p>PLANO DE TRATAMENTO / ODONTOGRAMA</p></div>
-            <div class="meta">Data: ${fmtBR(todayISO())}<br>Lead: ${escapeHTML(String(entry.id || '—'))}<br>Tratamento: ${patientTreatment}</div>
+            <div class="meta">Data: ${fmtBR(todayISO())}<br>Lead: ${escapeHTML(String(entry.id || '—'))}<br>Tratamento: ${patientTreatment}<br>Avaliação: ${patientEvaluation}</div>
           </div>
           <div class="patient">
             <div class="field"><span class="lbl">Paciente</span><span class="val">${patientName}</span></div>
             <div class="field"><span class="lbl">Telefone</span><span class="val">${patientPhone}</span></div>
             <div class="field"><span class="lbl">CPF</span><span class="val">${patientCpf}</span></div>
             <div class="field"><span class="lbl">Nascimento</span><span class="val">${patientBirthAge}</span></div>
-            <div class="field"><span class="lbl">Cidade</span><span class="val">${patientCity}</span></div>
           </div>
 
           <div class="boxWrap" style="margin-top:16px">
@@ -13561,10 +13573,10 @@ window.CRONOS_PROC_UI = {
             <div class="legend"><span><i class="chip cp1"></i>Pago</span><span><i class="chip cp2"></i>Realizado</span><span><i class="chip cp3"></i>Perda dentária / ausente</span></div>
           </div>
 
-          <div style="border:1.5px solid #111;display:flex;flex-direction:column;margin-top:16px">
+          <div style="border:1.25px solid var(--print-line);display:flex;flex-direction:column;margin-top:16px">
             <table>
               <thead><tr><th>Nº</th><th>Procedimento</th><th>Dente</th><th>Face</th><th>Tabela</th><th>Fechado</th><th>Pago</th></tr></thead>
-              <tbody>${ficha.plano.length ? ficha.plano.map((item, idx)=>`<tr class="${getItemVisualState(entry, item)}"><td class="center">${idx+1}</td><td>${escapeHTML(item.procedimento || '')}</td><td class="center">${escapeHTML(item.dente || '—')}</td><td class="center">${escapeHTML(item.face || '—')}</td><td class="right">${moneyBR(item.valorBase || 0)}</td><td class="right">${moneyBR(item.valorFechado || 0)}</td><td class="right">${isFichaItemFinancialPaid(entry, item) ? moneyBR(item.valorFechado || 0) : moneyBR(0)}</td></tr>`).join('') : `<tr><td colspan="7">Nenhum item cadastrado.</td></tr>`}</tbody>
+              <tbody>${printablePlan.length ? printablePlan.map((item, idx)=>`<tr class="${getItemVisualState(entry, item)}"><td class="center">${idx+1}</td><td>${escapeHTML(item.procedimento || '')}</td><td class="center">${escapeHTML(item.dente || '—')}</td><td class="center">${escapeHTML(item.face || '—')}</td><td class="right">${moneyBR(item.valorBase || 0)}</td><td class="right">${moneyBR(item.valorFechado || 0)}</td><td class="right">${isFichaItemFinancialPaid(entry, item) ? moneyBR(item.valorFechado || 0) : moneyBR(0)}</td></tr>`).join('') : `<tr><td colspan="7">Nenhum item cadastrado nesta avaliação.</td></tr>`}</tbody>
             </table>
             <div class="summary">
               <div class="sum"><div class="lbl">Valor tabela</div><div class="val">${moneyBR(totals.totalBase)}</div></div>
