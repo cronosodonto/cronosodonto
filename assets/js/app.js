@@ -1490,6 +1490,9 @@ function ensureNewInstallmentButton(){
 }
 
 function buildFinancialPlanCards(db, actor, mk, q, filter, today){
+  // Paginação do novo modelo deve aparecer no final da lista geral de Recebimentos,
+  // não no meio entre os cards novos e os parcelamentos antigos.
+  window.__instFinancialPagerHtml = "";
   const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===actor.masterId).map(c=>[String(c.id),c]));
   const rows = [];
   (db.entries||[])
@@ -1562,7 +1565,7 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
   const finStart = (finPage - 1) * finPageSize;
   const renderRows = rows.slice(finStart, finStart + finPageSize);
   const finPagerHtml = finTotalPages > 1 ? `
-    <div class="instPager" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 16px;">
+    <div class="instPager" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;">
       <div class="muted">Novo modelo: página ${finPage} de ${finTotalPages} • ${rows.length} registro(s)</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn small" ${finPage<=1 ? 'disabled' : ''} onclick="window.__instFinancialState.page=Math.max(1,(window.__instFinancialState.page||1)-1);renderInstallmentsView();">Anterior</button>
@@ -1570,6 +1573,7 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
       </div>
     </div>
   ` : '';
+  window.__instFinancialPagerHtml = finPagerHtml;
 
   return `
     <div style="margin-bottom:10px;font-weight:900">Novo modelo de orçamentos</div>
@@ -1621,7 +1625,6 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
         </div>
       `;
     }).join("")}
-    ${finPagerHtml}
     <div style="height:10px"></div>
   `;
 }
@@ -1638,7 +1641,7 @@ function renderFinancialPaymentTable(entry, plan, contact){
       ? (canSensitive
           ? `<a class="miniLink" href="javascript:void(0)" onclick="undoFinancialPayment('${entry.id}','${plan.id}','${p.id}')">Desfazer</a>`
           : `<span class="muted" style="font-size:12px">Pago</span>`)
-      : `<button type="button" class="btn ok" data-fin-action="pay" data-entry-id="${escapeHTML(entry.id)}" data-plan-id="${escapeHTML(plan.id)}" data-payment-id="${escapeHTML(p.id)}">Dar baixa</button>`;
+      : `<button type="button" class="btn ok" onclick="payFinancialPayment('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(p.id)}'); return false;">Dar baixa</button>`;
     const transfer = (paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferFinancialPaymentCashDate('${entry.id}','${plan.id}','${p.id}')">Transferir data</a>` : "";
     const cashISO = cronosPaymentCashISO(p, false);
     const deleteBtn = canSensitive ? `<button type="button" class="miniBtn danger" onclick="deleteFinancialPayment('${entry.id}','${plan.id}','${p.id}')" title="Excluir pagamento">🗑️</button>` : "";
@@ -1779,6 +1782,85 @@ function markFinancialMutation(entry, plan=null, payment=null, nowISO=new Date()
     payment.updatedAt = nowISO;
     payment.lastUpdateAt = nowISO;
   }
+}
+
+
+function cronosTombstoneListAdd(list, id, nowISO=new Date().toISOString()){
+  const cleanId = String(id || "").trim();
+  if(!cleanId) return Array.isArray(list) ? list : [];
+  const arr = Array.isArray(list) ? list.slice() : [];
+  const prev = arr.find(x=>String((x && typeof x === "object") ? x.id : x).trim() === cleanId);
+  if(prev && typeof prev === "object"){
+    prev.deletedAt = nowISO;
+    prev.updatedAt = nowISO;
+    return arr;
+  }
+  arr.push({id: cleanId, deletedAt: nowISO, updatedAt: nowISO});
+  return arr;
+}
+
+function cronosTombstoneIdSet(list){
+  const set = new Set();
+  (Array.isArray(list) ? list : []).forEach(x=>{
+    const id = String((x && typeof x === "object") ? x.id : x).trim();
+    if(id) set.add(id);
+  });
+  return set;
+}
+
+function tombstoneFinancialPlan(entry, planId, nowISO=new Date().toISOString()){
+  if(!entry) return;
+  entry.deletedFinancialPlanIds = cronosTombstoneListAdd(entry.deletedFinancialPlanIds, planId, nowISO);
+  markFinancialMutation(entry, null, null, nowISO);
+}
+
+function tombstoneFinancialPayment(plan, paymentId, nowISO=new Date().toISOString()){
+  if(!plan) return;
+  plan.deletedPaymentIds = cronosTombstoneListAdd(plan.deletedPaymentIds, paymentId, nowISO);
+  markFinancialMutation(null, plan, null, nowISO);
+}
+
+function cronosLegacyInstallmentTombstoneKey(parcela, fallbackNumber=""){
+  const number = String(parcela?.number || fallbackNumber || "").trim();
+  const due = String(parcela?.dueDate || parcela?.due || "").trim();
+  const amount = String(parseMoney(parcela?.amount ?? parcela?.value ?? parcela?.valor ?? 0));
+  return `${number}|${due}|${amount}`;
+}
+
+function applyFinancialTombstonesToEntry(entry){
+  if(!entry || typeof entry !== "object") return entry;
+  const deletedPlanIds = cronosTombstoneIdSet(entry.deletedFinancialPlanIds);
+  if(Array.isArray(entry.financialPlans)){
+    entry.financialPlans = entry.financialPlans.filter(plan=>!deletedPlanIds.has(String(plan?.id || "")));
+    entry.financialPlans.forEach(plan=>{
+      const deletedPaymentIds = cronosTombstoneIdSet(plan?.deletedPaymentIds);
+      if(deletedPaymentIds.size && Array.isArray(plan.payments)){
+        plan.payments = plan.payments.filter(pay=>!deletedPaymentIds.has(String(pay?.id || "")));
+        try{ renumberFinancialPlanPayments(plan); }catch(_){ }
+      }
+    });
+  }
+  if(entry.deletedLegacyInstallmentPlanAt){
+    entry.installPlan = null;
+    entry.installments = [];
+  }else{
+    const deletedLegacy = cronosTombstoneIdSet(entry.deletedLegacyInstallments);
+    if(deletedLegacy.size && Array.isArray(entry.installments)){
+      entry.installments = entry.installments.filter(pay=>!deletedLegacy.has(cronosLegacyInstallmentTombstoneKey(pay, pay?.number)));
+      try{ normalizeInstallmentsAfterMutation(entry); }catch(_){ }
+    }
+  }
+  return entry;
+}
+
+function applyFinancialTombstones(db){
+  try{
+    if(!db || !Array.isArray(db.entries)) return db;
+    db.entries.forEach(entry=>applyFinancialTombstonesToEntry(entry));
+  }catch(err){
+    console.warn("Falha ao aplicar exclusões financeiras:", err);
+  }
+  return db;
 }
 
 
@@ -2499,6 +2581,7 @@ async function deleteFinancialPayment(entryId, planId, paymentId){
 
   const nowISO = new Date().toISOString();
   const before = Array.isArray(plan.payments) ? plan.payments.length : 0;
+  tombstoneFinancialPayment(plan, paymentId, nowISO);
   plan.payments = (plan.payments||[]).filter(p=>String(p.id)!==String(paymentId));
   const after = plan.payments.length;
   if(before === after) return toast("Atenção", "Não encontrei essa parcela para excluir.");
@@ -3025,7 +3108,9 @@ window.CRONOS_NEW_FIN_UI = {
     const st = window.__newFinancialInstallmentState || {};
     const entry = (db.entries||[]).find(e=>String(e.id)===String(st.entryId));
     if(!entry) return;
+    const nowISO = new Date().toISOString();
     const removedPlan = ensureFinancialPlans(entry).find(p=>String(p.id)===String(planId));
+    tombstoneFinancialPlan(entry, planId, nowISO);
     entry.financialPlans = ensureFinancialPlans(entry).filter(p=>String(p.id)!==String(planId));
     db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entry.id) && String(p.financialPlanId)===String(planId)));
     try{ pruneOrphanFinancialPaymentRecords(db, entry); }catch(_){ }
@@ -3039,11 +3124,12 @@ window.CRONOS_NEW_FIN_UI = {
           item.recebimentoId = "";
           item.financeStatus = "";
           item.pago = false;
-          item.updatedAt = new Date().toISOString();
+          item.updatedAt = nowISO;
         }
       });
     }
     if(String(st.planId)===String(planId)) st.planId = "";
+    markFinancialMutation(entry, null, null, nowISO);
     try{ syncFichaFinancialLinks(entry); }catch(_){ }
     syncInstallmentTasks(db, actor);
     saveDB(db, { immediate:true });
@@ -3059,7 +3145,7 @@ window.CRONOS_NEW_FIN_UI = {
     const t = financialPlanTotals(plan);
     setVal("newPayAmount", Number(t.remainingToSchedule.toFixed(2)));
   },
-  addPayment(){
+  async addPayment(){
     const actor = currentActor();
     const db = loadDB();
     const st = window.__newFinancialInstallmentState || {};
@@ -3074,6 +3160,14 @@ window.CRONOS_NEW_FIN_UI = {
     if(amount <= 0) return toast("Valor", "Informe o valor do pagamento.");
     if(!/^\d{4}-\d{2}-\d{2}$/.test(due)) return toast("Data", "Informe uma data válida.");
 
+    const paidInitially = status === "PAGA";
+    const initialCashDate = paidInitially ? await askPaymentCashDate({
+      title: "Data da baixa",
+      subtitle: `${plan.title || "Plano financeiro"} • ${moneyBR(amount)}. Escolha em que dia esse pagamento deve entrar no caixa.`,
+      defaultDate: due
+    }) : "";
+    if(paidInitially && !initialCashDate) return;
+
     plan.payments = Array.isArray(plan.payments) ? plan.payments : [];
     const base = Math.floor((amount / count) * 100) / 100;
     let accumulated = 0;
@@ -3081,7 +3175,7 @@ window.CRONOS_NEW_FIN_UI = {
       let value = i === count ? Number((amount - accumulated).toFixed(2)) : Number(base.toFixed(2));
       accumulated += value;
       const dueDate = addMonthsISO(due, i-1);
-      const paid = status === "PAGA";
+      const paid = paidInitially;
       const p = {
         id: uid("pay"),
         amount: value,
@@ -3089,8 +3183,9 @@ window.CRONOS_NEW_FIN_UI = {
         payMethod: method,
         notes: obs,
         status: paid ? "PAGA" : "PENDENTE",
-        paidAt: paid ? todayISO() : "",
-        cashDate: paid ? todayISO() : "",
+        paidAt: paid ? initialCashDate : "",
+        cashDate: paid ? initialCashDate : "",
+        paid: !!paid,
         createdAt: new Date().toISOString()
       };
       plan.payments.push(p);
@@ -3099,7 +3194,9 @@ window.CRONOS_NEW_FIN_UI = {
 
     if(status === "PAGA"){
       db.payments = db.payments || [];
+      const nowISO = new Date().toISOString();
       plan.payments.filter(p=>p.status==="PAGA" && !findFinancePaymentRecord(db, entry.id, plan.id, p.id)).forEach(p=>{
+        const cashDate = p.cashDate || initialCashDate || due;
         db.payments.push({
           id: uid("p"),
           masterId: actor.masterId,
@@ -3107,8 +3204,14 @@ window.CRONOS_NEW_FIN_UI = {
           contactId: entry.contactId || "",
           financialPlanId: plan.id,
           financialPaymentId: p.id,
-          at: new Date().toISOString(),
-          date: p.cashDate || todayISO(),
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          lastUpdateAt: nowISO,
+          date: cashDate,
+          paidAt: cashDate,
+          cashDate,
+          status: "PAGA",
           value: parseMoney(p.amount),
           method: p.payMethod || "",
           desc: `Orçamento: ${plan.title || "Plano financeiro"} • Pagamento ${p.number || ""}/${p.total || ""}`,
@@ -3271,6 +3374,7 @@ function renderInstallmentsView(){
   if(!list) return;
   ensureNewInstallmentButton();
   const financialCardsHtml = buildFinancialPlanCards(db, actor, mk, q, filter, today);
+  const financialPagerHtml = window.__instFinancialPagerHtml || "";
 
   if(!rows.length && !financialCardsHtml){
     list.innerHTML = `<div class="muted">Nenhum recebimento encontrado para o mês e filtro selecionados.</div>`;
@@ -3345,7 +3449,7 @@ function renderInstallmentsView(){
     </div>
   ` : '';
 
-  list.innerHTML = financialCardsHtml + cardsHtml + pagerHtml;
+  list.innerHTML = financialCardsHtml + cardsHtml + financialPagerHtml + pagerHtml;
 
   try{
     window.__instOpen = window.__instOpen || {};
@@ -3386,7 +3490,7 @@ function renderInstallmentTable(entry, contact){
     const st = paid ? `<span class="badge ok">PAGO</span>` : (late ? `<span class="badge late">ATRASADO</span>` : `<span class="badge pending">PENDENTE</span>`);
     const action = paid
       ? (canSensitive ? `<a class="miniLink" href="javascript:void(0)" onclick="undoInstallmentPay('${entry.id}', ${p.number})">Desfazer</a>` : `<span class="muted" style="font-size:12px">Pago</span>`)
-      : `<button class="btn ok" type="button" data-inst-action="pay" data-entry-id="${escapeHTML(entry.id)}" data-number="${Number(p.number)||0}">Dar baixa</button>`;
+      : `<button class="btn ok" type="button" onclick="payInstallment('${escapeJSString(entry.id)}', ${Number(p.number)||0}); return false;">Dar baixa</button>`;
     const transfer = (paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferInstallmentCashDate('${entry.id}', ${p.number})">Transferir data</a>` : "";
     const wa = !paid ? `<a class="waChargeBtn" href="${waChargeLink(contact.phone, contact.name, entry, p)}" target="_blank"><span class="waChargeIcon">☎</span><span>Cobrar</span></a>` : "";
     const deleteBtn = canSensitive ? `<button class="miniBtn danger" onclick="deleteInstallment('${entry.id}', ${p.number})" title="Excluir parcela">🗑️</button>` : "";
@@ -3671,9 +3775,12 @@ Isso vai remover ${totalParcelas} parcela(s), pagamentos lançados por parcelas 
     entry.valueClosed = entry.status === "Fechou" ? entry.valuePaid : null;
   }
 
-  db.payments = (db.payments||[]).filter(pay=>!(pay.entryId===entryId && String(pay.desc||"").startsWith("Parcela ")));
+  const nowISO = new Date().toISOString();
+  db.payments = (db.payments||[]).filter(pay=>!(String(pay.entryId)===String(entryId) && String(pay.desc||"").startsWith("Parcela ")));
   entry.installPlan = null;
   entry.installments = [];
+  entry.deletedLegacyInstallmentPlanAt = nowISO;
+  markFinancialMutation(entry, null, null, nowISO);
 
   persistInstallmentMutation(db, actor, null, "Parcelamento excluído", `${totalParcelas} parcela(s) removida(s).`);
 }
@@ -3702,8 +3809,11 @@ function deleteInstallment(entryId, number){
     db.payments = (db.payments||[]).filter(pay=>!(pay.entryId===entryId && Number(pay.value||0)===amt && String(pay.desc||"").includes(`Parcela ${oldNumber}/`)));
   }
 
+  const nowISO = new Date().toISOString();
+  entry.deletedLegacyInstallments = cronosTombstoneListAdd(entry.deletedLegacyInstallments, cronosLegacyInstallmentTombstoneKey(parcela, oldNumber), nowISO);
   entry.installments.splice(idx, 1);
   normalizeInstallmentsAfterMutation(entry);
+  markFinancialMutation(entry, null, null, nowISO);
   persistInstallmentMutation(db, actor, entryId, "Parcela excluída", `A parcela ${oldNumber}/${oldTotal} foi removida.`);
 }
 
@@ -3957,6 +4067,16 @@ function toast(msg, sub=""){
   t.classList.add("show");
   clearTimeout(toast._tm);
   toast._tm = setTimeout(()=>t.classList.remove("show"), 2800);
+}
+
+
+function escapeJSString(s){
+  return String(s ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/</g, "\\x3C");
 }
 
 function escapeHTML(s){
@@ -4724,8 +4844,9 @@ function __cronosItemTime(item){
   // horário encontrado na árvore relevante do registro.
   let latest = 0;
   const direct = [
-    item.updatedAt, item.lastUpdateAt, item.at, item.createdAt, item.lastSeenAt, item.firstSeenAt,
-    item.date, item.dueDate, item.cashDate, item.paidAt, item.fichaUpdatedAt, item.financeUpdatedAt
+    item.updatedAt, item.lastUpdateAt, item.at, item.createdAt, item.deletedAt,
+    item.lastSeenAt, item.firstSeenAt, item.fichaUpdatedAt, item.financeUpdatedAt,
+    item.lastMergedAt, item.lastSavedAt, item.lastSyncAt
   ];
   direct.forEach(v=>{ latest = Math.max(latest, parseTime(v)); });
 
@@ -4738,7 +4859,7 @@ function __cronosItemTime(item){
     if(typeof value !== "object") return;
     [
       value.updatedAt, value.lastUpdateAt, value.createdAt, value.deletedAt, value.at,
-      value.date, value.dueDate, value.cashDate, value.paidAt, value.fichaUpdatedAt, value.financeUpdatedAt
+      value.fichaUpdatedAt, value.financeUpdatedAt, value.lastSavedAt, value.lastSyncAt
     ].forEach(v=>{ latest = Math.max(latest, parseTime(v)); });
 
     // Campos que costumam carregar dados preenchíveis/nested do Cronos.
@@ -9642,6 +9763,57 @@ const KANBAN_COLUMNS = [
   {title:"Sem resposta", status:"Sem resposta"},
 ];
 
+
+function kanbanPotentialValue(entry, db){
+  if(!entry) return 0;
+  try{
+    if(Array.isArray(entry?.tags) && entry.tags.includes("Resgatado")) return 0;
+  }catch(_){ }
+
+  try{
+    const directBudget = (typeof getEntryBudgetValue === "function") ? parseMoney(getEntryBudgetValue(entry)) : 0;
+    if(directBudget > 0) return directBudget;
+  }catch(_){ }
+
+  try{
+    if(typeof cronosEntryFinancialSummary === "function"){
+      const summary = cronosEntryFinancialSummary(entry, db);
+      const budget = parseMoney(summary?.budget ?? 0);
+      if(budget > 0) return budget;
+    }
+  }catch(_){ }
+
+  const direct = Math.max(
+    parseMoney(entry.valueBudget ?? 0),
+    parseMoney(entry.valorOrcamento ?? 0),
+    parseMoney(entry.orcamento ?? 0),
+    parseMoney(entry.budget ?? 0),
+    parseMoney(entry.valueEstimated ?? 0),
+    parseMoney(entry.valorEstimado ?? 0),
+    parseMoney(entry.proposalValue ?? 0),
+    parseMoney(entry.budgetValue ?? 0)
+  );
+
+  let ficha = 0;
+  try{
+    const items = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
+    ficha = items.reduce((sum,item)=>sum + parseMoney(item?.valorFechado ?? item?.valorBase ?? item?.valor ?? item?.value ?? item?.amount ?? 0), 0);
+  }catch(_){ }
+
+  let financial = 0;
+  try{
+    const plans = Array.isArray(entry?.financialPlans) ? entry.financialPlans : [];
+    financial = plans.reduce((sum,plan)=>{
+      const payments = Array.isArray(plan?.payments) ? plan.payments : [];
+      const scheduled = payments.reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+      const declared = parseMoney(plan?.amount ?? plan?.total ?? plan?.valor ?? plan?.value ?? 0);
+      return sum + Math.max(declared, scheduled);
+    }, 0);
+  }catch(_){ }
+
+  return Math.max(0, direct, ficha, financial);
+}
+
 function renderKanban(){
   const actor = currentActor();
 if(!actor) return;
@@ -9670,21 +9842,14 @@ const key = groups.has(s) ? s : "Conversando";
   board.innerHTML = KANBAN_COLUMNS.map(col=>{
     const list = groups.get(col.status) || [];
 
-const total = list.reduce((sum,e)=>{
-  const budget = (e.valueBudget!=null && !isNaN(Number(e.valueBudget)))
-    ? Number(e.valueBudget)
-    : 0;
-  return sum + budget;
-},0);
+const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
 
     return `
       <div class="kanCol" data-kan-status="${escapeHTML(col.status)}">
         <div class="kanHead">
           <b>${escapeHTML(col.title)}</b>
           <span class="pill">${list.length}</span>
-<span class="pill" style="margin-left:6px">
-  R$ ${total.toLocaleString("pt-BR")}
-</span>
+<span class="pill" style="margin-left:6px">${moneyBR(total)}</span>
         </div>
         <div class="kanList" data-dropzone="${escapeHTML(col.status)}">
           ${list.length ? list
