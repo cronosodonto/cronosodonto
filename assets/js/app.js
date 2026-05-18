@@ -4283,8 +4283,11 @@ function cancelPendingCloudSync(){
 
 const SUPPORT_STORAGE_KEY = "cronos_support_context";
 const SUPPORT_DBKEY = "cronos_support_db";
+let __supportMemoryContext = null;
+let __supportMemoryDB = null;
 
 function getSupportContext(){
+  if(__supportMemoryContext) return __supportMemoryContext;
   try{
     return JSON.parse(sessionStorage.getItem(SUPPORT_STORAGE_KEY) || "null");
   }catch(_){
@@ -4292,13 +4295,19 @@ function getSupportContext(){
   }
 }
 function setSupportContext(ctx){
+  __supportMemoryContext = ctx || null;
   if(!ctx){
-    sessionStorage.removeItem(SUPPORT_STORAGE_KEY);
+    try{ sessionStorage.removeItem(SUPPORT_STORAGE_KEY); }catch(_){}
     return;
   }
-  sessionStorage.setItem(SUPPORT_STORAGE_KEY, JSON.stringify(ctx));
+  try{
+    sessionStorage.setItem(SUPPORT_STORAGE_KEY, JSON.stringify(ctx));
+  }catch(_){
+    // Em clínicas grandes, sessionStorage pode estourar. A memória da aba continua valendo.
+  }
 }
 function getSupportDB(){
+  if(__supportMemoryDB) return normalizeDBShape(__supportMemoryDB);
   try{
     return normalizeDBShape(JSON.parse(sessionStorage.getItem(SUPPORT_DBKEY) || "null"));
   }catch(_){
@@ -4307,14 +4316,25 @@ function getSupportDB(){
 }
 function setSupportDB(db){
   if(!db){
-    sessionStorage.removeItem(SUPPORT_DBKEY);
+    __supportMemoryDB = null;
+    try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
     return;
   }
-  sessionStorage.setItem(SUPPORT_DBKEY, JSON.stringify(normalizeDBShape(db)));
+
+  const normalized = normalizeDBShape(db);
+  __supportMemoryDB = normalized;
+
+  try{
+    sessionStorage.setItem(SUPPORT_DBKEY, JSON.stringify(normalized));
+  }catch(_){
+    // Não derruba o modo suporte se a clínica tiver dados demais para o sessionStorage.
+  }
 }
 function clearSupportContext(){
-  sessionStorage.removeItem(SUPPORT_STORAGE_KEY);
-  sessionStorage.removeItem(SUPPORT_DBKEY);
+  __supportMemoryContext = null;
+  __supportMemoryDB = null;
+  try{ sessionStorage.removeItem(SUPPORT_STORAGE_KEY); }catch(_){}
+  try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
 }
 function isSupportMode(){
   return !!getSupportContext();
@@ -4324,6 +4344,13 @@ async function maybeInitSupportMode(){
   const params = new URLSearchParams(location.search);
   const supportToken = params.get("support_token");
   if(!supportToken) return getSupportContext();
+
+  // Link de suporte tem prioridade absoluta sobre qualquer login/cache já aberto nessa aba.
+  clearSupportContext();
+  clearSession();
+  resetCloudContext();
+  DB = null;
+  CLOUD_DB_READY = false;
 
   const res = await fetch(`${supabaseUrl}/functions/v1/resolve-support-access`, {
     method: "POST",
@@ -4339,13 +4366,20 @@ async function maybeInitSupportMode(){
     throw new Error(json?.error || "Falha ao validar o acesso de suporte.");
   }
 
-  setSupportContext(json.support || null);
-  if(json?.support?.data){
-    setSupportDB(json.support.data);
+  const support = json.support || null;
+  if(!support){
+    throw new Error("Acesso de suporte validado, mas sem dados de suporte.");
   }
 
+  if(!support.data || typeof support.data !== "object"){
+    throw new Error("Acesso de suporte validado, mas os dados da clínica não foram retornados.");
+  }
+
+  setSupportContext(support);
+  setSupportDB(support.data);
+
   history.replaceState({}, "", location.pathname);
-  return json.support || null;
+  return support;
 }
 
 
@@ -6776,7 +6810,7 @@ if(!prev.length){
             <div>
               <div style="font-weight:800">${escapeHTML(c?.name||"—")}</div>
               <div class="muted" style="font-size:12px; margin-top:2px">
-                ${escapeHTML(c?.phone||"—")} • ${escapeHTML(e.status||"—")}
+                ${escapeHTML((()=>{ const phone = c?.phone || "—"; const st = String(e.status || "").trim(); return st ? `${phone} • ${st}` : phone; })())}
               </div>
             </div>
             <div style="display:flex; gap:8px; align-items:start">
@@ -7329,7 +7363,7 @@ function renderLeadsTable(list){
     const paidVal   = parseMoney(financeSummary.paid);
     const openVal   = parseMoney(financeSummary.open);
 
-    const statusPill = chipStatus(e);
+    const statusPill = String(e.status || "").trim() ? chipStatus(e) : "";
 
     const id = e.id ?? e._id ?? '';
     const idAttr = escapeHTML(String(id));
@@ -7357,8 +7391,7 @@ function renderLeadsTable(list){
             </div>
             <div class="leadMeta">
               <span>${escapeHTML(phonePretty)}</span>
-              <span>•</span>
-              <span>${statusPill}</span>
+              ${statusPill ? `<span>•</span><span>${statusPill}</span>` : ""}
             </div>
           </div>
 
@@ -10608,9 +10641,21 @@ async function boot(){
   }catch(error){
     console.error("Falha ao iniciar suporte:", error);
 
+    if(supportTokenPresent){
+      clearSupportContext();
+      resetCloudContext();
+      DB = null;
+      CLOUD_DB_READY = false;
+      setSupportEntryLoading(false);
+      hideBootSplash();
+      showAuth();
+      toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
+      return;
+    }
+
     const supportCtx = getSupportContext();
 
-    if(!supportCtx && !supportTokenPresent){
+    if(!supportCtx){
       clearSupportContext();
       toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
     }
