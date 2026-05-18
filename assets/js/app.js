@@ -7988,7 +7988,9 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
   const ro = !actor.perms.edit;
 
   function opt(list, cur){
-    return list.map(v=>`<option ${cur===v?"selected":""} value="${escapeHTML(v)}">${escapeHTML(v)}</option>`).join("");
+    const current = String(cur || "");
+    const blank = `<option ${!current ? "selected" : ""} value="">Selecione</option>`;
+    return blank + list.map(v=>`<option ${current===v?"selected":""} value="${escapeHTML(v)}">${escapeHTML(v)}</option>`).join("");
   }
 
 
@@ -8029,7 +8031,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div>
         <label>Data do 1º contato (mês)</label>
-        <input id="lf_first" type="date" ${ro?"disabled":""} value="${escapeHTML(e.firstContactAt || todayISO())}"/>
+        <input id="lf_first" type="date" ${ro?"disabled":""} value="${escapeHTML(e.firstContactAt || "")}"/>
       </div>
 
       <div>
@@ -8040,7 +8042,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div>
         <label>Status</label>
-        <select id="lf_status" ${ro?"disabled":""}>${opt(STATUS_LIST, e.status || "Conversando")}</select>
+        <select id="lf_status" ${ro?"disabled":""}>${opt(STATUS_LIST, e.status || "")}</select>
       </div>
 
       
@@ -8048,7 +8050,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div>
         <label>Origem</label>
-        <select id="lf_origin" ${ro?"disabled":""}>${opt(ORIGINS, e.origin || "Instagram orgânico")}</select>
+        <select id="lf_origin" ${ro?"disabled":""}>${opt(ORIGINS, e.origin || "")}</select>
       </div>
 
       <div id="originOtherWrap" class="${(e.origin==="Outros")?"":"hidden"}">
@@ -8058,7 +8060,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div>
         <label>Tratamento</label>
-        <select id="lf_treatment" ${ro?"disabled":""}>${opt(TREATMENTS, e.treatment || "Clínica geral")}</select>
+        <select id="lf_treatment" ${ro?"disabled":""}>${opt(TREATMENTS, e.treatment || "")}</select>
       </div>
 
       <div id="treatOtherWrap" class="${(e.treatment==="Outros")?"":"hidden"}">
@@ -9042,10 +9044,10 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   if(latest){
     setIf("lf_first", latest.firstContactAt || c.firstSeenAt || todayISO());
     setIf("lf_month", latest.monthKey || monthKey || "");
-    setIf("lf_status", latest.status || "Conversando");
-    setIf("lf_origin", latest.origin || "Instagram orgânico");
+    setIf("lf_status", latest.status || "");
+    setIf("lf_origin", latest.origin || "");
     setIf("lf_originOther", latest.originOther || "");
-    setIf("lf_treatment", latest.treatment || "Clínica geral");
+    setIf("lf_treatment", latest.treatment || "");
     setIf("lf_treatOther", latest.treatmentOther || "");
     setIf("lf_apptDate", latest.apptDate || "");
     setIf("lf_apptTime", latest.apptTime || "");
