@@ -7621,14 +7621,14 @@ async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
 }
 
 function closeAuxiliaryViews(){
-  ["view-todayCronos", "view-creditSimulator"].forEach(id=>{
+  ["view-todayCronos", "view-creditSimulator", "view-performance"].forEach(id=>{
     const node = el(id);
     if(node){
       node.classList.add("hidden");
       node.style.display = "none";
     }
   });
-  ["navHojeCronos", "navCreditoSimulator"].forEach(id=>{
+  ["navHojeCronos", "navCreditoSimulator", "navPerformance"].forEach(id=>{
     const btn = el(id);
     if(btn) btn.classList.remove("active");
   });
@@ -11261,27 +11261,56 @@ document.addEventListener("DOMContentLoaded", () => {
     tasks: 'tasks',
     installments: 'installments',
     users: 'users',
-    settings: 'settings'
+    settings: 'settings',
+    todayCronos: 'todayCronos',
+    creditSimulator: 'creditSimulator',
+    simulador: 'creditSimulator',
+    performance: 'performance'
   };
 
-  const VIEW_LABELS = {
+  const MODULE_LABELS = {
     dashboard: 'Dashboard',
+    todayCronos: 'Hoje no Cronos',
+    performance: 'Performance',
     leads: 'Leads',
     kanban: 'Funil',
     tasks: 'Tarefas',
     installments: 'Recebimentos',
+    creditSimulator: 'Simulador de Crédito',
+    riskAnalysis: 'Análise de Risco',
+    flows: 'Fluxos Assistidos',
     users: 'Usuários',
     settings: 'Configurações'
   };
+
+  const VIEW_LABELS = { ...MODULE_LABELS };
+
+  const AUX_MODULE_BUTTONS = [
+    { module:'todayCronos', selector:'#navHojeCronos' },
+    { module:'creditSimulator', selector:'#navCreditoSimulator' },
+    { module:'performance', selector:'#navPerformance' }
+  ];
+
+  const SUB_FEATURES_WITHOUT_ROLE_GATE = new Set(['riskAnalysis','flows']);
 
   function normalizeFeatureKey(value){
     return String(value || '').trim().toLowerCase();
   }
 
-  function getFeatureState(view){
-    const key = VIEW_TO_FEATURE[view];
+  function featureKeyFor(value){
+    const raw = String(value || '').trim();
+    if(!raw) return '';
+    return VIEW_TO_FEATURE[raw] || raw;
+  }
+
+  function getFeatureStateByKey(featureKey){
+    const key = normalizeFeatureKey(featureKeyFor(featureKey));
     if(!key) return { visibility_mode:'enabled', enabled:true };
     return featureStateMap.get(key) || { visibility_mode:'enabled', enabled:true };
+  }
+
+  function getFeatureState(view){
+    return getFeatureStateByKey(view);
   }
 
   function isFeatureHidden(view){
@@ -11295,6 +11324,27 @@ document.addEventListener("DOMContentLoaded", () => {
     if(visibility === 'hidden') return false;
     if(visibility === 'locked') return true;
     return state.enabled === false;
+  }
+
+  function roleAllowsModule(moduleKey, actorOverride){
+    const key = String(moduleKey || '').trim();
+    if(!key) return true;
+    if(SUB_FEATURES_WITHOUT_ROLE_GATE.has(key)) return true;
+    try{
+      if(typeof window.__CRONOS_ROLE_CAN_ACCESS_MODULE === 'function') return window.__CRONOS_ROLE_CAN_ACCESS_MODULE(key, actorOverride);
+    }catch(_err){}
+    try{
+      if(typeof canAccessModule === 'function') return canAccessModule(key, actorOverride || (typeof currentActor === 'function' ? currentActor() : null));
+    }catch(_err){}
+    return true;
+  }
+
+  function canSeeModule(moduleKey, actorOverride){
+    return roleAllowsModule(moduleKey, actorOverride) && !isFeatureHidden(moduleKey);
+  }
+
+  function canOpenModule(moduleKey, actorOverride){
+    return canSeeModule(moduleKey, actorOverride) && !isFeatureLocked(moduleKey);
   }
 
   function showPlanToast(){
@@ -11341,6 +11391,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const node = document.getElementById(`view-${v}`);
       if(node) node.classList.add('hidden');
     });
+    ['view-todayCronos','view-creditSimulator','view-performance'].forEach(id => {
+      const node = document.getElementById(id);
+      if(node){
+        node.classList.add('hidden');
+        node.style.display = 'none';
+      }
+    });
   }
 
   function positionBlockedOverlay(){
@@ -11370,7 +11427,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function showBlockedOverlay(view){
     const overlay = ensureOverlay();
     if(!overlay) return;
-    const label = VIEW_LABELS[view] || 'Módulo';
+    const label = MODULE_LABELS[view] || VIEW_LABELS[view] || 'Módulo';
     const title = overlay.querySelector('.featureBlockedTitle');
     const texts = overlay.querySelectorAll('.featureBlockedText');
     if(title) title.textContent = `${label} indisponível`;
@@ -11386,8 +11443,10 @@ document.addEventListener("DOMContentLoaded", () => {
     document.documentElement.classList.add('feature-lock-active');
     document.body.classList.add('feature-lock-active');
 
-    document.querySelectorAll('.nav button[data-view]').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.view === view);
+    document.querySelectorAll('.nav button').forEach(btn => {
+      const btnView = btn.dataset ? btn.dataset.view : '';
+      const btnModule = auxModuleFromButton(btn);
+      btn.classList.toggle('active', btnView === view || btnModule === view);
     });
 
     overlay.classList.add('show');
@@ -11416,6 +11475,43 @@ document.addEventListener("DOMContentLoaded", () => {
     return null;
   }
 
+  function auxModuleFromButton(btn){
+    if(!btn) return '';
+    if(btn.id === 'navHojeCronos') return 'todayCronos';
+    if(btn.id === 'navCreditoSimulator') return 'creditSimulator';
+    if(btn.id === 'navPerformance') return 'performance';
+    return btn.getAttribute && btn.getAttribute('data-cronos-feature-module') || '';
+  }
+
+  function applyLockTag(btn, locked){
+    if(!btn) return;
+    let tag = btn.querySelector('.featureLockTag');
+    if(locked){
+      if(!tag){
+        tag = document.createElement('span');
+        tag.className = 'featureLockTag';
+        tag.textContent = 'Bloq.';
+        btn.appendChild(tag);
+      }
+    }else if(tag){
+      tag.remove();
+    }
+  }
+
+  function applyAuxFeatureStatesToMenu(){
+    AUX_MODULE_BUTTONS.forEach(meta => {
+      document.querySelectorAll(meta.selector).forEach(btn => {
+        const roleAllowed = roleAllowsModule(meta.module);
+        const hiddenByFeature = isFeatureHidden(meta.module);
+        const lockedByFeature = isFeatureLocked(meta.module);
+        btn.classList.toggle('hidden', !roleAllowed || hiddenByFeature);
+        btn.classList.toggle('feature-hidden', roleAllowed && hiddenByFeature);
+        btn.classList.toggle('feature-locked', roleAllowed && !hiddenByFeature && lockedByFeature);
+        applyLockTag(btn, roleAllowed && !hiddenByFeature && lockedByFeature);
+      });
+    });
+  }
+
   function applyFeatureStatesToMenu(){
     try{
       const buttons = Array.from(document.querySelectorAll('.nav button[data-view]'));
@@ -11430,26 +11526,17 @@ document.addEventListener("DOMContentLoaded", () => {
         btn.classList.toggle('feature-hidden', !hiddenByRole && hiddenByFeature);
         btn.classList.toggle('feature-locked', !hiddenByRole && !hiddenByFeature && lockedByFeature);
 
-        let tag = btn.querySelector('.featureLockTag');
-        if(!hiddenByRole && !hiddenByFeature && lockedByFeature){
-          if(!tag){
-            tag = document.createElement('span');
-            tag.className = 'featureLockTag';
-            tag.textContent = 'Bloq.';
-            btn.appendChild(tag);
-          }
-        } else if(tag){
-          tag.remove();
-        }
+        applyLockTag(btn, !hiddenByRole && !hiddenByFeature && lockedByFeature);
       });
+      applyAuxFeatureStatesToMenu();
     }catch(err){
       console.error('Falha ao aplicar botões de feature:', err);
     }
   }
 
   function syncCurrentViewState(){
-    const activeBtn = document.querySelector('.nav button.active[data-view]');
-    const activeView = activeBtn ? activeBtn.dataset.view : null;
+    const activeBtn = document.querySelector('.nav button.active');
+    const activeView = activeBtn ? (activeBtn.dataset && activeBtn.dataset.view || auxModuleFromButton(activeBtn)) : null;
     if(activeView && isFeatureLocked(activeView)){
       showBlockedOverlay(activeView);
       return;
@@ -11575,12 +11662,20 @@ document.addEventListener("DOMContentLoaded", () => {
         return true;
       }
 
-      const authToken =
+      let authToken =
         localStorage.getItem('cronos_token') ||
         localStorage.getItem('authToken') ||
         '';
 
+      try{
+        if(typeof supabaseClient !== 'undefined' && supabaseClient?.auth){
+          const sessionResp = await supabaseClient.auth.getSession();
+          authToken = sessionResp?.data?.session?.access_token || authToken || '';
+        }
+      }catch(_sessionErr){}
+
       const headers = { 'Content-Type':'application/json' };
+      try{ if(typeof supabaseKey !== 'undefined' && supabaseKey) headers['apikey'] = supabaseKey; }catch(_keyErr){}
       if(authToken){
         headers['Authorization'] = 'Bearer ' + authToken;
       }
@@ -11688,8 +11783,56 @@ document.addEventListener("DOMContentLoaded", () => {
     window.__featureBootWrapped = true;
   }
 
+  function handleAuxFeatureGateEvent(ev){
+    const btn = ev.target && ev.target.closest ? ev.target.closest('#navHojeCronos,#navCreditoSimulator,#navPerformance') : null;
+    if(!btn) return;
+    const moduleKey = auxModuleFromButton(btn);
+    if(!moduleKey) return;
+
+    if(!canSeeModule(moduleKey)){
+      try{ ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation?.(); }catch(_err){}
+      applyFeatureStatesToMenu();
+      return false;
+    }
+
+    if(isFeatureLocked(moduleKey)){
+      try{ ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation?.(); }catch(_err){}
+      showPlanToast();
+      showBlockedOverlay(moduleKey);
+      return false;
+    }
+  }
+
+  function installAuxFeatureGate(){
+    if(window.__cronosAuxFeatureGateInstalled) return;
+    window.__cronosAuxFeatureGateInstalled = true;
+    document.addEventListener('pointerdown', handleAuxFeatureGateEvent, true);
+    document.addEventListener('click', handleAuxFeatureGateEvent, true);
+    document.addEventListener('keydown', (ev) => {
+      if(ev.key !== 'Enter' && ev.key !== ' ') return;
+      handleAuxFeatureGateEvent(ev);
+    }, true);
+  }
+
+  function exposeFeatureAccessHelpers(){
+    if(!window.__CRONOS_ROLE_CAN_ACCESS_MODULE && typeof window.CRONOS_CAN_ACCESS_MODULE === 'function'){
+      window.__CRONOS_ROLE_CAN_ACCESS_MODULE = window.CRONOS_CAN_ACCESS_MODULE;
+    }
+    window.CRONOS_FEATURE_STATE = getFeatureStateByKey;
+    window.CRONOS_IS_FEATURE_HIDDEN = isFeatureHidden;
+    window.CRONOS_IS_FEATURE_LOCKED = isFeatureLocked;
+    window.CRONOS_CAN_SEE_MODULE = canSeeModule;
+    window.CRONOS_CAN_OPEN_MODULE = canOpenModule;
+    window.CRONOS_SHOW_FEATURE_BLOCKED = showBlockedOverlay;
+    window.CRONOS_CAN_ACCESS_MODULE = function(moduleKey, actorOverride){
+      return canSeeModule(moduleKey, actorOverride);
+    };
+  }
+
   function install(){
+    exposeFeatureAccessHelpers();
     ensureOverlay();
+    installAuxFeatureGate();
     wrapSetSupportEntryLoading();
     wrapShowApp();
     wrapBoot();

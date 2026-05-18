@@ -45,7 +45,14 @@
   function canOpenCredit(){
     try{return !window.CRONOS_CAN_ACCESS_MODULE || window.CRONOS_CAN_ACCESS_MODULE('creditSimulator')}catch(_){return true}
   }
+  function canSeeRiskAnalysis(){
+    try{return !window.CRONOS_CAN_SEE_MODULE || window.CRONOS_CAN_SEE_MODULE('riskAnalysis')}catch(_){return true}
+  }
+  function canOpenRiskAnalysis(){
+    try{return !window.CRONOS_CAN_OPEN_MODULE || window.CRONOS_CAN_OPEN_MODULE('riskAnalysis')}catch(_){return true}
+  }
   function denyCreditAccess(){toast('Acesso restrito','Seu nível de acesso não permite abrir o Simulador.')}
+  function denyRiskAccess(){toast('Módulo indisponível','A Análise de Risco não está disponível para esta clínica.')}
   function esc(v){try{if(typeof window.escapeHTML==='function')return window.escapeHTML(v)}catch(_){} return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
   function money(v){try{if(typeof window.moneyBR==='function')return window.moneyBR(v)}catch(_){} return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
   function fmt(iso){try{if(typeof window.fmtBR==='function')return window.fmtBR(iso)}catch(_){} const s=String(iso||'').slice(0,10),p=s.split('-'); return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:s}
@@ -969,6 +976,7 @@ ${factors||'Sem fatores calculados.'}
 Observação: documento interno de apoio à decisão, baseado nos dados registrados no Cronos. Não substitui consulta a órgãos de crédito nem decisão administrativa da clínica.`;
   }
   function printRiskAnalysis(){
+    if(!canOpenRiskAnalysis()) return denyRiskAccess();
     if(!S.risk?.result)return toast('Análise de risco','Calcule a análise antes de imprimir.');
     const r=S.risk.result, ri=S.risk.inputs||{}, e=getEntry(), db=load(), c=e&&db?contactOf(db,e):null;
     const origin=S.risk.source==='linked'?'Vinculada ao lead':S.risk.source==='simulation'?'Usando a simulação':'Manual';
@@ -1273,6 +1281,7 @@ Observação: documento interno de apoio à decisão, baseado nos dados registra
   }
 
   function useSimulationForRisk(){
+    if(!canOpenRiskAnalysis()) return denyRiskAccess();
     if(!S.result)return toast('Análise de risco','Calcule uma simulação válida primeiro.');
     const r=S.result, e=getEntry();
     const total=Number(r.total||r.pv||0);
@@ -1298,6 +1307,7 @@ Observação: documento interno de apoio à decisão, baseado nos dados registra
   }
 
   function clearRisk(){
+    if(!canOpenRiskAnalysis()) return denyRiskAccess();
     S.risk={inputs:{...RISK_DEFAULT_INPUTS},result:null,error:'',source:'manual',snapshot:null,dirty:false,animating:false};
     render();
   }
@@ -1416,6 +1426,7 @@ Observação: documento interno de apoio à decisão, baseado nos dados registra
   }
 
   function calculateRisk(){
+    if(!canOpenRiskAnalysis()) return denyRiskAccess();
     const res=calculateRiskScore();
     if(res.error){S.risk.error=res.error;S.risk.result=null;return render();}
     S.risk.error='';
@@ -1435,6 +1446,10 @@ Observação: documento interno de apoio à decisão, baseado nos dados registra
   }
 
   function riskAnalysisCard(){
+    if(!canSeeRiskAnalysis()) return '';
+    if(!canOpenRiskAnalysis()){
+      return `<div class="credCard riskPanel" data-cronos-feature-module="riskAnalysis"><div class="riskHead"><div><h3>Análise Inteligente de Risco</h3><p>Este recurso está bloqueado para esta clínica. Para liberar, entre em contato com o suporte.</p></div></div><div class="riskEmpty"><div><b>Análise de Risco indisponível</b><p style="margin:8px 0 0">O simulador continua funcionando, mas o score interno foi bloqueado pelo Superadmin.</p></div></div></div>`;
+    }
     const ri=S.risk.inputs;
     const hasSim=!!S.result;
     const e=getEntry();

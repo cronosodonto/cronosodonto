@@ -24,6 +24,15 @@
     try{ if(typeof window.toast === "function") return window.toast(title, msg); }catch(_){}
     console.log("[Fluxos]", title, msg);
   }
+  function canSeeFlows(){
+    try{ return !window.CRONOS_CAN_SEE_MODULE || window.CRONOS_CAN_SEE_MODULE('flows'); }catch(_){ return true; }
+  }
+  function canOpenFlows(){
+    try{ return !window.CRONOS_CAN_OPEN_MODULE || window.CRONOS_CAN_OPEN_MODULE('flows'); }catch(_){ return true; }
+  }
+  function denyFlowsAccess(){
+    toast("Fluxos indisponíveis", "Este recurso está bloqueado para esta clínica.");
+  }
   function escapeHTML(v){
     try{ if(typeof window.escapeHTML === "function") return window.escapeHTML(v); }catch(_){}
     return String(v ?? "").replace(/[&<>\"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
@@ -378,6 +387,10 @@
     const settings = $("view-settings");
     if(!settings) return;
     let card = $(CARD_ID);
+    if(!canSeeFlows()){
+      if(card) card.remove();
+      return;
+    }
     let created = false;
     if(!card){
       card = document.createElement("div");
@@ -402,6 +415,10 @@
     delete card.dataset.settingsAccordion;
     const db = load();
     const a = actor();
+    if(!canOpenFlows()){
+      card.innerHTML = `<h3>Fluxos assistidos</h3><div class="muted" style="line-height:1.5">Este recurso está bloqueado para esta clínica. Para liberar, entre em contato com o suporte.</div>`;
+      return;
+    }
     if(!db || !a){
       card.innerHTML = `<h3>Fluxos assistidos</h3><div class="muted">Carregando...</div>`;
       return;
@@ -492,6 +509,7 @@
   }
 
   function openEditor(flowId=""){
+    if(!canOpenFlows()) return denyFlowsAccess();
     const db = load();
     const a = actor();
     if(!db || !a) return;
@@ -590,6 +608,7 @@
   }
 
   function saveFlow(flowId=""){
+    if(!canOpenFlows()) return denyFlowsAccess();
     const db = load();
     const a = actor();
     if(!db || !a) return;
@@ -621,6 +640,7 @@
   }
 
   function toggleFlow(flowId){
+    if(!canOpenFlows()) return denyFlowsAccess();
     const db = load();
     const f = getFlow(db, flowId);
     if(!f) return;
@@ -631,6 +651,7 @@
     setTimeout(()=>openSettingsCardById(CARD_ID), 0);
   }
   function deleteFlow(flowId){
+    if(!canOpenFlows()) return denyFlowsAccess();
     const db = load();
     const f = getFlow(db, flowId);
     if(!f) return;
@@ -643,6 +664,11 @@
   }
 
   function injectLeadButtons(root=document){
+    if(!canOpenFlows()){
+      qsa(".cronos-action-flow", root).forEach(btn=>btn.remove());
+      qsa(".leadCard", root).forEach(card=>{ delete card.dataset.flowInjected; });
+      return;
+    }
     qsa(".leadCard", root).forEach(card=>{
       if(card.dataset.flowInjected === "1") return;
       const actionRow = qs(".leadActionsRow", card);
@@ -689,6 +715,7 @@
     return (db.flowRuns || []).filter(r=>String(r.entryId)===String(entryId) && r.active !== false);
   }
   function openActivateFlow(entryId){
+    if(!canOpenFlows()) return denyFlowsAccess();
     const db = load();
     const a = actor();
     if(!db || !a) return;
@@ -759,6 +786,7 @@
   }
 
   function activateFlow(entryId){
+    if(!canOpenFlows()) return denyFlowsAccess();
     const db = load();
     const a = actor();
     if(!db || !a) return;
