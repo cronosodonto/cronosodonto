@@ -6617,7 +6617,8 @@ function renderDashboard(){
   const dashKpiActive = String(window.__KPI_ACTIVE || "");
   const rowsForDashboardDetail = (typeof __dashboardRowsByKpi === "function") ? __dashboardRowsByKpi(dashKpiActive, rows) : rows;
   const byStatus = new Map();
-  const byStatusValue = new Map(); // soma R$ em aberto (orçado - pago) por status
+  const byStatusTotalValue = new Map(); // soma do valor orçado/fechado por status
+  const byStatusValue = new Map(); // soma R$ em aberto por status
   let totalBudget = 0;
   let totalOpen = 0;
   let positive = 0, dq = 0, appt = 0;
@@ -6632,18 +6633,26 @@ function renderDashboard(){
 
   rows.forEach(e=>{
     const budget = isRescueEntry(e) ? 0 : getEntryBudgetValue(e);
-    const paid = getEntryPaidValue(e);
-    const open = Math.max(0, (budget||0) - (paid||0));
-
     totalBudget += (budget||0);
-    if(open) totalOpen += open;
   });
 
+  // Dashboard consolidado:
+  // "R$ em aberto" precisa bater com as próprias KPIs:
+  // Valor orçado - R$ recebido real no período/filtro.
+  totalOpen = Math.max(0, (totalBudget || 0) - (totalPaid || 0));
+
   rowsForDashboardDetail.forEach(e=>{
-    const budget = isRescueEntry(e) ? 0 : getEntryBudgetValue(e);
-    const paid = getEntryPaidValue(e);
-    const open = Math.max(0, (budget||0) - (paid||0));
+    const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+
+    // Resumo por Status:
+    // Total precisa ser sempre baseado no Valor do orçamento do lead, não no valor de tabela/plano.
+    // Aberto precisa ser Valor do orçamento - valor pago reconhecido.
+    const budget = isRescueEntry(e) ? 0 : (getEntryBudgetValue(e) || 0);
+    const paid = isRescueEntry(e) ? 0 : Number(summary?.paid ?? getEntryPaidValue(e) ?? 0);
+    const open = Math.max(0, (budget || 0) - (paid || 0));
+
     byStatus.set(e.status, (byStatus.get(e.status)||0) + 1);
+    byStatusTotalValue.set(e.status, (byStatusTotalValue.get(e.status)||0) + (budget||0));
     byStatusValue.set(e.status, (byStatusValue.get(e.status)||0) + (open||0));
   });
 
@@ -6701,8 +6710,8 @@ function renderDashboard(){
 
   grid.innerHTML = `
     <div class="sgHead">Status</div>
-    <div class="sgHead center">Total</div>
-    <div class="sgHead right">Valor em aberto</div>
+    <div class="sgHead center">Leads</div>
+    <div class="sgHead right">Financeiro</div>
   `;
   if(!ordered.length){
     const a=document.createElement("div"); a.className="muted"; a.style.gridColumn="1 / -1"; a.style.padding="12px";
@@ -6732,8 +6741,15 @@ function renderDashboard(){
       c2.title = "Clique para filtrar os leads abaixo por este status";
 
       const c3=document.createElement("div");
-      c3.className="right nowrap";
-      c3.innerHTML="<b>"+moneyBR(byStatusValue.get(s)||0)+"</b>";
+      c3.className="right";
+      const statusTotalValue = byStatusTotalValue.get(s) || 0;
+      const statusOpenValue = byStatusValue.get(s) || 0;
+      c3.innerHTML = `
+        <div style="line-height:1.25; display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
+          <div style="white-space:nowrap;"><span class="muted" style="font-size:11px">Total:</span> <b style="font-size:14px">${moneyBR(statusTotalValue)}</b></div>
+          <div style="white-space:nowrap;"><span class="muted" style="font-size:11px">Aberto:</span> <b style="font-size:14px">${moneyBR(statusOpenValue)}</b></div>
+        </div>
+      `;
       c3.style.cursor = "pointer";
       c3.style.transition = "all .15s ease";
       c3.style.cssText += activeStyle;
@@ -6804,6 +6820,7 @@ if(!prev.length){
     prev.map(e=>{
       const c = dashContactsById.get(String(e.contactId || ""));
       const tagRes = e.tags?.includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : "";
+      const entryId = escapeHTML(String(e.id || ""));
       return `
         <div class="card" style="padding:10px; margin-bottom:10px">
           <div style="display:flex; justify-content:space-between; gap:10px">
@@ -6813,9 +6830,10 @@ if(!prev.length){
                 ${escapeHTML((()=>{ const phone = c?.phone || "—"; const st = String(e.status || "").trim(); return st ? `${phone} • ${st}` : phone; })())}
               </div>
             </div>
-            <div style="display:flex; gap:8px; align-items:start">
+            <div style="display:flex; gap:6px; align-items:start">
               ${tagRes}
-              <button class="miniBtn" onclick="openLeadEntry('${e.id}')">Abrir</button>
+              <button class="miniBtn" onclick="openLeadEntry('${entryId}')">Abrir</button>
+              <button type="button" class="miniBtn" data-ficha-entry="${entryId}" title="Ficha" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')">Ficha</button>
             </div>
           </div>
         </div>
@@ -8136,6 +8154,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
         <div>
           <label>Prioridade</label>
           <select id="lf_priority" ${ro?"disabled":""}>
+            <option value="" ${!(e.tags||[]).some(t=>String(t||"").startsWith("Prioridade: "))?"selected":""}>Selecione</option>
             ${["Frio","Morno","Quente"].map(v=>`<option value="${v}" ${(e.tags||[]).includes("Prioridade: "+v)?"selected":""}>${v}</option>`).join("")}
           </select>
         </div>
@@ -8203,7 +8222,7 @@ function openNewLead(){
   if(!actor.perms.edit || !canAccessView("leads", actor)) return toast("Sem permissão", "Seu nível não pode criar leads.");
   let monthKey = val("fMonth", new Date().toISOString().slice(0,7));
   if(!monthKey || monthKey === "all") monthKey = new Date().toISOString().slice(0,7);
-  const entry = { monthKey, firstContactAt: todayISO(), status:"Conversando", origin:"Instagram orgânico", treatment:"Clínica geral", tags:[] };
+  const entry = { monthKey, firstContactAt: todayISO(), status:"", origin:"", treatment:"", tags:[] };
   const contact = { name:"", phone:"", cpf:"", birthDate:"", firstSeenAt:"", lastSeenAt:"" };
 
   openModal({
@@ -9790,6 +9809,8 @@ async function wipeAll(){
 /* -------- Render all -------- */
 
 /* -------- Kanban -------- */
+const KANBAN_EMPTY_STATUS = "__sem_status__";
+const KANBAN_RENDER_LIMIT = 200;
 const KANBAN_COLUMNS = [
   {title:"Conversando", status:"Conversando"},
   {title:"Agendado", status:"Agendado"},
@@ -9861,34 +9882,38 @@ const contactsById = (typeof getContactsByIdMap === "function") ? getContactsByI
 const rows = filteredEntries().slice(); // respects filters + month
 
 function currentStatus(entry){
- if(!entry.statusLog || entry.statusLog.length === 0){
-  return "Conversando";
- }
- return entry.statusLog[entry.statusLog.length - 1].to;
+  const log = Array.isArray(entry.statusLog) ? entry.statusLog : [];
+  const last = log.length ? String(log[log.length - 1]?.to || "").trim() : "";
+  const direct = String(entry.status || "").trim();
+  return last || direct || "";
 }
 
   const groups = new Map(KANBAN_COLUMNS.map(c=>[c.status, []]));
   rows.forEach(e=>{
     const s = currentStatus(e);
-const key = groups.has(s) ? s : "Conversando";
-    groups.get(key).push(e);
+    if(!s || !groups.has(s)) return;
+    groups.get(s).push(e);
   });
 
   board.innerHTML = KANBAN_COLUMNS.map(col=>{
     const list = groups.get(col.status) || [];
 
 const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
+const sortedList = list
+  .slice()
+  .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""));
+const visibleList = sortedList.slice(0, KANBAN_RENDER_LIMIT);
+const hiddenCount = Math.max(0, sortedList.length - visibleList.length);
 
     return `
       <div class="kanCol" data-kan-status="${escapeHTML(col.status)}">
         <div class="kanHead">
           <b>${escapeHTML(col.title)}</b>
           <span class="pill">${list.length}</span>
-<span class="pill" style="margin-left:6px">${moneyBR(total)}</span>
+<span class="pill" style="margin-left:6px" title="Valor orçado/fechado dos leads desta coluna">${moneyBR(total)}</span>
         </div>
         <div class="kanList" data-dropzone="${escapeHTML(col.status)}">
-          ${list.length ? list
-            .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""))
+          ${list.length ? visibleList
             .map(e=>{
               const c = contactsById.get(String(e.contactId || ""));
               const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid))) ? Number(e.valuePaid) : 0;
@@ -9897,14 +9922,15 @@ const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
               const apptDateRaw = (e.apptDate || e.agendamentoData || e.appointmentDate || "").toString().trim();
               const apptTimeRaw = (e.apptTime || e.agendamentoHora || e.appointmentTime || "").toString().trim();
               const apptLabel = `${apptDateRaw ? fmtBR(apptDateRaw) : ""}${apptTimeRaw ? ` às ${apptTimeRaw}` : ""}`.trim() || "—";
-              const showApptOnCard = ["Agendado","Remarcou"].includes(col.status);
+              const showApptOnCard = ["Agendado","Remarcou"].includes(col.status) || !!apptDateRaw;
+              const extraInfo = [e.treatment, e.origin].map(x=>String(x || "").trim()).filter(Boolean).join(" • ");
               return `
                 <div class="kanCard" draggable="true" data-entry="${e.id}">
                   <div style="display:flex; justify-content:space-between; gap:10px">
                     <div>
                       <div style="font-weight:900">${escapeHTML(c?.name||"—")}</div>
                       <div class="muted" style="font-size:12px; margin-top:2px">${escapeHTML(c?.phone||"—")}</div>
-                      <div class="muted" style="font-size:12px; margin-top:6px">${escapeHTML(e.treatment||"—")} • ${escapeHTML(e.origin||"—")}</div>
+                      ${extraInfo ? `<div class="muted" style="font-size:12px; margin-top:6px">${escapeHTML(extraInfo)}</div>` : ""}
                       ${showApptOnCard ? `<div class="muted mono" style="font-size:12px; margin-top:6px">Agendamento: <b>${escapeHTML(apptLabel)}</b></div>` : ""}
                       ${(budget||paid)?`<div class="muted mono" style="font-size:12px; margin-top:6px">Pago: <b>${moneyBR(paid)}</b> • Em aberto: <b>${moneyBR(open)}</b></div>`:""}
                     </div>
@@ -9916,6 +9942,7 @@ const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
                 </div>
               `;
             }).join("")
+            + (hiddenCount ? `<div class="muted" style="font-size:12px; padding:10px 6px; line-height:1.35">Mostrando ${visibleList.length} de ${list.length}. Use busca/filtros para refinar sem travar o navegador.</div>` : "")
           : `<div class="muted" style="font-size:13px">—</div>`}
         </div>
       </div>
@@ -9960,7 +9987,7 @@ const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
     window.__KANBAN_DRAG_ID = null;
     qsa(".kanCard", board).forEach(c=>c.classList.remove("kanSelected"));
     if(entryId && status){
-  quickUpdateStatus(entryId, status);
+  quickUpdateStatus(entryId, status === KANBAN_EMPTY_STATUS ? "" : status);
 
   setTimeout(() => {
     renderKanban();
