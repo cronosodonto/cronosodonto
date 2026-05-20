@@ -1038,8 +1038,8 @@
 
           <div class="card" style="padding:16px;margin-bottom:16px">
             <div class="section-intro">
-              <strong>Dados e contingência</strong>
-              <div class="helper">Baixe um arquivo de backup/exportação de uma clínica usando a função já configurada no Supabase.</div>
+              <strong>Dados e recuperação</strong>
+              <div class="helper">Exporte planilha organizada, faça backups, restaure dados e execute ações de contingência por clínica.</div>
             </div>
             <div class="super-form-grid" style="margin-top:14px">
               <div class="field clinic-search-wrap">
@@ -1052,12 +1052,17 @@
               <div class="field">
                 <label>&nbsp;</label>
                 <div class="row-actions">
-                  <button class="btn btn-info" id="btnConfigExportClinicData" type="button">Baixar dados da clínica</button>
+                  <button class="btn btn-info" id="btnConfigExportClinicData" type="button" data-export-format="xlsx">Baixar Excel (.xlsx)</button>
+                  <button class="btn btn-ghost" id="btnConfigExportClinicCsv" type="button" data-export-format="csv">CSV técnico</button>
+                  <button class="btn btn-success" id="btnConfigCreateClinicBackup" type="button">Criar backup</button>
+                  <button class="btn btn-ghost" id="btnConfigListClinicBackups" type="button">Ver backups</button>
                   <button class="btn btn-warning" id="btnConfigImportClinicCsv" type="button">Importar CSV</button>
+                  <button class="btn btn-danger" id="btnConfigClearClinicData" type="button">Limpar/Zerar clínica</button>
                 </div>
               </div>
             </div>
-            <div class="support-preview" id="configExportPreview">Selecione uma clínica para exportar os dados.</div>
+            <div class="support-preview" id="configExportPreview">Selecione uma clínica para exportar planilha, gerar backup ou restaurar dados.</div>
+            <div id="configBackupList" class="backup-list" style="margin-top:14px"></div>
           </div>
 
           <div class="placeholder-grid">
@@ -1372,6 +1377,10 @@
         openSupportAccess: "open-support-access",
         exportClinicCsv: "export-clinic-csv",
         importClinicCsv: "import-clinic-csv",
+        createClinicBackup: "create-clinic-backup",
+        listClinicBackups: "list-clinic-backups",
+        restoreClinicBackup: "restore-clinic-backup",
+        clearClinicData: "clear-clinic-data",
         resetMasterPassword: "reset-master-password",
         deleteClinic: "delete-clinic"
       }
@@ -2334,9 +2343,13 @@
           <div class="section-body">
             <div class="row-actions">
               <button class="btn btn-success" id="btnExportCsv">Exportar CSV</button>
+              <button class="btn btn-info" id="btnDetailCreateBackup">Criar backup</button>
+              <button class="btn btn-ghost" id="btnDetailListBackups">Ver backups</button>
               <button class="btn btn-warning" id="btnImportCsv">Importar CSV</button>
+              <button class="btn btn-danger" id="btnDetailClearClinicData">Limpar/Zerar dados</button>
             </div>
-            <div class="helper">Atalho rápido desta clínica. A mesma contingência também existe em Configurações para escolher qualquer clínica.</div>
+            <div id="detailBackupList" class="backup-list"></div>
+            <div class="helper">Atalho rápido desta clínica. Antes de importar ou zerar, o backend também cria backup automático.</div>
             <div class="helper">Exclusão é só pra casos extremos. O fluxo normal continua sendo bloquear/desativar.</div>
           </div>
         </details>
@@ -2504,6 +2517,176 @@
         console.error(err);
         toast(err?.message || "Falha ao exportar CSV.", "error", 4200);
       }
+    }
+
+
+    function ensureBackupEndpoints(){
+      CONFIG.endpoints.createClinicBackup = CONFIG.endpoints.createClinicBackup || 'create-clinic-backup';
+      CONFIG.endpoints.listClinicBackups = CONFIG.endpoints.listClinicBackups || 'list-clinic-backups';
+      CONFIG.endpoints.restoreClinicBackup = CONFIG.endpoints.restoreClinicBackup || 'restore-clinic-backup';
+      CONFIG.endpoints.clearClinicData = CONFIG.endpoints.clearClinicData || 'clear-clinic-data';
+      CONFIG.endpoints.exportClinicData = CONFIG.endpoints.exportClinicData || 'export-clinic-data';
+    }
+
+    function backupTypeLabel(type){
+      const map = {
+        manual: 'Manual',
+        before_import: 'Antes da importação',
+        before_clear: 'Antes de limpar/zerar',
+        before_restore: 'Antes da restauração',
+        auto: 'Automático'
+      };
+      return map[type] || type || 'Backup';
+    }
+
+    function formatBackupDate(value){
+      if(!value) return '—';
+      try{
+        return new Date(value).toLocaleString('pt-BR');
+      }catch(_){
+        return String(value);
+      }
+    }
+
+    function backupDownloadJson(data, filename){
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || 'backup-cronos.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    async function createBackupForClinic(button, clinicId, clinicName, backupType = 'manual', note = ''){
+      ensureBackupEndpoints();
+      if(!clinicId){
+        toast('Selecione uma clínica antes de criar backup.', 'error', 3000);
+        return null;
+      }
+      return withButtonLoading(button, 'Criando backup...', async () => {
+        const data = await callEdgeFunction(CONFIG.endpoints.createClinicBackup, {
+          clinic_id: clinicId,
+          backup_type: backupType,
+          note
+        });
+        toast(`Backup criado para ${clinicName || 'a clínica'}.`, 'success', 3200);
+        return data;
+      });
+    }
+
+    function renderBackupList(targetId, backups, clinicName = ''){
+      const target = document.getElementById(targetId);
+      if(!target) return;
+      const rows = Array.isArray(backups) ? backups : [];
+      if(!rows.length){
+        target.innerHTML = `<div class="empty">Nenhum backup encontrado para ${escapeHtml(clinicName || 'esta clínica')}.</div>`;
+        return;
+      }
+      target.innerHTML = `
+        <div class="table-wrap" style="margin-top:12px">
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Tipo</th>
+                <th>Clínica</th>
+                <th>Observação</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(row => `
+                <tr>
+                  <td>${escapeHtml(formatBackupDate(row.created_at))}</td>
+                  <td>${escapeHtml(backupTypeLabel(row.backup_type))}</td>
+                  <td>${escapeHtml(row.clinic_name || clinicName || '—')}</td>
+                  <td>${escapeHtml(row.note || row.created_by_email || '—')}</td>
+                  <td>
+                    <div class="row-actions">
+                      <button class="btn btn-warning" type="button" data-restore-backup-id="${escapeHtml(row.id)}" data-backup-clinic-name="${escapeHtml(row.clinic_name || clinicName || '')}">Restaurar</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="helper">Restaurar cria automaticamente um backup do estado atual antes de voltar o backup escolhido.</div>`;
+    }
+
+    async function listBackupsForClinic(button, clinicId, targetId, clinicName = ''){
+      ensureBackupEndpoints();
+      if(!clinicId){
+        toast('Selecione uma clínica antes de listar backups.', 'error', 3000);
+        return;
+      }
+      await withButtonLoading(button, 'Carregando...', async () => {
+        const data = await callEdgeFunction(CONFIG.endpoints.listClinicBackups, {
+          clinic_id: clinicId,
+          limit: 30
+        });
+        renderBackupList(targetId, data?.backups || [], clinicName);
+        toast('Backups carregados.', 'success', 2200);
+      });
+    }
+
+    async function restoreBackup(button, backupId, clinicName = ''){
+      ensureBackupEndpoints();
+      if(!backupId) return;
+      const phrase = 'RESTAURAR BACKUP';
+      const typed = prompt(`Restaurar backup${clinicName ? ` de ${clinicName}` : ''}?\n\nEssa ação substituirá os dados atuais da clínica pelos dados do backup escolhido.\nUm backup do estado atual será criado antes.\n\nDigite ${phrase} para confirmar:`);
+      if(String(typed || '').trim().toUpperCase() !== phrase) {
+        toast('Restauração cancelada.', 'info', 2200);
+        return;
+      }
+      await withButtonLoading(button, 'Restaurando...', async () => {
+        await callEdgeFunction(CONFIG.endpoints.restoreClinicBackup, {
+          backup_id: backupId
+        });
+        toast('Backup restaurado com sucesso.', 'success', 3600);
+        try{ await loadClinics(); }catch(_){}
+        if(state.selectedClinicId){
+          try{ await openClinicDetails(state.selectedClinicId); }catch(_){}
+        }
+      });
+    }
+
+    async function clearClinicDataForClinic(button, clinicId, clinicName = ''){
+      ensureBackupEndpoints();
+      if(!clinicId){
+        toast('Selecione uma clínica antes de limpar dados.', 'error', 3000);
+        return;
+      }
+      const phrase = `ZERAR ${String(clinicName || 'CLINICA').toUpperCase()}`;
+      const typed = prompt(
+        `Você está prestes a limpar/zerar os dados da clínica ${clinicName || clinicId}.\n\n` +
+        `Um backup automático será criado antes da limpeza.\n` +
+        `Essa ação remove leads, contatos, tarefas e recebimentos da clínica.\n\n` +
+        `Digite exatamente: ${phrase}`
+      );
+      if(String(typed || '').trim().toUpperCase() !== phrase){
+        toast('Limpeza cancelada.', 'info', 2200);
+        return;
+      }
+      await withButtonLoading(button, 'Zerando...', async () => {
+        await callEdgeFunction(CONFIG.endpoints.clearClinicData, {
+          clinic_id: clinicId,
+          confirm: phrase
+        });
+        toast('Dados da clínica zerados com backup automático criado.', 'success', 4200);
+        try{ await loadClinics(); }catch(_){}
+        if(state.selectedClinicId === clinicId){
+          try{ await openClinicDetails(clinicId); }catch(_){}
+        }
+      });
+    }
+
+    function getConfigSelectedClinic(){
+      refreshConfigClinicSelect();
+      return resolveConfigExportClinic();
     }
 
     function detectCsvDelimiter(line) {
@@ -3365,55 +3548,87 @@
     }
   }
 
-  async function handleExportClinicData(button){
+  function base64ToUint8Array(base64){
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for(let i=0; i<len; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function downloadExportPayload(data, fallbackName = 'cronos-export'){
+    if(data?.url){
+      window.open(data.url, '_blank');
+      return true;
+    }
+
+    if(data?.base64){
+      const bytes = base64ToUint8Array(data.base64);
+      const blob = new Blob([bytes], { type: data.mime || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = data.filename || fallbackName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return true;
+    }
+
+    if(typeof data?.content === 'string'){
+      const blob = new Blob([data.content], { type: data.mime || 'text/plain;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = data.filename || fallbackName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return true;
+    }
+
+    if(data?.data && typeof data.data === 'object'){
+      const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = data?.filename || fallbackName.replace(/\.[^.]+$/, '') + '.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return true;
+    }
+
+    return false;
+  }
+
+  async function handleExportClinicData(button, format = 'xlsx'){
     ensureFeatureEndpoints();
     if(!state.selectedClinicId){
       toast('Nenhuma clínica selecionada.', 'error', 2800);
       return;
     }
+
+    const exportFormat = String(format || button?.dataset?.exportFormat || 'xlsx').toLowerCase();
+    const loadingLabel = exportFormat === 'csv' ? 'Gerando CSV...' : exportFormat === 'json' ? 'Gerando backup...' : 'Gerando Excel...';
+
     try{
-      await withButtonLoading(button, 'Preparando...', async () => {
+      await withButtonLoading(button, loadingLabel, async () => {
         const data = await callEdgeFunction(CONFIG.endpoints.exportClinicData, {
-          clinic_id: state.selectedClinicId
+          clinic_id: state.selectedClinicId,
+          format: exportFormat
         });
 
-        if(data?.url){
-          window.open(data.url, '_blank');
-          toast('Download iniciado.', 'success', 2600);
+        if(downloadExportPayload(data, `clinica-${state.selectedClinicId}.${exportFormat === 'csv' ? 'csv' : exportFormat === 'json' ? 'json' : 'xlsx'}`)){
+          const label = exportFormat === 'csv' ? 'CSV técnico exportado.' : exportFormat === 'json' ? 'Backup JSON exportado.' : 'Planilha Excel exportada.';
+          toast(label, 'success', 2800);
           return;
         }
 
-        if(data?.data && typeof data.data === 'object'){
-          const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = data?.filename || `clinica-${state.selectedClinicId}-backup.json`;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          URL.revokeObjectURL(url);
-          toast('Backup da clínica exportado.', 'success', 2600);
-          return;
-        }
-
-        const content = data?.json || data?.content || null;
-        if(content){
-          const serialized = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-          const blob = new Blob([serialized], { type: 'application/json;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = data?.filename || `clinica-${state.selectedClinicId}-backup.json`;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          URL.revokeObjectURL(url);
-          toast('Backup da clínica exportado.', 'success', 2600);
-          return;
-        }
-
-        throw new Error('A função não retornou dados exportáveis.');
+        throw new Error('A função não retornou arquivo exportável.');
       });
     }catch(error){
       console.error(error);
@@ -3635,7 +3850,7 @@
       || rows.find(row=>row.name.toLowerCase().includes(typed) || row.slug.toLowerCase().includes(typed) || row.master.toLowerCase().includes(typed));
   }
 
-  async function exportClinicFromSettings(button){
+  async function exportClinicFromSettings(button, format){
     refreshConfigClinicSelect();
 
     const input = document.getElementById('configExportClinicSearch');
@@ -3657,9 +3872,12 @@
     const oldSelected = state.selectedClinicId;
     state.selectedClinicId = selected.id;
     try{
+      const exportFormat = String(format || button?.dataset?.exportFormat || 'xlsx').toLowerCase();
       if(typeof handleExportClinicData === 'function'){
-        await handleExportClinicData(button);
-        if(preview) preview.textContent = `Solicitação de exportação enviada para: ${selected.name}.`;
+        await handleExportClinicData(button, exportFormat);
+        if(preview) preview.textContent = exportFormat === 'csv'
+          ? `CSV técnico exportado para: ${selected.name}.`
+          : `Planilha Excel exportada para: ${selected.name}.`;
       }else{
         throw new Error('Função de exportação não encontrada no painel.');
       }
@@ -3987,9 +4205,9 @@
         if(link) window.open(link, '_blank');
       }
 
-      const exportBtn = ev.target.closest?.('#btnConfigExportClinicData');
+      const exportBtn = ev.target.closest?.('#btnConfigExportClinicData, #btnConfigExportClinicCsv');
       if(exportBtn){
-        exportClinicFromSettings(exportBtn);
+        exportClinicFromSettings(exportBtn, exportBtn.dataset?.exportFormat || 'xlsx');
       }
 
       const importBtn = ev.target.closest?.('#btnConfigImportClinicCsv');
@@ -4029,6 +4247,62 @@
       if(!ev.target.closest?.('.clinic-search-wrap')){
         const results = document.getElementById('configExportClinicResults');
         if(results) results.classList.remove('show');
+      }
+    });
+
+
+    document.addEventListener('click', async (ev)=>{
+      const createConfig = ev.target.closest?.('#btnConfigCreateClinicBackup');
+      if(createConfig){
+        const selected = getConfigSelectedClinic();
+        if(!selected){ toast('Selecione uma clínica válida.', 'error', 2600); return; }
+        await createBackupForClinic(createConfig, selected.id, selected.name, 'manual', 'Backup manual pelo Superadmin');
+        await listBackupsForClinic(createConfig, selected.id, 'configBackupList', selected.name);
+        return;
+      }
+
+      const listConfig = ev.target.closest?.('#btnConfigListClinicBackups');
+      if(listConfig){
+        const selected = getConfigSelectedClinic();
+        if(!selected){ toast('Selecione uma clínica válida.', 'error', 2600); return; }
+        await listBackupsForClinic(listConfig, selected.id, 'configBackupList', selected.name);
+        return;
+      }
+
+      const clearConfig = ev.target.closest?.('#btnConfigClearClinicData');
+      if(clearConfig){
+        const selected = getConfigSelectedClinic();
+        if(!selected){ toast('Selecione uma clínica válida.', 'error', 2600); return; }
+        await clearClinicDataForClinic(clearConfig, selected.id, selected.name);
+        return;
+      }
+
+      const detailCreate = ev.target.closest?.('#btnDetailCreateBackup');
+      if(detailCreate){
+        const clinicName = state.selectedClinicDetails?.clinic?.name || 'clínica selecionada';
+        await createBackupForClinic(detailCreate, state.selectedClinicId, clinicName, 'manual', 'Backup manual pelo detalhe da clínica');
+        await listBackupsForClinic(detailCreate, state.selectedClinicId, 'detailBackupList', clinicName);
+        return;
+      }
+
+      const detailList = ev.target.closest?.('#btnDetailListBackups');
+      if(detailList){
+        const clinicName = state.selectedClinicDetails?.clinic?.name || 'clínica selecionada';
+        await listBackupsForClinic(detailList, state.selectedClinicId, 'detailBackupList', clinicName);
+        return;
+      }
+
+      const detailClear = ev.target.closest?.('#btnDetailClearClinicData');
+      if(detailClear){
+        const clinicName = state.selectedClinicDetails?.clinic?.name || 'clínica selecionada';
+        await clearClinicDataForClinic(detailClear, state.selectedClinicId, clinicName);
+        return;
+      }
+
+      const restoreBtn = ev.target.closest?.('[data-restore-backup-id]');
+      if(restoreBtn){
+        await restoreBackup(restoreBtn, restoreBtn.dataset.restoreBackupId, restoreBtn.dataset.backupClinicName || '');
+        return;
       }
     });
 
