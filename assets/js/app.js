@@ -1701,8 +1701,7 @@ function persistLocalDBNow(db){
     DB = normalizeDBShape(db || DB || freshDB());
     window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
     window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
-    localStorage.setItem(DBKEY, JSON.stringify(DB));
-    return true;
+    return safeSetLocalDB(DB);
   }catch(err){
     console.warn("Falha ao persistir localmente:", err);
     return false;
@@ -2362,7 +2361,7 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
     cloudOk = await saveDB(db, { immediate:true });
   }catch(err){
     console.error("Falha ao salvar antecipação de crédito na nuvem", err);
-    try{ localStorage.setItem(DBKEY, JSON.stringify(db)); }catch(_){ }
+    safeSetLocalDB(db);
   }
   if(cloudOk){
     toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
@@ -4257,6 +4256,7 @@ let CLOUD_CLINIC_OWNER_UID = null;
 let CLOUD_CLINIC_OWNER_EMAIL = "";
 let CLOUD_ACCESS_KIND = "guest"; // owner | member | guest
 let CLOUD_MEMBER_INFO = null;
+let __localMemoryDB = null; // fallback para clínicas grandes quando localStorage estoura
 let __cloudSaveTimer = null;
 let __cloudSavePromise = null;
 let __cloudSaveRevision = 0;
@@ -4631,10 +4631,28 @@ function normalizeDBShape(db){
   return out;
 }
 
+function safeSetLocalDB(db){
+  const normalized = normalizeDBShape(db || freshDB());
+  __localMemoryDB = normalized;
+
+  try{
+    safeSetLocalDB(normalized);
+    return true;
+  }catch(err){
+    // Clínicas grandes podem passar do limite do localStorage.
+    // Isso não pode impedir o login nem derrubar o carregamento da clínica.
+    console.warn("Cronos: base grande demais para cache local. Mantendo em memória da aba.", err);
+    try{ localStorage.removeItem(DBKEY); }catch(_){}
+    return false;
+  }
+}
+
 function getLegacyLocalDB(){
-  const raw = localStorage.getItem(DBKEY);
-  if(!raw) return null;
-  try{ return normalizeDBShape(JSON.parse(raw)); }catch(_){ return null; }
+  try{
+    const raw = localStorage.getItem(DBKEY);
+    if(raw) return normalizeDBShape(JSON.parse(raw));
+  }catch(_){ }
+  return __localMemoryDB ? normalizeDBShape(__localMemoryDB) : null;
 }
 
 async function getCurrentSupabaseUser(){
@@ -5040,7 +5058,7 @@ async function flushCloudSave(dbToSave){
   try{ scrubInstallmentTasksForAllMasters(normalized); }catch(e){ console.warn("Falha ao higienizar tarefas antes da nuvem:", e); }
 
   DB = normalized;
-  localStorage.setItem(DBKEY, JSON.stringify(normalized));
+  safeSetLocalDB(normalized);
 
   const payload = buildClinicStatePayload(normalized, user);
 
@@ -5203,7 +5221,7 @@ async function ensureCloudDBLoaded(force=false){
     }
     DB = loaded;
     CLOUD_DB_READY = true;
-    localStorage.setItem(DBKEY, JSON.stringify(DB));
+    safeSetLocalDB(DB);
 
     // Se havia alteração local mais recente que ainda não tinha subido, sobe de volta
     // depois do pull. Isso protege ficha, parcelamentos e demais campos preenchíveis
@@ -5225,13 +5243,13 @@ async function ensureCloudDBLoaded(force=false){
     DB = ensureMasterRecordByEmail(DB, ctx.ownerEmail || "");
     DB = ensureMemberMirror(DB, ctx.member);
     CLOUD_DB_READY = false;
-    localStorage.setItem(DBKEY, JSON.stringify(DB));
+    safeSetLocalDB(DB);
     toast("Acesso sem base da clínica", "Peça para o master entrar primeiro para criar a base na nuvem.");
     return DB;
   }
 
   DB = ensureMasterRecordByEmail(normalizeDBShape(getLegacyLocalDB() || freshDB()), ctx?.ownerEmail || user.email || "");
-  localStorage.setItem(DBKEY, JSON.stringify(DB));
+  safeSetLocalDB(DB);
 
   const created = await flushCloudSave(DB);
   CLOUD_DB_READY = !!created;
@@ -5260,7 +5278,7 @@ function saveDB(db, options={}){
     return;
   }
 
-  localStorage.setItem(DBKEY, JSON.stringify(DB));
+  safeSetLocalDB(DB);
 
   try{
     updateSidebarPills();
