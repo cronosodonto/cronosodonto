@@ -4287,6 +4287,8 @@ const SUPPORT_STORAGE_KEY = "cronos_support_context";
 const SUPPORT_DBKEY = "cronos_support_db";
 let __supportMemoryContext = null;
 let __supportMemoryDB = null;
+let __supportStorageDisabledForLargeDB = false;
+let __supportStorageQuotaWarned = false;
 
 function getSupportContext(){
   if(__supportMemoryContext) return __supportMemoryContext;
@@ -4302,8 +4304,14 @@ function setSupportContext(ctx){
     try{ sessionStorage.removeItem(SUPPORT_STORAGE_KEY); }catch(_){}
     return;
   }
+
+  // O contexto de suporte pode vir com data gigante. Guardar isso inteiro no
+  // sessionStorage estoura a cota e deixa o modo suporte instável. A memória da aba
+  // guarda o objeto completo; no sessionStorage fica só o metadado leve.
   try{
-    sessionStorage.setItem(SUPPORT_STORAGE_KEY, JSON.stringify(ctx));
+    const lightCtx = { ...ctx };
+    delete lightCtx.data;
+    sessionStorage.setItem(SUPPORT_STORAGE_KEY, JSON.stringify(lightCtx));
   }catch(_){
     // Em clínicas grandes, sessionStorage pode estourar. A memória da aba continua valendo.
   }
@@ -4319,6 +4327,7 @@ function getSupportDB(){
 function setSupportDB(db){
   if(!db){
     __supportMemoryDB = null;
+    __supportStorageDisabledForLargeDB = false;
     try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
     return;
   }
@@ -4326,10 +4335,31 @@ function setSupportDB(db){
   const normalized = normalizeDBShape(db);
   __supportMemoryDB = normalized;
 
+  if(__supportStorageDisabledForLargeDB) return;
+
   try{
-    sessionStorage.setItem(SUPPORT_DBKEY, JSON.stringify(normalized));
-  }catch(_){
-    // Não derruba o modo suporte se a clínica tiver dados demais para o sessionStorage.
+    const serialized = JSON.stringify(normalized);
+
+    // Evita bater no limite do sessionStorage toda hora. O modo suporte continua
+    // usando a memória da aba, que é suficiente enquanto a aba está aberta.
+    if(serialized.length > 2_500_000){
+      __supportStorageDisabledForLargeDB = true;
+      if(!__supportStorageQuotaWarned){
+        __supportStorageQuotaWarned = true;
+        console.warn("Cronos suporte: base grande demais para sessionStorage. Mantendo em memória da aba.");
+      }
+      try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
+      return;
+    }
+
+    sessionStorage.setItem(SUPPORT_DBKEY, serialized);
+  }catch(err){
+    __supportStorageDisabledForLargeDB = true;
+    if(!__supportStorageQuotaWarned){
+      __supportStorageQuotaWarned = true;
+      console.warn("Cronos suporte: base grande demais para sessionStorage. Mantendo em memória da aba.", err);
+    }
+    try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
   }
 }
 function clearSupportContext(){
@@ -5261,24 +5291,46 @@ async function ensureCloudDBLoaded(force=false){
 function loadDB(){
   if(DB) return DB;
   if(isSupportMode()){
-    DB = normalizeDBShape(getSupportDB() || freshDB());
+    const support = getSupportContext();
+    DB = normalizeDBShape(getSupportDB() || support?.data || freshDB());
+    if((DB.contacts?.length || 0) + (DB.entries?.length || 0) > 0){
+      setSupportDB(DB);
+    }
     return DB;
   }
   DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
   return DB;
 }
 function saveDB(db, options={}){
-  DB = normalizeDBShape(db);
-  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
-  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  const incoming = normalizeDBShape(db);
 
   if(isSupportMode()){
+    const previous = normalizeDBShape(__supportMemoryDB || DB || getSupportDB() || freshDB());
+    const previousSize = (previous.contacts?.length || 0) + (previous.entries?.length || 0);
+    const incomingSize = (incoming.contacts?.length || 0) + (incoming.entries?.length || 0);
+
+    // Proteção contra o bug em que uma renderização/aba secundária tenta salvar um
+    // freshDB vazio por cima de uma clínica grande no modo suporte.
+    if(previousSize > 100 && incomingSize === 0 && !options.allowEmptySupportSave){
+      DB = previous;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      setSupportDB(DB);
+      try{ updateSidebarPills(); }catch(e){}
+      console.warn("Cronos suporte: tentativa de salvar base vazia ignorada para proteger a clínica carregada.");
+      return Promise.resolve(false);
+    }
+
+    DB = incoming;
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
     setSupportDB(DB);
-    try{
-      updateSidebarPills();
-    }catch(e){}
-    return;
+    try{ updateSidebarPills(); }catch(e){}
+    return Promise.resolve(false);
   }
+
+  DB = incoming;
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
 
   safeSetLocalDB(DB);
 
