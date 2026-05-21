@@ -3947,7 +3947,7 @@ const PERMS = {
 };
 
 function actorAccessModules(actor=currentActor()){
-  if(!actor) return [...ALL_ACCESS_MODULES];
+  if(!actor) return [];
   const views = Array.isArray(actor?.perms?.views) && actor.perms.views.length ? actor.perms.views : ["dashboard"];
   return [...new Set(views.filter(v=>ALL_ACCESS_MODULES.includes(v)))];
 }
@@ -4257,6 +4257,8 @@ let CLOUD_CLINIC_OWNER_EMAIL = "";
 let CLOUD_ACCESS_KIND = "guest"; // owner | member | guest
 let CLOUD_MEMBER_INFO = null;
 let __localMemoryDB = null; // fallback para clínicas grandes quando localStorage estoura
+let __localCacheDisabledForLargeDB = false; // evita tentar gravar base grande no localStorage infinitamente
+let __localCacheQuotaWarned = false;
 let __cloudSaveTimer = null;
 let __cloudSavePromise = null;
 let __cloudSaveRevision = 0;
@@ -4635,13 +4637,22 @@ function safeSetLocalDB(db){
   const normalized = normalizeDBShape(db || freshDB());
   __localMemoryDB = normalized;
 
+  // Depois que uma clínica grande estoura a cota do localStorage, não adianta tentar
+  // gravar o mesmo pacotão toda vez que a tela renderiza. Mantemos a base em memória
+  // da aba e paramos de bater no localStorage, evitando travas e spam no console.
+  if(__localCacheDisabledForLargeDB){
+    return false;
+  }
+
   try{
     localStorage.setItem(DBKEY, JSON.stringify(normalized));
     return true;
   }catch(err){
-    // Clínicas grandes podem passar do limite do localStorage.
-    // Isso não pode impedir o login nem derrubar o carregamento da clínica.
-    console.warn("Cronos: base grande demais para cache local. Mantendo em memória da aba.", err);
+    __localCacheDisabledForLargeDB = true;
+    if(!__localCacheQuotaWarned){
+      __localCacheQuotaWarned = true;
+      console.warn("Cronos: base grande demais para cache local. Mantendo em memória da aba.", err);
+    }
     try{ localStorage.removeItem(DBKEY); }catch(_){}
     return false;
   }
@@ -5223,18 +5234,9 @@ async function ensureCloudDBLoaded(force=false){
     CLOUD_DB_READY = true;
     safeSetLocalDB(DB);
 
-    // Se havia alteração local mais recente que ainda não tinha subido, sobe de volta
-    // depois do pull. Isso protege ficha, parcelamentos e demais campos preenchíveis
-    // contra o clássico: salva no PC A, F5, outro PC não vê, e depois some do PC A.
-    try{
-      const localSig = JSON.stringify(localBeforePull);
-      const cloudSig = JSON.stringify(cloudBeforePull);
-      const mergedSig = JSON.stringify(DB);
-      if(mergedSig !== cloudSig && localSig !== cloudSig){
-        setTimeout(()=>{ try{ scheduleCloudSave(true); }catch(err){ console.warn("Falha ao reenviar alterações locais após pull:", err); } }, 180);
-      }
-    }catch(_){ }
-
+    // Em bases grandes, reenviar automaticamente o pacotão inteiro logo após o pull
+    // pode gerar statement timeout no Supabase. O reenvio automático foi desativado:
+    // alterações reais continuam chamando saveDB normalmente.
     return DB;
   }
 
@@ -5758,10 +5760,14 @@ function showApp(actor){
     const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
     const stats = syncInstallmentTasks(db, actor) || {};
     const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
-    saveDB(db, { immediate:true });
-    if(before !== after && !window.__CRONOS_TASK_REPAIR_TOASTED__){
-      window.__CRONOS_TASK_REPAIR_TOASTED__ = true;
-      toast("Tarefas higienizadas", `Antes: ${before} • Depois: ${after}`);
+    if(before !== after){
+      // No boot, não força gravação do pacote inteiro na nuvem. As tarefas automáticas
+      // podem ser regeneradas e isso evita timeout em clínicas com base grande.
+      saveDB(db, { skipCloud:true });
+      if(!window.__CRONOS_TASK_REPAIR_TOASTED__){
+        window.__CRONOS_TASK_REPAIR_TOASTED__ = true;
+        toast("Tarefas higienizadas", `Antes: ${before} • Depois: ${after}`);
+      }
     }
   }catch(e){
     console.warn("Falha ao higienizar tarefas no boot:", e);
@@ -7518,7 +7524,8 @@ function openChangeMyPassword(){
 
 function renderSettings(){
   const actor = currentActor();
-  if(actor && !canAccessView("settings", actor)) return;
+  if(!actor) return;
+  if(!canAccessView("settings", actor)) return;
   const prefs = getPrefs();
   const ta = el("waTemplate");
   if(ta) ta.value = prefs.waTemplate || "";
@@ -7551,9 +7558,13 @@ function renderSettings(){
 
 function renderUsers(){
   const actor = currentActor();
-  if(actor && !canAccessView("users", actor)) return;
-  const db = loadDB();
   const tbody = el("usersTbody");
+  if(!actor){
+    if(tbody) tbody.innerHTML = "";
+    return;
+  }
+  if(!canAccessView("users", actor)) return;
+  const db = loadDB();
   const master = db.masters.find(m=>m.id===actor.masterId);
   const users = db.users.filter(u=>u.masterId===actor.masterId);
 
@@ -7584,7 +7595,7 @@ function renderUsers(){
   ];
 
   tbody.innerHTML = rows.map(r=>{
-    const canManage = actor.perms.manageUsers;
+    const canManage = !!actor?.perms?.manageUsers;
     const isPending = r.kind === "USER" && r.pendingApproval === true;
     const isInactive = r.kind === "USER" && !isPending && r.active === false;
     const rowClass = isPending ? "userRowPending" : (isInactive ? "userRowInactive" : "");
@@ -10717,7 +10728,7 @@ async function boot(){
   ensureMonthOptions();
   setUIFilters(f);
 
-  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db); }catch(e){}
+  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db, { skipCloud:true }); }catch(e){}
 
   saveFilters(getUIFilters());
 
