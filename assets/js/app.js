@@ -4636,7 +4636,7 @@ function safeSetLocalDB(db){
   __localMemoryDB = normalized;
 
   try{
-    safeSetLocalDB(normalized);
+    localStorage.setItem(DBKEY, JSON.stringify(normalized));
     return true;
   }catch(err){
     // Clínicas grandes podem passar do limite do localStorage.
