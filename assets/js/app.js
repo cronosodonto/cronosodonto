@@ -4285,6 +4285,7 @@ function cancelPendingCloudSync(){
 
 const SUPPORT_STORAGE_KEY = "cronos_support_context";
 const SUPPORT_DBKEY = "cronos_support_db";
+const SUPPORT_TOKEN_KEY = "cronos_support_token";
 let __supportMemoryContext = null;
 let __supportMemoryDB = null;
 let __supportStorageDisabledForLargeDB = false;
@@ -4365,8 +4366,10 @@ function setSupportDB(db){
 function clearSupportContext(){
   __supportMemoryContext = null;
   __supportMemoryDB = null;
+  __supportStorageDisabledForLargeDB = false;
   try{ sessionStorage.removeItem(SUPPORT_STORAGE_KEY); }catch(_){}
   try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
+  try{ sessionStorage.removeItem(SUPPORT_TOKEN_KEY); }catch(_){}
 }
 function isSupportMode(){
   return !!getSupportContext();
@@ -4374,15 +4377,38 @@ function isSupportMode(){
 
 async function maybeInitSupportMode(){
   const params = new URLSearchParams(location.search);
-  const supportToken = params.get("support_token");
+  const tokenFromUrl = params.get("support_token");
+  let tokenFromSession = "";
+  try{ tokenFromSession = sessionStorage.getItem(SUPPORT_TOKEN_KEY) || ""; }catch(_){}
+
+  const supportToken = tokenFromUrl || tokenFromSession;
+
+  // Sem token novo nem token lembrado, mantém o contexto leve se existir.
   if(!supportToken) return getSupportContext();
 
+  // Se ainda há DB de suporte na memória/sessionStorage, não precisa revalidar.
+  // Depois de F5, a memória some e, em bases grandes, o DB não cabe no sessionStorage;
+  // aí usamos o token salvo para buscar novamente a clínica na Edge Function.
+  if(!tokenFromUrl){
+    const ctx = getSupportContext();
+    const cachedDB = getSupportDB();
+    const cachedSize = ((cachedDB?.contacts || []).length || 0) + ((cachedDB?.entries || []).length || 0);
+    if(ctx && cachedSize > 0){
+      return ctx;
+    }
+  }
+
   // Link de suporte tem prioridade absoluta sobre qualquer login/cache já aberto nessa aba.
-  clearSupportContext();
-  clearSession();
+  if(tokenFromUrl){
+    clearSupportContext();
+    clearSession();
+  }
+
   resetCloudContext();
   DB = null;
   CLOUD_DB_READY = false;
+
+  try{ sessionStorage.setItem(SUPPORT_TOKEN_KEY, supportToken); }catch(_){}
 
   const res = await fetch(`${supabaseUrl}/functions/v1/resolve-support-access`, {
     method: "POST",
@@ -4410,7 +4436,11 @@ async function maybeInitSupportMode(){
   setSupportContext(support);
   setSupportDB(support.data);
 
-  history.replaceState({}, "", location.pathname);
+  // Esconde o token da barra, mas mantém no sessionStorage para F5 do suporte.
+  if(tokenFromUrl){
+    history.replaceState({}, "", location.pathname);
+  }
+
   return support;
 }
 
