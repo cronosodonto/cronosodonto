@@ -4259,6 +4259,23 @@ let CLOUD_MEMBER_INFO = null;
 let __localMemoryDB = null; // fallback para clínicas grandes quando localStorage estoura
 let __localCacheDisabledForLargeDB = false; // evita tentar gravar base grande no localStorage infinitamente
 let __localCacheQuotaWarned = false;
+let CLOUD_LOAD_TEMPORARY_FAILURE = false; // falha de leitura/timeout não é "usuário sem vínculo"
+let CLOUD_LAST_LOAD_ERROR = null;
+
+// FASE 2: fontes estruturadas para contatos/leads. A interface ainda opera com arrays
+// em memória nesta ponte inicial, mas a persistência passa a ser por tabela quando ativada.
+const CLOUD_DATA_SOURCES_TABLE = "clinic_data_sources";
+const CLOUD_CONTACTS_V2_TABLE = "clinic_contacts";
+const CLOUD_LEADS_V2_TABLE = "clinic_leads";
+let CLOUD_CLINIC_ID = "";
+let CLOUD_DATA_SOURCES = {
+  contacts_source: "legacy_json",
+  leads_source: "legacy_json",
+  payments_source: "legacy_json",
+  tasks_source: "legacy_json",
+  patient_files_source: "legacy_json"
+};
+let __v2Snapshots = { contacts: new Map(), entries: new Map() };
 let __cloudSaveTimer = null;
 let __cloudSavePromise = null;
 let __cloudSaveRevision = 0;
@@ -4433,8 +4450,10 @@ async function maybeInitSupportMode(){
     throw new Error("Acesso de suporte validado, mas os dados da clínica não foram retornados.");
   }
 
+  setCloudDataSourcesFromRow(support.data_sources || null, support.clinic_id || "");
   setSupportContext(support);
   setSupportDB(support.data);
+  if(usesAnyClinicTableV2()) captureV2Snapshots(support.data);
 
   // Esconde o token da barra, mas mantém no sessionStorage para F5 do suporte.
   if(tokenFromUrl){
@@ -4673,6 +4692,17 @@ function resetCloudContext(){
   CLOUD_CLINIC_OWNER_EMAIL = "";
   CLOUD_ACCESS_KIND = "guest";
   CLOUD_MEMBER_INFO = null;
+  CLOUD_LOAD_TEMPORARY_FAILURE = false;
+  CLOUD_LAST_LOAD_ERROR = null;
+  CLOUD_CLINIC_ID = "";
+  CLOUD_DATA_SOURCES = {
+    contacts_source: "legacy_json",
+    leads_source: "legacy_json",
+    payments_source: "legacy_json",
+    tasks_source: "legacy_json",
+    patient_files_source: "legacy_json"
+  };
+  __v2Snapshots = { contacts: new Map(), entries: new Map() };
 }
 
 function normalizeDBShape(db){
@@ -4693,6 +4723,206 @@ function normalizeDBShape(db){
   return out;
 }
 
+function isClinicSourceV2(kind){
+  const key = kind === "contacts" ? "contacts_source" : "leads_source";
+  return String(CLOUD_DATA_SOURCES?.[key] || "legacy_json") === "tables_v2";
+}
+function usesAnyClinicTableV2(){
+  return isClinicSourceV2("contacts") || isClinicSourceV2("entries");
+}
+function setCloudDataSourcesFromRow(row, clinicId=""){
+  CLOUD_CLINIC_ID = String(clinicId || row?.clinic_id || CLOUD_CLINIC_ID || "").trim();
+  CLOUD_DATA_SOURCES = {
+    contacts_source: String(row?.contacts_source || "legacy_json"),
+    leads_source: String(row?.leads_source || "legacy_json"),
+    payments_source: String(row?.payments_source || "legacy_json"),
+    tasks_source: String(row?.tasks_source || "legacy_json"),
+    patient_files_source: String(row?.patient_files_source || "legacy_json")
+  };
+}
+function v2Fingerprint(item){
+  try{ return JSON.stringify(item || {}); }catch(_){ return String(item?.id || ""); }
+}
+function captureV2Snapshots(db){
+  const normalized = normalizeDBShape(db || freshDB());
+  __v2Snapshots = {
+    contacts: new Map((normalized.contacts || []).filter(x=>x?.id).map(x=>[String(x.id), v2Fingerprint(x)])),
+    entries: new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), v2Fingerprint(x)]))
+  };
+}
+function removeV2CollectionsFromObject(db){
+  const out = normalizeDBShape(db || freshDB());
+  const compact = { ...out };
+  if(isClinicSourceV2("contacts")) delete compact.contacts;
+  if(isClinicSourceV2("entries")) delete compact.entries;
+  return compact;
+}
+function v2Text(value){
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+function v2Date(value){
+  const raw = String(value || "").trim().slice(0,10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+function v2Time(value){
+  const raw = String(value || "").trim();
+  return /^([01]\d|2[0-3]):[0-5]\d/.test(raw) ? raw.slice(0,5) : null;
+}
+function v2Money(value){
+  if(value === null || value === undefined || String(value).trim() === "") return null;
+  try{
+    if(typeof parseMoney === "function"){
+      const parsed = Number(parseMoney(value));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+  }catch(_){}
+  let raw = String(value).replace(/[^\d,.-]/g, "");
+  if(raw.includes(",")) raw = raw.replace(/\./g, "").replace(",", ".");
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function contactToV2Row(contact){
+  return {
+    clinic_id: CLOUD_CLINIC_ID,
+    id: String(contact.id),
+    name: String(contact.name || ""),
+    phone: v2Text(contact.phone),
+    cpf: v2Text(contact.cpf || contact.cpfDigits),
+    birth_date: v2Date(contact.birthDate || contact.nascimento),
+    email: v2Text(contact.email),
+    legacy_payload: contact
+  };
+}
+function leadToV2Row(entry){
+  return {
+    clinic_id: CLOUD_CLINIC_ID,
+    id: String(entry.id),
+    contact_id: v2Text(entry.contactId),
+    status: String(entry.status || ""),
+    origin: String(entry.origin || ""),
+    origin_other: String(entry.originOther || ""),
+    treatment: String(entry.treatment || ""),
+    treatment_other: String(entry.treatmentOther || ""),
+    priority: String(entry.priority || ""),
+    first_contact_at: v2Date(entry.firstContactAt),
+    appointment_date: v2Date(entry.apptDate),
+    appointment_time: v2Time(entry.apptTime),
+    month_key: v2Text(entry.monthKey),
+    city: String(entry.city || ""),
+    budget_value: v2Money(entry.valueBudget ?? entry.valueEstimated),
+    paid_value: v2Money(entry.valuePaid),
+    closed_value: v2Money(entry.valueClosed),
+    notes: String(entry.notes || ""),
+    tags: Array.isArray(entry.tags) ? entry.tags : [],
+    status_log: Array.isArray(entry.statusLog) ? entry.statusLog : [],
+    legacy_payload: entry
+  };
+}
+async function loadCurrentClinicDataSources(){
+  if(isSupportMode()){
+    const support = getSupportContext();
+    setCloudDataSourcesFromRow(support?.data_sources || null, support?.clinic_id || "");
+    return CLOUD_DATA_SOURCES;
+  }
+  const { data, error } = await supabaseClient
+    .from(CLOUD_DATA_SOURCES_TABLE)
+    .select("clinic_id, clinic_name, contacts_source, leads_source, payments_source, tasks_source, patient_files_source")
+    .limit(2);
+  if(error) throw error;
+  const rows = Array.isArray(data) ? data : [];
+  if(rows.length === 1){
+    setCloudDataSourcesFromRow(rows[0], rows[0].clinic_id);
+  }else if(rows.length === 0){
+    setCloudDataSourcesFromRow(null, "");
+  }else{
+    console.warn("Cronos V2: mais de uma fonte acessível no app clínico. Mantendo legacy_json por segurança.", rows);
+    setCloudDataSourcesFromRow(null, "");
+  }
+  return CLOUD_DATA_SOURCES;
+}
+async function fetchAllV2Payloads(tableName){
+  if(!CLOUD_CLINIC_ID) throw new Error("clinic_id não resolvido para leitura V2.");
+  const output = [];
+  const pageSize = 1000;
+  for(let start = 0; ; start += pageSize){
+    const { data, error } = await supabaseClient
+      .from(tableName)
+      .select("id, legacy_payload")
+      .eq("clinic_id", CLOUD_CLINIC_ID)
+      .range(start, start + pageSize - 1);
+    if(error) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    rows.forEach(row=>{
+      const payload = row?.legacy_payload && typeof row.legacy_payload === "object"
+        ? { ...row.legacy_payload }
+        : {};
+      payload.id = payload.id || row.id;
+      output.push(payload);
+    });
+    if(rows.length < pageSize) break;
+  }
+  return output;
+}
+async function hydrateClinicArraysFromTables(db){
+  const loaded = normalizeDBShape(db || freshDB());
+  if(isClinicSourceV2("contacts")){
+    loaded.contacts = await fetchAllV2Payloads(CLOUD_CONTACTS_V2_TABLE);
+  }
+  if(isClinicSourceV2("entries")){
+    loaded.entries = await fetchAllV2Payloads(CLOUD_LEADS_V2_TABLE);
+  }
+  captureV2Snapshots(loaded);
+  return loaded;
+}
+async function deleteV2Ids(tableName, ids){
+  for(let i=0; i<ids.length; i+=200){
+    const slice = ids.slice(i, i+200);
+    const { error } = await supabaseClient
+      .from(tableName)
+      .delete()
+      .eq("clinic_id", CLOUD_CLINIC_ID)
+      .in("id", slice);
+    if(error) throw error;
+  }
+}
+async function upsertV2Rows(tableName, rows){
+  for(let i=0; i<rows.length; i+=200){
+    const { error } = await supabaseClient
+      .from(tableName)
+      .upsert(rows.slice(i, i+200), { onConflict: "clinic_id,id" });
+    if(error) throw error;
+  }
+}
+async function syncManagedCollectionsToV2(db){
+  if(!usesAnyClinicTableV2()) return true;
+  if(!CLOUD_CLINIC_ID) throw new Error("clinic_id não resolvido para salvar tabelas V2.");
+  const normalized = normalizeDBShape(db || freshDB());
+
+  if(isClinicSourceV2("contacts")){
+    const currentMap = new Map((normalized.contacts || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
+    const changed = Array.from(currentMap.entries())
+      .filter(([id, item])=>__v2Snapshots.contacts.get(id) !== v2Fingerprint(item))
+      .map(([, item])=>contactToV2Row(item));
+    const removed = Array.from(__v2Snapshots.contacts.keys()).filter(id=>!currentMap.has(id));
+    if(changed.length) await upsertV2Rows(CLOUD_CONTACTS_V2_TABLE, changed);
+    if(removed.length) await deleteV2Ids(CLOUD_CONTACTS_V2_TABLE, removed);
+  }
+
+  if(isClinicSourceV2("entries")){
+    const currentMap = new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
+    const changed = Array.from(currentMap.entries())
+      .filter(([id, item])=>__v2Snapshots.entries.get(id) !== v2Fingerprint(item))
+      .map(([, item])=>leadToV2Row(item));
+    const removed = Array.from(__v2Snapshots.entries.keys()).filter(id=>!currentMap.has(id));
+    if(changed.length) await upsertV2Rows(CLOUD_LEADS_V2_TABLE, changed);
+    if(removed.length) await deleteV2Ids(CLOUD_LEADS_V2_TABLE, removed);
+  }
+
+  captureV2Snapshots(normalized);
+  return true;
+}
+
 function safeSetLocalDB(db){
   const normalized = normalizeDBShape(db || freshDB());
   __localMemoryDB = normalized;
@@ -4705,7 +4935,10 @@ function safeSetLocalDB(db){
   }
 
   try{
-    localStorage.setItem(DBKEY, JSON.stringify(normalized));
+    // Em tables_v2, contatos/leads são a fonte do banco, não do cache local.
+    // Guardar os arrays gigantes de novo recriaria o problema de quota no navegador.
+    const cacheable = usesAnyClinicTableV2() ? removeV2CollectionsFromObject(normalized) : normalized;
+    localStorage.setItem(DBKEY, JSON.stringify(cacheable));
     return true;
   }catch(err){
     __localCacheDisabledForLargeDB = true;
@@ -4946,7 +5179,8 @@ function buildClinicStatePayload(db, user){
     owner_uid: ownerUid,
     owner_email: ownerEmail,
     clinic_name: master.name || (ownerEmail ? ownerEmail.split("@")[0] : "Clínica"),
-    data: normalized
+    // Quando a clínica estiver em V2, contacts/entries não voltam para o JSON gigante.
+    data: usesAnyClinicTableV2() ? removeV2CollectionsFromObject(normalized) : normalized
   };
 }
 
@@ -5115,18 +5349,33 @@ async function flushCloudSave(dbToSave){
   if(!user) return false;
 
   const ctx = await applyCloudAccessContext(user);
+  await loadCurrentClinicDataSources();
   const ownerEmail = String(ctx?.ownerEmail || user.email || "").trim().toLowerCase();
 
   let normalized = ensureMasterRecordByEmail(normalizeDBShape(dbToSave || DB || freshDB()), ownerEmail);
   if(ctx?.row?.data){
-    normalized = mergeCloudAndLocalDB(ctx.row.data, normalized);
-    normalized = ensureMasterRecordByEmail(normalized, ownerEmail);
+    const mergedWithLegacy = mergeCloudAndLocalDB(ctx.row.data, normalized);
+    // Se a fonte é V2, a versão em memória é a autoridade das coleções operacionais;
+    // o JSON legado não pode ressuscitar itens antigos na hora de salvar.
+    if(isClinicSourceV2("contacts")) mergedWithLegacy.contacts = normalized.contacts;
+    if(isClinicSourceV2("entries")) mergedWithLegacy.entries = normalized.entries;
+    normalized = ensureMasterRecordByEmail(mergedWithLegacy, ownerEmail);
   }
   if(CLOUD_MEMBER_INFO){
     normalized = ensureMemberMirror(normalized, CLOUD_MEMBER_INFO);
   }
 
   try{ scrubInstallmentTasksForAllMasters(normalized); }catch(e){ console.warn("Falha ao higienizar tarefas antes da nuvem:", e); }
+
+  try{
+    await syncManagedCollectionsToV2(normalized);
+  }catch(error){
+    console.error("Erro ao salvar contatos/leads nas tabelas V2:", error);
+    if(!shouldSuppressCloudFailureToast()){
+      toast("Falha ao salvar leads na nuvem", "A atualização nas tabelas não foi concluída. Tente novamente.");
+    }
+    return false;
+  }
 
   DB = normalized;
   safeSetLocalDB(normalized);
@@ -5162,7 +5411,7 @@ async function flushCloudSave(dbToSave){
   if(error){
     console.error("Erro ao salvar no Supabase:", error);
     if(!shouldSuppressCloudFailureToast()){
-      toast("Falha ao salvar na nuvem", "Os dados ficaram no navegador e podem ser sincronizados depois.");
+      toast("Falha ao salvar na nuvem", "Os dados operacionais foram tratados, mas o estado geral não foi sincronizado.");
     }
     return false;
   }
@@ -5237,6 +5486,7 @@ async function ensureCloudDBLoaded(force=false){
       return DB;
     }
 
+    setCloudDataSourcesFromRow(support.data_sources || null, support.clinic_id || "");
     let loaded = normalizeDBShape(getSupportDB() || support.data || freshDB());
     const supportEmail = String(support.owner_email || "").trim().toLowerCase();
     if(supportEmail){
@@ -5248,6 +5498,7 @@ async function ensureCloudDBLoaded(force=false){
     }
 
     DB = loaded;
+    if(usesAnyClinicTableV2()) captureV2Snapshots(DB);
     setSupportDB(DB);
     CLOUD_DB_READY = true;
     CLOUD_ROW_ID = support.clinic_id || null;
@@ -5267,37 +5518,62 @@ async function ensureCloudDBLoaded(force=false){
     return DB;
   }
 
+  const dbBeforeCloudAttempt = DB;
+  CLOUD_LOAD_TEMPORARY_FAILURE = false;
+  CLOUD_LAST_LOAD_ERROR = null;
+
   let ctx = null;
   try{
     ctx = await applyCloudAccessContext(user);
+    await loadCurrentClinicDataSources();
+
+    if(ctx?.row?.data){
+      const localBeforePull = normalizeDBShape(getLegacyLocalDB() || freshDB());
+      const cloudBeforePull = normalizeDBShape(ctx.row.data);
+      let loaded = mergeCloudAndLocalDB(cloudBeforePull, localBeforePull);
+      if(usesAnyClinicTableV2()){
+        loaded = await hydrateClinicArraysFromTables(loaded);
+      }
+      loaded = ensureMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "");
+      const cloudClinicName = String(ctx.row.clinic_name || "").trim();
+      if(cloudClinicName){
+        const master = getMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "") || loaded.masters?.[0];
+        if(master) master.name = cloudClinicName;
+      }
+      if(ctx.member){
+        loaded = ensureMemberMirror(loaded, ctx.member);
+      }
+      DB = loaded;
+      CLOUD_DB_READY = true;
+      safeSetLocalDB(DB);
+
+      // Alterações reais chamam saveDB; não reenviamos a base inteira após o pull.
+      return DB;
+    }
   }catch(error){
+    CLOUD_LOAD_TEMPORARY_FAILURE = true;
+    CLOUD_LAST_LOAD_ERROR = error;
     console.error("Erro ao carregar dados da nuvem:", error);
-    toast("Falha ao carregar da nuvem", "Usando o backup local por enquanto.");
-    DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
-    return DB;
-  }
 
-  if(ctx?.row?.data){
-    const localBeforePull = normalizeDBShape(getLegacyLocalDB() || freshDB());
-    const cloudBeforePull = normalizeDBShape(ctx.row.data);
-    let loaded = mergeCloudAndLocalDB(cloudBeforePull, localBeforePull);
-    loaded = ensureMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "");
-    const cloudClinicName = String(ctx.row.clinic_name || "").trim();
-    if(cloudClinicName){
-      const master = getMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "") || loaded.masters?.[0];
-      if(master) master.name = cloudClinicName;
-    }
-    if(ctx.member){
-      loaded = ensureMemberMirror(loaded, ctx.member);
-    }
-    DB = loaded;
-    CLOUD_DB_READY = true;
-    safeSetLocalDB(DB);
+    const localBackup = getLegacyLocalDB();
+    const localSize = localBackup
+      ? ((localBackup.contacts || []).length + (localBackup.entries || []).length + (localBackup.users || []).length + (localBackup.masters || []).length)
+      : 0;
 
-    // Em bases grandes, reenviar automaticamente o pacotão inteiro logo após o pull
-    // pode gerar statement timeout no Supabase. O reenvio automático foi desativado:
-    // alterações reais continuam chamando saveDB normalmente.
-    return DB;
+    if(localSize > 0 && !usesAnyClinicTableV2()){
+      DB = normalizeDBShape(localBackup);
+      return DB;
+    }
+
+    // Em V2, não usamos cache local sem contatos/leads como se fosse uma clínica válida.
+    // Se já havia uma base em memória, preservamos a aba; caso contrário, o login tenta novamente.
+    if(dbBeforeCloudAttempt){
+      DB = dbBeforeCloudAttempt;
+      return DB;
+    }
+
+    DB = null;
+    return normalizeDBShape(freshDB());
   }
 
   if(ctx?.kind === "member" || ctx?.kind === "member_orphan"){
@@ -11257,6 +11533,24 @@ window.__CRONOS_LOGIN_BUSY__ = false;
 window.__CRONOS_EXPLICIT_LOGIN__ = false;
 window.__CRONOS_ACCESS_BLOCK__ = null;
 
+async function ensureCloudDBForLoginWithRetry(maxAttempts=3){
+  for(let attempt = 1; attempt <= maxAttempts; attempt++){
+    await ensureCloudDBLoaded(true);
+
+    if(!CLOUD_LOAD_TEMPORARY_FAILURE){
+      return true;
+    }
+
+    if(attempt < maxAttempts){
+      const nextAttempt = attempt + 1;
+      setLoginLoading(true, `Nuvem ocupada. Tentando novamente (${nextAttempt}/${maxAttempts})...`);
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+
+  return false;
+}
+
 async function finalizeCloudLogin(){
   try{
     const explicitLogin = !!window.__CRONOS_EXPLICIT_LOGIN__;
@@ -11276,7 +11570,20 @@ async function finalizeCloudLogin(){
       showBootSplash("Sincronizando seu ambiente...");
     }
 
-    await ensureCloudDBLoaded(true);
+    const cloudLoaded = await ensureCloudDBForLoginWithRetry(3);
+
+    if(!cloudLoaded){
+      setLoginLoading(false);
+      hideBootSplash();
+      document.getElementById("appView").classList.add("hidden");
+      document.getElementById("authView").classList.remove("hidden");
+      toast(
+        "Nuvem temporariamente lenta",
+        "Seu login foi autenticado, mas os dados da clínica não responderam agora. Aguarde alguns segundos e tente novamente."
+      );
+      return;
+    }
+
     const actorInfo = await syncCurrentCloudActor();
     if(!actorInfo){
       let title = "Acesso sem vínculo";
