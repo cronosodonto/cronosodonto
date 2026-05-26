@@ -4392,6 +4392,90 @@ function isSupportMode(){
   return !!getSupportContext();
 }
 
+function supportSourceIsV2(support, collection){
+  const key = collection === "contacts" ? "contacts_source" : "leads_source";
+  return String(support?.data_sources?.[key] || "legacy_json") === "tables_v2";
+}
+
+function validateSupportHydration(support){
+  if(!support || !support.data || typeof support.data !== "object"){
+    return { ok:false, message:"Acesso de suporte validado, mas os dados da clínica não foram retornados." };
+  }
+
+  const hydration = support.v2_hydration || {};
+  const problems = [];
+
+  if(supportSourceIsV2(support, "contacts")){
+    const rows = Array.isArray(support.data.contacts) ? support.data.contacts.length : -1;
+    const expected = Number(hydration.contacts_count);
+    if(hydration.contacts_ready !== true || rows < 0 || !Number.isFinite(expected) || rows !== expected){
+      problems.push("contatos");
+    }
+  }
+
+  if(supportSourceIsV2(support, "entries")){
+    const rows = Array.isArray(support.data.entries) ? support.data.entries.length : -1;
+    const expected = Number(hydration.leads_count);
+    if(hydration.leads_ready !== true || rows < 0 || !Number.isFinite(expected) || rows !== expected){
+      problems.push("leads");
+    }
+  }
+
+  if(problems.length){
+    return {
+      ok:false,
+      message:`A clínica ainda não terminou de carregar ${problems.join(" e ")} pelo modo suporte.`
+    };
+  }
+
+  return { ok:true };
+}
+
+async function fetchSupportAccessReady(supportToken, maxAttempts=3){
+  let lastError = null;
+
+  for(let attempt = 1; attempt <= maxAttempts; attempt++){
+    try{
+      const res = await fetch(`${supabaseUrl}/functions/v1/resolve-support-access`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": supabaseKey
+        },
+        body: JSON.stringify({ support_token: supportToken })
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if(!res.ok){
+        throw new Error(json?.error || "Falha ao validar o acesso de suporte.");
+      }
+
+      const support = json.support || null;
+      if(!support){
+        throw new Error("Acesso de suporte validado, mas sem dados de suporte.");
+      }
+
+      const validation = validateSupportHydration(support);
+      if(!validation.ok){
+        throw new Error(validation.message);
+      }
+
+      return support;
+    }catch(error){
+      lastError = error;
+      if(attempt < maxAttempts){
+        setSupportEntryLoading(
+          true,
+          `Modo suporte • Carregando dados da clínica (${attempt + 1}/${maxAttempts})...`
+        );
+        await new Promise(resolve => setTimeout(resolve, attempt * 900));
+      }
+    }
+  }
+
+  throw lastError || new Error("Não foi possível carregar os dados da clínica no modo suporte.");
+}
+
 async function maybeInitSupportMode(){
   const params = new URLSearchParams(location.search);
   const tokenFromUrl = params.get("support_token");
@@ -4403,14 +4487,17 @@ async function maybeInitSupportMode(){
   // Sem token novo nem token lembrado, mantém o contexto leve se existir.
   if(!supportToken) return getSupportContext();
 
-  // Se ainda há DB de suporte na memória/sessionStorage, não precisa revalidar.
-  // Depois de F5, a memória some e, em bases grandes, o DB não cabe no sessionStorage;
-  // aí usamos o token salvo para buscar novamente a clínica na Edge Function.
+  // Se ainda há DB válido de suporte na memória/sessionStorage, não precisa revalidar.
   if(!tokenFromUrl){
     const ctx = getSupportContext();
     const cachedDB = getSupportDB();
+    const validation = validateSupportHydration({
+      ...ctx,
+      data: cachedDB || ctx?.data,
+      v2_hydration: ctx?.v2_hydration
+    });
     const cachedSize = ((cachedDB?.contacts || []).length || 0) + ((cachedDB?.entries || []).length || 0);
-    if(ctx && cachedSize > 0){
+    if(ctx && validation.ok && (cachedSize > 0 || !supportSourceIsV2(ctx, "contacts") && !supportSourceIsV2(ctx, "entries"))){
       return ctx;
     }
   }
@@ -4427,28 +4514,9 @@ async function maybeInitSupportMode(){
 
   try{ sessionStorage.setItem(SUPPORT_TOKEN_KEY, supportToken); }catch(_){}
 
-  const res = await fetch(`${supabaseUrl}/functions/v1/resolve-support-access`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": supabaseKey
-    },
-    body: JSON.stringify({ support_token: supportToken })
-  });
-
-  const json = await res.json().catch(() => ({}));
-  if(!res.ok){
-    throw new Error(json?.error || "Falha ao validar o acesso de suporte.");
-  }
-
-  const support = json.support || null;
-  if(!support){
-    throw new Error("Acesso de suporte validado, mas sem dados de suporte.");
-  }
-
-  if(!support.data || typeof support.data !== "object"){
-    throw new Error("Acesso de suporte validado, mas os dados da clínica não foram retornados.");
-  }
+  // Só grava contexto/DB e só libera a interface depois que a Edge confirmar
+  // que a hidratação V2 veio completa. Nunca renderiza clínica zerada por carga parcial.
+  const support = await fetchSupportAccessReady(supportToken, 3);
 
   setCloudDataSourcesFromRow(support.data_sources || null, support.clinic_id || "");
   setSupportContext(support);
