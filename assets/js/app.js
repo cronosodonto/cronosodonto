@@ -1741,6 +1741,43 @@ async function commitFinancialMutationCloud(db, entry){
   return await saveDB(db, { immediate:true });
 }
 
+async function saveConfirmedFinancialChange(db, entry, before, labels={}){
+  if(__cronosFinancialMutationBusy){
+    toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    return false;
+  }
+
+  __cronosFinancialMutationBusy = true;
+  toast(
+    labels.pendingTitle || "Salvando alteração...",
+    labels.pendingMessage || "Aguarde a confirmação da nuvem antes de atualizar a página."
+  );
+
+  let cloudOk = false;
+  try{
+    cloudOk = await commitFinancialMutationCloud(db, entry);
+  }catch(err){
+    console.error(labels.consoleLabel || "Falha ao salvar alteração financeira:", err);
+  }finally{
+    __cronosFinancialMutationBusy = false;
+  }
+
+  if(!cloudOk){
+    restoreCronosCriticalSnapshot(before);
+    toast(
+      labels.failTitle || "Alteração não registrada",
+      labels.failMessage || "A nuvem não confirmou a operação. O estado anterior foi restaurado."
+    );
+    return false;
+  }
+
+  refreshFinancialUIAfterPayment();
+  if(labels.successTitle){
+    toast(labels.successTitle, labels.successMessage || "");
+  }
+  return true;
+}
+
 function findFinancePaymentRecord(db, entryId, planId, paymentId){
   return (db.payments||[]).find(p=>String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId));
 }
@@ -2598,6 +2635,7 @@ document.addEventListener('click', function(ev){
 }, true);
 
 async function undoFinancialPayment(entryId, planId, paymentId){
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva na nuvem.");
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -2606,6 +2644,7 @@ async function undoFinancialPayment(entryId, planId, paymentId){
   const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
   if(!payment) return toast("Erro", "Pagamento não encontrado.");
 
+  const before = cloneCronosCriticalSnapshot(db);
   const nowISO = new Date().toISOString();
   payment.status = "PENDENTE";
   payment.paidAt = "";
@@ -2629,22 +2668,19 @@ async function undoFinancialPayment(entryId, planId, paymentId){
   markFinancialMutation(entry, plan, payment, nowISO);
   if(String(plan.status || "").toLowerCase().includes("concl")) plan.status = "Aguardando";
   syncInstallmentTasks(db, actor);
-  refreshFinancialUIAfterPayment();
-  toast("Salvando alteração...", "Desfazendo a baixa e sincronizando.");
-  let cloudOk = false;
-  try{
-    cloudOk = await saveDB(db, { immediate:true });
-  }catch(err){
-    console.error("Falha ao salvar desfazer baixa financeira:", err);
-  }
-  refreshFinancialUIAfterPayment();
-  if(cloudOk){
-    toast("Baixa desfeita", "Pagamento voltou para pendente.");
-  }else{
-    toast("Baixa desfeita no navegador", "A nuvem ainda não confirmou. Atualize depois para conferir.");
-  }
+
+  await saveConfirmedFinancialChange(db, entry, before, {
+    pendingTitle: "Desfazendo baixa...",
+    pendingMessage: "Aguarde a confirmação da nuvem.",
+    consoleLabel: "Falha ao salvar desfazer baixa financeira:",
+    failTitle: "Baixa não desfeita",
+    failMessage: "A nuvem não confirmou. O pagamento permanece baixado.",
+    successTitle: "Baixa desfeita",
+    successMessage: "Pagamento voltou para pendente."
+  });
 }
 async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva na nuvem.");
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -2660,6 +2696,7 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   });
   if(!next) return;
 
+  const before = cloneCronosCriticalSnapshot(db);
   const nowISO = new Date().toISOString();
   payment.cashDate = next;
   payment.paidAt = next;
@@ -2676,18 +2713,19 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
     rec.lastUpdateAt = nowISO;
   }
   markFinancialMutation(entry, plan, payment, nowISO);
-  refreshFinancialUIAfterPayment();
-  let cloudOk = false;
-  try{
-    cloudOk = await saveDB(db, { immediate:true });
-  }catch(err){
-    console.error("Falha ao salvar transferência financeira:", err);
-  }
-  refreshFinancialUIAfterPayment();
-  if(cloudOk) toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
-  else toast("Data transferida no navegador", "A nuvem ainda não confirmou.");
+
+  await saveConfirmedFinancialChange(db, entry, before, {
+    pendingTitle: "Transferindo data...",
+    pendingMessage: "Aguarde a confirmação da nuvem.",
+    consoleLabel: "Falha ao salvar transferência financeira:",
+    failTitle: "Data não transferida",
+    failMessage: "A nuvem não confirmou. A data anterior foi mantida.",
+    successTitle: "Data transferida ✅",
+    successMessage: `Caixa: ${fmtBR(next)}`
+  });
 }
 async function deleteFinancialPayment(entryId, planId, paymentId){
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva na nuvem.");
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   if(!confirm("Excluir este pagamento/parcela?")) return;
@@ -2695,12 +2733,13 @@ async function deleteFinancialPayment(entryId, planId, paymentId){
   const {entry, plan} = getFinancialPlan(db, entryId, planId);
   if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
 
+  const snapshot = cloneCronosCriticalSnapshot(db);
   const nowISO = new Date().toISOString();
-  const before = Array.isArray(plan.payments) ? plan.payments.length : 0;
+  const beforeCount = Array.isArray(plan.payments) ? plan.payments.length : 0;
   tombstoneFinancialPayment(plan, paymentId, nowISO);
   plan.payments = (plan.payments||[]).filter(p=>String(p.id)!==String(paymentId));
   const after = plan.payments.length;
-  if(before === after) return toast("Atenção", "Não encontrei essa parcela para excluir.");
+  if(beforeCount === after) return toast("Atenção", "Não encontrei essa parcela para excluir.");
 
   renumberFinancialPlanPayments(plan);
   db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
@@ -2708,16 +2747,16 @@ async function deleteFinancialPayment(entryId, planId, paymentId){
   try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após excluir pagamento:", err); }
   markFinancialMutation(entry, plan, null, nowISO);
   syncInstallmentTasks(db, actor);
-  refreshFinancialUIAfterPayment();
-  let cloudOk = false;
-  try{
-    cloudOk = await saveDB(db, { immediate:true });
-  }catch(err){
-    console.error("Falha ao salvar exclusão de pagamento:", err);
-  }
-  refreshFinancialUIAfterPayment();
-  if(cloudOk) toast("Pagamento removido");
-  else toast("Pagamento removido no navegador", "A nuvem ainda não confirmou.");
+
+  await saveConfirmedFinancialChange(db, entry, snapshot, {
+    pendingTitle: "Excluindo pagamento...",
+    pendingMessage: "Aguarde a confirmação da nuvem.",
+    consoleLabel: "Falha ao salvar exclusão de pagamento:",
+    failTitle: "Pagamento não removido",
+    failMessage: "A nuvem não confirmou. A parcela foi restaurada.",
+    successTitle: "Pagamento removido",
+    successMessage: ""
+  });
 }
 function openNewFinancialInstallment(entryId="", planId=""){
   let finalPlanId = String(planId||"");
@@ -3158,7 +3197,8 @@ window.CRONOS_NEW_FIN_UI = {
     window.__newFinancialInstallmentState = st;
     cronosNewFinRenderSafe();
   },
-  createPlan(){
+  async createPlan(){
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
     const actor = currentActor();
     const db = loadDB();
     const st = window.__newFinancialInstallmentState || {};
@@ -3170,13 +3210,18 @@ window.CRONOS_NEW_FIN_UI = {
     const selectedTotal = selectedItems.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
     const amount = selectedTotal || parseMoney(val("newFinTotal"));
     if(amount <= 0) return toast("Valor", "Informe o valor total do recebimento.");
+
+    const before = cloneCronosCriticalSnapshot(db);
+    const nowISO = new Date().toISOString();
     const plan = {
       id: uid("budget"),
       title: String(val("newFinTitle") || (selectedItems.length ? "Recebimento da ficha" : "Recebimento avulso")).trim() || "Recebimento",
       dentist: String(val("newFinDentist") || "").trim(),
       amount,
       status: "Aguardando",
-      createdAt: new Date().toISOString(),
+      createdAt: nowISO,
+      updatedAt: nowISO,
+      lastUpdateAt: nowISO,
       createdBy: actor?.name || "",
       source: selectedItems.length ? "ficha" : "manual",
       fichaItemIds: selectedItems.map(item=>String(item.id)),
@@ -3189,13 +3234,24 @@ window.CRONOS_NEW_FIN_UI = {
       item.recebimentoId = plan.id;
       item.financeStatus = "recebimento_criado";
       item.pago = false;
+      item.updatedAt = nowISO;
     });
-    try{ syncFichaFinancialLinks(entry); }catch(_){}
+    markFinancialMutation(entry, plan, null, nowISO);
+    try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar vínculo da ficha:", err); }
+
+    const ok = await saveConfirmedFinancialChange(db, entry, before, {
+      pendingTitle: "Salvando recebimento...",
+      pendingMessage: "Aguarde a confirmação da nuvem antes de adicionar parcelas.",
+      consoleLabel: "Falha ao criar recebimento:",
+      failTitle: "Recebimento não criado",
+      failMessage: "A nuvem não confirmou. Nenhum recebimento foi gravado.",
+      successTitle: "Recebimento criado ✅",
+      successMessage: `${plan.title} • ${moneyBR(plan.amount)}`
+    });
+    if(!ok) return;
+
     window.__newFinancialInstallmentState.planId = plan.id;
     window.__newFinancialInstallmentState.fichaItemIds = [];
-    try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar vínculo da ficha:", err); }
-    saveDB(db, { immediate:true });
-    toast("Recebimento criado ✅", `${plan.title} • ${moneyBR(plan.amount)}`);
     renderNewFinancialInstallmentApp();
     renderInstallmentsView();
     try{ renderFichaApp(); }catch(_){}
@@ -3204,19 +3260,35 @@ window.CRONOS_NEW_FIN_UI = {
     window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {planId:String(planId)});
     renderNewFinancialInstallmentApp();
   },
-  approvePlan(planId){
+  async approvePlan(planId){
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
     const actor = currentActor();
     if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
     const db = loadDB();
     const st = window.__newFinancialInstallmentState || {};
-    const {plan} = getFinancialPlan(db, st.entryId, planId);
-    if(!plan) return;
+    const {entry, plan} = getFinancialPlan(db, st.entryId, planId);
+    if(!entry || !plan) return;
+    const before = cloneCronosCriticalSnapshot(db);
+    const nowISO = new Date().toISOString();
     plan.status = "Aprovado";
-    saveDB(db, { immediate:true });
-    renderNewFinancialInstallmentApp();
-    renderInstallmentsView();
+    markFinancialMutation(entry, plan, null, nowISO);
+
+    const ok = await saveConfirmedFinancialChange(db, entry, before, {
+      pendingTitle: "Aprovando recebimento...",
+      pendingMessage: "Aguarde a confirmação da nuvem.",
+      consoleLabel: "Falha ao aprovar recebimento:",
+      failTitle: "Recebimento não aprovado",
+      failMessage: "A nuvem não confirmou a aprovação.",
+      successTitle: "Recebimento aprovado ✅",
+      successMessage: ""
+    });
+    if(ok){
+      renderNewFinancialInstallmentApp();
+      renderInstallmentsView();
+    }
   },
-  removePlan(planId){
+  async removePlan(planId){
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
     const actor = currentActor();
     if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
     if(!confirm("Excluir este recebimento e todos os pagamentos vinculados?")) return;
@@ -3224,6 +3296,7 @@ window.CRONOS_NEW_FIN_UI = {
     const st = window.__newFinancialInstallmentState || {};
     const entry = (db.entries||[]).find(e=>String(e.id)===String(st.entryId));
     if(!entry) return;
+    const before = cloneCronosCriticalSnapshot(db);
     const nowISO = new Date().toISOString();
     const removedPlan = ensureFinancialPlans(entry).find(p=>String(p.id)===String(planId));
     tombstoneFinancialPlan(entry, planId, nowISO);
@@ -3244,14 +3317,25 @@ window.CRONOS_NEW_FIN_UI = {
         }
       });
     }
-    if(String(st.planId)===String(planId)) st.planId = "";
     markFinancialMutation(entry, null, null, nowISO);
     try{ syncFichaFinancialLinks(entry); }catch(_){ }
     syncInstallmentTasks(db, actor);
-    saveDB(db, { immediate:true });
-    toast(removedPlan?.source === "legacyInstallments" ? "Recebimento legado removido" : "Recebimento removido");
+
+    const ok = await saveConfirmedFinancialChange(db, entry, before, {
+      pendingTitle: "Excluindo recebimento...",
+      pendingMessage: "Aguarde a confirmação da nuvem.",
+      consoleLabel: "Falha ao excluir recebimento:",
+      failTitle: "Recebimento não removido",
+      failMessage: "A nuvem não confirmou. O recebimento foi restaurado.",
+      successTitle: removedPlan?.source === "legacyInstallments" ? "Recebimento legado removido" : "Recebimento removido",
+      successMessage: ""
+    });
+    if(!ok) return;
+
+    if(String(st.planId)===String(planId)) st.planId = "";
     renderNewFinancialInstallmentApp();
     renderInstallmentsView();
+    try{ renderFichaApp(); }catch(_){}
   },
   fillRemaining(){
     const db = loadDB();
@@ -3283,6 +3367,9 @@ window.CRONOS_NEW_FIN_UI = {
       defaultDate: due
     }) : "";
     if(paidInitially && !initialCashDate) return;
+
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    const paymentMutationBefore = cloneCronosCriticalSnapshot(db);
 
     plan.payments = Array.isArray(plan.payments) ? plan.payments : [];
     const base = Math.floor((amount / count) * 100) / 100;
@@ -3336,10 +3423,22 @@ window.CRONOS_NEW_FIN_UI = {
       });
     }
 
+    // Salva primeiro o lançamento da parcela; somente depois o botão de baixa passa a operar.
+    const nowMutationISO = new Date().toISOString();
+    markFinancialMutation(entry, plan, null, nowMutationISO);
     try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após pagamento:", err); }
     syncInstallmentTasks(db, actor);
-    saveDB(db, { immediate:true });
-    toast("Pagamento lançado ✅", `${count} parcela(s) • ${moneyBR(amount)}`);
+
+    const ok = await saveConfirmedFinancialChange(db, entry, paymentMutationBefore, {
+      pendingTitle: "Salvando parcela...",
+      pendingMessage: "Aguarde a confirmação da nuvem antes de dar baixa.",
+      consoleLabel: "Falha ao lançar parcela:",
+      failTitle: "Parcela não lançada",
+      failMessage: "A nuvem não confirmou. Reabra o recebimento antes de tentar novamente.",
+      successTitle: "Pagamento lançado ✅",
+      successMessage: `${count} parcela(s) • ${moneyBR(amount)}`
+    });
+    if(!ok) return;
     renderNewFinancialInstallmentApp();
     renderInstallmentsView();
     try{ renderFichaApp(); }catch(_){}
