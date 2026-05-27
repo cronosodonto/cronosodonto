@@ -1685,11 +1685,60 @@ function toggleFinancialPlanRow(rowId){
 }
 
 function refreshFinancialUIAfterPayment(){
-  try{ renderNewFinancialInstallmentApp(); }catch(_){ }
-  try{ renderInstallmentsView(); }catch(_){ }
-  try{ renderDashboard(); }catch(_){ }
-  try{ renderFichaApp(); }catch(_){ }
-  try{ updateSidebarPills(); }catch(_){ }
+  try{ renderNewFinancialInstallmentApp(); }catch(err){ console.error("Falha ao atualizar painel de recebimento:", err); }
+  try{ renderInstallmentsView(); }catch(err){ console.error("Falha ao atualizar Recebimentos:", err); }
+  try{ renderDashboard(); }catch(err){ console.error("Falha ao atualizar Dashboard após baixa:", err); }
+  try{ renderFichaApp(); }catch(err){ console.error("Falha ao atualizar Ficha após baixa:", err); }
+  try{ updateSidebarPills(); }catch(err){ console.error("Falha ao atualizar indicadores laterais:", err); }
+}
+
+let __cronosFinancialMutationBusy = false;
+
+function cloneCronosCriticalSnapshot(db){
+  try{ return normalizeDBShape(JSON.parse(JSON.stringify(db || freshDB()))); }
+  catch(_){ return normalizeDBShape(db || freshDB()); }
+}
+
+function restoreCronosCriticalSnapshot(snapshot){
+  DB = normalizeDBShape(snapshot || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  try{ safeSetLocalDB(DB); }catch(_){ }
+  try{ if(typeof captureV2Snapshots === "function") captureV2Snapshots(DB); }catch(_){ }
+  refreshFinancialUIAfterPayment();
+}
+
+async function commitFinancialMutationCloud(db, entry){
+  if(isSupportMode()){
+    toast("Modo suporte", "Alterações financeiras não são salvas no modo suporte.");
+    return false;
+  }
+
+  // Pagamentos ainda usam clinic_state, enquanto a ficha/lead já usa clinic_leads.
+  // Esta RPC grava os dois pontos numa única transação no banco.
+  if(typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID && entry?.id){
+    const { data, error } = await supabaseClient.rpc("cronos_v2_commit_financial_mutation", {
+      p_clinic_id: String(CLOUD_CLINIC_ID),
+      p_entry_id: String(entry.id),
+      p_entry_payload: entry,
+      p_payments: Array.isArray(db?.payments) ? db.payments : [],
+      p_tasks: Array.isArray(db?.tasks) ? db.tasks : []
+    });
+    if(error) throw error;
+    if(!data || data.ok !== true){
+      throw new Error(data?.error || "A nuvem não confirmou a baixa financeira.");
+    }
+
+    DB = normalizeDBShape(db || DB || freshDB());
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    safeSetLocalDB(DB);
+    captureV2Snapshots(DB);
+    CLOUD_DB_READY = true;
+    return true;
+  }
+
+  return await saveDB(db, { immediate:true });
 }
 
 function findFinancePaymentRecord(db, entryId, planId, paymentId){
@@ -1878,9 +1927,71 @@ function markFichaMutation(entry, item=null, nowISO=new Date().toISOString()){
   return nowISO;
 }
 
-function saveFichaMutation(db, entry, options={}){
+let __cronosFichaSaveQueue = Promise.resolve(true);
+let __cronosFichaMutationRevision = 0;
+
+function cloneFichaLeadSnapshot(entry){
+  try{ return JSON.parse(JSON.stringify(entry || {})); }catch(_){ return { ...(entry || {}) }; }
+}
+
+async function queueFichaV2LeadSave(entry){
+  const row = leadToV2Row(cloneFichaLeadSnapshot(entry));
+  const run = async ()=>{
+    await upsertV2Rows(CLOUD_LEADS_V2_TABLE, [row]);
+    return true;
+  };
+  // Serializa as gravações da mesma ficha. Sem isso, dois cliques rápidos podiam
+  // chegar fora de ordem no Supabase e o estado anterior sobrescrever o mais novo.
+  const pending = __cronosFichaSaveQueue.then(run, run);
+  __cronosFichaSaveQueue = pending.catch(()=>false);
+  return pending;
+}
+
+async function saveFichaMutation(db, entry, options={}){
   try{ markFichaMutation(entry); }catch(_){ }
+
+  // Em tables_v2, a Ficha mora dentro do lead em clinic_leads.
+  // Salvar a ficha não deve depender do clinic_state (tarefas/recebimentos/configurações),
+  // porque uma falha ali fazia procedimento parecer salvo e desaparecer no F5.
+  if(!isSupportMode() && typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID){
+    try{
+      await queueFichaV2LeadSave(entry);
+      DB = normalizeDBShape(db || DB || freshDB());
+      window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      safeSetLocalDB(DB);
+      captureV2Snapshots(DB);
+      return true;
+    }catch(error){
+      console.error("Falha ao salvar ficha em tables_v2:", error);
+      if(!options.silent){
+        toast("Ficha não salva", "A nuvem não confirmou esta alteração. Tente novamente antes de sair da ficha.");
+      }
+      return false;
+    }
+  }
+
   return saveDB(db, { immediate:true, ...(options || {}) });
+}
+
+async function confirmFichaMutation(db, entry, before, successTitle="", successMessage=""){
+  const revision = ++__cronosFichaMutationRevision;
+  toast("Salvando ficha...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
+  const ok = await saveFichaMutation(db, entry, { silent:true });
+  if(!ok){
+    // Se houve outra mudança depois desta, não voltamos a ficha inteira para
+    // um snapshot antigo e não apagamos visualmente a alteração mais recente.
+    if(revision === __cronosFichaMutationRevision){
+      restoreCronosCriticalSnapshot(before);
+      try{ renderFichaApp(); }catch(_){ }
+      toast("Alteração não salva", "A nuvem não confirmou. A Ficha voltou ao estado anterior.");
+    }else{
+      toast("Uma alteração anterior não foi confirmada", "Mantive a edição mais recente. Aguarde o salvamento e confira antes de atualizar.");
+    }
+    return false;
+  }
+  if(successTitle) toast(successTitle, successMessage);
+  return true;
 }
 
 function pruneOrphanFinancialPaymentRecords(db, entry=null){
@@ -2372,6 +2483,7 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
 }
 
 async function payFinancialPayment(entryId, planId, paymentId){
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma baixa sendo salva na nuvem.");
   const actor = currentActor();
   const db = loadDB();
   const {entry, plan} = getFinancialPlan(db, entryId, planId);
@@ -2387,6 +2499,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
   });
   if(!payDate) return;
 
+  const before = cloneCronosCriticalSnapshot(db);
   const nowISO = new Date().toISOString();
   payment.status = "PAGA";
   payment.paidAt = payDate;
@@ -2445,20 +2558,24 @@ async function payFinancialPayment(entryId, planId, paymentId){
   }
 
   try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
-  persistLocalDBNow(db);
-  refreshFinancialUIAfterPayment();
-  toast("Salvando baixa...", "Registrando no navegador e sincronizando com a nuvem.");
+
+  __cronosFinancialMutationBusy = true;
+  toast("Salvando baixa...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
   let cloudOk = false;
   try{
-    cloudOk = await saveDB(db, { immediate:true });
+    cloudOk = await commitFinancialMutationCloud(db, entry);
   }catch(err){
     console.error("Falha ao salvar baixa financeira:", err);
+  }finally{
+    __cronosFinancialMutationBusy = false;
   }
-  refreshFinancialUIAfterPayment();
+
   if(cloudOk){
+    refreshFinancialUIAfterPayment();
     toast("Baixa feita ✅", `${moneyBR(payment.amount)} • caixa em ${fmtBR(payDate)}`);
   }else{
-    toast("Baixa salva no navegador", "A nuvem ainda não confirmou. O Cronos marcou a versão local como mais recente para não perder no F5.");
+    restoreCronosCriticalSnapshot(before);
+    toast("Baixa não registrada", "A nuvem não confirmou a operação. O pagamento continua pendente; tente novamente.");
   }
 }
 try{ window.payFinancialPayment = payFinancialPayment; }catch(_){ }
@@ -3534,6 +3651,7 @@ function waChargeLink(phone, nome, entry, parcela){
 }
 
 async function payInstallment(entryId, number){
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma baixa sendo salva na nuvem.");
   window.__instOpen = window.__instOpen || {};
   window.__instOpen[entryId] = true;
   const actor = currentActor();
@@ -3552,6 +3670,7 @@ async function payInstallment(entryId, number){
   });
   if(!payDate) return;
 
+  const before = cloneCronosCriticalSnapshot(db);
   const nowISO = new Date().toISOString();
   p.paidAt = payDate;
   p.cashDate = payDate;
@@ -3588,20 +3707,24 @@ async function payInstallment(entryId, number){
   });
 
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
-  persistLocalDBNow(db);
-  refreshFinancialUIAfterPayment();
-  toast("Salvando baixa...", "Registrando no navegador e sincronizando com a nuvem.");
+
+  __cronosFinancialMutationBusy = true;
+  toast("Salvando baixa...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
   let cloudOk = false;
   try{
-    cloudOk = await saveDB(db, { immediate:true });
+    cloudOk = await commitFinancialMutationCloud(db, entry);
   }catch(err){
     console.error("Falha ao salvar baixa de parcela legada:", err);
+  }finally{
+    __cronosFinancialMutationBusy = false;
   }
-  refreshFinancialUIAfterPayment();
+
   if(cloudOk){
+    refreshFinancialUIAfterPayment();
     toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • caixa em ${fmtBR(payDate)}`);
   }else{
-    toast("Baixa salva no navegador", "A nuvem ainda não confirmou. A versão local foi marcada como mais recente para não perder no F5.");
+    restoreCronosCriticalSnapshot(before);
+    toast("Baixa não registrada", "A nuvem não confirmou a operação. A parcela continua pendente; tente novamente.");
   }
 }
 try{ window.payInstallment = payInstallment; }catch(_){ }
@@ -13607,23 +13730,20 @@ window.CRONOS_PROC_UI = {
     function getToothProgressStatus(entry, tooth){
       const ficha = ensureFicha(entry);
       const meta = getToothMeta(entry, tooth);
-      const planForTooth = ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
+      const manualStatus = String(meta?.status || '').toLowerCase();
 
+      // A cor escolhida no odontograma pertence ao próprio dente.
+      // Antes ela era ignorada sempre que existia procedimento vinculado, fazendo
+      // amarelo/verde desaparecerem ou parecerem alternar ao marcar outro dente.
+      if(manualStatus === 'done' || manualStatus === 'realizado') return 'done';
+      if(manualStatus === 'paid' || manualStatus === 'pago' || manualStatus === 'closed' || manualStatus === 'plan') return 'paid';
+
+      const planForTooth = ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
       if(planForTooth.length){
-        // Quando existe procedimento ligado ao dente, o odontograma deve refletir
-        // o estado REAL desses itens. Pagamento/em pagamento fica amarelo;
-        // verde só quando TODOS os procedimentos daquele dente estiverem feitos.
-        // Isso evita meta antiga/manual deixar o dente verde enquanto a linha ainda
-        // está Pendente/Em pagamento. O caos até tenta, mas aqui não passa.
         const allClinicallyDone = planForTooth.every(x=>isFichaItemClinicallyDone(entry, x));
         if(allClinicallyDone) return 'done';
         if(planForTooth.some(x=>x.pago || isFichaItemFinancialLinked(entry, x))) return 'paid';
-        return '';
       }
-
-      // Sem item ligado ao dente, mantém a marcação manual do odontograma.
-      if(meta?.status === 'done' || meta?.status === 'realizado') return 'done';
-      if(meta?.status === 'paid' || meta?.status === 'pago' || meta?.status === 'closed' || meta?.status === 'plan') return 'paid';
       return '';
     }
     function getToothVisualState(entry, tooth){
@@ -13706,7 +13826,7 @@ window.CRONOS_PROC_UI = {
       const procMenuHTML = getProcSuggestionsHTML(catalog, state.procMenuOpen ? '' : procInputValue);
       const selectedFaceText = selectedProc?.exigeFace ? (String(state.selectedFace || '').trim() || '—') : 'Não exige';
       const selectedToothStatus = state.selectedTooth
-        ? (isToothAbsent(entry, state.selectedTooth) ? 'Perda dentária / ausente' : (getToothProgressStatus(entry, state.selectedTooth) === 'done' ? 'Realizado' : (getToothProgressStatus(entry, state.selectedTooth) === 'paid' ? 'Pago' : 'Neutro')))
+        ? (isToothAbsent(entry, state.selectedTooth) ? 'Perda dentária / ausente' : (getToothProgressStatus(entry, state.selectedTooth) === 'done' ? 'Realizado' : (getToothProgressStatus(entry, state.selectedTooth) === 'paid' ? 'Pago/Pendente' : 'Neutro')))
         : '—';
       const upper = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq];
       const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
@@ -13976,9 +14096,10 @@ window.CRONOS_PROC_UI = {
       },
       setPrice(v){ const s = getFichaState(); if(!s) return; s.price = v; },
       setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; ensureFicha(entry).observacoes = String(v || ''); saveFichaMutation(db, entry); },
-      addToPlan(){
+      async addToPlan(){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return toast('Lead não encontrado.');
         const ficha = ensureFicha(entry);
@@ -14034,7 +14155,9 @@ window.CRONOS_PROC_UI = {
             recebimentoId:''
           });
         }
-        saveFichaMutation(db, entry);
+
+        const ok = await confirmFichaMutation(db, entry, before, 'Item adicionado ✅', proc.nome);
+        if(!ok) return;
 
         s.selectedTeeth = [];
         s.selectedTooth = null;
@@ -14046,7 +14169,6 @@ window.CRONOS_PROC_UI = {
 
         renderFichaApp();
         try{ renderLeadsTable(filteredEntries()); }catch(_){ }
-        toast('Item adicionado ✅', proc.nome);
       },
       refreshPlanBaseValues(){
         const s = getFichaState(); if(!s) return;
@@ -14155,17 +14277,18 @@ window.CRONOS_PROC_UI = {
         markFichaMutation(entry, item);
         saveDB(db, { immediate:true });
       },
-      toggleDone(itemId){
+      async toggleDone(itemId){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const item = ensureFicha(entry).plano.find(x=>x.id===itemId);
         if(!item) return;
         item.feito = !item.feito;
         markFichaMutation(entry, item);
-        saveDB(db, { immediate:true });
         renderFichaApp();
+        await confirmFichaMutation(db, entry, before, item.feito ? 'Procedimento realizado ✅' : 'Procedimento reaberto', item.procedimento || '');
       },
       togglePaid(itemId){
         const s = getFichaState(); if(!s) return;
@@ -14306,22 +14429,24 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
         toast('Nova avaliação criada ✅', `${av.label} • ${fmtBR(date)}`);
       },
-      removeItem(itemId){
+      async removeItem(itemId){
         if(!confirm('Excluir este item do plano?')) return;
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
         ficha.plano = ficha.plano.filter(x=>x.id!==itemId);
-        saveFichaMutation(db, entry);
         renderFichaApp();
-        try{ renderLeadsTable(filteredEntries()); }catch(_){ }
+        const ok = await confirmFichaMutation(db, entry, before, 'Procedimento excluído', 'Alteração salva na nuvem.');
+        if(ok){ try{ renderLeadsTable(filteredEntries()); }catch(_){ } }
       },
       pickTooth(tooth){ const s = getFichaState(); if(!s) return; s.selectedTooth = tooth; renderFichaApp(); },
-      cycleToothStatus(tooth){
+      async cycleToothStatus(tooth){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
@@ -14335,8 +14460,8 @@ window.CRONOS_PROC_UI = {
         if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
         else ficha.odontograma[key] = meta;
         s.selectedTooth = key;
-        saveFichaMutation(db, entry);
         renderFichaApp();
+        await confirmFichaMutation(db, entry, before, 'Odontograma salvo ✅', 'A cor foi confirmada na nuvem.');
       },
       toggleAbsent(tooth){
         const s = getFichaState(); if(!s) return;
@@ -14378,11 +14503,12 @@ window.CRONOS_PROC_UI = {
         if(!teeth.length && s.selectedTooth) teeth.push(String(s.selectedTooth));
         return [...new Set(teeth.map(String).filter(Boolean))];
       },
-      markSelectedProgress(status){
+      async markSelectedProgress(status){
         const s = getFichaState(); if(!s) return;
         const teeth = this.selectedTeethOrLast();
         if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
@@ -14393,14 +14519,20 @@ window.CRONOS_PROC_UI = {
           if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
           else ficha.odontograma[key] = meta;
         });
-        saveFichaMutation(db, entry);
+        // A marcação conclui esta seleção. Assim o próximo clique em outro dente
+        // não reaplica o novo status nos dentes que já estavam coloridos.
+        s.selectedTeeth = [];
+        s.selectedTooth = null;
         renderFichaApp();
+        const label = status === 'done' ? 'Realizado' : 'Pago/Pendente';
+        await confirmFichaMutation(db, entry, before, `${label} salvo ✅`, `${teeth.length} dente(s) atualizado(s).`);
       },
-      setAbsentForSelection(){
+      async setAbsentForSelection(){
         const s = getFichaState(); if(!s) return;
         const teeth = this.selectedTeethOrLast();
         if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
@@ -14414,8 +14546,10 @@ window.CRONOS_PROC_UI = {
           if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
           else ficha.odontograma[key] = meta;
         });
-        saveFichaMutation(db, entry);
+        s.selectedTeeth = [];
+        s.selectedTooth = null;
         renderFichaApp();
+        await confirmFichaMutation(db, entry, before, allAbsent ? 'Ausência removida' : 'Dente ausente salvo ✅', 'Alteração confirmada na nuvem.');
       },
       saveToothMeta(){
         const s = getFichaState(); if(!s || !s.selectedTooth) return;
@@ -14438,17 +14572,20 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
         toast('Odontograma salvo.');
       },
-      clearToothMeta(){
+      async clearToothMeta(){
         const s = getFichaState(); if(!s) return;
         const teeth = this.selectedTeethOrLast();
         if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
         teeth.forEach(tooth=>{ delete ficha.odontograma[String(tooth)]; });
-        saveDB(db);
+        s.selectedTeeth = [];
+        s.selectedTooth = null;
         renderFichaApp();
+        await confirmFichaMutation(db, entry, before, 'Marcação removida', 'Alteração salva na nuvem.');
       }
     };
 
@@ -14537,11 +14674,14 @@ window.CRONOS_PROC_UI = {
       const lower = [...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
       function getPrintToothVisualState(tooth){
         if(isToothAbsent(entry, tooth)) return 'absent';
+        const meta = getToothMeta(entry, tooth);
+        const manualStatus = String(meta?.status || '').toLowerCase();
+        if(manualStatus === 'done' || manualStatus === 'realizado') return 'done';
+        if(manualStatus === 'paid' || manualStatus === 'pago' || manualStatus === 'closed' || manualStatus === 'plan') return 'paid';
         const planForTooth = printablePlan.filter(item=>String(item.dente || '').split(',').map(x=>x.trim()).filter(Boolean).includes(String(tooth)));
         if(planForTooth.length){
           if(planForTooth.every(item=>isFichaItemClinicallyDone(entry, item))) return 'done';
           if(planForTooth.some(item=>item.pago || isFichaItemFinancialLinked(entry, item))) return 'paid';
-          return '';
         }
         return '';
       }
@@ -14592,7 +14732,7 @@ window.CRONOS_PROC_UI = {
           <div class="boxWrap" style="margin-top:16px">
             <div class="sectionTitle">Odontograma</div>
             <div class="odonto"><img src="${ODONTO_BASE_LIGHT}" alt="Odontograma"><div class="overlay">${overlayBoxes(upper, 8.5)}${overlayBoxes(lower, 82.5)}</div></div>
-            <div class="legend"><span><i class="chip cp1"></i>Pago</span><span><i class="chip cp2"></i>Realizado</span><span><i class="chip cp3"></i>Perda dentária / ausente</span></div>
+            <div class="legend"><span><i class="chip cp1"></i>Pago / Pendente</span><span><i class="chip cp2"></i>Realizado</span><span><i class="chip cp3"></i>Perda dentária / ausente</span></div>
           </div>
 
           <div style="border:1.25px solid var(--print-line);display:flex;flex-direction:column;margin-top:16px">
