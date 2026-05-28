@@ -1634,24 +1634,31 @@ function renderFinancialPaymentTable(entry, plan, contact){
   const today = todayISO();
   const canSensitive = canManageFinancialSensitiveActions();
   const rows = (plan.payments||[]).map(p=>{
+    const uiMutation = String(p?.__cronosUiMutation || "");
+    const mutating = !!uiMutation || isFinancialPaymentMutationPending(entry?.id, plan?.id, p?.id);
     const paid = financialPaymentPaid(p);
     const late = !paid && p.dueDate && p.dueDate < today;
-    const st = paid ? `<span class="badge ok">PAGO</span>` : (late ? `<span class="badge late">ATRASADO</span>` : `<span class="badge pending">PENDENTE</span>`);
-    const action = paid
-      ? (canSensitive
-          ? `<a class="miniLink" href="javascript:void(0)" onclick="undoFinancialPayment('${entry.id}','${plan.id}','${p.id}')">Desfazer</a>`
-          : `<span class="muted" style="font-size:12px">Pago</span>`)
-      : `<button type="button" class="btn ok" onclick="payFinancialPayment('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(p.id)}'); return false;">Dar baixa</button>`;
-    const transfer = (paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferFinancialPaymentCashDate('${entry.id}','${plan.id}','${p.id}')">Transferir data</a>` : "";
+    const processingLabel = uiMutation === "undo" ? "DESFAZENDO..." : "SALVANDO...";
+    const st = mutating
+      ? `<span class="badge pending">${processingLabel}</span>`
+      : (paid ? `<span class="badge ok">PAGO</span>` : (late ? `<span class="badge late">ATRASADO</span>` : `<span class="badge pending">PENDENTE</span>`));
+    const action = mutating
+      ? `<button type="button" class="btn" disabled style="opacity:.65;cursor:wait">${processingLabel}</button>`
+      : (paid
+          ? (canSensitive
+              ? `<a class="miniLink" href="javascript:void(0)" onclick="undoFinancialPayment('${entry.id}','${plan.id}','${p.id}')">Desfazer</a>`
+              : `<span class="muted" style="font-size:12px">Pago</span>`)
+          : `<button type="button" class="btn ok" onclick="payFinancialPayment('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(p.id)}'); return false;">Dar baixa</button>`);
+    const transfer = (!mutating && paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferFinancialPaymentCashDate('${entry.id}','${plan.id}','${p.id}')">Transferir data</a>` : "";
     const cashISO = cronosPaymentCashISO(p, false);
-    const deleteBtn = canSensitive ? `<button type="button" class="miniBtn danger" onclick="deleteFinancialPayment('${entry.id}','${plan.id}','${p.id}')" title="Excluir pagamento">🗑️</button>` : "";
+    const deleteBtn = (!mutating && canSensitive) ? `<button type="button" class="miniBtn danger" onclick="deleteFinancialPayment('${entry.id}','${plan.id}','${p.id}')" title="Excluir pagamento">🗑️</button>` : "";
     return `
       <tr>
         <td class="mono">${p.number||""}/${p.total||""}</td>
         <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod || "—")}</td>
-        <td>${st}${cashISO ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}${(p.creditAnticipated || p.settlementType === "antecipacao_credito") ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
+        <td>${st}${(!mutating && cashISO) ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}${(!mutating && (p.creditAnticipated || p.settlementType === "antecipacao_credito")) ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
         <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${deleteBtn}</td>
       </tr>
     `;
@@ -1688,11 +1695,88 @@ function refreshFinancialUIAfterPayment(){
   try{ renderNewFinancialInstallmentApp(); }catch(err){ console.error("Falha ao atualizar painel de recebimento:", err); }
   try{ renderInstallmentsView(); }catch(err){ console.error("Falha ao atualizar Recebimentos:", err); }
   try{ renderDashboard(); }catch(err){ console.error("Falha ao atualizar Dashboard após baixa:", err); }
-  try{ renderFichaApp(); }catch(err){ console.error("Falha ao atualizar Ficha após baixa:", err); }
+  try{ window.__cronosRenderFichaApp?.(); }catch(err){ console.error("Falha ao atualizar Ficha após baixa:", err); }
   try{ updateSidebarPills(); }catch(err){ console.error("Falha ao atualizar indicadores laterais:", err); }
 }
 
 let __cronosFinancialMutationBusy = false;
+let __cronosFinancialMutationPromise = null;
+let __cronosFinancialMutationLabel = "";
+const __cronosPendingFinancialPayments = new Set();
+
+function financialPaymentMutationKey(entryId, planId, paymentId){
+  return `${String(entryId||"")}::${String(planId||"")}::${String(paymentId||"")}`;
+}
+function isFinancialPaymentMutationPending(entryId, planId, paymentId){
+  return __cronosPendingFinancialPayments.has(financialPaymentMutationKey(entryId, planId, paymentId));
+}
+function setFinancialPaymentMutationPending(entryId, planId, paymentId, pending=true){
+  const key = financialPaymentMutationKey(entryId, planId, paymentId);
+  if(pending) __cronosPendingFinancialPayments.add(key);
+  else __cronosPendingFinancialPayments.delete(key);
+}
+function setFinancialPaymentUIState(payment, state=""){
+  if(!payment || typeof payment !== "object") return;
+  try{
+    if(state){
+      Object.defineProperty(payment, "__cronosUiMutation", {
+        value: String(state),
+        writable: true,
+        configurable: true,
+        enumerable: false
+      });
+    }else{
+      delete payment.__cronosUiMutation;
+    }
+  }catch(_){
+    try{
+      if(state) payment.__cronosUiMutation = String(state);
+      else delete payment.__cronosUiMutation;
+    }catch(__){}
+  }
+}
+function financialMutationBusyText(){
+  return __cronosFinancialMutationLabel
+    ? `Já existe ${__cronosFinancialMutationLabel} sendo confirmada na nuvem.`
+    : "Já existe uma alteração financeira sendo confirmada na nuvem.";
+}
+function startFinancialMutationWait(label="uma alteração financeira"){
+  __cronosFinancialMutationBusy = true;
+  __cronosFinancialMutationLabel = String(label || "uma alteração financeira");
+  let finish = null;
+  __cronosFinancialMutationPromise = new Promise(resolve=>{ finish = resolve; });
+  return ()=>{
+    __cronosFinancialMutationBusy = false;
+    __cronosFinancialMutationLabel = "";
+    try{ finish?.(); }catch(_){}
+    __cronosFinancialMutationPromise = null;
+  };
+}
+
+async function waitForPreviousCloudWriteBeforeFinancialChange(){
+  // A baixa não pode disputar escrita com algum saveDB anterior que ainda esteja rodando.
+  // Primeiro deixamos a escrita anterior terminar; a alteração financeira vem depois.
+  try{
+    if(__cloudSaveTimer){
+      clearTimeout(__cloudSaveTimer);
+      __cloudSaveTimer = null;
+      await scheduleCloudSave(true);
+    }else if(__cloudSaveRunning && __cloudSavePromise){
+      await __cloudSavePromise;
+    }
+  }catch(err){
+    console.warn("Não foi possível aguardar sincronização anterior antes do financeiro:", err);
+  }
+}
+
+try{
+  window.addEventListener("beforeunload", function(event){
+    if(__cronosFinancialMutationBusy){
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
+}catch(_){ }
 
 function cloneCronosCriticalSnapshot(db){
   try{ return normalizeDBShape(JSON.parse(JSON.stringify(db || freshDB()))); }
@@ -1706,6 +1790,45 @@ function restoreCronosCriticalSnapshot(snapshot){
   try{ safeSetLocalDB(DB); }catch(_){ }
   try{ if(typeof captureV2Snapshots === "function") captureV2Snapshots(DB); }catch(_){ }
   refreshFinancialUIAfterPayment();
+}
+
+function showFinancialMutationPreview(db){
+  // Exibe imediatamente SALVANDO... sem persistir estado otimista antes da confirmação real.
+  DB = normalizeDBShape(db || DB || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  refreshFinancialUIAfterPayment();
+}
+function waitCronos(ms){
+  return new Promise(resolve=>setTimeout(resolve, ms));
+}
+function findPaymentInsideEntryPayload(payload, planId, paymentId){
+  const plans = Array.isArray(payload?.financialPlans) ? payload.financialPlans : [];
+  const plan = plans.find(p=>String(p?.id)===String(planId));
+  return (Array.isArray(plan?.payments) ? plan.payments : []).find(p=>String(p?.id)===String(paymentId)) || null;
+}
+async function verifyFinancialPaymentCloudState(entryId, planId, paymentId, paidExpected=true){
+  if(!(typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID)){
+    return false;
+  }
+  const { data, error } = await supabaseClient
+    .from("clinic_leads")
+    .select("legacy_payload")
+    .eq("clinic_id", String(CLOUD_CLINIC_ID))
+    .eq("id", String(entryId))
+    .maybeSingle();
+  if(error){
+    console.warn("Não foi possível verificar automaticamente a baixa na tabela V2:", error);
+    return false;
+  }
+  const payment = findPaymentInsideEntryPayload(data?.legacy_payload || {}, planId, paymentId);
+  if(!payment) return false;
+  return paidExpected ? financialPaymentPaid(payment) : !financialPaymentPaid(payment);
+}
+async function commitPaymentWithAutoConfirmation(db, entry, planId, paymentId, paidExpected=true){
+  // A RPC é transacional: quando retorna sucesso, a baixa já foi confirmada no banco.
+  // Sem espera artificial ou polling de minutos.
+  return await commitFinancialMutationCloud(db, entry);
 }
 
 async function commitFinancialMutationCloud(db, entry){
@@ -1726,15 +1849,21 @@ async function commitFinancialMutationCloud(db, entry){
     });
     if(error) throw error;
     if(!data || data.ok !== true){
-      throw new Error(data?.error || "A nuvem não confirmou a baixa financeira.");
+      throw new Error(data?.error || "A nuvem não confirmou a alteração financeira.");
     }
 
-    DB = normalizeDBShape(db || DB || freshDB());
-    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
-    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
-    safeSetLocalDB(DB);
-    captureV2Snapshots(DB);
-    CLOUD_DB_READY = true;
+    // Daqui em diante o banco JÁ confirmou. Qualquer falha de cache/render local
+    // não pode transformar sucesso real em mensagem de falha ou reverter a tela.
+    try{
+      DB = normalizeDBShape(db || DB || freshDB());
+      window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      try{ safeSetLocalDB(DB); }catch(cacheErr){ console.warn("Financeiro salvo na nuvem; cache local não atualizado:", cacheErr); }
+      try{ captureV2Snapshots(DB); }catch(snapshotErr){ console.warn("Financeiro salvo na nuvem; snapshot V2 não atualizado:", snapshotErr); }
+      CLOUD_DB_READY = true;
+    }catch(postCommitErr){
+      console.error("Alteração financeira foi salva na nuvem, mas houve falha ao preparar a interface local:", postCommitErr);
+    }
     return true;
   }
 
@@ -1743,11 +1872,11 @@ async function commitFinancialMutationCloud(db, entry){
 
 async function saveConfirmedFinancialChange(db, entry, before, labels={}){
   if(__cronosFinancialMutationBusy){
-    toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    toast("Aguarde", financialMutationBusyText());
     return false;
   }
 
-  __cronosFinancialMutationBusy = true;
+  const finishMutation = startFinancialMutationWait(labels.operationLabel || "uma alteração financeira");
   toast(
     labels.pendingTitle || "Salvando alteração...",
     labels.pendingMessage || "Aguarde a confirmação da nuvem antes de atualizar a página."
@@ -1759,7 +1888,7 @@ async function saveConfirmedFinancialChange(db, entry, before, labels={}){
   }catch(err){
     console.error(labels.consoleLabel || "Falha ao salvar alteração financeira:", err);
   }finally{
-    __cronosFinancialMutationBusy = false;
+    finishMutation();
   }
 
   if(!cloudOk){
@@ -2020,7 +2149,7 @@ async function confirmFichaMutation(db, entry, before, successTitle="", successM
     // um snapshot antigo e não apagamos visualmente a alteração mais recente.
     if(revision === __cronosFichaMutationRevision){
       restoreCronosCriticalSnapshot(before);
-      try{ renderFichaApp(); }catch(_){ }
+      try{ window.__cronosRenderFichaApp?.(); }catch(_){ }
       toast("Alteração não salva", "A nuvem não confirmou. A Ficha voltou ao estado anterior.");
     }else{
       toast("Uma alteração anterior não foi confirmada", "Mantive a edição mais recente. Aguarde o salvamento e confira antes de atualizar.");
@@ -2520,101 +2649,146 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
 }
 
 async function payFinancialPayment(entryId, planId, paymentId){
-  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma baixa sendo salva na nuvem.");
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
   const actor = currentActor();
   const db = loadDB();
-  const {entry, plan} = getFinancialPlan(db, entryId, planId);
-  if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
-  const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
-  if(!payment) return toast("Erro", "Pagamento não encontrado.");
-  if(financialPaymentPaid(payment)) return toast("Já foi", "Esse pagamento já está baixado.");
+  const initial = getFinancialPlan(db, entryId, planId);
+  if(!initial.entry || !initial.plan) return toast("Erro", "Recebimento não encontrado.");
+  const initialPayment = (initial.plan.payments||[]).find(p=>String(p.id)===String(paymentId));
+  if(!initialPayment) return toast("Erro", "Pagamento não encontrado.");
+  if(financialPaymentPaid(initialPayment)) return toast("Já foi", "Esse pagamento já está baixado.");
 
   const payDate = await askPaymentCashDate({
     title: "Dar baixa no pagamento",
-    subtitle: `${plan.title || "Plano financeiro"} • ${moneyBR(payment.amount)}${payment.dueDate ? ` • venc. ${fmtBR(payment.dueDate)}` : ""}`,
+    subtitle: `${initial.plan.title || "Plano financeiro"} • ${moneyBR(initialPayment.amount)}${initialPayment.dueDate ? ` • venc. ${fmtBR(initialPayment.dueDate)}` : ""}`,
     defaultDate: todayISO()
   });
   if(!payDate) return;
 
-  const before = cloneCronosCriticalSnapshot(db);
-  const nowISO = new Date().toISOString();
-  payment.status = "PAGA";
-  payment.paidAt = payDate;
-  payment.cashDate = payDate;
-  payment.paid = true;
+  setFinancialPaymentMutationPending(entryId, planId, paymentId, true);
+  setFinancialPaymentUIState(initialPayment, "pay");
+  const finishMutation = startFinancialMutationWait("uma baixa");
 
-  db.payments = db.payments || [];
-  let rec = findFinancePaymentRecord(db, entryId, planId, paymentId);
-  if(!rec){
-    rec = {
-      id: uid("p"),
-      masterId: actor.masterId,
-      entryId,
-      contactId: entry.contactId || "",
-      financialPlanId: planId,
-      financialPaymentId: paymentId,
-      at: nowISO,
-      createdAt: nowISO,
-      updatedAt: nowISO,
-      lastUpdateAt: nowISO,
-      date: payDate,
-      paidAt: payDate,
-      cashDate: payDate,
-      status: "PAGA",
-      value: parseMoney(payment.amount),
-      method: payment.payMethod || "",
-      desc: `Orçamento: ${plan.title || "Plano financeiro"} • Pagamento ${payment.number || ""}/${payment.total || ""}`,
-      source: "financialPlan"
-    };
-    db.payments.push(rec);
-  }else{
-    rec.date = payDate;
-    rec.paidAt = payDate;
-    rec.cashDate = payDate;
-    rec.status = "PAGA";
-    rec.at = nowISO;
-    rec.updatedAt = nowISO;
-    rec.lastUpdateAt = nowISO;
-    rec.value = parseMoney(payment.amount);
-    rec.method = payment.payMethod || rec.method || "";
-  }
+  // O usuário vê que a ação está em andamento desde o primeiro segundo,
+  // inclusive enquanto uma gravação anterior termina.
+  showFinancialMutationPreview(db);
+  toast("Salvando baixa...", "Confirmando a operação na nuvem.");
 
-  markFinancialMutation(entry, plan, payment, nowISO);
-  if(financialPlanIsFullyPaid(plan)) plan.status = "Concluído";
-  syncInstallmentTasks(db, actor);
-  if(Array.isArray(plan.fichaItemIds)){
-    const fullyPaid = financialPlanIsFullyPaid(plan);
-    const linked = plan.fichaItemIds.map(String);
-    ensureFicha(entry).plano.forEach(item=>{
-      if(linked.includes(String(item.id))){
-        item.pago = !!fullyPaid;
-        item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
-        item.updatedAt = nowISO;
-      }
-    });
-  }
-
-  try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
-
-  __cronosFinancialMutationBusy = true;
-  toast("Salvando baixa...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
+  let before = cloneCronosCriticalSnapshot(db);
+  let commitDB = null;
+  let commitPayment = null;
   let cloudOk = false;
+
   try{
-    cloudOk = await commitFinancialMutationCloud(db, entry);
+    await waitForPreviousCloudWriteBeforeFinancialChange();
+
+    const currentDB = loadDB();
+    const current = getFinancialPlan(currentDB, entryId, planId);
+    const visiblePayment = (current.plan?.payments||[]).find(p=>String(p.id)===String(paymentId));
+    if(!current.entry || !current.plan || !visiblePayment){
+      throw new Error("Pagamento não encontrado após sincronização.");
+    }
+    if(financialPaymentPaid(visiblePayment)){
+      cloudOk = true;
+    }else{
+      // Modificamos apenas a cópia enviada ao banco. Na tela, o item permanece
+      // SALVANDO... em vez de aparecer PAGO antes da confirmação.
+      before = cloneCronosCriticalSnapshot(currentDB);
+      commitDB = cloneCronosCriticalSnapshot(currentDB);
+      const commit = getFinancialPlan(commitDB, entryId, planId);
+      commitPayment = (commit.plan?.payments||[]).find(p=>String(p.id)===String(paymentId));
+      if(!commit.entry || !commit.plan || !commitPayment){
+        throw new Error("Pagamento não encontrado na cópia de confirmação.");
+      }
+
+      const nowISO = new Date().toISOString();
+      commitPayment.status = "PAGA";
+      commitPayment.paidAt = payDate;
+      commitPayment.cashDate = payDate;
+      commitPayment.paid = true;
+      markFinancialMutation(commit.entry, commit.plan, commitPayment, nowISO);
+
+      commitDB.payments = commitDB.payments || [];
+      let rec = findFinancePaymentRecord(commitDB, entryId, planId, paymentId);
+      if(!rec){
+        rec = {
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId,
+          contactId: commit.entry.contactId || "",
+          financialPlanId: planId,
+          financialPaymentId: paymentId,
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          lastUpdateAt: nowISO,
+          date: payDate,
+          paidAt: payDate,
+          cashDate: payDate,
+          status: "PAGA",
+          value: parseMoney(commitPayment.amount),
+          method: commitPayment.payMethod || "",
+          desc: `Orçamento: ${commit.plan.title || "Plano financeiro"} • Pagamento ${commitPayment.number || ""}/${commitPayment.total || ""}`,
+          source: "financialPlan"
+        };
+        commitDB.payments.push(rec);
+      }else{
+        rec.date = payDate;
+        rec.paidAt = payDate;
+        rec.cashDate = payDate;
+        rec.status = "PAGA";
+        rec.at = nowISO;
+        rec.updatedAt = nowISO;
+        rec.lastUpdateAt = nowISO;
+        rec.value = parseMoney(commitPayment.amount);
+        rec.method = commitPayment.payMethod || rec.method || "";
+      }
+
+      if(financialPlanIsFullyPaid(commit.plan)) commit.plan.status = "Concluído";
+      syncInstallmentTasks(commitDB, actor);
+      if(Array.isArray(commit.plan.fichaItemIds)){
+        const fullyPaid = financialPlanIsFullyPaid(commit.plan);
+        const linked = commit.plan.fichaItemIds.map(String);
+        ensureFichaForRecebimentos(commit.entry).plano.forEach(item=>{
+          if(linked.includes(String(item.id))){
+            item.pago = !!fullyPaid;
+            item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
+            item.updatedAt = nowISO;
+          }
+        });
+      }
+      try{ syncFichaFinancialLinks(commit.entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
+
+      cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, true);
+    }
   }catch(err){
     console.error("Falha ao salvar baixa financeira:", err);
+    cloudOk = false;
   }finally{
-    __cronosFinancialMutationBusy = false;
+    setFinancialPaymentMutationPending(entryId, planId, paymentId, false);
+    try{ setFinancialPaymentUIState(initialPayment, ""); }catch(_){}
+    finishMutation();
   }
 
-  if(cloudOk){
+  if(cloudOk === true){
+    if(commitDB){
+      DB = normalizeDBShape(commitDB);
+      try{ safeSetLocalDB(DB); }catch(_){}
+      try{ captureV2Snapshots(DB); }catch(_){}
+    }
     refreshFinancialUIAfterPayment();
-    toast("Baixa feita ✅", `${moneyBR(payment.amount)} • caixa em ${fmtBR(payDate)}`);
+    toast("Baixa feita ✅", `${moneyBR(commitPayment?.amount ?? initialPayment.amount)} • caixa em ${fmtBR(payDate)}`);
+  }else if(cloudOk === null){
+    // Não permite nova baixa como se nada tivesse sido enviado.
+    // A operação demorou além do normal; uma recarga posterior trará a confirmação real.
+    toast("Baixa não confirmada", "A operação não recebeu confirmação da nuvem.");
+    refreshFinancialUIAfterPayment();
   }else{
     restoreCronosCriticalSnapshot(before);
     toast("Baixa não registrada", "A nuvem não confirmou a operação. O pagamento continua pendente; tente novamente.");
   }
 }
+
 try{ window.payFinancialPayment = payFinancialPayment; }catch(_){ }
 
 document.addEventListener('click', function(ev){
@@ -2635,52 +2809,79 @@ document.addEventListener('click', function(ev){
 }, true);
 
 async function undoFinancialPayment(entryId, planId, paymentId){
-  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva na nuvem.");
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
-  const {entry, plan} = getFinancialPlan(db, entryId, planId);
-  if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
-  const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
-  if(!payment) return toast("Erro", "Pagamento não encontrado.");
+  const initial = getFinancialPlan(db, entryId, planId);
+  if(!initial.entry || !initial.plan) return toast("Erro", "Recebimento não encontrado.");
+  const initialPayment = (initial.plan.payments||[]).find(p=>String(p.id)===String(paymentId));
+  if(!initialPayment) return toast("Erro", "Pagamento não encontrado.");
+
+  setFinancialPaymentMutationPending(entryId, planId, paymentId, true);
+  setFinancialPaymentUIState(initialPayment, "undo");
+  const finishMutation = startFinancialMutationWait("uma baixa sendo desfeita");
+  showFinancialMutationPreview(db);
+  toast("Desfazendo baixa...", "Confirmando a operação na nuvem.");
 
   const before = cloneCronosCriticalSnapshot(db);
-  const nowISO = new Date().toISOString();
-  payment.status = "PENDENTE";
-  payment.paidAt = "";
-  payment.cashDate = "";
-  payment.paid = false;
-  payment.updatedAt = nowISO;
-  payment.lastUpdateAt = nowISO;
-  db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
+  const commitDB = cloneCronosCriticalSnapshot(db);
+  const commit = getFinancialPlan(commitDB, entryId, planId);
+  const payment = (commit.plan?.payments||[]).find(p=>String(p.id)===String(paymentId));
+  let cloudOk = false;
 
-  if(Array.isArray(plan.fichaItemIds)){
-    const linked = plan.fichaItemIds.map(String);
-    ensureFicha(entry).plano.forEach(item=>{
-      if(linked.includes(String(item.id))){
-        item.pago = false;
-        item.financeStatus = "em_pagamento";
-        item.updatedAt = nowISO;
-      }
-    });
+  try{
+    if(!commit.entry || !commit.plan || !payment) throw new Error("Pagamento não encontrado na confirmação.");
+    const nowISO = new Date().toISOString();
+    payment.status = "PENDENTE";
+    payment.paidAt = "";
+    payment.cashDate = "";
+    payment.paid = false;
+    payment.updatedAt = nowISO;
+    payment.lastUpdateAt = nowISO;
+    commitDB.payments = (commitDB.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
+
+    if(Array.isArray(commit.plan.fichaItemIds)){
+      const linked = commit.plan.fichaItemIds.map(String);
+      ensureFichaForRecebimentos(commit.entry).plano.forEach(item=>{
+        if(linked.includes(String(item.id))){
+          item.pago = false;
+          item.financeStatus = "em_pagamento";
+          item.updatedAt = nowISO;
+        }
+      });
+    }
+    markFinancialMutation(commit.entry, commit.plan, payment, nowISO);
+    if(String(commit.plan.status || "").toLowerCase().includes("concl")) commit.plan.status = "Aguardando";
+    syncInstallmentTasks(commitDB, actor);
+
+    cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, false);
+  }catch(err){
+    console.error("Falha ao salvar desfazer baixa financeira:", err);
+    cloudOk = false;
+  }finally{
+    setFinancialPaymentMutationPending(entryId, planId, paymentId, false);
+    try{ setFinancialPaymentUIState(initialPayment, ""); }catch(_){}
+    finishMutation();
   }
 
-  markFinancialMutation(entry, plan, payment, nowISO);
-  if(String(plan.status || "").toLowerCase().includes("concl")) plan.status = "Aguardando";
-  syncInstallmentTasks(db, actor);
-
-  await saveConfirmedFinancialChange(db, entry, before, {
-    pendingTitle: "Desfazendo baixa...",
-    pendingMessage: "Aguarde a confirmação da nuvem.",
-    consoleLabel: "Falha ao salvar desfazer baixa financeira:",
-    failTitle: "Baixa não desfeita",
-    failMessage: "A nuvem não confirmou. O pagamento permanece baixado.",
-    successTitle: "Baixa desfeita",
-    successMessage: "Pagamento voltou para pendente."
-  });
+  if(cloudOk === true){
+    DB = normalizeDBShape(commitDB);
+    try{ safeSetLocalDB(DB); }catch(_){}
+    try{ captureV2Snapshots(DB); }catch(_){}
+    refreshFinancialUIAfterPayment();
+    toast("Baixa desfeita", "Pagamento voltou para pendente.");
+  }else if(cloudOk === null){
+    toast("Desfazimento não confirmado", "A operação não recebeu confirmação da nuvem.");
+    refreshFinancialUIAfterPayment();
+  }else{
+    restoreCronosCriticalSnapshot(before);
+    toast("Baixa não desfeita", "A nuvem não confirmou. O pagamento permanece baixado.");
+  }
 }
+
 async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
-  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva na nuvem.");
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   const db = loadDB();
@@ -2715,6 +2916,7 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   markFinancialMutation(entry, plan, payment, nowISO);
 
   await saveConfirmedFinancialChange(db, entry, before, {
+    operationLabel: "uma data sendo transferida",
     pendingTitle: "Transferindo data...",
     pendingMessage: "Aguarde a confirmação da nuvem.",
     consoleLabel: "Falha ao salvar transferência financeira:",
@@ -3240,6 +3442,7 @@ window.CRONOS_NEW_FIN_UI = {
     try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar vínculo da ficha:", err); }
 
     const ok = await saveConfirmedFinancialChange(db, entry, before, {
+      operationLabel: "um recebimento sendo salvo",
       pendingTitle: "Salvando recebimento...",
       pendingMessage: "Aguarde a confirmação da nuvem antes de adicionar parcelas.",
       consoleLabel: "Falha ao criar recebimento:",
@@ -3254,7 +3457,7 @@ window.CRONOS_NEW_FIN_UI = {
     window.__newFinancialInstallmentState.fichaItemIds = [];
     renderNewFinancialInstallmentApp();
     renderInstallmentsView();
-    try{ renderFichaApp(); }catch(_){}
+    try{ window.__cronosRenderFichaApp?.(); }catch(_){}
   },
   selectPlan(planId){
     window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {planId:String(planId)});
@@ -3335,7 +3538,7 @@ window.CRONOS_NEW_FIN_UI = {
     if(String(st.planId)===String(planId)) st.planId = "";
     renderNewFinancialInstallmentApp();
     renderInstallmentsView();
-    try{ renderFichaApp(); }catch(_){}
+    try{ window.__cronosRenderFichaApp?.(); }catch(_){}
   },
   fillRemaining(){
     const db = loadDB();
@@ -3430,6 +3633,7 @@ window.CRONOS_NEW_FIN_UI = {
     syncInstallmentTasks(db, actor);
 
     const ok = await saveConfirmedFinancialChange(db, entry, paymentMutationBefore, {
+      operationLabel: "uma parcela sendo salva",
       pendingTitle: "Salvando parcela...",
       pendingMessage: "Aguarde a confirmação da nuvem antes de dar baixa.",
       consoleLabel: "Falha ao lançar parcela:",
@@ -3441,7 +3645,7 @@ window.CRONOS_NEW_FIN_UI = {
     if(!ok) return;
     renderNewFinancialInstallmentApp();
     renderInstallmentsView();
-    try{ renderFichaApp(); }catch(_){}
+    try{ window.__cronosRenderFichaApp?.(); }catch(_){}
   }
 };
 
@@ -4755,9 +4959,12 @@ async function maybeInitSupportMode(){
 
 
 const ACCESS_STATUS_ENDPOINT = "get-clinic-access-state";
+const RENEWAL_CONTACT_ENDPOINT = "get-renewal-contact";
 const CREATE_CLINIC_USER_ENDPOINT = "create-clinic-user";
-const DEFAULT_RENEWAL_MESSAGE = "Olá! Meu acesso ao Cronos expirou e quero renovar.";
+const DEFAULT_RENEWAL_MESSAGE = "Olá! O acesso da clínica [CLINICA] ao Cronos expirou e quero regularizar a renovação.";
+const DEFAULT_BLOCKED_FEATURE_MESSAGE = "Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].";
 let CLINIC_ACCESS_STATE = null;
+let CLINIC_RENEWAL_CONTACT = null;
 
 function parseAccessDate(value){
   if(!value) return null;
@@ -4779,20 +4986,60 @@ function daysUntilCalendar(endDate){
 function normalizeAccessStatus(value){
   return String(value || "active").trim().toLowerCase();
 }
-function buildRenewalWhatsappUrl(access){
-  const phone = String(access?.renewal_phone || "").replace(/\D/g, "");
-  if(!phone) return "";
-  const clinicName = String(access?.clinic_name || "").trim();
+function fillSupportMessageTemplate(template, access, featureLabel=""){
+  const clinicName = String(access?.clinic_name || "").trim() || "Minha clínica";
   const slug = String(access?.slug || "").trim();
-  const template = String(access?.renewal_message || DEFAULT_RENEWAL_MESSAGE);
-  const message = template
+  const feature = String(featureLabel || "").trim() || "recurso";
+  return String(template || "")
+    .replaceAll("[CLINICA]", clinicName)
     .replaceAll("{clinica}", clinicName)
-    .replaceAll("{slug}", slug)
-    .replaceAll("{clinic_name}", clinicName);
+    .replaceAll("{clinic_name}", clinicName)
+    .replaceAll("[RECURSO]", feature)
+    .replaceAll("{recurso}", feature)
+    .replaceAll("{slug}", slug);
+}
+function buildRenewalWhatsappUrl(access, kind="expired", featureLabel=""){
+  const source = { ...(CLINIC_RENEWAL_CONTACT || {}), ...(access || {}) };
+  const phone = String(source?.renewal_phone || source?.whatsapp || "").replace(/\D/g, "");
+  if(!phone) return "";
+  const isFeature = kind === "feature";
+  const template = isFeature
+    ? String(source?.blocked_message || source?.blockedMessage || DEFAULT_BLOCKED_FEATURE_MESSAGE)
+    : String(source?.renewal_message || source?.expired_message || source?.expiredMessage || DEFAULT_RENEWAL_MESSAGE);
+  const message = fillSupportMessageTemplate(template, source, featureLabel);
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+async function fetchRenewalContact(accessToken){
+  if(!accessToken) return null;
+  try{
+    const res = await fetch(`${supabaseUrl}/functions/v1/${RENEWAL_CONTACT_ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+        "apikey": supabaseKey
+      },
+      body: JSON.stringify({})
+    });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(json?.error || "Falha ao carregar contato de renovação.");
+    const settings = json?.settings || null;
+    if(!settings) return null;
+    CLINIC_RENEWAL_CONTACT = {
+      support_name: String(settings.support_name || "Cronos Odonto"),
+      renewal_phone: String(settings.whatsapp || ""),
+      renewal_message: String(settings.expired_message || DEFAULT_RENEWAL_MESSAGE),
+      blocked_message: String(settings.blocked_message || DEFAULT_BLOCKED_FEATURE_MESSAGE)
+    };
+    return CLINIC_RENEWAL_CONTACT;
+  }catch(error){
+    console.warn("Contato de renovação não pôde ser carregado:", error);
+    return null;
+  }
 }
 function clearClinicAccessState(){
   CLINIC_ACCESS_STATE = null;
+  CLINIC_RENEWAL_CONTACT = null;
 }
 async function fetchClinicAccessState(force=false){
   if(isSupportMode()) return null;
@@ -4819,7 +5066,8 @@ async function fetchClinicAccessState(force=false){
     if(!res.ok){
       throw new Error(json?.error || "Falha ao validar o período de acesso.");
     }
-    CLINIC_ACCESS_STATE = json?.access || null;
+    const renewalContact = await fetchRenewalContact(session.access_token);
+    CLINIC_ACCESS_STATE = { ...(json?.access || {}), ...(renewalContact || {}) };
     return CLINIC_ACCESS_STATE;
   }catch(error){
     console.error("Falha ao consultar período de acesso:", error);
@@ -5713,6 +5961,12 @@ async function flushCloudSave(dbToSave){
 
 function scheduleCloudSave(immediate=false){
   if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return Promise.resolve(false);
+
+  // Nunca deixamos o salvamento genérico atropelar uma baixa/alteração financeira atômica.
+  // Ele espera a confirmação financeira e só depois persiste o estado mais recente.
+  if(__cronosFinancialMutationBusy && __cronosFinancialMutationPromise){
+    return __cronosFinancialMutationPromise.then(()=>scheduleCloudSave(true));
+  }
   __cloudSaveRevision += 1;
   const revision = __cloudSaveRevision;
   if(__cloudSaveTimer){
@@ -12152,6 +12406,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <h2 class="featureBlockedTitle">Módulo indisponível</h2>
           <p class="featureBlockedText">Este módulo não está disponível para esta clínica.</p>
           <p class="featureBlockedText">Para liberar este recurso, entre em contato com o suporte.</p>
+          <a class="btn ok hidden" id="btnFeatureBlockedWhatsapp" href="#" target="_blank" rel="noopener noreferrer" style="margin-top:14px">Falar com suporte no WhatsApp</a>
         </div>
       `;
       main.appendChild(overlay);
@@ -12215,6 +12470,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if(title) title.textContent = `${label} indisponível`;
     if(texts[0]) texts[0].textContent = `O módulo ${label} não está disponível para esta clínica.`;
     if(texts[1]) texts[1].textContent = 'Para liberar este recurso, entre em contato com o suporte.';
+    const featureWhats = overlay.querySelector('#btnFeatureBlockedWhatsapp');
+    if(featureWhats){
+      const whatsappUrl = buildRenewalWhatsappUrl(CLINIC_ACCESS_STATE || {}, 'feature', label);
+      if(whatsappUrl){
+        featureWhats.href = whatsappUrl;
+        featureWhats.classList.remove('hidden');
+      }else{
+        featureWhats.classList.add('hidden');
+        featureWhats.removeAttribute('href');
+      }
+    }
 
     hideAllNativeViews();
     const sticky = document.getElementById('stickyFilters');
@@ -14707,6 +14973,8 @@ window.CRONOS_PROC_UI = {
         }catch(_){}
       });
     }
+
+    window.__cronosRenderFichaApp = renderFichaApp;
 
     window.openFicha = function(entryId){
       ensureProcedureCatalogSeeded();
