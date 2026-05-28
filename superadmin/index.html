@@ -985,7 +985,7 @@
           <div class="super-section-head">
             <div>
               <h2>Suporte e renovação</h2>
-              <p>Configure o WhatsApp oficial que aparece nas telas de acesso expirado, recurso bloqueado e pedidos de upgrade.</p>
+              <p>Configure o WhatsApp oficial que aparecerá para as clínicas nas telas de acesso expirado, bloqueio e módulos indisponíveis. O contato é salvo na nuvem.</p>
             </div>
           </div>
           <div class="card" style="padding:16px">
@@ -1375,6 +1375,8 @@
         getClinicDetails: "get-clinic-details",
         updateClinicSettings: "update-clinic-settings",
         openSupportAccess: "open-support-access",
+        getRenewalContact: "get-renewal-contact",
+        saveRenewalContact: "save-renewal-contact",
         exportClinicCsv: "export-clinic-csv",
         importClinicCsv: "import-clinic-csv",
         createClinicBackup: "create-clinic-backup",
@@ -3687,6 +3689,7 @@
       }
     if(view === 'finance') setTimeout(()=>renderFinanceDashboard(state.financeKpi || 'month'), 0);
     if(view === 'settings') setTimeout(refreshConfigClinicSelect, 0);
+    if(view === 'support') setTimeout(()=>loadSupportSettingsCloud(true), 0);
     }catch(_){}
   }
 
@@ -3699,6 +3702,42 @@
 
   function saveSupportSettings(data){
     localStorage.setItem(SUPPORT_KEY, JSON.stringify(data || {}));
+  }
+
+  function normalizeCloudSupportSettings(row){
+    return {
+      name: row?.support_name || 'Cronos Odonto',
+      whatsapp: String(row?.whatsapp || '').replace(/\D/g, ''),
+      expiredMessage: row?.expired_message || 'Olá! O acesso da clínica [CLINICA] ao Cronos expirou e quero regularizar a renovação.',
+      blockedMessage: row?.blocked_message || 'Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].'
+    };
+  }
+
+  async function loadSupportSettingsCloud(showError=false){
+    try{
+      const response = await callEdgeFunction(CONFIG.endpoints.getRenewalContact, {});
+      const data = normalizeCloudSupportSettings(response?.settings || {});
+      saveSupportSettings(data);
+      refreshSupportUI();
+      return data;
+    }catch(error){
+      if(showError){ try{ toast(error.message || 'Não foi possível carregar o contato de suporte.', 'error', 3600); }catch(_){} }
+      return null;
+    }
+  }
+
+  async function saveSupportSettingsCloud(data){
+    const payload = {
+      support_name: data.name || 'Cronos Odonto',
+      whatsapp: String(data.whatsapp || '').replace(/\D/g, ''),
+      expired_message: data.expiredMessage || '',
+      blocked_message: data.blockedMessage || ''
+    };
+    const response = await callEdgeFunction(CONFIG.endpoints.saveRenewalContact, payload);
+    const saved = normalizeCloudSupportSettings(response?.settings || payload);
+    saveSupportSettings(saved);
+    refreshSupportUI();
+    return saved;
   }
 
   function onlyDigits(v){ return String(v||'').replace(/\D/g,''); }
@@ -4177,7 +4216,7 @@
       try{ renderFinanceDashboard(state.financeKpi); }catch(_){}
     });
 
-    document.addEventListener('click', (ev)=>{
+    document.addEventListener('click', async (ev)=>{
       const save = ev.target.closest?.('#btnSaveSupportSettings');
       if(save){
         const data = {
@@ -4186,9 +4225,12 @@
           expiredMessage: document.getElementById('saExpiredMessage')?.value || '',
           blockedMessage: document.getElementById('saBlockedMessage')?.value || ''
         };
-        saveSupportSettings(data);
-        refreshSupportUI();
-        try{ if(typeof toast === 'function') toast('Contato salvo.', 'success', 2400); }catch(_){}
+        try{
+          await withButtonLoading(save, 'Salvando...', ()=>saveSupportSettingsCloud(data));
+          if(typeof toast === 'function') toast('Contato salvo na nuvem ✅', 'success', 2800);
+        }catch(error){
+          if(typeof toast === 'function') toast(error.message || 'Não foi possível salvar o contato.', 'error', 4200);
+        }
       }
 
       const preview = ev.target.closest?.('#btnPreviewSupportWhats');
