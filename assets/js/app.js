@@ -2649,6 +2649,7 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
 }
 
 async function payFinancialPayment(entryId, planId, paymentId){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
   if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
   const actor = currentActor();
   const db = loadDB();
@@ -2809,6 +2810,7 @@ document.addEventListener('click', function(ev){
 }, true);
 
 async function undoFinancialPayment(entryId, planId, paymentId){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
   if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
@@ -2881,6 +2883,7 @@ async function undoFinancialPayment(entryId, planId, paymentId){
 }
 
 async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
   if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
@@ -2927,6 +2930,7 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   });
 }
 async function deleteFinancialPayment(entryId, planId, paymentId){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
   if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva na nuvem.");
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
@@ -2961,6 +2965,7 @@ async function deleteFinancialPayment(entryId, planId, paymentId){
   });
 }
 function openNewFinancialInstallment(entryId="", planId=""){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
   let finalPlanId = String(planId||"");
   try{
     if(entryId){
@@ -3400,6 +3405,7 @@ window.CRONOS_NEW_FIN_UI = {
     cronosNewFinRenderSafe();
   },
   async createPlan(){
+    if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
     if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
     const actor = currentActor();
     const db = loadDB();
@@ -3550,6 +3556,7 @@ window.CRONOS_NEW_FIN_UI = {
   },
   async addPayment(){
     const actor = currentActor();
+    if(!canOperateRecebimentos(actor)) return blockedRecebimentosAction();
     const db = loadDB();
     const st = window.__newFinancialInstallmentState || {};
     const {entry, plan} = getFinancialPlan(db, st.entryId, st.planId);
@@ -4342,7 +4349,7 @@ const SESSIONKEY = "cronoscrm_phase1_session";
 const THEMEKEY = "cronoscrm_theme";
 window.__KPI_ACTIVE = null; // filtro do KPI clicável
 
-const ROLES = ["MASTER","GERENTE","SECRETARIA","DENTISTA"];
+const ROLES = ["MASTER","GERENTE","SECRETARIA","CRC","DENTISTA"];
 
 const STATUS_LIST = [
   "Agendado","Compareceu","Fechou","Remarcou","Conversando","Faltou","Sem resposta",
@@ -4366,11 +4373,37 @@ const AUX_MODULES = ["todayCronos","creditSimulator","performance"];
 const ALL_ACCESS_MODULES = [...APP_VIEWS, ...AUX_MODULES];
 
 const PERMS = {
+  // O plano controla módulos da clínica; a matriz abaixo controla a função de cada perfil.
   MASTER:     {viewAll:true, edit:true, delete:true, manageUsers:true, manageMasters:false, views:[...ALL_ACCESS_MODULES]},
-  GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","todayCronos","leads","kanban","tasks","installments","creditSimulator","performance"]},
-  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["todayCronos","leads","kanban","tasks","installments","creditSimulator"]},
+  GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","todayCronos","leads","kanban","tasks","installments","creditSimulator","performance","users","settings"]},
+  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["todayCronos","leads","kanban","tasks","installments"]},
+  CRC:        {viewAll:true, edit:true, delete:false, manageUsers:false, manageMasters:false, views:["todayCronos","leads","kanban","tasks"]},
   DENTISTA:   {viewAll:true, edit:false, delete:false, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban"]},
 };
+
+function actorRoleKey(actor=currentActor()){
+  return String(actor?.role || "").trim().toUpperCase();
+}
+function isCRCRole(actor=currentActor()){
+  return actorRoleKey(actor) === "CRC";
+}
+function isFichaReadOnlyForActor(actor=currentActor()){
+  return isCRCRole(actor);
+}
+function denyCRCFichaEdit(){
+  toast("Ficha em visualização", "A CRC pode consultar e imprimir a ficha, mas não pode alterar tratamento ou recebimentos.");
+  return false;
+}
+function canOperateRecebimentos(actor=currentActor()){
+  const role = actorRoleKey(actor);
+  if(!actor || actor.isSupport === true) return false;
+  if(!["MASTER","GERENTE","SECRETARIA"].includes(role)) return false;
+  return canAccessView("installments", actor);
+}
+function blockedRecebimentosAction(){
+  toast("Acesso limitado", "Seu perfil não pode criar ou alterar recebimentos.");
+  return false;
+}
 
 function actorAccessModules(actor=currentActor()){
   if(!actor) return [];
@@ -4410,10 +4443,12 @@ function applyRoleVisibility(actor=currentActor()){
   const canUsers = canAccessView("users", actor) && !!actor?.perms?.manageUsers;
   const canSettings = canAccessView("settings", actor);
 
-  ["btnNewLeadSide","btnNewLeadTop","btnNewLeadList","btnNewLeadKanban","btnNewTask","btnNewFinancialInstallment"].forEach(id=>{
+  ["btnNewLeadSide","btnNewLeadTop","btnNewLeadList","btnNewLeadKanban","btnNewTask"].forEach(id=>{
     const node = el(id);
     if(node) node.classList.toggle("hidden", !canEdit);
   });
+  const btnNewFinancialInstallment = el("btnNewFinancialInstallment");
+  if(btnNewFinancialInstallment) btnNewFinancialInstallment.classList.toggle("hidden", !canOperateRecebimentos(actor));
 
   const btnNewUser = el("btnNewUser");
   if(btnNewUser) btnNewUser.classList.toggle("hidden", !canUsers);
@@ -4960,7 +4995,7 @@ async function maybeInitSupportMode(){
 
 const ACCESS_STATUS_ENDPOINT = "get-clinic-access-state";
 const RENEWAL_CONTACT_ENDPOINT = "get-renewal-contact";
-const CREATE_CLINIC_USER_ENDPOINT = "create-clinic-user";
+const CREATE_CLINIC_USER_ENDPOINT = "create-clinic-user"; // criação e gestão segura por Masters
 const DEFAULT_RENEWAL_MESSAGE = "Olá! O acesso da clínica [CLINICA] ao Cronos expirou e quero regularizar a renovação.";
 const DEFAULT_BLOCKED_FEATURE_MESSAGE = "Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].";
 let CLINIC_ACCESS_STATE = null;
@@ -5414,6 +5449,9 @@ async function hydrateClinicArraysFromTables(db){
   return loaded;
 }
 async function deleteV2Ids(tableName, ids){
+  if(isCRCRole(typeof currentActor === "function" ? currentActor() : null)){
+    throw new Error("A CRC não pode excluir contatos ou leads.");
+  }
   for(let i=0; i<ids.length; i+=200){
     const slice = ids.slice(i, i+200);
     const { error } = await supabaseClient
@@ -5425,6 +5463,22 @@ async function deleteV2Ids(tableName, ids){
   }
 }
 async function upsertV2Rows(tableName, rows){
+  const actor = (typeof currentActor === "function") ? currentActor() : null;
+  if(isCRCRole(actor) && [CLOUD_CONTACTS_V2_TABLE, CLOUD_LEADS_V2_TABLE].includes(tableName)){
+    const rpcName = tableName === CLOUD_CONTACTS_V2_TABLE
+      ? "cronos_v2_crc_upsert_contact"
+      : "cronos_v2_crc_upsert_lead_commercial";
+    for(const row of rows){
+      const payload = row?.legacy_payload && typeof row.legacy_payload === "object" ? row.legacy_payload : {};
+      const { error } = await supabaseClient.rpc(rpcName, {
+        p_clinic_id: CLOUD_CLINIC_ID,
+        p_payload: payload
+      });
+      if(error) throw error;
+    }
+    return;
+  }
+
   for(let i=0; i<rows.length; i+=200){
     const { error } = await supabaseClient
       .from(tableName)
@@ -6261,34 +6315,20 @@ async function insertClinicMemberRecord({ authUid, loginEmail, username, name, r
 
 async function updateClinicMemberRecord(userRow, { name, role }){
   if(!userRow?.authUid) return;
-  const owner = await getCurrentSupabaseUser();
-  if(!owner) throw new Error("Sessão do master não encontrada.");
-
-  const { error } = await supabaseClient
-    .from(CLOUD_MEMBERS_TABLE)
-    .update({
-      name,
-      role,
-      active: true
-    })
-    .eq("owner_uid", owner.id)
-    .eq("auth_uid", userRow.authUid);
-
-  if(error) throw error;
+  return callClinicUserManagerEdge({
+    action:"update",
+    auth_uid:userRow.authUid,
+    name,
+    role
+  });
 }
 
 async function deactivateClinicMemberRecord(userRow){
   if(!userRow?.authUid) return;
-  const owner = await getCurrentSupabaseUser();
-  if(!owner) throw new Error("Sessão do master não encontrada.");
-
-  const { error } = await supabaseClient
-    .from(CLOUD_MEMBERS_TABLE)
-    .update({ active: false })
-    .eq("owner_uid", owner.id)
-    .eq("auth_uid", userRow.authUid);
-
-  if(error) throw error;
+  return callClinicUserManagerEdge({
+    action:"deactivate",
+    auth_uid:userRow.authUid
+  });
 }
 
 async function syncCurrentCloudActor(){
@@ -6493,6 +6533,7 @@ function roleLabelPt(role){
     MASTER: "Master",
     GERENTE: "Gerente",
     SECRETARIA: "Secretária",
+    CRC: "CRC",
     DENTISTA: "Dentista"
   };
   return map[String(role || "").toUpperCase()] || String(role || "Usuário");
@@ -10224,7 +10265,7 @@ function userFormHTML(user){
 }
 
 
-async function createClinicUserViaEdge({ name, username, email, password, role }){
+async function callClinicUserManagerEdge(payload={}){
   const sessionResp = await supabaseClient.auth.getSession();
   const session = sessionResp?.data?.session;
   if(!session?.access_token){
@@ -10238,14 +10279,18 @@ async function createClinicUserViaEdge({ name, username, email, password, role }
       "Authorization": `Bearer ${session.access_token}`,
       "apikey": supabaseKey
     },
-    body: JSON.stringify({ name, username, email, password, role })
+    body: JSON.stringify(payload || {})
   });
 
   const json = await res.json().catch(() => ({}));
   if(!res.ok){
-    throw new Error(json?.error || "Não foi possível criar o usuário.");
+    throw new Error(json?.error || "Não foi possível gerenciar o usuário.");
   }
   return json || {};
+}
+
+async function createClinicUserViaEdge({ name, username, email, password, role }){
+  return callClinicUserManagerEdge({ action:"create", name, username, email, password, role });
 }
 
 function openNewUser(){
@@ -14167,6 +14212,7 @@ window.CRONOS_PROC_UI = {
       if(!box || !state) return;
       const db = loadDB();
       const actor = currentActor();
+      const fichaReadOnly = isFichaReadOnlyForActor(actor);
       const entry = getEntryById(state.entryId);
       if(!entry){ box.innerHTML = `<div class="fichaEmpty">Lead não encontrado.</div>`; return; }
       const contact = getContactForEntry(entry);
@@ -14358,6 +14404,34 @@ window.CRONOS_PROC_UI = {
           </div>
         </div>
       `;
+
+      if(fichaReadOnly){
+        box.classList.add("cronosFichaReadOnly");
+        box.insertAdjacentHTML("afterbegin", `
+          <div style="margin:0 0 14px;padding:12px 14px;border-radius:14px;border:1px solid rgba(59,130,246,.25);background:rgba(59,130,246,.10)">
+            <b>Visualização comercial</b>
+            <div class="small muted" style="margin-top:4px">A CRC pode consultar e imprimir esta ficha. Alterações clínicas e financeiras ficam bloqueadas.</div>
+          </div>
+        `);
+        box.querySelectorAll("input, textarea, select").forEach(node=>{
+          node.disabled = true;
+          node.setAttribute("aria-disabled", "true");
+        });
+        box.querySelectorAll(".fichaQuickActions button, .fichaPlanToolbar button, .miniBtn.danger").forEach(node=>node.style.display = "none");
+        box.querySelectorAll("button").forEach(node=>{
+          const label = String(node.textContent || "").toLowerCase();
+          if(label.includes("receber") || label.includes("abrir") || label.includes("feito") || label.includes("pendente") || label.includes("nova avaliação")){
+            node.style.display = "none";
+          }
+        });
+      }else{
+        box.classList.remove("cronosFichaReadOnly");
+      }
+    }
+
+    function guardFichaMutationForCRC(){
+      if(isFichaReadOnlyForActor(currentActor())) return denyCRCFichaEdit();
+      return true;
     }
 
     window.CRONOS_FICHA_UI = {
@@ -14954,6 +15028,22 @@ window.CRONOS_PROC_UI = {
       }
     };
 
+    [
+      "setObs", "addToPlan", "refreshPlanBaseValues", "updateValue", "formatValue",
+      "updateFace", "toggleDone", "togglePaid", "openReceivingForItems",
+      "openReceivingForSelected", "confirmReceiving", "setActiveEvaluation",
+      "newEvaluation", "removeItem", "cycleToothStatus", "toggleAbsent",
+      "markSelectedProgress", "setAbsentForSelection", "saveToothMeta",
+      "clearToothMeta"
+    ].forEach(methodName=>{
+      const original = window.CRONOS_FICHA_UI?.[methodName];
+      if(typeof original !== "function") return;
+      window.CRONOS_FICHA_UI[methodName] = function(){
+        if(!guardFichaMutationForCRC()) return false;
+        return original.apply(this, arguments);
+      };
+    });
+
     if(!window.__CRONOS_PROC_MENU_OUTSIDE_BOUND__){
       window.__CRONOS_PROC_MENU_OUTSIDE_BOUND__ = true;
       document.addEventListener('mousedown', function(ev){
@@ -14984,7 +15074,7 @@ window.CRONOS_PROC_UI = {
       const contact = getContactForEntry(entry);
       openModal({
         title:'Ficha do paciente',
-        sub:`${contact?.name || entry?.name || 'Lead'} • plano de tratamento, valores e odontograma`,
+        sub:`${contact?.name || entry?.name || 'Lead'} • ${isFichaReadOnlyForActor(currentActor()) ? 'visualização comercial / impressão' : 'plano de tratamento, valores e odontograma'}`,
         bodyHTML:'<div id="fichaApp" style="width:100%"></div>',
         footHTML:`<button class="btn" onclick="printFicha('${escapeHTML(String(entryId))}')">🖨️ Imprimir ficha</button><button class="btn" onclick="closeModal()">Fechar</button>`,
         onMount: renderFichaApp,
