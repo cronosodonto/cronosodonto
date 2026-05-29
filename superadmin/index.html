@@ -3459,6 +3459,35 @@
     }
   }
 
+  const COMMERCIAL_PLAN_PRESETS = {
+    pro: {
+      label:'Plano Pro', price:300,
+      features:{dashboard:'enabled',todayCronos:'enabled',performance:'locked',leads:'enabled',kanban:'enabled',tasks:'enabled',installments:'enabled',creditSimulator:'locked',riskAnalysis:'locked',users:'enabled',settings:'enabled'}
+    },
+    elite: {
+      label:'Plano Elite', price:600,
+      features:{dashboard:'enabled',todayCronos:'enabled',performance:'enabled',leads:'enabled',kanban:'enabled',tasks:'enabled',installments:'enabled',creditSimulator:'enabled',riskAnalysis:'enabled',users:'enabled',settings:'enabled'}
+    }
+  };
+
+  async function applyCommercialPlanPreset(planKey, button){
+    const clinicId = state.selectedClinicId;
+    const plan = COMMERCIAL_PLAN_PRESETS[planKey];
+    if(!clinicId || !plan) return;
+    if(!confirm(`Aplicar ${plan.label} (R$ ${plan.price}/mês) nesta clínica?`)) return;
+    await withButtonLoading(button, 'Aplicando...', async () => {
+      for(const [featureKey, mode] of Object.entries(plan.features)){
+        await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, {
+          scope:'clinic', clinic_id:clinicId, feature_key:featureKey, mode, enabled:mode === 'enabled'
+        });
+      }
+      await loadClinicFeatureAccess(clinicId);
+      const hint = document.getElementById('commercialPlanPresetHint');
+      if(hint) hint.textContent = `${plan.label} aplicado • R$ ${plan.price}/mês. Ajustes manuais posteriores deixam a configuração personalizada.`;
+      toast(`${plan.label} aplicado.`, 'success', 3000);
+    });
+  }
+
   function ensureClinicFeatureSection(){
     const detailRoot = document.getElementById('detailContent');
     if(!detailRoot || !state.selectedClinicId) return null;
@@ -3472,6 +3501,15 @@
       <summary>Módulos laterais da clínica</summary>
       <div class="section-body">
         <div class="helper">Use “Usar padrão global” para herdar o que foi definido no topo do superadmin.</div>
+        <div style="margin:0 0 16px;padding:14px;border:1px solid rgba(59,130,246,.28);background:rgba(59,130,246,.08);border-radius:16px">
+          <div style="font-weight:900;font-size:16px">Plano comercial da clínica</div>
+          <div class="helper" style="margin-top:6px">Aplique a matriz padrão e, se necessário, ajuste módulos individualmente logo abaixo.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+            <button class="btn btn-primary" id="btnApplyCommercialPlanPro" type="button">Aplicar Pro • R$ 300</button>
+            <button class="btn btn-primary" id="btnApplyCommercialPlanElite" type="button">Aplicar Elite • R$ 600</button>
+          </div>
+          <div id="commercialPlanPresetHint" class="helper" style="margin-top:10px">No Pro, Performance e Simulador ficam bloqueados com opção de upgrade. No Elite, ambos são liberados.</div>
+        </div>
         <div id="detailFeatureAccessBody" class="feature-access-grid"></div>
         <div class="feature-save-actions">
           <button class="btn btn-ghost" id="btnRefreshClinicFeatures" type="button">Atualizar módulos</button>
@@ -3489,6 +3527,13 @@
     }else{
       detailRoot.appendChild(section);
     }
+
+    document.getElementById('btnApplyCommercialPlanPro')?.addEventListener('click', async (e) => {
+      await applyCommercialPlanPreset('pro', e.currentTarget);
+    });
+    document.getElementById('btnApplyCommercialPlanElite')?.addEventListener('click', async (e) => {
+      await applyCommercialPlanPreset('elite', e.currentTarget);
+    });
 
     document.getElementById('btnRefreshClinicFeatures')?.addEventListener('click', async (e) => {
       const button = e.currentTarget;
