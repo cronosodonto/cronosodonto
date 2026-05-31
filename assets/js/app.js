@@ -1693,6 +1693,8 @@ function toggleFinancialPlanRow(rowId){
 }
 
 function refreshFinancialUIAfterPayment(){
+  try{ window.__CRONOS_DASH_REVENUE_CACHE__ = null; }catch(_){ }
+  try{ window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null; }catch(_){ }
   try{ renderNewFinancialInstallmentApp(); }catch(err){ console.error("Falha ao atualizar painel de recebimento:", err); }
   try{ renderInstallmentsView(); }catch(err){ console.error("Falha ao atualizar Recebimentos:", err); }
   try{ renderDashboard(); }catch(err){ console.error("Falha ao atualizar Dashboard após baixa:", err); }
@@ -1910,6 +1912,47 @@ async function saveConfirmedFinancialChange(db, entry, before, labels={}){
 
 function findFinancePaymentRecord(db, entryId, planId, paymentId){
   return (db.payments||[]).find(p=>String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId));
+}
+function clonePlainFinancialRecord(record){
+  try{ return record ? JSON.parse(JSON.stringify(record)) : null; }
+  catch(_){ return record ? { ...record } : null; }
+}
+function matchingFinancePaymentRecord(record, entryId, planId, paymentId){
+  return !!record
+    && String(record.entryId)===String(entryId)
+    && String(record.financialPlanId)===String(planId)
+    && String(record.financialPaymentId)===String(paymentId);
+}
+function setPaymentUndoRecordSnapshot(payment, hadRecord, record, atISO){
+  if(!payment || typeof payment !== "object") return;
+  payment.cronosUndoPaymentRecord = {
+    hadRecord: !!hadRecord,
+    record: hadRecord ? clonePlainFinancialRecord(record) : null,
+    at: atISO || new Date().toISOString()
+  };
+}
+function popPaymentUndoRecordSnapshot(payment){
+  if(!payment || typeof payment !== "object") return null;
+  const snap = payment.cronosUndoPaymentRecord || null;
+  try{ delete payment.cronosUndoPaymentRecord; }catch(_){ payment.cronosUndoPaymentRecord = null; }
+  return snap;
+}
+function restoreOrRemoveFinancePaymentRecordOnUndo(db, entryId, planId, paymentId, undoSnapshot){
+  db.payments = Array.isArray(db?.payments) ? db.payments : [];
+  const kept = [];
+  db.payments.forEach(rec=>{
+    if(!matchingFinancePaymentRecord(rec, entryId, planId, paymentId)){
+      kept.push(rec);
+    }
+  });
+
+  if(undoSnapshot?.hadRecord && undoSnapshot.record){
+    // Se já existia um lançamento antes da baixa de teste, desfazer deve restaurar esse estado,
+    // não apagar o que o Dashboard já contava antes. Sem isso, o total pode cair 2 mil do nada.
+    kept.push(clonePlainFinancialRecord(undoSnapshot.record));
+  }
+
+  db.payments = kept;
 }
 
 function persistLocalDBNow(db){
@@ -2712,6 +2755,8 @@ async function payFinancialPayment(entryId, planId, paymentId){
 
       commitDB.payments = commitDB.payments || [];
       let rec = findFinancePaymentRecord(commitDB, entryId, planId, paymentId);
+      const recBeforePay = clonePlainFinancialRecord(rec);
+      setPaymentUndoRecordSnapshot(commitPayment, !!recBeforePay, recBeforePay, nowISO);
       if(!rec){
         rec = {
           id: uid("p"),
@@ -2731,7 +2776,9 @@ async function payFinancialPayment(entryId, planId, paymentId){
           value: parseMoney(commitPayment.amount),
           method: commitPayment.payMethod || "",
           desc: `Orçamento: ${commit.plan.title || "Plano financeiro"} • Pagamento ${commitPayment.number || ""}/${commitPayment.total || ""}`,
-          source: "financialPlan"
+          source: "financialPlan",
+          cronosFinancialMutation: "baixa",
+          cronosFinancialMutationAt: nowISO
         };
         commitDB.payments.push(rec);
       }else{
@@ -2744,6 +2791,8 @@ async function payFinancialPayment(entryId, planId, paymentId){
         rec.lastUpdateAt = nowISO;
         rec.value = parseMoney(commitPayment.amount);
         rec.method = commitPayment.payMethod || rec.method || "";
+        rec.cronosFinancialMutation = "baixa";
+        rec.cronosFinancialMutationAt = nowISO;
       }
 
       if(financialPlanIsFullyPaid(commit.plan)) commit.plan.status = "Concluído";
@@ -2842,7 +2891,8 @@ async function undoFinancialPayment(entryId, planId, paymentId){
     payment.paid = false;
     payment.updatedAt = nowISO;
     payment.lastUpdateAt = nowISO;
-    commitDB.payments = (commitDB.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
+    const undoSnapshot = popPaymentUndoRecordSnapshot(payment);
+    restoreOrRemoveFinancePaymentRecordOnUndo(commitDB, entryId, planId, paymentId, undoSnapshot);
 
     if(Array.isArray(commit.plan.fichaItemIds)){
       const linked = commit.plan.fichaItemIds.map(String);
