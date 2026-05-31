@@ -367,6 +367,7 @@ function entryInstallmentSummary(entry){
 }
 
 
+/* CRONOS_PATCH_RECEBIMENTOS_BUSCA_SCROLL_V14_1 - busca sem re-render total e scroll de procedimentos preservado */
 /* Recebimentos */
 
 function ensureFinancialPlans(entry){
@@ -3179,6 +3180,53 @@ function buildNewFinancialPatientSuggestions(db, actor, query){
   return rows.slice(0, 12);
 }
 
+function cronosNewFinPatientSuggestionsHTML(suggestions, q){
+  const list = Array.isArray(suggestions) ? suggestions : [];
+  const query = String(q || "").trim();
+  if(list.length){
+    return list.map(x=>`
+      <button type="button" class="btn" style="text-align:left;justify-content:flex-start" onpointerdown="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')" onclick="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')">
+        <b>${escapeHTML(x.contact.name || "(sem nome)")}</b> <span class="muted">• ${escapeHTML(x.contact.phone||"")} • ${monthLabel(x.entry.monthKey||new Date().toISOString().slice(0,7))}</span>
+      </button>
+    `).join("");
+  }
+  return `<div class="muted">${query ? 'Nenhum lead encontrado com esse termo.' : 'Digite para encontrar um lead já cadastrado.'}</div>`;
+}
+
+function cronosNewFinRenderPatientSuggestionsOnly(value){
+  const st = window.__newFinancialInstallmentState || {};
+  const q = String(value || "").trim();
+  const wrap = el("newFinSuggestionsWrap");
+  if(!wrap || st.entryId){
+    cronosNewFinRenderSafe({focusId:"newFinSearch"});
+    return;
+  }
+  try{
+    const db = loadDB();
+    const actor = currentActor();
+    const suggestions = q ? buildNewFinancialPatientSuggestions(db, actor, q) : [];
+    wrap.innerHTML = cronosNewFinPatientSuggestionsHTML(suggestions, q);
+  }catch(err){
+    console.warn("Falha ao atualizar sugestões de Recebimentos sem redesenhar o modal:", err);
+    cronosNewFinRenderSafe({focusId:"newFinSearch"});
+  }
+}
+
+function cronosNewFinRestoreFichaItemsScroll(top, left){
+  const restore = ()=>{
+    try{
+      const node = document.querySelector('[data-cronos-scroll-key="new-fin-ficha-items"]');
+      if(!node) return;
+      node.scrollTop = Number(top || 0);
+      node.scrollLeft = Number(left || 0);
+    }catch(_){ }
+  };
+  restore();
+  requestAnimationFrame(restore);
+  setTimeout(restore, 0);
+  setTimeout(restore, 80);
+}
+
 function cronosNewFinRenderSafe(opts={}){
   try{
     if(typeof __cronosRenderNewFinancialPreservingScroll === "function"){
@@ -3200,12 +3248,14 @@ function cronosNewFinWireSearchInput(){
   input.setAttribute("autocorrect", "off");
   input.setAttribute("autocapitalize", "off");
   input.setAttribute("spellcheck", "false");
+  let lastValue = String(input.value || "");
   const handler = ()=>{
-    try{ window.CRONOS_NEW_FIN_UI?.search(input.value); }catch(err){ console.error("Erro na busca de Novo recebimento:", err); }
+    const value = String(input.value || "");
+    if(value === lastValue) return;
+    lastValue = value;
+    try{ window.CRONOS_NEW_FIN_UI?.search(value); }catch(err){ console.error("Erro na busca de Novo recebimento:", err); }
   };
   input.addEventListener("input", handler, {passive:true});
-  input.addEventListener("keyup", handler, {passive:true});
-  input.addEventListener("change", handler, {passive:true});
 }
 
 function renderNewFinancialInstallmentApp(){
@@ -3254,13 +3304,9 @@ function renderNewFinancialInstallmentApp(){
           </div>
         ` : `
           <label>Buscar paciente/lead</label>
-          <input id="newFinSearch" value="${escapeHTML(st.search||"")}" placeholder="Digite nome ou telefone" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="cronos_new_fin_search_${Date.now()}" oninput="CRONOS_NEW_FIN_UI.search(this.value)">
-          <div style="display:grid;gap:8px;margin-top:10px">
-            ${suggestions.length ? suggestions.map(x=>`
-              <button type="button" class="btn" style="text-align:left;justify-content:flex-start" onpointerdown="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')" onclick="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')">
-                <b>${escapeHTML(x.contact.name || "(sem nome)")}</b> <span class="muted">• ${escapeHTML(x.contact.phone||"")} • ${monthLabel(x.entry.monthKey||new Date().toISOString().slice(0,7))}</span>
-              </button>
-            `).join("") : `<div class="muted">${q ? 'Nenhum lead encontrado com esse termo.' : 'Digite para encontrar um lead já cadastrado.'}</div>`}
+          <input id="newFinSearch" value="${escapeHTML(st.search||"")}" placeholder="Digite nome ou telefone" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="cronos_new_fin_search">
+          <div id="newFinSuggestionsWrap" style="display:grid;gap:8px;margin-top:10px">
+            ${cronosNewFinPatientSuggestionsHTML(suggestions, q)}
           </div>
         `}
       </div>
@@ -3350,8 +3396,9 @@ function renderNewFinancialInstallmentApp(){
 window.CRONOS_NEW_FIN_UI = {
   search(v){
     const value = String(v||"");
-    window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {search:value, entryId:"", planId:""});
-    cronosNewFinRenderSafe({focusId:'newFinSearch'});
+    const st = window.__newFinancialInstallmentState || {};
+    window.__newFinancialInstallmentState = Object.assign(st, {search:value, entryId:"", planId:""});
+    cronosNewFinRenderPatientSuggestionsOnly(value);
     requestAnimationFrame(()=>{ try{ const input = el("newFinSearch"); input?.focus({preventScroll:true}); input?.setSelectionRange(value.length,value.length); }catch(_){} });
   },
   selectPatientFromEvent(ev, entryId){
@@ -3396,6 +3443,9 @@ window.CRONOS_NEW_FIN_UI = {
     renderNewFinancialInstallmentApp();
   },
   toggleFichaItem(itemId){
+    const scroller = document.querySelector('[data-cronos-scroll-key="new-fin-ficha-items"]');
+    const top = scroller ? Number(scroller.scrollTop || 0) : 0;
+    const left = scroller ? Number(scroller.scrollLeft || 0) : 0;
     const st = window.__newFinancialInstallmentState || {};
     st.fichaItemIds = Array.isArray(st.fichaItemIds) ? st.fichaItemIds : [];
     const id = String(itemId || '');
@@ -3403,6 +3453,7 @@ window.CRONOS_NEW_FIN_UI = {
     if(idx >= 0) st.fichaItemIds.splice(idx,1); else st.fichaItemIds.push(id);
     window.__newFinancialInstallmentState = st;
     cronosNewFinRenderSafe();
+    cronosNewFinRestoreFichaItemsScroll(top, left);
   },
   async createPlan(){
     if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
@@ -3657,13 +3708,9 @@ window.CRONOS_NEW_FIN_UI = {
 };
 
 if(!window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__){
+  // A busca de Recebimentos agora usa apenas o listener direto do campo.
+  // Antes havia listener global + inline + keyup/change, e uma única letra podia redesenhar o modal várias vezes.
   window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__ = true;
-  document.addEventListener("input", function(ev){
-    const target = ev && ev.target;
-    if(target && target.id === "newFinSearch"){
-      try{ window.CRONOS_NEW_FIN_UI?.search(target.value); }catch(err){ console.error("Erro na busca de Novo recebimento:", err); }
-    }
-  }, true);
 }
 
 
@@ -13785,7 +13832,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     function __cronosRestoreModalScrollState(state, opts={}){
       if(!state) return;
-      requestAnimationFrame(()=>{
+      const applyRestore = ()=>{
         try{
           (state.nodes || []).forEach(item=>{
             let node = null;
@@ -13813,7 +13860,10 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
         }catch(_){}
-      });
+      };
+      requestAnimationFrame(applyRestore);
+      setTimeout(applyRestore, 0);
+      setTimeout(applyRestore, 80);
     }
     function __cronosRenderFichaPreservingScroll(opts={}){
       const scrollState = __cronosCaptureModalScrollState();
