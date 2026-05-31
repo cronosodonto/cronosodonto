@@ -19,7 +19,10 @@
   const TODAY_STATE = window.__CRONOS_TODAY_STATE__ || {
     filter: "all",
     visible: { appointments: 3, tasks: 3, receipts: 3, flows: 3, birthdays: 3 },
-    loading: false
+    loading: false,
+    cacheKey: "",
+    cacheData: null,
+    renderToken: 0
   };
   window.__CRONOS_TODAY_STATE__ = TODAY_STATE;
 
@@ -460,6 +463,12 @@
       #${NAV_ID} .todayNavBadge.empty{opacity:.55}
       .todaySpinner{width:13px;height:13px;border-radius:50%;border:2px solid currentColor;border-top-color:transparent;display:inline-block;vertical-align:-2px;animation:todaySpin .75s linear infinite}
       @keyframes todaySpin{to{transform:rotate(360deg)}}
+      .todaySkeleton{display:grid;gap:16px}
+      .todaySkeletonBlock{border:1px solid var(--tc-line);border-radius:18px;background:var(--tc-card);padding:16px;overflow:hidden}
+      .todaySkeletonLine{height:13px;border-radius:999px;background:linear-gradient(90deg,rgba(255,255,255,.05),rgba(255,255,255,.13),rgba(255,255,255,.05));background-size:220% 100%;animation:todaySkeletonPulse 1s ease-in-out infinite;margin:9px 0}
+      html.light #${VIEW_ID} .todaySkeletonLine{background:linear-gradient(90deg,rgba(15,23,42,.055),rgba(15,23,42,.12),rgba(15,23,42,.055));background-size:220% 100%}
+      .todaySkeletonGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:8px}
+      @keyframes todaySkeletonPulse{0%{background-position:120% 0}100%{background-position:-120% 0}}
       .todayFull{grid-column:1/-1}
       @media(max-width:1200px){.todayGrid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.todaySections{grid-template-columns:1fr}}
       @media(max-width:720px){#${VIEW_ID}{padding:12px}.todayGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.todayHero h2{font-size:20px}}
@@ -1251,6 +1260,36 @@
     }
   }
 
+  function renderTodaySkeleton(){
+    addStyles();
+    const view = ensureView();
+    view.innerHTML = `
+      <div class="todayWrap todaySkeleton" aria-busy="true">
+        <div class="todayHero">
+          <div style="min-width:260px;flex:1">
+            <h2>Hoje no Cronos</h2>
+            <p>Preparando agenda diária sem travar a tela.</p>
+            <div class="todaySkeletonLine" style="width:220px"></div>
+          </div>
+          <div class="todayActions"><button class="todayBtn primary" disabled><span class="todaySpinner"></span> Carregando...</button></div>
+        </div>
+        <div class="todaySkeletonGrid">
+          ${Array.from({length:6}).map(()=>`<div class="todayKpi"><span><span class="todaySkeletonLine" style="width:110px"></span></span><b>...</b></div>`).join("")}
+        </div>
+        <div class="todaySections">
+          ${Array.from({length:4}).map(()=>`
+            <section class="todaySkeletonBlock">
+              <div class="todaySkeletonLine" style="width:42%;height:16px"></div>
+              <div class="todaySkeletonLine" style="width:92%"></div>
+              <div class="todaySkeletonLine" style="width:78%"></div>
+              <div class="todaySkeletonLine" style="width:84%"></div>
+            </section>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   function renderLimitedSection(section, items, renderer){
     const list = Array.isArray(items) ? items : [];
     const limit = TODAY_STATE.visible[section] || 3;
@@ -1323,10 +1362,29 @@
     }catch(_){}
   }
 
-  function getTodayCollections(){
+  function todayCollectionsCacheKey(db, a){
+    const version = Number(window.__CRONOS_DATA_VERSION__ || 0);
+    const contactsLen = Array.isArray(db?.contacts) ? db.contacts.length : 0;
+    const entriesLen = Array.isArray(db?.entries) ? db.entries.length : 0;
+    const tasksLen = Array.isArray(db?.tasks) ? db.tasks.length : 0;
+    const paymentsLen = Array.isArray(db?.payments) ? db.payments.length : 0;
+    const flowRunsLen = Array.isArray(db?.flowRuns || db?.assistedFlowRuns) ? (db.flowRuns || db.assistedFlowRuns || []).length : 0;
+    return [a?.masterId || "", todayISO(), version, contactsLen, entriesLen, tasksLen, paymentsLen, flowRunsLen].join("|");
+  }
+
+  function invalidateTodayCache(){
+    TODAY_STATE.cacheKey = "";
+    TODAY_STATE.cacheData = null;
+  }
+
+  function getTodayCollections(options={}){
     const db = load();
     const a = actor();
-    if(!db || !a) return { total:0, overdue:0, appointments:[], tasks:[], receipts:[], flows:[] };
+    if(!db || !a) return { total:0, overdue:0, appointments:[], tasks:[], receipts:[], flows:[], birthdays:[], db:null, actor:null };
+    const key = todayCollectionsCacheKey(db, a);
+    if(!options.force && TODAY_STATE.cacheKey === key && TODAY_STATE.cacheData){
+      return TODAY_STATE.cacheData;
+    }
 
     const appointments = collectAppointments(db, a);
     const tasks = collectTasks(db, a);
@@ -1335,7 +1393,10 @@
     const birthdays = collectBirthdays(db, a);
     const all = [...appointments, ...tasks, ...receipts, ...flows, ...birthdays];
 
-    return {
+    const data = {
+      key,
+      db,
+      actor:a,
       total: all.length,
       overdue: all.filter(x=>x.overdue).length,
       appointments,
@@ -1344,6 +1405,9 @@
       flows,
       birthdays
     };
+    TODAY_STATE.cacheKey = key;
+    TODAY_STATE.cacheData = data;
+    return data;
   }
 
   function updateNavCount(){
@@ -1776,7 +1840,7 @@
     }).join("");
   }
 
-  function render(){
+  function render(options={}){
     addStyles();
     installV94Refinements();
     ensureNav();
@@ -1789,91 +1853,113 @@
       return;
     }
 
-    const appointmentsAll = collectAppointments(db, a);
-    const tasksAll = collectTasks(db, a);
-    const receiptsAll = collectReceipts(db, a);
-    const flowsAll = collectFlows(db, a);
-    const birthdaysAll = collectBirthdays(db, a);
+    const runRender = (force=false)=>{
+      const data = getTodayCollections({ force });
+      const db = data.db || load();
+      const appointmentsAll = data.appointments || [];
+      const tasksAll = data.tasks || [];
+      const receiptsAll = data.receipts || [];
+      const flowsAll = data.flows || [];
+      const birthdaysAll = data.birthdays || [];
+      const overdueCount = Number(data.overdue || 0);
+      const total = Number(data.total || 0);
 
-    const overdueCount =
-      appointmentsAll.filter(x=>x.overdue).length +
-      tasksAll.filter(x=>x.overdue).length +
-      receiptsAll.filter(x=>x.overdue).length +
-      flowsAll.filter(x=>x.overdue).length;
+      const appointments = filterSectionItems("appointments", appointmentsAll);
+      const tasks = filterSectionItems("tasks", tasksAll);
+      const receipts = filterSectionItems("receipts", receiptsAll);
+      const flows = filterSectionItems("flows", flowsAll);
+      const birthdays = filterSectionItems("birthdays", birthdaysAll);
 
-    const total = appointmentsAll.length + tasksAll.length + receiptsAll.length + flowsAll.length + birthdaysAll.length;
+      const activeFilter = TODAY_STATE.filter || "all";
+      const kpiCls = (f)=>`todayKpi ${activeFilter===f ? "active" : ""}`;
+      setTimeout(updateNavCount, 0);
 
-    const appointments = filterSectionItems("appointments", appointmentsAll);
-    const tasks = filterSectionItems("tasks", tasksAll);
-    const receipts = filterSectionItems("receipts", receiptsAll);
-    const flows = filterSectionItems("flows", flowsAll);
-    const birthdays = filterSectionItems("birthdays", birthdaysAll);
-
-    const activeFilter = TODAY_STATE.filter || "all";
-    const kpiCls = (f)=>`todayKpi ${activeFilter===f ? "active" : ""}`;
-    setTimeout(updateNavCount, 0);
-
-    view.innerHTML = `
-      <div class="todayWrap">
-        <div class="todayHero">
-          <div>
-            <h2>Hoje no Cronos</h2>
-            <p>Agenda de ação diária: follow-ups, agendamentos, tarefas e recebimentos que não podem virar fóssil administrativo.</p>
-            <p><b>${fmtBR(todayISO())}</b> • ${total} item(ns) para acompanhar</p>
-          </div>
-          <div class="todayActions">
-            <button id="todayRefreshBtn" class="todayBtn primary" onclick="CRONOS_TODAY.refresh(this)">Atualizar</button>
-          </div>
-        </div>
-
-        <div class="todayGrid">
-          <button class="${kpiCls('all')}" onclick="CRONOS_TODAY.setFilter('all')"><b>${total}</b><span>Total de ações</span></button>
-          <button class="${kpiCls('appointments')}" onclick="CRONOS_TODAY.setFilter('appointments')"><b>${appointmentsAll.length}</b><span>Agendamentos</span></button>
-          <button class="${kpiCls('tasks')}" onclick="CRONOS_TODAY.setFilter('tasks')"><b>${tasksAll.length}</b><span>Tarefas</span></button>
-          <button class="${kpiCls('receipts')}" onclick="CRONOS_TODAY.setFilter('receipts')"><b>${receiptsAll.length}</b><span>Recebimentos</span></button>
-          <button class="${kpiCls('birthdays')}" onclick="CRONOS_TODAY.setFilter('birthdays')"><b>${birthdaysAll.length}</b><span>Aniversariantes</span></button>
-          <button class="${kpiCls('flows')}" onclick="CRONOS_TODAY.setFilter('flows')"><b>${flowsAll.length}</b><span>Fluxos assistidos</span></button>
-        </div>
-
-        <div class="todaySections" data-focus="${activeFilter}">
-          ${activeFilter === "all" || activeFilter === "appointments" ? `
-          <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="appointments">
-            <div class="todayCardHeader"><h3>Agendamentos / notificações</h3><span>${appointments.length}</span></div>
-            ${renderLimitedSection('appointments', appointments, (shown)=>renderAppointments(shown, db))}
-          </section>` : ""}
-
-          ${activeFilter === "all" || activeFilter === "tasks" ? `
-          <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="tasks">
-            <div class="todayCardHeader"><h3>Tarefas de hoje / atrasadas</h3><span>${tasks.length}</span></div>
-            ${renderLimitedSection('tasks', tasks, (shown)=>renderTasksList(shown, db))}
-          </section>` : ""}
-
-          ${activeFilter === "all" || activeFilter === "receipts" ? `
-          <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="receipts">
-            <div class="todayCardHeader"><h3>Recebimentos vencendo / atrasados</h3><span>${receipts.length}</span></div>
-            ${renderLimitedSection('receipts', receipts, (shown)=>renderReceipts(shown, db))}
-          </section>` : ""}
-
-          ${activeFilter === "all" || activeFilter === "birthdays" ? `
-          <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="birthdays">
-            <div class="todayCardHeader">
-              <h3>Aniversariantes do dia</h3>
-              <div class="todayHeaderActions">
-                <button class="todayMiniBtn" onclick="CRONOS_TODAY.editBirthdayTemplate()">Editar mensagem</button>
-                <span>${birthdays.length}</span>
-              </div>
+      view.innerHTML = `
+        <div class="todayWrap">
+          <div class="todayHero">
+            <div>
+              <h2>Hoje no Cronos</h2>
+              <p>Agenda de ação diária: follow-ups, agendamentos, tarefas e recebimentos que não podem virar fóssil administrativo.</p>
+              <p><b>${fmtBR(todayISO())}</b> • ${total} item(ns) para acompanhar</p>
             </div>
-            ${renderLimitedSection('birthdays', birthdays, (shown)=>renderBirthdays(shown, db))}
-          </section>` : ""}
+            <div class="todayActions">
+              <button id="todayRefreshBtn" class="todayBtn primary" onclick="CRONOS_TODAY.refresh(this)">Atualizar</button>
+            </div>
+          </div>
 
-          ${activeFilter === "all" || activeFilter === "flows" ? `
-          <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="flows">
-            <div class="todayCardHeader"><h3>Fluxos assistidos</h3><span>${flows.length}</span></div>
-            ${renderLimitedSection('flows', flows, (shown)=>renderFlows(shown, db))}
-          </section>` : ""}
+          <div class="todayGrid">
+            <button class="${kpiCls('all')}" onclick="CRONOS_TODAY.setFilter('all')"><b>${total}</b><span>Total de ações</span></button>
+            <button class="${kpiCls('appointments')}" onclick="CRONOS_TODAY.setFilter('appointments')"><b>${appointmentsAll.length}</b><span>Agendamentos</span></button>
+            <button class="${kpiCls('tasks')}" onclick="CRONOS_TODAY.setFilter('tasks')"><b>${tasksAll.length}</b><span>Tarefas</span></button>
+            <button class="${kpiCls('receipts')}" onclick="CRONOS_TODAY.setFilter('receipts')"><b>${receiptsAll.length}</b><span>Recebimentos</span></button>
+            <button class="${kpiCls('birthdays')}" onclick="CRONOS_TODAY.setFilter('birthdays')"><b>${birthdaysAll.length}</b><span>Aniversariantes</span></button>
+            <button class="${kpiCls('flows')}" onclick="CRONOS_TODAY.setFilter('flows')"><b>${flowsAll.length}</b><span>Fluxos assistidos</span></button>
+          </div>
+
+          <div class="todaySections" data-focus="${activeFilter}">
+            ${activeFilter === "all" || activeFilter === "appointments" ? `
+            <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="appointments">
+              <div class="todayCardHeader"><h3>Agendamentos / notificações</h3><span>${appointments.length}</span></div>
+              ${renderLimitedSection('appointments', appointments, (shown)=>renderAppointments(shown, db))}
+            </section>` : ""}
+
+            ${activeFilter === "all" || activeFilter === "tasks" ? `
+            <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="tasks">
+              <div class="todayCardHeader"><h3>Tarefas de hoje / atrasadas</h3><span>${tasks.length}</span></div>
+              ${renderLimitedSection('tasks', tasks, (shown)=>renderTasksList(shown, db))}
+            </section>` : ""}
+
+            ${activeFilter === "all" || activeFilter === "receipts" ? `
+            <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="receipts">
+              <div class="todayCardHeader"><h3>Recebimentos vencendo / atrasados</h3><span>${receipts.length}</span></div>
+              ${renderLimitedSection('receipts', receipts, (shown)=>renderReceipts(shown, db))}
+            </section>` : ""}
+
+            ${activeFilter === "all" || activeFilter === "birthdays" ? `
+            <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="birthdays">
+              <div class="todayCardHeader">
+                <h3>Aniversariantes do dia</h3>
+                <div class="todayHeaderActions">
+                  <button class="todayMiniBtn" onclick="CRONOS_TODAY.editBirthdayTemplate()">Editar mensagem</button>
+                  <span>${birthdays.length}</span>
+                </div>
+              </div>
+              ${renderLimitedSection('birthdays', birthdays, (shown)=>renderBirthdays(shown, db))}
+            </section>` : ""}
+
+            ${activeFilter === "all" || activeFilter === "flows" ? `
+            <section class="todayCard ${activeFilter !== "all" ? "todayFull" : ""}" data-section="flows">
+              <div class="todayCardHeader"><h3>Fluxos assistidos</h3><span>${flows.length}</span></div>
+              ${renderLimitedSection('flows', flows, (shown)=>renderFlows(shown, db))}
+            </section>` : ""}
+          </div>
         </div>
-      </div>
-    `;
+      `;
+    };
+
+    if(options.defer){
+      const hasValidCache = TODAY_STATE.cacheData && TODAY_STATE.cacheKey === todayCollectionsCacheKey(db, a);
+      if(hasValidCache){
+        runRender(false);
+        return;
+      }
+      TODAY_STATE.renderToken = (TODAY_STATE.renderToken || 0) + 1;
+      const token = TODAY_STATE.renderToken;
+      renderTodaySkeleton();
+      const later = ()=>{
+        if(token !== TODAY_STATE.renderToken) return;
+        try{ runRender(!!options.force); }
+        catch(err){
+          console.error("Hoje no Cronos: falha ao renderizar", err);
+          view.innerHTML = `<div class="todayEmpty">Não consegui carregar o Hoje no Cronos agora. Atualiza daqui a pouco, que nem todo caos precisa virar drama.</div>`;
+        }
+      };
+      if(typeof requestAnimationFrame === "function") requestAnimationFrame(()=>setTimeout(later, 0));
+      else setTimeout(later, 0);
+      return;
+    }
+
+    runRender(!!options.force);
   }
 
   function show(){
@@ -1886,21 +1972,22 @@
     ensureNav();
     ensureView();
     hideOtherViews();
-    render();
+    render({ defer:true });
     scheduleScrollCronosToTop();
   }
 
 
   function refresh(btn){
+    invalidateTodayCache();
     updateButtonLoading(btn || $("todayRefreshBtn"), true);
     setTimeout(()=>{
       try{
-        render();
+        render({ force:true, defer:true });
         toast("Hoje no Cronos atualizado ✅");
       }finally{
-        updateButtonLoading($("todayRefreshBtn"), false);
+        setTimeout(()=>updateButtonLoading($("todayRefreshBtn"), false), 120);
       }
-    }, 350);
+    }, 80);
   }
 
   window.CRONOS_TODAY = {
@@ -1911,6 +1998,7 @@
     showMore,
     showLess,
     updateNavCount,
+    invalidateTodayCache,
     syncNavBadgeStyle,
     patchDashboardAppointmentKpi,
     fixSidebarDashboardCount,

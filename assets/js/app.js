@@ -4629,14 +4629,16 @@ function applyTheme(theme){
   // A classe dura só o tempo da troca visual e congela as pílulas no estado correto.
   try{
     clearTimeout(window.__CRONOS_THEME_SWITCH_TIMER__);
-    root.classList.add("cronos-theme-switching");
-    if(body) body.classList.add("cronos-theme-switching");
+    root.classList.add("cronos-theme-switching", "themeSwitching");
+    if(body) body.classList.add("cronos-theme-switching", "themeSwitching");
+    // A troca visual precisa ser atômica: congela transições por poucos frames
+    // para evitar sidebar/botões claros atrasados no modo escuro.
     window.__CRONOS_THEME_SWITCH_TIMER__ = setTimeout(()=>{
       try{
-        root.classList.remove("cronos-theme-switching");
-        if(document.body) document.body.classList.remove("cronos-theme-switching");
+        root.classList.remove("cronos-theme-switching", "themeSwitching");
+        if(document.body) document.body.classList.remove("cronos-theme-switching", "themeSwitching");
       }catch(_){ }
-    }, 260);
+    }, 120);
   }catch(_){ }
 
   if(isLight){
@@ -4657,18 +4659,15 @@ function applyTheme(theme){
 
   const syncInjectedThemeBits = ()=>{
     try{
-      if(window.CRONOS_TODAY){
-        if(typeof window.CRONOS_TODAY.updateNavCount === "function") window.CRONOS_TODAY.updateNavCount();
-        if(typeof window.CRONOS_TODAY.syncNavBadgeStyle === "function") window.CRONOS_TODAY.syncNavBadgeStyle();
+      if(window.CRONOS_TODAY && typeof window.CRONOS_TODAY.syncNavBadgeStyle === "function"){
+        window.CRONOS_TODAY.syncNavBadgeStyle();
       }
     }catch(_){ }
   };
   try{
     syncInjectedThemeBits();
     requestAnimationFrame(syncInjectedThemeBits);
-    setTimeout(syncInjectedThemeBits, 40);
-    setTimeout(syncInjectedThemeBits, 140);
-    setTimeout(syncInjectedThemeBits, 260);
+    setTimeout(syncInjectedThemeBits, 80);
   }catch(_){ }
 }
 function setThemeIcons(icon){
@@ -6698,23 +6697,29 @@ function showApp(actor){
   syncThemeButtons();
   applyRoleVisibility(actor);
 
-  try{
-    const db = loadDB();
-    const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
-    const stats = syncInstallmentTasks(db, actor) || {};
-    const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
-    if(before !== after){
-      // No boot, não força gravação do pacote inteiro na nuvem. As tarefas automáticas
-      // podem ser regeneradas e isso evita timeout em clínicas com base grande.
-      saveDB(db, { skipCloud:true });
-      if(!window.__CRONOS_TASK_REPAIR_TOASTED__){
-        window.__CRONOS_TASK_REPAIR_TOASTED__ = true;
-        toast("Tarefas higienizadas", `Antes: ${before} • Depois: ${after}`);
+  // Não bloqueia login/F5 higienizando tarefas automáticas antes da primeira tela.
+  // A rotina continua existindo, mas roda em segundo plano depois do app aparecer.
+  const deferTaskRepair = ()=>{
+    try{
+      const db = loadDB();
+      const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      const stats = syncInstallmentTasks(db, actor) || {};
+      const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      if(before !== after){
+        saveDB(db, { skipCloud:true });
+        if(!window.__CRONOS_TASK_REPAIR_TOASTED__){
+          window.__CRONOS_TASK_REPAIR_TOASTED__ = true;
+          console.info("Cronos: tarefas automáticas ajustadas em segundo plano.", {before, after, stats});
+        }
       }
+    }catch(e){
+      console.warn("Falha ao higienizar tarefas em segundo plano:", e);
     }
-  }catch(e){
-    console.warn("Falha ao higienizar tarefas no boot:", e);
-  }
+  };
+  try{
+    if("requestIdleCallback" in window) requestIdleCallback(deferTaskRepair, { timeout:1800 });
+    else setTimeout(deferTaskRepair, 350);
+  }catch(_){ setTimeout(deferTaskRepair, 350); }
 
   window.__CRONOS_BOOTED = true;
 }
