@@ -2384,3 +2384,70 @@ body.cronos-nav-switching .nav button:not(.active){
     filter:none !important;
   }
 }
+
+
+/* =====================================================
+   Performance Visual V1 — troca de tema atômica
+   Congela transições/gradientes durante 2 frames para impedir botões claros
+   atrasados quando sai do modo claro para o escuro.
+   ===================================================== */
+html.cronos-theme-switching *,
+html.cronos-theme-switching *::before,
+html.cronos-theme-switching *::after,
+body.cronos-theme-switching *,
+body.cronos-theme-switching *::before,
+body.cronos-theme-switching *::after,
+html.themeSwitching *,
+html.themeSwitching *::before,
+html.themeSwitching *::after,
+body.themeSwitching *,
+body.themeSwitching *::before,
+body.themeSwitching *::after{
+  transition:none !important;
+  animation:none !important;
+  transition-delay:0s !important;
+}
+
+html.cronos-theme-switching:not(.light) .sidebar .nav button,
+body.cronos-theme-switching:not(.light) .sidebar .nav button,
+html.themeSwitching:not(.light) .sidebar .nav button,
+body.themeSwitching:not(.light) .sidebar .nav button{
+  background:rgba(255,255,255,.035) !important;
+  border-color:rgba(148,163,184,.18) !important;
+  color:var(--text) !important;
+  -webkit-text-fill-color:var(--text) !important;
+  box-shadow:none !important;
+  filter:none !important;
+}
+
+html.cronos-theme-switching:not(.light) .sidebar .nav button.active,
+body.cronos-theme-switching:not(.light) .sidebar .nav button.active,
+html.themeSwitching:not(.light) .sidebar .nav button.active,
+body.themeSwitching:not(.light) .sidebar .nav button.active{
+  color:#f8f7ff !important;
+  -webkit-text-fill-color:#f8f7ff !important;
+  border-color:rgba(196,181,253,.50) !important;
+  background:linear-gradient(135deg,rgba(88,28,135,.48),rgba(109,40,217,.38),rgba(49,46,129,.34)),rgba(15,23,42,.58) !important;
+  box-shadow:0 9px 18px rgba(88,28,135,.13),inset 0 0 0 1px rgba(255,255,255,.07) !important;
+}
+
+html.cronos-theme-switching:not(.light) .sidebar .sideFooter button,
+body.cronos-theme-switching:not(.light) .sidebar .sideFooter button,
+html.themeSwitching:not(.light) .sidebar .sideFooter button,
+body.themeSwitching:not(.light) .sidebar .sideFooter button{
+  background:rgba(255,255,255,.035) !important;
+  color:var(--text) !important;
+  -webkit-text-fill-color:var(--text) !important;
+  border-color:rgba(148,163,184,.18) !important;
+  box-shadow:none !important;
+}
+
+html.cronos-theme-switching.light .sidebar .nav button,
+body.cronos-theme-switching.light .sidebar .nav button,
+html.themeSwitching.light .sidebar .nav button,
+body.themeSwitching.light .sidebar .nav button{
+  background:linear-gradient(135deg, rgba(59,130,246,.13), rgba(6,182,212,.095)), rgba(255,255,255,.88) !important;
+  border-color:rgba(37,99,235,.24) !important;
+  color:var(--text) !important;
+  -webkit-text-fill-color:var(--text) !important;
+}
