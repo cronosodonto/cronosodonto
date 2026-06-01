@@ -6251,6 +6251,7 @@ async function ensureCloudDBLoaded(force=false){
 
     DB = loaded;
     if(usesAnyClinicTableV2()) captureV2Snapshots(DB);
+    try{ cronosMarkCloudDBHydrated("support_loaded"); }catch(_){ }
     setSupportDB(DB);
     CLOUD_DB_READY = true;
     CLOUD_ROW_ID = support.clinic_id || null;
@@ -6297,6 +6298,7 @@ async function ensureCloudDBLoaded(force=false){
       }
       DB = loaded;
       CLOUD_DB_READY = true;
+      try{ cronosMarkCloudDBHydrated("ensure_cloud_loaded"); }catch(_){ }
       safeSetLocalDB(DB);
 
       // Alterações reais chamam saveDB; não reenviamos a base inteira após o pull.
@@ -8790,9 +8792,10 @@ async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
     await refreshCloudDataNow({ force:true, reason: installmentsOnly ? "installments_button" : "manual_button" });
     if(installmentsOnly){
       renderInstallmentsView();
-      updateSidebarPills();
+      cronosRefreshSidebarCountersNow({ reason:"manual_installments_refresh", repeat:true });
     }else{
       renderAll();
+      cronosRefreshSidebarCountersNow({ reason:"manual_refresh", repeat:true });
     }
     toast("Atualizado", "Dados verificados na nuvem.");
   }catch(error){
@@ -11196,6 +11199,7 @@ function renderTasks(){
   const db = loadDB();
   syncInstallmentTasks(db, actor);
   saveDB(db, { skipCloud:true });
+  try{ cronosUpdateTasksSidebarPill({ repair:false }); }catch(_){ }
 
   const tbody = el("tasksTbody");
   if(!tbody) return;
@@ -12385,6 +12389,101 @@ function cronosBootFromLocalCacheAfterF5(session){
   }
 }
 
+
+/* =========================
+   V23 — pós-sincronização: contadores laterais só liberam atualizados
+   ========================= */
+function cronosMarkCloudDBHydrated(reason=""){
+  try{
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    window.__CRONOS_CONTACTS_BY_ID_CACHE__ = null;
+    window.__CRONOS_LAST_HYDRATION_REASON__ = reason || "cloud_hydrated";
+  }catch(_){ }
+}
+
+function cronosUpdateInstallmentsSidebarPill(){
+  try{
+    const db = loadDB();
+    const actor = currentActor();
+    if(!db || !actor) return;
+    const mm = document.getElementById("instMonth");
+    const mk = (mm && mm.value) ? mm.value : todayISO().slice(0,7);
+    if(typeof installmentsKPIs === "function"){
+      const k = installmentsKPIs(db, actor, mk);
+      const pill = document.getElementById("pillInst");
+      if(pill) pill.textContent = String(k?.lateN || 0);
+    }
+  }catch(e){ console.warn("Cronos V23: falha ao atualizar contador de recebimentos", e); }
+}
+
+function cronosUpdateTodaySidebarBadge(){
+  try{
+    if(window.CRONOS_TODAY && typeof window.CRONOS_TODAY.invalidateTodayCache === "function"){
+      window.CRONOS_TODAY.invalidateTodayCache();
+    }
+    if(window.CRONOS_TODAY && typeof window.CRONOS_TODAY.updateNavCount === "function"){
+      window.CRONOS_TODAY.updateNavCount();
+    }
+    if(window.CRONOS_TODAY && typeof window.CRONOS_TODAY.syncNavBadgeStyle === "function"){
+      window.CRONOS_TODAY.syncNavBadgeStyle();
+    }
+  }catch(e){ console.warn("Cronos V23: falha ao atualizar Hoje no Cronos", e); }
+}
+
+
+function cronosUpdateTasksSidebarPill({ repair=true } = {}){
+  try{
+    const db = loadDB();
+    const actor = currentActor();
+    if(!db || !actor) return;
+
+    if(repair && typeof syncInstallmentTasks === "function"){
+      const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      try{ syncInstallmentTasks(db, actor); }catch(e){ console.warn("Cronos V24: falha ao sincronizar tarefas automáticas", e); }
+      const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      if(before !== after){
+        try{ saveDB(db, { skipCloud:true }); }catch(_){ }
+      }
+    }
+
+    const currentMonth = todayISO().slice(0,7);
+    const today = new Date(todayISO()+"T00:00:00");
+    const currentMonthTasks = (db.tasks||[]).filter(t => {
+      if(t.done === true) return false;
+      if(t.masterId && t.masterId !== actor.masterId) return false;
+      return String(t.dueDate||"").slice(0,7) === currentMonth;
+    });
+    const overdue = currentMonthTasks.filter(t => {
+      if(!t.dueDate) return false;
+      return new Date(String(t.dueDate)+"T00:00:00") < today;
+    }).length;
+
+    const pill = document.getElementById("pillTasks");
+    if(pill) pill.textContent = overdue ? `${overdue} ⚠️` : String(currentMonthTasks.length);
+  }catch(e){ console.warn("Cronos V24: falha ao atualizar contador de tarefas", e); }
+}
+
+function cronosRefreshSidebarCountersNow({ reason="", repeat=true } = {}){
+  const run = ()=>{
+    try{ window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null; }catch(_){ }
+    try{ updateSidebarPills(); }catch(e){ console.warn("Cronos V23: falha ao atualizar contadores laterais", e); }
+    cronosUpdateTasksSidebarPill({ repair:true });
+    cronosUpdateInstallmentsSidebarPill();
+    cronosUpdateTodaySidebarBadge();
+  };
+
+  run();
+
+  // Algumas badges são criadas por módulos externos depois do shell principal.
+  // Repetimos em poucos frames para evitar abrir a tela com 0/1 até o usuário clicar.
+  if(repeat){
+    [60, 180, 420].forEach(ms=>setTimeout(run, ms));
+  }
+
+  try{ window.__CRONOS_LAST_COUNTER_REFRESH_REASON__ = reason || "v23"; }catch(_){ }
+}
+
 function cronosRefreshCloudAfterFastResume(){
   if(window.__CRONOS_FAST_RESUME_REFRESHING__) return;
   window.__CRONOS_FAST_RESUME_REFRESHING__ = true;
@@ -12398,6 +12497,7 @@ function cronosRefreshCloudAfterFastResume(){
     let refreshed = false;
     try{
       await ensureCloudDBLoaded(true);
+      cronosMarkCloudDBHydrated("fast_resume_pull");
       const actorInfo = await syncCurrentCloudActor();
       const actor = currentActor();
 
@@ -12415,7 +12515,7 @@ function cronosRefreshCloudAfterFastResume(){
 
       const active = cronosGetCurrentVisibleView() || firstAllowedView(actor);
       try{ renderActiveViewOnly(active); }catch(_){ try{ renderAll(); }catch(__){} }
-      try{ updateSidebarPills(); }catch(_){ }
+      cronosRefreshSidebarCountersNow({ reason:"fast_resume_after_cloud", repeat:true });
 
       window.__CRONOS_FAST_RESUME_REFRESHED_AT__ = Date.now();
       refreshed = true;
@@ -12535,6 +12635,7 @@ async function finalizeCloudLogin(){
   }
 
   await boot();
+  try{ cronosRefreshSidebarCountersNow({ reason:"login_after_boot", repeat:true }); }catch(_){ }
 
   const actor = currentActor();
   if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
@@ -15637,3 +15738,6 @@ window.CRONOS_PROC_UI = {
     console.error('Falha ao iniciar módulo de ficha/prontuário:', err);
   }
 })();
+
+
+/* V24 — corrige contador lateral de Tarefas após F5/login: sincroniza tarefas automáticas antes de calcular a badge. */
