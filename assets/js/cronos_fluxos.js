@@ -37,9 +37,14 @@
     try{ if(typeof window.escapeHTML === "function") return window.escapeHTML(v); }catch(_){}
     return String(v ?? "").replace(/[&<>\"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
   }
+  function localISODate(date=new Date()){
+    const d = date instanceof Date ? date : new Date(date);
+    if(isNaN(d)) return "";
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  }
   function todayISO(){
     try{ if(typeof window.todayISO === "function") return window.todayISO(); }catch(_){}
-    return new Date().toISOString().slice(0,10);
+    return localISODate(new Date());
   }
   function nowISO(){ return new Date().toISOString(); }
   function uid(prefix="id"){
@@ -51,7 +56,7 @@
     const [y,m,d] = base.split("-").map(Number);
     const dt = new Date(y, (m||1)-1, d||1);
     dt.setDate(dt.getDate() + Number(days || 0));
-    return dt.toISOString().slice(0,10);
+    return localISODate(dt);
   }
   function fmtBR(iso){
     try{ if(typeof window.fmtBR === "function") return window.fmtBR(iso); }catch(_){}

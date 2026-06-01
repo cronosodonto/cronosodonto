@@ -96,7 +96,18 @@ function parseBRNum(v){
   const n = Number(s.replace(/\./g, "").replace(/,/g, ".").replace(/[^0-9.-]/g, ""));
   return (isFinite(n) && !isNaN(n)) ? n : null;
 }
-function isoDate(d){ return (d instanceof Date) ? d.toISOString().slice(0,10) : String(d||"").slice(0,10); }
+function cronosLocalISODate(date=new Date()){
+  const d = date instanceof Date ? date : new Date(date);
+  if(isNaN(d)) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function cronosLocalMonthKey(date=new Date()){
+  return cronosLocalISODate(date).slice(0,7);
+}
+function isoDate(d){ return (d instanceof Date) ? cronosLocalISODate(d) : String(d||"").slice(0,10); }
 function addMonthsISO(iso, k){
   const [y,m,d] = iso.split("-").map(x=>parseInt(x,10));
   const dt = new Date(y, (m-1)+k, d||1);
@@ -3236,7 +3247,7 @@ function cronosNewFinPatientSuggestionsHTML(suggestions, q){
   if(list.length){
     return list.map(x=>`
       <button type="button" class="btn" style="text-align:left;justify-content:flex-start" onpointerdown="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')" onclick="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')">
-        <b>${escapeHTML(x.contact.name || "(sem nome)")}</b> <span class="muted">• ${escapeHTML(x.contact.phone||"")} • ${monthLabel(x.entry.monthKey||new Date().toISOString().slice(0,7))}</span>
+        <b>${escapeHTML(x.contact.name || "(sem nome)")}</b> <span class="muted">• ${escapeHTML(x.contact.phone||"")} • ${monthLabel(x.entry.monthKey||todayISO().slice(0,7))}</span>
       </button>
     `).join("");
   }
@@ -3789,7 +3800,7 @@ function renderInstallmentsView(){
   });
 
   const mm = el("instMonth");
-  const nowMK = new Date().toISOString().slice(0,7);
+  const nowMK = todayISO().slice(0,7);
   if(mm && !mm.value) mm.value = nowMK;
 
   const mk = mm?.value || nowMK;
@@ -4649,9 +4660,7 @@ function escapeHTML(s){
 function uid(prefix="id"){ return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`; }
 
 function todayISO(){
-  const d = new Date();
-  const tz = d.getTimezoneOffset()*60000;
-  return new Date(d - tz).toISOString().slice(0,10);
+  return cronosLocalISODate(new Date());
 }
 function parseISO(s){ return s ? new Date(s+"T00:00:00") : null; }
 function fmtBR(s){
@@ -4685,7 +4694,7 @@ function formatCPFInput(v){
   return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9, 11)}`;
 }
 function monthKeyFromDate(iso){
-  if(!iso) return new Date().toISOString().slice(0,7);
+  if(!iso) return todayISO().slice(0,7);
   return iso.slice(0,7);
 }
 function monthLabel(key){
@@ -5512,35 +5521,84 @@ async function loadCurrentClinicDataSources(){
 }
 async function fetchAllV2Payloads(tableName){
   if(!CLOUD_CLINIC_ID) throw new Error("clinic_id não resolvido para leitura V2.");
+
   const output = [];
   const pageSize = 1000;
-  for(let start = 0; ; start += pageSize){
-    const { data, error } = await supabaseClient
-      .from(tableName)
-      .select("id, legacy_payload")
-      .eq("clinic_id", CLOUD_CLINIC_ID)
-      .range(start, start + pageSize - 1);
-    if(error) throw error;
-    const rows = Array.isArray(data) ? data : [];
-    rows.forEach(row=>{
+  const maxParallelPages = 4;
+
+  const pushRows = (rows)=>{
+    (Array.isArray(rows) ? rows : []).forEach(row=>{
       const payload = row?.legacy_payload && typeof row.legacy_payload === "object"
         ? { ...row.legacy_payload }
         : {};
       payload.id = payload.id || row.id;
       output.push(payload);
     });
-    if(rows.length < pageSize) break;
+  };
+
+  const fetchPage = async (start, withCount=false)=>{
+    const query = supabaseClient
+      .from(tableName)
+      .select("id, legacy_payload", withCount ? { count:"exact" } : undefined)
+      .eq("clinic_id", CLOUD_CLINIC_ID)
+      .range(start, start + pageSize - 1);
+
+    const { data, error, count } = await query;
+    if(error) throw error;
+    return { rows: Array.isArray(data) ? data : [], count: Number.isFinite(count) ? count : null };
+  };
+
+  // V21: antes o Cronos buscava as páginas V2 uma por uma. Em clínica grande
+  // isso fazia o F5 parecer que foi buscar café em outra cidade. Agora a primeira
+  // página vem com contagem total e as demais páginas são baixadas em lotes paralelos.
+  const first = await fetchPage(0, true);
+  pushRows(first.rows);
+
+  if(Number.isFinite(first.count) && first.count > first.rows.length){
+    const starts = [];
+    for(let start = pageSize; start < first.count; start += pageSize){
+      starts.push(start);
+    }
+
+    for(let i = 0; i < starts.length; i += maxParallelPages){
+      const batch = starts.slice(i, i + maxParallelPages);
+      const pages = await Promise.all(batch.map(start => fetchPage(start, false)));
+      pages.forEach(page => pushRows(page.rows));
+    }
+
+    return output;
   }
+
+  // Fallback: se o Supabase não devolver count por algum motivo, mantém o
+  // comportamento antigo e seguro, sem risco de cortar a base pela metade.
+  if(first.rows.length >= pageSize){
+    for(let start = pageSize; ; start += pageSize){
+      const page = await fetchPage(start, false);
+      pushRows(page.rows);
+      if(page.rows.length < pageSize) break;
+    }
+  }
+
   return output;
 }
 async function hydrateClinicArraysFromTables(db){
   const loaded = normalizeDBShape(db || freshDB());
+
+  // V21: contatos e leads não precisam esperar um pelo outro. Baixamos em paralelo
+  // para reduzir o tempo do F5/login sem voltar a mostrar contagem antiga na tela.
+  const jobs = [];
+
   if(isClinicSourceV2("contacts")){
-    loaded.contacts = await fetchAllV2Payloads(CLOUD_CONTACTS_V2_TABLE);
+    jobs.push(fetchAllV2Payloads(CLOUD_CONTACTS_V2_TABLE).then(rows=>{ loaded.contacts = rows; }));
   }
   if(isClinicSourceV2("entries")){
-    loaded.entries = await fetchAllV2Payloads(CLOUD_LEADS_V2_TABLE);
+    jobs.push(fetchAllV2Payloads(CLOUD_LEADS_V2_TABLE).then(rows=>{ loaded.entries = rows; }));
   }
+
+  if(jobs.length){
+    await Promise.all(jobs);
+  }
+
   captureV2Snapshots(loaded);
   return loaded;
 }
@@ -6838,7 +6896,7 @@ function defaultFilters(){
   const now = new Date();
   return {
     year: String(now.getFullYear()),
-    monthKey: now.toISOString().slice(0,7), // YYYY-MM or "all"
+    monthKey: cronosLocalMonthKey(now), // YYYY-MM or "all"
     search:"",
     status:"",
     campaign:"",
@@ -6905,7 +6963,7 @@ window.CRONOS_RESET_FILTERS = resetFiltersToDefault;
 function getUIFilters(){
   return {
     year: val("fYear", String(new Date().getFullYear())),
-    monthKey: val("fMonth", new Date().toISOString().slice(0,7)), // YYYY-MM or "all"
+    monthKey: val("fMonth", todayISO().slice(0,7)), // YYYY-MM or "all"
     search: val("fSearch","").trim(),
     status: val("fStatus",""),
     campaign: val("fCampaign",""),
@@ -7127,10 +7185,10 @@ function updateSidebarPills(){
   el("pillHot").textContent = `${hotCount} hot`;
   el("pillUsers").textContent = String(usersCount);
 
-const currentMonth = new Date().toISOString().slice(0,7);
+const currentMonth = todayISO().slice(0,7);
 const currentMonthTasks = (db.tasks||[]).filter(t=>t.masterId===actor.masterId && t.done!==true && String(t.dueDate||"").slice(0,7)===currentMonth);
 const tasksOpen = currentMonthTasks.length;
-const overdue = currentMonthTasks.filter(t=>t.dueDate && (new Date(t.dueDate+"T00:00:00") < new Date(new Date().toISOString().slice(0,10)+"T00:00:00"))).length;
+const overdue = currentMonthTasks.filter(t=>t.dueDate && (new Date(t.dueDate+"T00:00:00") < new Date(todayISO()+"T00:00:00"))).length;
 const pillK = el("pillKanban"); if(pillK) pillK.textContent = String(total);
 const pillT = el("pillTasks"); if(pillT) pillT.textContent = overdue ? `${overdue} ⚠️` : String(tasksOpen);
 
@@ -7432,10 +7490,10 @@ function legacyPlanShouldBeSkippedAsAdapter(entry, plan){
   return hasOriginalInstallments || hasOriginalPaid || hasLegacyInstallPlan;
 }
 function pickISOFlexible(raw){
-  if(raw instanceof Date) return raw.toISOString().slice(0,10);
+  if(raw instanceof Date) return cronosLocalISODate(raw);
   if(typeof raw === "number"){
     const d = new Date(raw);
-    return isNaN(d) ? "" : d.toISOString().slice(0,10);
+    return isNaN(d) ? "" : cronosLocalISODate(d);
   }
   if(typeof raw === "string"){
     const s = raw.trim();
@@ -7449,7 +7507,7 @@ function pickISOFlexible(raw){
       return `${yyyy}-${mo}-${dd}`;
     }
     const d = new Date(s);
-    if(!isNaN(d)) return d.toISOString().slice(0,10);
+    if(!isNaN(d)) return cronosLocalISODate(d);
   }
   return "";
 }
@@ -7493,9 +7551,9 @@ function getDashboardPaymentsForRows(db, actor, rows){
     .filter(p=>p.__iso);
 }
 function buildDashboardRevenueData(rows, db, actor, filters){
-  const todayISO = new Date().toISOString().slice(0,10);
-  const currentMonthKey = todayISO.slice(0,7);
-  const currentYear = todayISO.slice(0,4);
+  const todayKey = todayISO();
+  const currentMonthKey = todayKey.slice(0,7);
+  const currentYear = todayKey.slice(0,4);
   const monthNamesShort = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
   const fromISO = String(filters?.periodFrom||"").trim();
   const toISO = String(filters?.periodTo||"").trim();
@@ -9161,7 +9219,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div>
         <label>Mês/Ano</label>
-        <input id="lf_month" type="month" ${ro?"disabled":""} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : new Date().toISOString().slice(0,7)))}" class="mono"/>
+        <input id="lf_month" type="month" ${ro?"disabled":""} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : todayISO().slice(0,7)))}" class="mono"/>
         <div class="help muted" style="font-size:12px">Agora é editável. Use para corrigir leads salvos no mês errado.</div>
       </div>
 
@@ -9294,8 +9352,8 @@ function openNewLead(){
   const actor = currentActor();
   if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
   if(!actor.perms.edit || !canAccessView("leads", actor)) return toast("Sem permissão", "Seu nível não pode criar leads.");
-  let monthKey = val("fMonth", new Date().toISOString().slice(0,7));
-  if(!monthKey || monthKey === "all") monthKey = new Date().toISOString().slice(0,7);
+  let monthKey = val("fMonth", todayISO().slice(0,7));
+  if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
   const entry = { monthKey, firstContactAt: todayISO(), status:"", origin:"", treatment:"", tags:[] };
   const contact = { name:"", phone:"", cpf:"", birthDate:"", firstSeenAt:"", lastSeenAt:"" };
 
@@ -9781,8 +9839,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const phone = normPhone(val("lf_phone"));
     if(!name || !phone) return toast("Nome e telefone são obrigatórios");
 
-    let monthKey = (val("lf_month","") || val("fMonth", new Date().toISOString().slice(0,7))).trim();
-    if(!monthKey || monthKey === "all") monthKey = new Date().toISOString().slice(0,7);
+    let monthKey = (val("lf_month","") || val("fMonth", todayISO().slice(0,7))).trim();
+    if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
     if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
 
     const now = new Date().toISOString();
@@ -10134,8 +10192,8 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   const c = db.contacts.find(x=>x.id===contactId);
   if(!c) return;
 
-  let monthKey = (val("lf_month","") || val("fMonth", new Date().toISOString().slice(0,7))).trim();
-  if(!monthKey || monthKey === "all") monthKey = new Date().toISOString().slice(0,7);
+  let monthKey = (val("lf_month","") || val("fMonth", todayISO().slice(0,7))).trim();
+  if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
   const entries = (db.entries||[])
     .filter(e=>e.masterId===actor.masterId && e.contactId===c.id)
     .sort((a,b)=>{
@@ -10843,7 +10901,7 @@ function exportJSON(){
   const blob = new Blob([JSON.stringify(db,null,2)], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `cronoscrm_backup_${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `cronoscrm_backup_${todayISO()}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -11125,7 +11183,7 @@ const TASK_ACTIONS = ["Ligar","WhatsApp","Enviar orçamento","Confirmar agendame
 
 function taskStatusLabel(t){
   const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
-  const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
+  const today = new Date(todayISO()+"T00:00:00");
   const overdue = due && due < today && !t.done;
  if(overdue) return `<span class="chip"><span class="dot hot"></span>Atrasado</span>`;
 if(t.done) return `<span class="chip"><span class="dot ok"></span>Feito</span>`;
@@ -11151,7 +11209,7 @@ function renderTasks(){
   // "Pendentes e em atraso" ignora o mês e mostra todas as tarefas abertas.
 
   if(monthEl && !monthEl.value){
-    monthEl.value = new Date().toISOString().slice(0,7);
+    monthEl.value = todayISO().slice(0,7);
   }
 
   [monthEl, searchEl, filterEl].forEach(ctrl => {
@@ -11215,7 +11273,7 @@ function renderTasks(){
   const allStatusMode = isTodosFilter;
   const allOpenMode = isAllOpenFilter;
 
-  const today = new Date(new Date().toISOString().slice(0,10)+"T00:00:00");
+  const today = new Date(todayISO()+"T00:00:00");
 
   const tasks = (db.tasks||[])
     .filter(t => !t.masterId || t.masterId === actor.masterId)
@@ -11302,7 +11360,7 @@ function openNewTask(){
   if(!actor) return;
   if(!actor.perms.edit || !canAccessView("tasks", actor)) return toast("Sem permissão", "Seu nível não pode criar tarefas.");
   const db = loadDB();
-  const monthKey = val("fMonth") || new Date().toISOString().slice(0,7);
+  const monthKey = val("fMonth") || todayISO().slice(0,7);
 
   const entries = filteredEntries();
   const opts = entries.map(e=>{
@@ -11497,27 +11555,12 @@ const bTask = el("btnNewTask"); if(bTask) bTask.addEventListener("click", openNe
 
 }
 function bindActions(){
-  el("btnLogout").onclick = async ()=>{
-    try{ if(typeof supabaseClient !== "undefined" && supabaseClient?.auth) await supabaseClient.auth.signOut(); }catch(_){}
-    DB = null;
-    resetCloudContext();
-    clearSupportContext();
-    clearClinicAccessState();
-    clearSession();
-    try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
-    toast("Saiu");
-    showAuth();
+  el("btnLogout").onclick = ()=>{
+    cronosInstantLogout();
   };
   const btnGateLogout = el("btnGateLogout");
-  if(btnGateLogout) btnGateLogout.onclick = async ()=>{
-    try{ if(typeof supabaseClient !== "undefined" && supabaseClient?.auth) await supabaseClient.auth.signOut(); }catch(_){}
-    DB = null;
-    resetCloudContext();
-    clearSupportContext();
-    clearClinicAccessState();
-    clearSession();
-    try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
-    showAuth();
+  if(btnGateLogout) btnGateLogout.onclick = ()=>{
+    cronosInstantLogout();
   };
   const btnCloseAccessNotice = el("btnCloseAccessNotice");
   if(btnCloseAccessNotice) btnCloseAccessNotice.onclick = hideAccessNotice;
@@ -11525,14 +11568,8 @@ function bindActions(){
   if(btnAccessNoticeContinue) btnAccessNoticeContinue.onclick = hideAccessNotice;
   const btnExitSupport = el("btnExitSupport");
   if(btnExitSupport) btnExitSupport.onclick = ()=>{
-    clearSupportContext();
-    clearClinicAccessState();
-    DB = null;
-    resetCloudContext();
-    clearSession();
-    try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
     toast("Modo suporte encerrado");
-    window.location.href = "/superadmin/";
+    cronosInstantLogout({ supportRedirect:true });
   };
   const btnRefreshNow = el("btnRefreshNow");
   if(btnRefreshNow) btnRefreshNow.onclick = ()=>runManualCloudRefresh(btnRefreshNow);
@@ -12242,6 +12279,199 @@ async function ensureCloudDBForLoginWithRetry(maxAttempts=3){
   return false;
 }
 
+
+/* =========================
+   V19 — F5 honesto: rápido, mas sem mostrar contagem antiga
+   ========================= */
+function cronosSafeSessionUser(session){
+  return session && session.user ? session.user : null;
+}
+
+function cronosHasUsableLocalCache(db){
+  if(!db || typeof db !== "object") return false;
+  return ((db.contacts || []).length + (db.entries || []).length + (db.masters || []).length + (db.users || []).length) > 0;
+}
+
+function cronosActorMatchesSupabaseSession(actor, session){
+  const user = cronosSafeSessionUser(session);
+  if(!actor || !user) return false;
+
+  const sessionEmail = String(user.email || "").trim().toLowerCase();
+  const sessionUid = String(user.id || "").trim();
+
+  if(actor.kind === "master"){
+    const actorEmail = String(actor.email || "").trim().toLowerCase();
+    // Master sem e-mail local é suspeito; melhor cair no fluxo completo da nuvem.
+    if(!actorEmail || !sessionEmail) return false;
+    return actorEmail === sessionEmail;
+  }
+
+  if(actor.kind === "user"){
+    const db = loadDB();
+    const row = (db.users || []).find(u => String(u.id) === String(actor.id));
+    if(!row) return false;
+
+    const authUid = String(row.authUid || "").trim();
+    if(authUid && sessionUid) return authUid === sessionUid;
+
+    const loginEmail = String(row.loginEmail || row.email || actor.email || "").trim().toLowerCase();
+    return !!loginEmail && !!sessionEmail && loginEmail === sessionEmail;
+  }
+
+  return false;
+}
+
+function cronosGetCurrentVisibleView(){
+  try{
+    const activeBtn = document.querySelector('.nav button.active');
+    const view = activeBtn?.dataset?.view || "";
+    if(view && APP_VIEWS.includes(view)) return view;
+  }catch(_){ }
+  return "";
+}
+
+function cronosBootFromLocalCacheAfterF5(session){
+  try{
+    if(isSupportMode()) return false;
+
+    const local = getLegacyLocalDB();
+    if(!cronosHasUsableLocalCache(local)) return false;
+
+    DB = normalizeDBShape(local);
+    const actor = currentActor();
+    if(!cronosActorMatchesSupabaseSession(actor, session)){
+      DB = null;
+      return false;
+    }
+
+    try{ cancelPendingCloudSync(); }catch(_){ }
+    try{ setSupportEntryLoading(false); }catch(_){ }
+    try{ setLoginLoading(false); }catch(_){ }
+
+    try{ fillSelectOptions(); }catch(e){ console.warn("Cronos F5 rápido: falha em fillSelectOptions", e); }
+
+    try{
+      const f = resetFiltersToDefault({ ui:false });
+      ensureYearOptions();
+      setUIFilters(f);
+      ensureMonthOptions();
+      setUIFilters(f);
+      saveFilters(getUIFilters());
+    }catch(e){ console.warn("Cronos F5 rápido: falha ao preparar filtros", e); }
+
+    try{
+      const db = loadDB();
+      if(migrateDBValues(db)) saveDB(db, { skipCloud:true });
+    }catch(e){ console.warn("Cronos F5 rápido: falha na migração leve", e); }
+
+    showApp(actor);
+    applyRoleVisibility(actor);
+    bindNav();
+
+    const target = cronosGetCurrentVisibleView() || firstAllowedView(actor);
+    setActiveView(target);
+
+    // V19: mantém a tela de carregamento por cima até a sincronização real da nuvem
+    // terminar. O app fica preparado por baixo, mas não mostra contagens antigas.
+    try{ document.body?.classList.add("cronos-fast-resume-pending"); }catch(_){ }
+    try{ showBootSplash("Atualizando dados da clínica..."); }catch(_){ }
+
+    window.__CRONOS_FAST_RESUME_ACTIVE__ = true;
+    window.__CRONOS_FAST_RESUME_AT__ = Date.now();
+    return true;
+  }catch(error){
+    console.warn("Cronos F5 rápido indisponível; usando boot completo.", error);
+    return false;
+  }
+}
+
+function cronosRefreshCloudAfterFastResume(){
+  if(window.__CRONOS_FAST_RESUME_REFRESHING__) return;
+  window.__CRONOS_FAST_RESUME_REFRESHING__ = true;
+
+  // V19: o app pode preparar a tela com cache local, mas a tela de carregamento
+  // precisa continuar cobrindo tudo até a nuvem terminar de baixar e a view ativa
+  // ser renderizada novamente. Assim o usuário não vê contagens antigas piscando.
+  try{ showBootSplash("Atualizando dados da clínica..."); }catch(_){ }
+
+  setTimeout(async ()=>{
+    let refreshed = false;
+    try{
+      await ensureCloudDBLoaded(true);
+      const actorInfo = await syncCurrentCloudActor();
+      const actor = currentActor();
+
+      if(!actorInfo || !actor){
+        if(window.__CRONOS_ACCESS_BLOCK__?.title){
+          toast(window.__CRONOS_ACCESS_BLOCK__.title, window.__CRONOS_ACCESS_BLOCK__.message || "");
+          showAuth();
+        }
+        return;
+      }
+
+      try{ fillSelectOptions(); }catch(_){ }
+      try{ applyRoleVisibility(actor); }catch(_){ }
+      try{ if(typeof window.__refreshFeatureAccess === "function") await window.__refreshFeatureAccess(true, actor); }catch(_){ }
+
+      const active = cronosGetCurrentVisibleView() || firstAllowedView(actor);
+      try{ renderActiveViewOnly(active); }catch(_){ try{ renderAll(); }catch(__){} }
+      try{ updateSidebarPills(); }catch(_){ }
+
+      window.__CRONOS_FAST_RESUME_REFRESHED_AT__ = Date.now();
+      refreshed = true;
+    }catch(error){
+      console.warn("Cronos: atualização após F5 falhou.", error);
+      // Se a nuvem falhar, libera o cache local com aviso leve. Melhor do que travar o usuário.
+      try{ toast("Nuvem demorou", "Abri com os dados locais. Atualize de novo em alguns segundos se as contagens parecerem antigas."); }catch(_){ }
+    }finally{
+      window.__CRONOS_FAST_RESUME_REFRESHING__ = false;
+      try{ hideBootSplash(); }catch(_){ }
+      if(refreshed){
+        try{ document.body?.classList.remove("cronos-fast-resume-pending"); }catch(_){ }
+      }
+    }
+  }, 80);
+}
+
+function cronosClearSupabaseAuthStorageFast(){
+  try{ localStorage.removeItem(CRONOS_MAIN_AUTH_STORAGE_KEY); }catch(_){ }
+  try{ sessionStorage.removeItem(CRONOS_MAIN_AUTH_STORAGE_KEY); }catch(_){ }
+}
+
+function cronosSignOutSupabaseInBackground(){
+  try{
+    if(typeof supabaseClient !== "undefined" && supabaseClient?.auth){
+      const p = supabaseClient.auth.signOut({ scope:"local" });
+      if(p && typeof p.catch === "function") p.catch(err => console.warn("Logout Supabase em segundo plano falhou:", err));
+    }
+  }catch(error){
+    console.warn("Logout Supabase em segundo plano falhou:", error);
+  }
+}
+
+function cronosInstantLogout({ supportRedirect=false }={}){
+  try{ cancelPendingCloudSync(); }catch(_){ }
+  try{ suppressCloudFailureToasts(6000); }catch(_){ }
+  try{ cronosClearSupabaseAuthStorageFast(); }catch(_){ }
+
+  DB = null;
+  resetCloudContext();
+  clearSupportContext();
+  clearClinicAccessState();
+  clearSession();
+  try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
+
+  setTimeout(cronosSignOutSupabaseInBackground, 0);
+
+  if(supportRedirect){
+    window.location.href = "/superadmin/";
+    return;
+  }
+
+  toast("Saiu");
+  showAuth();
+}
+
 async function finalizeCloudLogin(){
   try{
     const explicitLogin = !!window.__CRONOS_EXPLICIT_LOGIN__;
@@ -12390,6 +12620,14 @@ async function verificarSessao() {
 
   if (data.session) {
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
+
+    // Em F5, abre primeiro com o cache local da própria sessão e sincroniza a nuvem em segundo plano.
+    // Isso tira aquele carregamento longo de 8–10s sem voltar a mostrar dados de outra clínica.
+    if(cronosBootFromLocalCacheAfterF5(data.session)){
+      cronosRefreshCloudAfterFastResume();
+      return;
+    }
+
     await finalizeCloudLogin();
     return;
   }

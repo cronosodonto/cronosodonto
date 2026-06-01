@@ -81,11 +81,17 @@
     return typeof window.loadDB === "function" && typeof window.currentActor === "function";
   }
 
+  function localISODate(date=new Date()){
+    const d = date instanceof Date ? date : new Date(date);
+    if(isNaN(d)) return "";
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  }
+
   function todayISO(){
     try{
       if(typeof window.todayISO === "function") return window.todayISO();
     }catch(_){}
-    return new Date().toISOString().slice(0,10);
+    return localISODate(new Date());
   }
 
   function nowISO(){

@@ -56,7 +56,8 @@
   function esc(v){try{if(typeof window.escapeHTML==='function')return window.escapeHTML(v)}catch(_){} return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
   function money(v){try{if(typeof window.moneyBR==='function')return window.moneyBR(v)}catch(_){} return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
   function fmt(iso){try{if(typeof window.fmtBR==='function')return window.fmtBR(iso)}catch(_){} const s=String(iso||'').slice(0,10),p=s.split('-'); return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:s}
-  function today(){try{if(typeof window.todayISO==='function')return window.todayISO()}catch(_){} return new Date().toISOString().slice(0,10)}
+  function localISODate(date=new Date()){const d=date instanceof Date?date:new Date(date); if(isNaN(d))return ''; return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+  function today(){try{if(typeof window.todayISO==='function')return window.todayISO()}catch(_){} return localISODate(new Date())}
   function parse(v){
     let s=String(v??'').trim();
     if(!s)return null;
@@ -1015,7 +1016,7 @@ Observação: documento interno de apoio à decisão, baseado nos dados registra
     </style></head><body><div class="doc">
       <div class="top">
         <div>
-          <div class="brandSub">${esc(fmt(new Date().toISOString().slice(0,10)))} • ${esc(today())}</div>
+          <div class="brandSub">${esc(fmt(today()))} • ${esc(today())}</div>
           <h1>${esc(clinic())}</h1>
           <div class="muted">Análise Inteligente de Risco — uso interno</div>
         </div>

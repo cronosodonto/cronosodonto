@@ -28,7 +28,8 @@
   }
   function denyPerformanceAccess(){toast('Acesso restrito','Seu nível de acesso não permite abrir Performance.')}
   function num(v){const n=Number(v||0); return Number.isFinite(n)?n:0}
-  function todayISO(){try{if(typeof window.todayISO==='function')return window.todayISO()}catch(_){} const d=new Date(); const tz=d.getTimezoneOffset()*60000; return new Date(d-tz).toISOString().slice(0,10)}
+  function localISODate(date=new Date()){const d=date instanceof Date?date:new Date(date); if(isNaN(d))return ''; return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+  function todayISO(){try{if(typeof window.todayISO==='function')return window.todayISO()}catch(_){} return localISODate(new Date())}
   function monthKeyFromDate(iso){return String(iso||'').slice(0,7)}
   function pad2(n){return String(n).padStart(2,'0')}
   function currentMonthKey(){const d=todayISO(); return d.slice(0,7)}
@@ -55,14 +56,14 @@
   }
   function pickISO(raw){
     try{ if(typeof window.pickISOFlexible==='function') return window.pickISOFlexible(raw); }catch(_){}
-    if(raw instanceof Date) return raw.toISOString().slice(0,10);
-    if(typeof raw==='number'){const d=new Date(raw); return isNaN(d)?'':d.toISOString().slice(0,10)}
+    if(raw instanceof Date) return localISODate(raw);
+    if(typeof raw==='number'){const d=new Date(raw); return isNaN(d)?'':localISODate(d)}
     const s=String(raw||'').trim();
     if(!s) return '';
     if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
     const br=s.match(/^([0-3]?\d)\/([0-1]?\d)\/([12]\d{3})/);
     if(br) return `${br[3]}-${pad2(br[2])}-${pad2(br[1])}`;
-    const d=new Date(s); return isNaN(d)?'':d.toISOString().slice(0,10);
+    const d=new Date(s); return isNaN(d)?'':localISODate(d);
   }
   function paymentPaid(p){return !!(p?.paidAt||p?.cashDate||p?.paid)||String(p?.status||'').toUpperCase()==='PAGA'}
   function fallbackEntryDate(e){
