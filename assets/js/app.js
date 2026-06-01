@@ -9403,13 +9403,107 @@ function openLeadEntry(entryId){
 function printLeadEntry(entryId){
   const actor = currentActor();
   const db = loadDB();
-  const e = db.entries.find(x=>x.id===entryId);
+  const e = (db.entries || []).find(x=>String(x.id)===String(entryId));
   if(!e) return toast("Lead não encontrado");
-  const c = db.contacts.find(x=>x.id===e.contactId);
-  const master = db.masters.find(m=>m.id===actor.masterId);
+  const c = (db.contacts || []).find(x=>String(x.id)===String(e.contactId)) || {};
 
-  const logo = getSmallLogoDataURI ? getSmallLogoDataURI() : "";
-  const title = `Ficha do Lead • ${escapeHTML(c?.name||"")}`;
+  try{
+    if(typeof ensureFicha === "function") ensureFicha(e);
+    else if(typeof ensureFichaForRecebimentos === "function") ensureFichaForRecebimentos(e);
+    if(typeof syncFichaFinancialLinks === "function") syncFichaFinancialLinks(e);
+  }catch(err){ console.warn("Falha ao preparar ficha para impressão:", err); }
+
+  const ficha = e.ficha && typeof e.ficha === "object" ? e.ficha : { plano:[], odontograma:{}, avaliacoes:[] };
+  const plano = Array.isArray(ficha.plano) ? ficha.plano.slice() : [];
+  const avaliacoes = Array.isArray(ficha.avaliacoes) ? ficha.avaliacoes.slice() : [];
+  const byEval = new Map(avaliacoes.map(av=>[String(av.id || "eval_1"), av]));
+  const getEval = (item)=>{
+    const id = String(item?.avaliacaoId || "eval_1");
+    return byEval.get(id) || { id, label:item?.avaliacaoLabel || "Avaliação", date:item?.avaliacaoData || e.firstContactAt || todayISO() };
+  };
+  const getFinanceLabel = (item)=>{
+    try{
+      if(typeof getFichaItemFinancialStatus === "function") return getFichaItemFinancialStatus(e, item)?.label || "—";
+    }catch(_){ }
+    if(item?.pago) return "Pago";
+    if(item?.financialPlanId || item?.recebimentoId) return "Recebimento criado";
+    return "Sem recebimento";
+  };
+  const getClinicalLabel = (item)=>{
+    try{ if(typeof isFichaItemClinicallyDone === "function" && isFichaItemClinicallyDone(e, item)) return "Realizado"; }catch(_){ }
+    return item?.feito ? "Realizado" : "Pendente";
+  };
+  const num = (v)=>{
+    try{ return typeof parseMoney === "function" ? parseMoney(v) : Number(v || 0); }catch(_){ return Number(v || 0) || 0; }
+  };
+  const m = (v)=> moneyBR(Number(v || 0));
+  const h = (v)=> escapeHTML(String(v ?? ""));
+  const dateBR = (v)=> v ? fmtBR(String(v).slice(0,10)) : "—";
+
+  let totals;
+  try{
+    totals = typeof calcFichaTotals === "function" ? calcFichaTotals(plano, e) : null;
+  }catch(_){ totals = null; }
+  if(!totals){
+    const totalBase = plano.reduce((s,x)=>s + num(x.valorBase || x.valor || 0), 0);
+    const totalFechado = plano.reduce((s,x)=>s + num(x.valorFechado || x.valor || x.valorBase || 0), 0);
+    const totalFeito = plano.filter(x=>x.feito).reduce((s,x)=>s + num(x.valorFechado || x.valorBase || 0), 0);
+    totals = { totalBase, totalFechado, totalDesconto:totalBase-totalFechado, totalPago:0, totalFeito, emAberto:totalFechado, descontoPct: totalBase ? ((totalBase-totalFechado)/totalBase)*100 : 0 };
+  }
+
+  const financialPlans = Array.isArray(e.financialPlans) ? e.financialPlans : [];
+  const planRows = financialPlans.map((plan, idx)=>{
+    let ft = null;
+    try{ ft = typeof financialPlanTotals === "function" ? financialPlanTotals(plan) : null; }catch(_){ ft = null; }
+    const pays = Array.isArray(plan.payments) ? plan.payments : [];
+    return { plan, idx, totals:ft || { total:num(plan.amount || plan.total || 0), paid:0, open:num(plan.amount || plan.total || 0) }, pays };
+  });
+
+  const logo = (typeof getSmallLogoDataURI === "function" ? getSmallLogoDataURI() : "") || "";
+  const clinicName = h(typeof getClinicDisplayName === "function" ? getClinicDisplayName(db, actor) : "Clínica");
+  const title = `Ficha do Paciente • ${h(c?.name || e?.name || "")}`;
+  const procedureRows = plano.length ? plano.map((item, idx)=>{
+    const av = getEval(item);
+    const base = num(item.valorBase || 0);
+    const fechado = num(item.valorFechado || item.valor || item.value || 0);
+    const desconto = Math.max(0, base - fechado);
+    const descontoPct = base ? (desconto/base)*100 : 0;
+    return `
+      <tr>
+        <td class="mono">${idx+1}</td>
+        <td><b>${h(av.label || item.avaliacaoLabel || "Avaliação")}</b><br><span class="muted">${dateBR(av.date || item.avaliacaoData || "")}</span></td>
+        <td>${h(item.procedimento || item.nome || "—")}</td>
+        <td class="mono">${h(item.dente || "—")}</td>
+        <td>${h(item.face || "—")}</td>
+        <td class="money">${m(base)}</td>
+        <td class="money"><b>${m(fechado)}</b></td>
+        <td class="money">${m(desconto)}<br><span class="muted">${descontoPct.toFixed(2)}%</span></td>
+        <td>${h(getClinicalLabel(item))}</td>
+        <td>${h(getFinanceLabel(item))}</td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="10" class="empty">Nenhum procedimento registrado na ficha deste paciente.</td></tr>`;
+
+  const receivingRows = planRows.length ? planRows.map(({plan, totals:pt, pays}, idx)=>`
+    <div class="planCard">
+      <div class="planHead">
+        <div><b>${h(plan.title || `Recebimento ${idx+1}`)}</b><div class="muted">${h(plan.type || plan.source || "")}</div></div>
+        <div class="money"><b>${m(pt.total || plan.amount || 0)}</b></div>
+      </div>
+      <div class="planTotals">
+        <span>Pago: <b>${m(pt.paid || 0)}</b></span>
+        <span>Em aberto: <b>${m(pt.open || 0)}</b></span>
+        <span>Parcelas: <b>${pays.length || "—"}</b></span>
+      </div>
+      ${pays.length ? `<table class="miniTable"><thead><tr><th>#</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Baixa</th></tr></thead><tbody>${pays.map((pay, pidx)=>`
+        <tr>
+          <td class="mono">${pay.number || pidx+1}</td>
+          <td class="mono">${dateBR(pay.dueDate || pay.date || "")}</td>
+          <td class="money">${m(num(pay.amount || pay.value || pay.valor || 0))}</td>
+          <td>${h(pay.status || (pay.paid ? "PAGA" : "PENDENTE"))}</td>
+          <td class="mono">${dateBR(pay.cashDate || pay.paidAt || "")}</td>
+        </tr>`).join("")}</tbody></table>` : `<div class="muted small">Sem parcelas detalhadas.</div>`}
+    </div>`).join("") : `<div class="empty">Nenhum recebimento vinculado à ficha.</div>`;
+
   const htmlDoc = `
 <!doctype html>
 <html lang="pt-br">
@@ -9418,218 +9512,68 @@ function printLeadEntry(entryId){
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${title}</title>
 <style>
-  body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 26px; color:#111;}
-  .head{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; border-bottom:1px solid #ddd; padding-bottom:12px;}
-  .brand{display:flex; align-items:center; gap:10px;}
-  .brand img{width:34px; height:34px;}
-  h1{font-size:18px; margin:0;}
-  .sub{font-size:12px; color:#555; margin-top:2px;}
-  .grid{display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:14px;}
-  .card{border:1px solid #ddd; border-radius:12px; padding:12px;}
-  .label{font-size:11px; color:#555; text-transform:uppercase; letter-spacing:.04em;}
-  .val{margin-top:6px; font-size:14px;}
-  .mono{font-variant-numeric: tabular-nums;}
-  .tags{margin-top:8px;}
-  .pill{display:inline-block; padding:3px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; margin: 2px 4px 0 0;}
-  table{width:100%; border-collapse:collapse; margin-top:10px;}
-  th,td{border-bottom:1px solid #eee; text-align:left; padding:8px 6px; font-size:12px; vertical-align:top;}
-  th{color:#444;}
-  .muted{color:#666;}
-  @media print{ body{margin: 16mm;} }
-
-/* ===== Access guard / renewal ===== */
-.accessGateCard{
-  width:min(560px, 100%);
-  border:1px solid var(--line);
-  border-radius:26px;
-  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 42%), var(--panel);
-  box-shadow: var(--shadow);
-  padding:20px 18px;
-}
-.accessGateHeader{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  margin-bottom:12px;
-}
-.accessGateBadge{
-  width:44px;
-  height:44px;
-  border-radius:999px;
-  display:grid;
-  place-items:center;
-  font-size:20px;
-  background: rgba(255,255,255,.05);
-  border:1px solid var(--line);
-}
-.accessGateTitle{
-  margin:0;
-  font-size:26px;
-  line-height:1.02;
-  letter-spacing:-.02em;
-}
-.accessGateText{
-  margin:10px 0 0;
-  color:var(--muted);
-  line-height:1.5;
-}
-.accessGateMeta{
-  margin-top:14px;
-  padding:12px 14px;
-  border-radius:16px;
-  border:1px solid var(--line);
-  background: rgba(255,255,255,.03);
-  color:var(--text);
-  display:grid;
-  gap:8px;
-}
-.accessGateActions{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  margin-top:16px;
-}
-.accessGateActions .btn{
-  flex:1 1 220px;
-  justify-content:center;
-}
-.accessNotice{
-  width:min(560px, 100%);
-  border:1px solid var(--line);
-  border-radius:22px;
-  background: var(--panel2);
-  box-shadow: 0 20px 60px rgba(17,24,39,.15);
-  padding:18px 16px;
-}
-.accessNoticeHead{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:12px;
-  margin-bottom:10px;
-}
-.accessNoticeHead h3{
-  margin:0;
-  font-size:20px;
-}
-.accessNoticeText{
-  color:var(--muted);
-  line-height:1.5;
-  margin:0 0 14px;
-}
-.accessNoticeActions{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  justify-content:flex-end;
-}
-.accessNoticeDays{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding:6px 10px;
-  border-radius:999px;
-  border:1px solid var(--line);
-  background: rgba(255,255,255,.04);
-  color:var(--text);
-  font-size:12px;
-  font-weight:700;
-}
-
+  :root{--ink:#111827;--muted:#64748b;--line:#e5e7eb;--soft:#f8fafc;--brand:#2563eb;}
+  *{box-sizing:border-box}
+  body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:26px; color:var(--ink); background:#fff;}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:16px;}
+  .brand{display:flex;align-items:center;gap:12px;min-width:0}.brand img{width:auto;height:46px;max-width:132px;object-fit:contain}.brandTitle{font-size:19px;font-weight:900;line-height:1.05}.sub{font-size:12px;color:var(--muted);margin-top:4px}.stamp{font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
+  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:12px;margin:14px 0}.card{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}.card.soft{background:var(--soft)}.label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.055em;font-weight:800}.val{font-size:14px;margin-top:5px}.muted{color:var(--muted)}.small{font-size:12px}.mono{font-variant-numeric:tabular-nums}.money{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 16px}.summary .box{border:1px solid var(--line);border-radius:14px;padding:10px;background:var(--soft)}.summary .num{font-size:18px;font-weight:900;margin-top:4px}.ok{color:#15803d}.warn{color:#b45309}.bad{color:#b91c1c}
+  h2{font-size:15px;margin:18px 0 8px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid var(--line);padding:8px 7px;font-size:11.5px;text-align:left;vertical-align:top}th{background:var(--soft);color:#334155;text-transform:uppercase;letter-spacing:.04em;font-size:10px}.empty{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px;background:var(--soft)}.planCard{border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px;break-inside:avoid}.planHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.planTotals{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 4px;color:var(--muted);font-size:12px}.miniTable{margin-top:8px}.notes{white-space:pre-wrap;line-height:1.45}.footer{margin-top:18px;border-top:1px solid var(--line);padding-top:10px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:12px}
+  @media print{body{margin:14mm}.card,.box,.planCard{break-inside:avoid}.noPrint{display:none!important}}
 </style>
 </head>
 <body>
   <div class="head">
     <div class="brand">
-      ${logo?`<img src="${logo}" alt="Cronos"/>`:``}
-      <div>
-        <h1>${escapeHTML(master?.name||"Clínica")} • Ficha do Paciente</h1>
-        <div class="sub">Gerado em ${new Date().toLocaleString("pt-BR")} • Mês: <span class="mono">${escapeHTML(e.monthKey||"")}</span></div>
-      </div>
+      ${logo ? `<img src="${logo}" alt="Cronos"/>` : ``}
+      <div><div class="brandTitle">${clinicName}</div><div class="sub">Ficha do paciente • Plano de tratamento e valores</div></div>
     </div>
-    <div class="muted" style="font-size:12px">Cronos</div>
+    <div class="stamp">Gerado em ${new Date().toLocaleString("pt-BR")}<br>Cronos Odonto</div>
   </div>
 
   <div class="grid">
     <div class="card">
       <div class="label">Paciente</div>
-      <div class="val"><b>${escapeHTML(c?.name||"—")}</b></div>
-      <div class="val muted">${escapeHTML(c?.phone||"—")}</div>
-      ${e.city?`<div class="val muted">${escapeHTML(e.city)}</div>`:``}
-      <div class="tags">${(e.tags||[]).map(t=>`<span class="pill">${escapeHTML(t)}</span>`).join("")}</div>
+      <div class="val"><b>${h(c?.name || e?.name || "—")}</b></div>
+      <div class="val muted">Telefone: ${h(c?.phone || e?.phone || "—")}</div>
+      <div class="val muted">CPF: ${h((typeof formatCPF === "function" ? formatCPF(c?.cpf || "") : (c?.cpf || "")) || "—")}</div>
+      <div class="val muted">Nascimento: ${h((typeof birthWithAgeLabel === "function" ? birthWithAgeLabel(c?.birthDate || "") : (c?.birthDate || "")) || "—")}</div>
     </div>
-    <div class="card">
-      <div class="label">Status</div>
-      <div class="val"><b>${escapeHTML(e.status||"—")}</b></div>
-      <div class="val muted">Origem: ${escapeHTML(e.originOther?`${e.origin} — ${e.originOther}`: (e.origin||"—"))}</div>
-      <div class="val muted">Tratamento: ${escapeHTML(e.treatmentOther?`${e.treatment} — ${e.treatmentOther}`:(e.treatment||"—"))}</div>
-    </div>
-
-    <div class="card">
-      <div class="label">Datas</div>
-      <div class="val">1º contato: <span class="mono">${fmtBR(e.firstContactAt||"")}</span></div>
-      <div class="val">Última atualização: <span class="mono">${fmtBR(e.lastUpdateAt||"")}</span></div>
-      <div class="val">Agendamento: <span class="mono">${e.apptDate?`${fmtBR(e.apptDate)} ${e.apptTime||""}`.trim():"—"}</span></div>
-    </div>
-
-    <div class="card">
-      <div class="label">Ligações</div>
-      <div class="val">Tentativas: <span class="mono">${escapeHTML(e.callAttempts||"—")}</span></div>
-      <div class="val">Resultado: <span class="mono">${escapeHTML(e.callResult||"—")}</span></div>
-    </div>
-
-    <div class="card">
-      <div class="label">Valores</div>
-      <div class="val">Orçamento: <span class="mono">${(e.valueBudget!=null)?moneyBR(Number(e.valueBudget)):( (e.valueEstimated!=null)?moneyBR(Number(e.valueEstimated)):"—")}</span></div>
-      <div class="val">Pago: <span class="mono">${(e.valuePaid!=null)?moneyBR(Number(e.valuePaid)):( (e.valueClosed!=null)?moneyBR(Number(e.valueClosed)):"—")}</span></div>
-      <div class="val">Em aberto: <span class="mono">${(()=>{ const b=(e.valueBudget!=null && !isNaN(Number(e.valueBudget)))?Number(e.valueBudget):((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated)))?Number(e.valueEstimated):0); const p=(e.valuePaid!=null && !isNaN(Number(e.valuePaid)))?Number(e.valuePaid):((e.valueClosed!=null && !isNaN(Number(e.valueClosed)))?Number(e.valueClosed):0); const o=Math.max(0,(b||0)-(p||0)); return o?moneyBR(o):"—"; })()}</span></div>
-    </div>
-
-    <div class="card" style="grid-column:1/-1">
-      <div class="label">Observações</div>
-      <div class="val">${escapeHTML(e.notes||"—")}</div>
-    </div>
-
-    <div class="card" style="grid-column:1/-1">
-      <div class="label">Histórico (por mês)</div>
-      <table>
-        <thead><tr><th>Mês</th><th>Status</th><th>Agendamento</th><th class="mono">Orçamento</th><th class="mono">Pago</th><th class="mono">Em aberto</th></tr></thead>
-        <tbody>
-          ${db.entries.filter(x=>x.masterId===actor.masterId && x.contactId===c?.id).sort((a,b)=>b.monthKey.localeCompare(a.monthKey)).map(x=>`
-            <tr>
-              <td class="mono">${escapeHTML(x.monthKey||"")}</td>
-              <td>${escapeHTML(x.status||"")}</td>
-              <td class="mono">${x.apptDate?`${fmtBR(x.apptDate)} ${x.apptTime||""}`.trim():"—"}</td>
-              <td class="mono">${(x.valueBudget!=null && !isNaN(Number(x.valueBudget)))?moneyBR(Number(x.valueBudget)):( (x.valueEstimated!=null && !isNaN(Number(x.valueEstimated)))?moneyBR(Number(x.valueEstimated)):"—")}</td><td class="mono">${(x.valuePaid!=null && !isNaN(Number(x.valuePaid)))?moneyBR(Number(x.valuePaid)):( (x.valueClosed!=null && !isNaN(Number(x.valueClosed)))?moneyBR(Number(x.valueClosed)):"—")}</td><td class="mono">${(()=>{ const b=(x.valueBudget!=null && !isNaN(Number(x.valueBudget)))?Number(x.valueBudget):((x.valueEstimated!=null && !isNaN(Number(x.valueEstimated)))?Number(x.valueEstimated):0); const p=(x.valuePaid!=null && !isNaN(Number(x.valuePaid)))?Number(x.valuePaid):((x.valueClosed!=null && !isNaN(Number(x.valueClosed)))?Number(x.valueClosed):0); const o=Math.max(0,(b||0)-(p||0)); return o?moneyBR(o):"—"; })()}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
+    <div class="card soft">
+      <div class="label">Resumo comercial</div>
+      <div class="val">Status: <b>${h(e.status || "—")}</b></div>
+      <div class="val muted">Tratamento: ${h(e.treatmentOther ? `${e.treatment} — ${e.treatmentOther}` : (e.treatment || "—"))}</div>
+      <div class="val muted">Origem: ${h(e.originOther ? `${e.origin} — ${e.originOther}` : (e.origin || "—"))}</div>
+      <div class="val muted">Agendamento: ${e.apptDate ? `${h(fmtBR(e.apptDate))} ${h(e.apptTime || "")}`.trim() : "—"}</div>
     </div>
   </div>
 
+  <div class="summary">
+    <div class="box"><div class="label">Valor de tabela</div><div class="num">${m(totals.totalBase || 0)}</div></div>
+    <div class="box"><div class="label">Valor do orçamento</div><div class="num">${m(totals.totalFechado || 0)}</div></div>
+    <div class="box"><div class="label">Desconto</div><div class="num warn">${m(totals.totalDesconto || 0)}</div><div class="small muted">${Number(totals.descontoPct || 0).toFixed(2)}%</div></div>
+    <div class="box"><div class="label">Total realizado</div><div class="num ok">${m(totals.totalFeito || 0)}</div></div>
+    <div class="box"><div class="label">Total pago</div><div class="num ok">${m(totals.totalPago || 0)}</div></div>
+    <div class="box"><div class="label">Em aberto</div><div class="num bad">${m(totals.emAberto || 0)}</div></div>
+  </div>
+
+  <h2>Procedimentos da ficha</h2>
+  <table>
+    <thead><tr><th>#</th><th>Avaliação</th><th>Procedimento</th><th>Dente</th><th>Face</th><th class="money">Valor base</th><th class="money">Valor fechado</th><th class="money">Desconto</th><th>Clínico</th><th>Financeiro</th></tr></thead>
+    <tbody>${procedureRows}</tbody>
+  </table>
+
+  <h2>Recebimentos / parcelamentos vinculados</h2>
+  ${receivingRows}
+
+  <h2>Observações da ficha</h2>
+  <div class="card notes">${h(ficha.observacoes || e.notes || "—")}</div>
+
+  <div class="footer"><span>Documento de apoio interno/comercial. Confirme condições finais com a clínica.</span><span>${h(c?.name || e?.name || "Paciente")}</span></div>
 <script>window.onload=()=>{ setTimeout(()=>window.print(), 250); };<\/script>
-
-<div id="chartTooltip" aria-hidden="true"></div>
-
-<div id="kpiModal" class="modal hidden" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modalInner" style="max-width:720px">
-    <div class="modalHeader">
-      <div>
-        <div class="muted" style="font-size:12px">KPIs</div>
-        <div id="kpiModalTitle" style="font-size:18px; font-weight:800">Detalhes</div>
-      </div>
-      <button class="btn" id="kpiModalClose">Fechar</button>
-    </div>
-    <div class="modalBody" style="padding-top:10px">
-      <div class="muted" id="kpiModalSub" style="margin-bottom:10px"></div>
-      <div id="kpiModalList" class="stack" style="gap:10px"></div>
-    </div>
-  </div>
-</div>
-
 </body>
 </html>`;
+
   const w = window.open("", "_blank");
   if(!w) return toast("Popup bloqueado", "Permita popups para imprimir.");
   w.document.open();
@@ -11614,8 +11558,10 @@ function bindActions(){
     renderAll();
   };
 
-  el("btnExportCSV").onclick = exportCSV;
-  el("btnExportPDF").onclick = exportPDFFiltered;
+  const btnExportCSV = el("btnExportCSV");
+  if(btnExportCSV) btnExportCSV.onclick = exportCSV;
+  const btnExportPDF = el("btnExportPDF");
+  if(btnExportPDF) btnExportPDF.onclick = exportPDFFiltered;
   const btnChangeMyPassword = el("btnChangeMyPassword");
   if(btnChangeMyPassword) btnChangeMyPassword.onclick = openChangeMyPassword;
   const btnMyPasswordSide = el("btnMyPasswordSide");
@@ -11648,8 +11594,10 @@ function bindActions(){
 
   el("btnNewUser").onclick = openNewUser;
 
-  el("btnBackup").onclick = exportJSON;
-  el("fileImport").addEventListener("change", (e)=>{
+  const btnBackup = el("btnBackup");
+  if(btnBackup) btnBackup.onclick = exportJSON;
+  const fileImport = el("fileImport");
+  if(fileImport) fileImport.addEventListener("change", (e)=>{
     const f = e.target.files?.[0]; if(f) importJSON(f);
     e.target.value="";
   });
