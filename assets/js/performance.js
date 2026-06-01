@@ -9,7 +9,7 @@
   const VIEW_ID='view-performance';
   const NAV_ID='navPerformance';
   const STYLE_ID='cronosPerformanceStyle';
-  const STATE=window.__CRONOS_PERFORMANCE_STATE__||{ monthsBack:'all', selectedYear:null };
+  const STATE=window.__CRONOS_PERFORMANCE_STATE__||{ monthsBack:'all', selectedYear:null, selectedMonth:null };
   window.__CRONOS_PERFORMANCE_STATE__=STATE;
 
   const $=id=>document.getElementById(id);
@@ -43,6 +43,44 @@
     if(list.length && !list.includes(y) && y!==cy) y=cy;
     STATE.selectedYear=y;
     return y;
+  }
+  function normalizeMonthNumber(v){
+    const n=Number(v);
+    return Number.isFinite(n) ? Math.min(12,Math.max(1,Math.round(n))) : null;
+  }
+  function monthNumberFromKey(mk){
+    return normalizeMonthNumber(String(mk||'').slice(5,7));
+  }
+  function ensureSelectedMonth(year){
+    const cy=currentYear();
+    const cmk=currentMonthKey();
+    const currentMonthNumber=monthNumberFromKey(cmk)||12;
+    const y=Number(year)||cy;
+    let mk=String(STATE.selectedMonth||'');
+    let m=monthNumberFromKey(mk);
+    const selectedYearFromKey=Number(mk.slice(0,4));
+    if(!m || selectedYearFromKey!==y){
+      m = y===cy ? currentMonthNumber : 12;
+    }
+    if(y>cy) m=currentMonthNumber;
+    if(y===cy && m>currentMonthNumber) m=currentMonthNumber;
+    const finalKey=monthKeyOfYear(y,m);
+    STATE.selectedMonth=finalKey;
+    return finalKey;
+  }
+  function monthOptionsHtml(year, selectedKey){
+    const cy=currentYear();
+    const currentMonthNumber=monthNumberFromKey(currentMonthKey())||12;
+    const y=Number(year)||cy;
+    const selectedMonth=monthNumberFromKey(selectedKey)||currentMonthNumber;
+    let html='';
+    for(let m=1;m<=12;m++){
+      const mk=monthKeyOfYear(y,m);
+      const disabled=(y>cy || (y===cy && m>currentMonthNumber)) ? 'disabled' : '';
+      const label=monthLabel(mk).replace(/\s+\d{4}$/,'');
+      html+=`<option value="${mk}" ${m===selectedMonth?'selected':''} ${disabled}>${esc(label)}</option>`;
+    }
+    return html;
   }
   function prevMonthKey(mk){const [y,m]=String(mk||currentMonthKey()).split('-').map(Number); const d=new Date(y,(m||1)-2,1); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}`}
   function nextMonthKey(mk){const [y,m]=String(mk||currentMonthKey()).split('-').map(Number); const d=new Date(y,(m||1),1); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}`}
@@ -121,6 +159,7 @@
       :root.light .perfInsight{background:rgba(15,23,42,.035)}
       .perfChartWrap{position:relative;min-height:300px;max-width:100%;overflow:hidden}.perfChart{width:100%;height:290px;display:block;max-width:100%}.perfLegend{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;color:var(--muted);font-size:12px}.perfLegend span{border:1px solid var(--line);border-radius:999px;padding:5px 8px;background:rgba(255,255,255,.035)}
       .perfTable{width:100%;border-collapse:separate;border-spacing:0 8px;table-layout:fixed}.perfTable th{font-size:12px;color:var(--muted);font-weight:800;text-align:left;padding:0 10px}.perfTable td{padding:10px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:rgba(255,255,255,.035);word-break:break-word}.perfTable td:first-child{border-left:1px solid var(--line);border-radius:12px 0 0 12px}.perfTable td:last-child{border-right:1px solid var(--line);border-radius:0 12px 12px 0}.perfTable .right{text-align:right}.perfTable .center{text-align:center}.perfUp{color:var(--ok);font-weight:900}.perfDown{color:var(--danger);font-weight:900}.perfFlat{color:var(--muted);font-weight:900}
+      .perfSelectedRow td{background:color-mix(in srgb,var(--brand) 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--brand) 28%,transparent)}
       .perfTableScroll{max-height:430px;overflow-y:auto;overflow-x:hidden;padding-right:0;max-width:100%}.perfEmpty{padding:18px;border:1px dashed var(--line);border-radius:16px;color:var(--muted);line-height:1.5}
       @media(max-width:1260px){.perfMain{grid-template-columns:1fr}.perfChartWrap{min-height:290px}.perfChart{height:280px}}
       @media(max-width:1100px){.perfGrid{grid-template-columns:1fr 1fr}.perfMain{grid-template-columns:1fr}}
@@ -261,25 +300,31 @@
     }
 
     const cm=currentMonthKey();
-    const pm=prevMonthKey(cm);
     const cy=currentYear();
     const years=[...new Set([cy, ...Array.from(store.months.keys()).map(mk=>Number(String(mk).slice(0,4))).filter(Number.isFinite)])].sort((a,b)=>b-a);
     const selectedYear=ensureSelectedYear(years);
     const selectedYearNum=Number(selectedYear);
+    const selectedMonthKey=ensureSelectedMonth(selectedYearNum);
+    const selectedMonthNumber=monthNumberFromKey(selectedMonthKey)||Number(cm.slice(5,7))||12;
     const currentMonthNumber=Number(cm.slice(5,7))||12;
+    const visibleUntilMonth=Math.min(selectedMonthNumber,currentMonthNumber);
     let series=[];
     for(let m=1;m<=12;m++){
       const mk=monthKeyOfYear(selectedYearNum,m);
-      const isFuture=selectedYearNum>cy || (selectedYearNum===cy && m>currentMonthNumber);
+      // Na tela de Performance, o histórico acompanha o mês analisado.
+      // Ex.: escolhendo maio, junho-dezembro ficam em espera para não desenhar uma queda falsa para R$ 0,00.
+      const isFuture=selectedYearNum>cy || (selectedYearNum===cy && m>currentMonthNumber) || m>visibleUntilMonth;
       const value=isFuture ? 0 : (store.months.get(mk)||0);
       const previous=series.length?series[series.length-1].value:null;
       const diff=(isFuture||previous==null)?0:value-previous;
       const pct=(!isFuture&&previous&&previous>0)?(diff/previous)*100:(!isFuture&&previous===0&&value>0?100:0);
-      series.push({monthKey:mk,label:monthLabel(mk,true).replace(/\s+\d{4}$/,''),fullLabel:monthLabel(mk),value,diff,pct,isFuture});
+      series.push({monthKey:mk,label:monthLabel(mk,true).replace(/\s+\d{4}$/,''),fullLabel:monthLabel(mk),value,diff,pct,isFuture,isSelected:mk===selectedMonthKey});
     }
-    const current={monthKey:cm,value:store.months.get(cm)||0,label:monthLabel(cm,true),fullLabel:monthLabel(cm)};
+    const pm=prevMonthKey(selectedMonthKey);
+    const selectedIsFuture=selectedYearNum>cy || (selectedYearNum===cy && selectedMonthNumber>currentMonthNumber);
+    const current={monthKey:selectedMonthKey,value:selectedIsFuture?0:(store.months.get(selectedMonthKey)||0),label:monthLabel(selectedMonthKey,true),fullLabel:monthLabel(selectedMonthKey),isFuture:selectedIsFuture};
     const previous={monthKey:pm,value:store.months.get(pm)||0,label:monthLabel(pm,true),fullLabel:monthLabel(pm)};
-    return {series,current,previous,months:store.months,details:store.details,years,selectedYear};
+    return {series,current,analysis:current,previous,months:store.months,details:store.details,years,selectedYear,selectedMonthKey};
   }
 
   function chartPointLabel(p, series, i){
@@ -430,8 +475,8 @@
 
   function statusText(progress, current, previous, projection, dailyNeeded, remainingDays){
     if(previous<=0 && current<=0) return 'Ainda não há base no mês anterior. Assim que houver recebimentos registrados, a Performance começa a medir o desafio automaticamente.';
-    if(previous<=0 && current>0) return `O mês anterior estava zerado. Este mês já abriu vantagem com ${money(current)} registrados.`;
-    if(current>=previous) return `Recorde do mês anterior superado. Agora cada fechamento aumenta a vantagem — é crescimento, não cobrança de planilha mal-humorada.`;
+    if(previous<=0 && current>0) return `O mês anterior estava zerado. O mês analisado já abriu vantagem com ${money(current)} registrados.`;
+    if(current>=previous) return `Mês anterior superado. Cada fechamento acima da base mostra que a operação está evoluindo — crescimento real, não achismo em planilha.`;
     if(projection>=previous) return `No ritmo atual, a clínica tende a superar o mês anterior. Continuem nesse passo que o mês está andando com postura.`;
     if(remainingDays>0) return `Para superar o mês anterior, falta uma média de ${money(dailyNeeded)} por dia até o fim do mês. Não é julgamento; é bússola.`;
     return 'O mês fechou abaixo do anterior, mas isso vira referência para entender o ritmo e ajustar o próximo ciclo.';
@@ -453,13 +498,19 @@
     const selectedYear=data.selectedYear||currentYear();
     const years=Array.isArray(data.years)&&data.years.length?data.years:[currentYear()];
     const historicalSeries=series.filter(x=>!x.isFuture);
-    const current=data.current||{value:0,monthKey:currentMonthKey(),fullLabel:monthLabel(currentMonthKey())};
-    const previous=data.previous||{value:0,monthKey:prevMonthKey(currentMonthKey()),fullLabel:monthLabel(prevMonthKey(currentMonthKey()))};
-    const today=todayISO(); const cm=currentMonthKey(); const day=Number(today.slice(8,10))||1; const dim=daysInMonth(cm); const remaining=Math.max(0,dim-day);
+    const current=data.analysis||data.current||{value:0,monthKey:currentMonthKey(),fullLabel:monthLabel(currentMonthKey())};
+    const selectedMonthKey=data.selectedMonthKey||current.monthKey||currentMonthKey();
+    const previous=data.previous||{value:0,monthKey:prevMonthKey(selectedMonthKey),fullLabel:monthLabel(prevMonthKey(selectedMonthKey))};
+    const today=todayISO(); const cm=currentMonthKey();
+    const analysisIsCurrent=selectedMonthKey===cm;
+    const analysisIsFuture=String(selectedMonthKey)>String(cm);
+    const dim=daysInMonth(selectedMonthKey);
+    const day=analysisIsCurrent?(Number(today.slice(8,10))||1):(analysisIsFuture?0:dim);
+    const remaining=analysisIsCurrent?Math.max(0,dim-day):0;
     const progress=previous.value>0?(current.value/previous.value)*100:(current.value>0?100:0);
     const missing=Math.max(0,previous.value-current.value);
     const dailyNeeded=remaining>0?missing/remaining:missing;
-    const projection=day>0?(current.value/day)*dim:current.value;
+    const projection=analysisIsCurrent?(day>0?(current.value/day)*dim:current.value):current.value;
     const diff=current.value-previous.value;
     const best=historicalSeries.reduce((b,x)=>x.value>(b?.value??-1)?x:b,null);
     const growths=historicalSeries.slice(1).map(x=>x.diff);
@@ -470,34 +521,41 @@
     const diffClass=diff>0?'perfUp':(diff<0?'perfDown':'perfFlat');
     const diffLabel=diff>0?`+${money(diff)}`:(diff<0?`-${money(Math.abs(diff))}`:'Empate');
     const rows=series.slice();
+    const periodStateLabel=analysisIsFuture?'aguardando lançamento':(analysisIsCurrent?'até hoje':'mês fechado');
+    const projectionTitle=analysisIsCurrent?'Projeção':'Resultado final';
+    const projectionSmall=analysisIsCurrent?'Se o ritmo atual continuar até o fim do mês.':'Valor fechado no mês selecionado.';
+    const missingSmall=analysisIsCurrent?`${remaining} dia(s) restante(s).`:(missing>0?'Foi o valor que faltou para virar o mês.':'Meta mensal batida.');
+    const supportTitle=analysisIsCurrent?'Média diária necessária':'Saldo final vs base';
+    const supportValue=analysisIsCurrent?money(dailyNeeded):diffLabel;
+    const supportSmall=analysisIsCurrent?'Até o fim do mês.':(diff>=0?'O mês fechou acima da base.':'O mês fechou abaixo da base.');
     v.innerHTML=`
       <div class="perfWrap">
         <div class="perfHero">
           <div>
             <h2>Performance</h2>
-            <p>Comparativo mensal com desafio de crescimento. O histórico mostra janeiro a dezembro do ano selecionado; a barra compara apenas o mês atual com o mês anterior.</p>
+            <p>Comparativo mensal com desafio de crescimento. Escolha o mês para mostrar a tela com o desempenho daquele período; o histórico continua exibindo janeiro a dezembro.</p>
           </div>
-          <div class="perfActions"><label class="perfYearControl">Ano <select class="perfSelect" onchange="CRONOS_PERFORMANCE.setYear(this.value)">${years.map(y=>`<option value="${y}" ${Number(y)===Number(selectedYear)?'selected':''}>${y}</option>`).join('')}</select></label><button class="perfBtn" onclick="CRONOS_PERFORMANCE.refresh(this)">Atualizar</button></div>
+          <div class="perfActions"><label class="perfYearControl">Ano <select class="perfSelect" onchange="CRONOS_PERFORMANCE.setYear(this.value)">${years.map(y=>`<option value="${y}" ${Number(y)===Number(selectedYear)?'selected':''}>${y}</option>`).join('')}</select></label><label class="perfYearControl">Mês <select class="perfSelect" onchange="CRONOS_PERFORMANCE.setMonth(this.value)">${monthOptionsHtml(selectedYear,selectedMonthKey)}</select></label><button class="perfBtn" onclick="CRONOS_PERFORMANCE.refresh(this)">Atualizar</button></div>
         </div>
         <div class="perfGrid">
           <div class="perfCard perfKpi"><span class="muted">Mês anterior</span><b>${money(previous.value)}</b><small>${esc(previous.fullLabel||monthLabel(previous.monthKey))} é a base do desafio atual.</small></div>
-          <div class="perfCard perfKpi"><span class="muted">Este mês</span><b>${money(current.value)}</b><small>${esc(current.fullLabel||monthLabel(current.monthKey))} até hoje.</small></div>
+          <div class="perfCard perfKpi"><span class="muted">Mês analisado</span><b>${money(current.value)}</b><small>${esc(current.fullLabel||monthLabel(current.monthKey))} • ${periodStateLabel}.</small></div>
           <div class="perfCard perfKpi"><span class="muted">Diferença</span><b class="${diffClass}">${diffLabel}</b><small>${diff>=0?'Acima do mês anterior.':'Ainda falta para superar o mês anterior.'}</small></div>
-          <div class="perfCard perfKpi"><span class="muted">Projeção</span><b>${money(projection)}</b><small>Se o ritmo atual continuar até o fim do mês.</small></div>
+          <div class="perfCard perfKpi"><span class="muted">${projectionTitle}</span><b>${money(projection)}</b><small>${projectionSmall}</small></div>
         </div>
         <div class="perfMain">
           <div class="perfCard">
-            <div class="perfProgressTop"><div><h3>Desafio deste mês</h3><div class="muted" style="font-size:12px">${esc(monthLabel(cm))} tentando superar ${esc(monthLabel(previous.monthKey))}</div></div><b>${progress.toFixed(1).replace('.',',')}%</b></div>
+            <div class="perfProgressTop"><div><h3>Desafio do mês analisado</h3><div class="muted" style="font-size:12px">${esc(monthLabel(selectedMonthKey))} tentando superar ${esc(monthLabel(previous.monthKey))}</div></div><b>${progress.toFixed(1).replace('.',',')}%</b></div>
             <div class="perfBar" title="${esc(progress.toFixed(1).replace('.',','))}% do mês anterior alcançado"><div class="perfBarFill" style="width:${progressWidth}%;background-size:${progressGradientSize}"></div>${progress>100?`<div class="perfBarOver">+${(progress-100).toFixed(1).replace('.',',')}%</div>`:''}</div>
             <div class="perfInsight">${esc(statusText(progress,current.value,previous.value,projection,dailyNeeded,remaining))}</div>
             <div class="perfGrid" style="grid-template-columns:1fr 1fr;margin-top:12px">
-              <div class="perfKpi"><span class="muted">Falta para superar</span><b>${money(missing)}</b><small>${remaining} dia(s) restante(s).</small></div>
-              <div class="perfKpi"><span class="muted">Média diária necessária</span><b>${money(dailyNeeded)}</b><small>Até o fim do mês.</small></div>
+              <div class="perfKpi"><span class="muted">Falta para superar</span><b>${money(missing)}</b><small>${missingSmall}</small></div>
+              <div class="perfKpi"><span class="muted">${supportTitle}</span><b class="${analysisIsCurrent?'':diffClass}">${supportValue}</b><small>${supportSmall}</small></div>
             </div>
           </div>
           <div class="perfCard">
             <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
-              <div><h3 style="margin:0">Histórico de desempenho — ${selectedYear}</h3><div class="muted" style="font-size:12px;margin-top:3px">Recebido de janeiro a dezembro. Meses futuros ficam aguardando lançamento.</div></div>
+              <div><h3 style="margin:0">Histórico de desempenho — ${selectedYear}</h3><div class="muted" style="font-size:12px;margin-top:3px">Recebido até o mês analisado. Meses seguintes ficam em espera para evitar queda falsa no gráfico.</div></div>
               <div class="muted" style="font-size:12px">Melhor mês: <b>${best?esc(best.fullLabel):'—'}</b> • ${best?money(best.value):money(0)}</div>
             </div>
             <div class="perfChartWrap"><canvas id="perfHistoryChart" class="perfChart"></canvas></div>
@@ -506,7 +564,7 @@
         </div>
         <div class="perfCard">
           <h3 style="margin:0 0 4px">Sobe e desce mensal</h3>
-          <div class="muted" style="font-size:13px;margin-bottom:10px">Janeiro a dezembro do ano selecionado. Aqui é o filme; a barra lá em cima é só o capítulo atual.</div>
+          <div class="muted" style="font-size:13px;margin-bottom:10px">Janeiro a dezembro do ano selecionado. O mês analisado fica destacado e os meses seguintes ficam em espera — sem fingir que junho já trabalhou, coitado.</div>
           ${rows.length?`<div class="perfTableScroll"><table class="perfTable"><thead><tr><th>Mês</th><th class="right">Recebido</th><th class="right">Termômetro</th><th class="right">Variação</th><th class="center">Status</th></tr></thead><tbody>${rows.map((x,idx)=>{
             const baseIndex=series.findIndex(s=>s.monthKey===x.monthKey);
             const first = baseIndex===0;
@@ -517,7 +575,7 @@
             const label=future?'Aguardando':(first?'Base':(x.diff>0?'Subiu':(x.diff<0?'Caiu':'Manteve')));
             const delta=future?'—':(first?'—':`${x.diff>0?'+':x.diff<0?'-':''}${money(Math.abs(x.diff))}${x.pct?` (${x.pct>0?'+':''}${x.pct.toFixed(1).replace('.',',')}%)`:''}`);
             const bar=future?'<span class="perfFlat">Aguardando</span>':(first?'<span class="perfFlat">Base</span>':miniProgressHtml(monthProgress,`${x.fullLabel} alcançou ${monthProgress.toFixed(1).replace('.',',')}% do mês anterior`));
-            return `<tr><td><b>${esc(x.fullLabel)}</b></td><td class="right mono">${future?'—':money(x.value)}</td><td class="right">${bar}</td><td class="right ${cls}">${delta}</td><td class="center ${cls}">${label}</td></tr>`;
+            return `<tr class="${x.isSelected?'perfSelectedRow':''}"><td><b>${esc(x.fullLabel)}</b></td><td class="right mono">${future?'—':money(x.value)}</td><td class="right">${bar}</td><td class="right ${cls}">${delta}</td><td class="center ${cls}">${label}</td></tr>`;
           }).join('')}</tbody></table></div>`:`<div class="perfEmpty">Ainda não há recebimentos suficientes para montar o histórico de Performance.</div>`}
         </div>
       </div>`;
@@ -561,7 +619,23 @@
 
   function setYear(year){
     const y=Number(year);
-    if(Number.isFinite(y)){STATE.selectedYear=y; render();}
+    if(Number.isFinite(y)){
+      const keepMonth=monthNumberFromKey(STATE.selectedMonth)||monthNumberFromKey(currentMonthKey())||1;
+      STATE.selectedYear=y;
+      STATE.selectedMonth=monthKeyOfYear(y,keepMonth);
+      ensureSelectedMonth(y);
+      render();
+    }
+  }
+
+  function setMonth(monthKey){
+    const mk=String(monthKey||currentMonthKey()).slice(0,7);
+    if(/^\d{4}-\d{2}$/.test(mk)){
+      STATE.selectedMonth=mk;
+      const y=Number(mk.slice(0,4));
+      if(Number.isFinite(y)) STATE.selectedYear=y;
+      render();
+    }
   }
 
   function redrawIfOpen(){
@@ -578,6 +652,6 @@
     }catch(_){}
   }
 
-  window.CRONOS_PERFORMANCE={show,render,refresh,setYear,redraw:redrawIfOpen};
+  window.CRONOS_PERFORMANCE={show,render,refresh,setYear,setMonth,redraw:redrawIfOpen};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
