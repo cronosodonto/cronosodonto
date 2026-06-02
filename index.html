@@ -671,7 +671,7 @@
 <div class="kpis">
 <div class="kpi" data-kpi="total">
 <div class="kpiHead">
-<div class="label">Total (filtro)</div>
+<div class="label labelInfoWrap">Total (filtro) <button type="button" class="cronosInfo" data-tip="Quantidade de leads dentro do mês e filtros selecionados." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar Total">i</button></div>
 <div class="kpiPct" id="kpiTotalPct">100%</div>
 </div>
 <div class="value" id="kpiTotal">0</div>
@@ -679,7 +679,7 @@
 </div>
 <div class="kpi" data-kpi="pos">
 <div class="kpiHead">
-<div class="label">Positivos - Em andamento</div>
+<div class="label labelInfoWrap">Positivos - Em andamento <button type="button" class="cronosInfo" data-tip="Leads em status positivos do funil, como Agendado, Fechou, Remarcou e Conversando." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar positivos">i</button></div>
 <div class="kpiPct" id="kpiPositivePct">0%</div>
 </div>
 <div class="value" id="kpiPositive">0</div>
@@ -687,7 +687,7 @@
 </div>
 <div class="kpi" data-kpi="bad">
 <div class="kpiHead">
-<div class="label">Desqualificados</div>
+<div class="label labelInfoWrap">Desqualificados <button type="button" class="cronosInfo" data-tip="Leads sem potencial no filtro atual, como número incorreto, sem interesse, achou caro ou similares." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar desqualificados">i</button></div>
 <div class="kpiPct" id="kpiDQPct">0%</div>
 </div>
 <div class="value" id="kpiDQ">0</div>
@@ -695,25 +695,25 @@
 </div>
 <div class="kpi" data-kpi="sched">
 <div class="kpiHead">
-<div class="label">Agendados</div>
+<div class="label labelInfoWrap">Agendados <button type="button" class="cronosInfo" data-tip="Leads marcados como Agendado ou Remarcou no filtro atual." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar agendados">i</button></div>
 <div class="kpiPct" id="kpiApptPct">0%</div>
 </div>
 <div class="value" id="kpiAppt">0</div>
 <div class="hint">Agendado / Remarcou</div>
 </div>
 <div class="kpi">
-<div class="label">Ticket médio (orçado)</div>
+<div class="label labelInfoWrap">Ticket médio (orçado) <button type="button" class="cronosInfo" data-tip="Média dos orçamentos preenchidos nos leads do filtro atual. Não é caixa recebido." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar ticket médio">i</button></div>
 <div class="value mono" id="kpiBudgetAvg">R$ 0,00</div>
 <div class="hint">Média do orçamento no filtro</div>
 </div>
 <div class="kpi">
-<div class="label">Valor orçado</div>
+<div class="label labelInfoWrap">Valor orçado <button type="button" class="cronosInfo" data-tip="Soma do campo Orçamento total dos leads no filtro. Representa potencial/valor orçado, não necessariamente dinheiro recebido." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar valor orçado">i</button></div>
 <div class="value mono" id="kpiBudgetTotal">R$ 0,00</div>
 <div class="hint">Soma do “Orçamento total” no filtro</div>
 </div>
 <div class="kpi">
 <div class="kpiHead">
-<div class="label">R$ Recebido</div>
+<div class="label labelInfoWrap">R$ Recebido <button type="button" class="cronosInfo" data-tip="Soma das baixas e pagamentos realizados no período selecionado, incluindo parcelas, à vista, cartão e antecipações. Esse valor vem de Recebimentos/baixas, não apenas do status Fechados no funil." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar recebido">i</button></div>
 <div class="kpiPct" id="kpiReceivedPct">0%</div>
 </div>
 <div class="value mono" id="kpiClosedValue">R$ 0,00</div>
@@ -721,7 +721,7 @@
 </div>
 <div class="kpi">
 <div class="kpiHead">
-<div class="label">R$ em aberto</div>
+<div class="label labelInfoWrap">R$ em aberto <button type="button" class="cronosInfo" data-tip="Diferença entre o valor orçado no filtro e o valor recebido no período selecionado. É uma visão gerencial do filtro atual." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar aberto">i</button></div>
 <div class="kpiPct" id="kpiOpenPct">0%</div>
 </div>
 <div class="value mono" id="kpiOpenValue">R$ 0,00</div>
@@ -744,12 +744,12 @@
 </div>
 <div class="dashSplit" style="margin-top:12px">
 <div class="card" id="dashStatusCard">
-<h3>Resumo por Status</h3>
+<h3 class="sectionTitleInfo">Resumo por Status <button type="button" class="cronosInfo" data-tip="Resumo baseado no status atual dos leads no funil. Os valores daqui são orçados/em aberto por status e podem ser diferentes do R$ Recebido, que vem das baixas financeiras do período." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar resumo por status">i</button></h3>
 <div class="tableWrap noX" style="margin-top:10px">
 <div aria-label="Resumo por Status" class="statusGrid" id="dashByStatusGrid" role="table">
 <div class="sgHead">Status</div>
 <div class="sgHead center">Total</div>
-<div class="sgHead right">Valor (R$)</div>
+<div class="sgHead right">Orçado / Em aberto</div>
 <!-- Lista de leads -->
 </div>
 </div>
@@ -3841,12 +3841,15 @@
       inset 0 0 0 1px rgba(255, 255, 255, 0.055) !important;
   }
 
+  :root:not(.light) #view-todayCronos .todayBtn.wa,
   :root:not(.light) #view-todayCronos a.todayBtn[href*="wa.me"],
   :root:not(.light) #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
   :root:not(.light) #view-todayCronos a.todayBtn[href*="web.whatsapp.com"],
+  html:not(.light) #view-todayCronos .todayBtn.wa,
   html:not(.light) #view-todayCronos a.todayBtn[href*="wa.me"],
   html:not(.light) #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
   html:not(.light) #view-todayCronos a.todayBtn[href*="web.whatsapp.com"],
+  body:not(.light) #view-todayCronos .todayBtn.wa,
   body:not(.light) #view-todayCronos a.todayBtn[href*="wa.me"],
   body:not(.light) #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
   body:not(.light) #view-todayCronos a.todayBtn[href*="web.whatsapp.com"] {
@@ -3901,12 +3904,15 @@
       inset 0 0 0 1px rgba(255, 255, 255, 0.20) !important;
   }
 
+  html.light #view-todayCronos .todayBtn.wa,
   html.light #view-todayCronos a.todayBtn[href*="wa.me"],
   html.light #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
   html.light #view-todayCronos a.todayBtn[href*="web.whatsapp.com"],
+  :root.light #view-todayCronos .todayBtn.wa,
   :root.light #view-todayCronos a.todayBtn[href*="wa.me"],
   :root.light #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
   :root.light #view-todayCronos a.todayBtn[href*="web.whatsapp.com"],
+  body.light #view-todayCronos .todayBtn.wa,
   body.light #view-todayCronos a.todayBtn[href*="wa.me"],
   body.light #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
   body.light #view-todayCronos a.todayBtn[href*="web.whatsapp.com"] {
@@ -3954,15 +3960,15 @@
   }
 
   /* Botão neutro no modo claro continua neutro, mas agora parece botão */
-  html.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]),
-  :root.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]),
-  body.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]) {
-    color: #111827 !important;
-    background: rgba(255, 255, 255, 0.82) !important;
-    border-color: rgba(15, 23, 42, 0.15) !important;
+  html.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not(.wa):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]),
+  :root.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not(.wa):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]),
+  body.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not(.wa):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]) {
+    color: #334155 !important;
+    background: #e5e7eb !important;
+    border-color: rgba(100, 116, 139, 0.32) !important;
     box-shadow:
-      0 8px 18px rgba(37, 99, 235, 0.07),
-      inset 0 0 0 1px rgba(255,255,255,0.62) !important;
+      0 8px 18px rgba(15, 23, 42, 0.08),
+      inset 0 0 0 1px rgba(255,255,255,0.54) !important;
   }
 </style>
 
