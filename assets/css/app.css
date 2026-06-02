@@ -1170,6 +1170,35 @@ html, body{ overflow-x: hidden; }
 .chip{display:inline-flex; gap:6px; align-items:center; padding:6px 10px; border-radius:999px; border:1px solid var(--line); font-size:12px; color:var(--muted);}
 .chip b{color:var(--text); font-weight:800;}
 .instBtns{display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;}
+.instMeta.compact{margin-top:10px;}
+.instSummary{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:10px;margin-top:10px;}
+.instMetric{border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.03);min-width:0;}
+.instMetricLabel{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;}
+.instMetric strong{display:block;color:var(--text);font-size:16px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.instMetric.is-ok strong{color:var(--ok);}
+.instMetric.is-pending strong{color:var(--warn);}
+.instMetric.is-late strong{color:var(--danger);}
+.instAlert{margin-top:10px;padding:10px 12px;border-radius:14px;border:1px dashed var(--line);font-size:13px;font-weight:800;}
+.instAlert.ok{color:var(--ok);background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.25);}
+.instAlert.pending{color:var(--warn);background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.26);}
+.instAlert.late{color:var(--danger);background:rgba(244,63,94,.10);border-color:rgba(244,63,94,.26);}
+.instAlert.neutral{color:var(--muted);background:rgba(148,163,184,.06);border-color:rgba(148,163,184,.18);}
+.instExtra{margin-top:10px;border-top:1px dashed var(--line);padding-top:10px;}
+.instExtra summary{list-style:none;display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:800;color:var(--text);user-select:none;}
+.instExtra summary::-webkit-details-marker{display:none;}
+.instExtra summary::after{content:"▾";font-size:12px;opacity:.82;transition:transform .18s ease;}
+.instExtra[open] summary::after{transform:rotate(180deg);}
+.instExtra > .instMeta{margin-top:10px;}
+
+
+@media (max-width: 980px){
+  .instHead{flex-direction:column;}
+  .instBtns{justify-content:flex-start;}
+  .instSummary{grid-template-columns:repeat(2,minmax(140px,1fr));}
+}
+@media (max-width: 560px){
+  .instSummary{grid-template-columns:1fr;}
+}
 .instBody{margin-top:10px; border-top:1px dashed var(--line); padding-top:10px; display:none;}
 .instRow.open .instBody{display:block;}
 .instTable{width:100%; border-collapse:collapse; font-size:13px;}
@@ -1308,6 +1337,36 @@ body.light .miniLink.waChargeBtn,
 #view-tasks td:last-child{padding-right:16px;}
 
 /* Área de tarefas */
+.taskActionsCell .taskOpenLead{
+  align-self:flex-end;
+  min-height:40px;
+  padding:10px 16px;
+  border-radius:14px;
+  font-weight:800;
+  justify-content:center;
+}
+.taskActionsRow.leadActionsRow{gap:10px;justify-content:flex-end;}
+.taskActionsRow .iconBtn svg.cronos-action-icon{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+:root.light .taskActionsCell .taskOpenLead,
+html.light .taskActionsCell .taskOpenLead,
+body.light .taskActionsCell .taskOpenLead{
+  color:#ffffff !important;
+  -webkit-text-fill-color:#ffffff !important;
+  border-color:rgba(37,99,235,.45) !important;
+  background:linear-gradient(135deg,#2563eb,#06b6d4) !important;
+  box-shadow:0 10px 22px rgba(37,99,235,.20) !important;
+}
+:root:not(.light) .taskActionsCell .taskOpenLead,
+html:not(.light) .taskActionsCell .taskOpenLead,
+body:not(.light) .taskActionsCell .taskOpenLead{
+  color:#dbeafe !important;
+  -webkit-text-fill-color:#dbeafe !important;
+  border-color:rgba(96,165,250,.50) !important;
+  background:rgba(37,99,235,.12) !important;
+  box-shadow:0 10px 24px rgba(37,99,235,.10) !important;
+}
+.taskActionsCell .taskOpenLead:hover{filter:brightness(1.04);transform:translateY(-1px);}
+
 
 /* Resumo por Status (Status | Total | Valor) */
 .summaryTable{width:100%; border-collapse:separate; border-spacing:0;}
@@ -2450,4 +2509,315 @@ body.themeSwitching.light .sidebar .nav button{
   border-color:rgba(37,99,235,.24) !important;
   color:var(--text) !important;
   -webkit-text-fill-color:var(--text) !important;
+}
+
+/* Cronos — explicações e rastreabilidade */
+.labelInfoWrap,
+.sectionTitleInfo{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.cronosInfo{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:18px;
+  height:18px;
+  min-width:18px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background:rgba(255,255,255,.07);
+  color:var(--muted);
+  font-size:11px;
+  line-height:1;
+  font-weight:900;
+  font-style:normal;
+  cursor:help;
+  padding:0;
+  vertical-align:middle;
+  transition:transform .15s ease, background .15s ease, color .15s ease, border-color .15s ease;
+}
+.cronosInfo:hover,
+.cronosInfo:focus-visible{
+  transform:translateY(-1px);
+  background:rgba(96,165,250,.16);
+  border-color:rgba(96,165,250,.55);
+  color:var(--text);
+  outline:none;
+}
+.cronosInfo::after{
+  content:attr(data-tip);
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 10px);
+  transform:translateX(-50%) translateY(4px);
+  width:min(340px, 74vw);
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid rgba(148,163,184,.28);
+  background:rgba(15,23,42,.96);
+  color:#f8fafc;
+  font-size:12px;
+  line-height:1.35;
+  text-align:left;
+  font-weight:600;
+  white-space:pre-line;
+  opacity:0;
+  pointer-events:none;
+  z-index:9999;
+  box-shadow:0 18px 45px rgba(0,0,0,.32);
+}
+.cronosInfo:hover::after,
+.cronosInfo:focus-visible::after{
+  opacity:1;
+  transform:translateX(-50%) translateY(0);
+}
+:root.light .cronosInfo{
+  background:rgba(15,23,42,.05);
+  border-color:rgba(15,23,42,.12);
+  color:rgba(15,23,42,.62);
+}
+:root.light .cronosInfo::after{
+  background:rgba(15,23,42,.97);
+  color:#fff;
+}
+.cronosAuditInfo{
+  cursor:pointer;
+  width:22px;
+  height:22px;
+  min-width:22px;
+  color:var(--text);
+  background:rgba(96,165,250,.12);
+  border-color:rgba(96,165,250,.35);
+}
+.auditTimeline{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.auditItem{
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:12px;
+  background:rgba(255,255,255,.03);
+}
+:root.light .auditItem{background:rgba(15,23,42,.03)}
+.auditWhen{
+  font-size:12px;
+  color:var(--muted);
+  margin-bottom:4px;
+  font-weight:700;
+}
+.auditMain{
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  line-height:1.35;
+}
+.auditMain span{color:var(--muted);font-size:12px;}
+.auditBy{
+  margin-top:6px;
+  font-size:12px;
+  color:var(--muted);
+}
+#dashByStatusGrid .cronosInfo::after{
+  left:auto;
+  right:0;
+  transform:translateY(4px);
+}
+#dashByStatusGrid .cronosInfo:hover::after,
+#dashByStatusGrid .cronosInfo:focus-visible::after{
+  transform:translateY(0);
+}
+
+
+/* Cronos — tooltip flutuante global (não fica preso dentro de tabelas/cards) */
+.cronosInfo{
+  cursor:pointer;
+}
+.cronosInfo::after{
+  display:none !important;
+  content:none !important;
+}
+.cronosFloatingTip{
+  position:fixed;
+  z-index:2147483000;
+  max-width:min(360px, calc(100vw - 24px));
+  min-width:180px;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid rgba(148,163,184,.30);
+  background:rgba(15,23,42,.97);
+  color:#f8fafc;
+  font-size:12px;
+  line-height:1.38;
+  text-align:left;
+  font-weight:650;
+  white-space:pre-line;
+  opacity:0;
+  pointer-events:none;
+  transform:translateY(4px);
+  transition:opacity .12s ease, transform .12s ease;
+  box-shadow:0 20px 50px rgba(0,0,0,.42);
+  backdrop-filter:blur(10px);
+}
+.cronosFloatingTip.is-visible{
+  opacity:1;
+  transform:translateY(0);
+}
+:root.light .cronosFloatingTip{
+  background:rgba(15,23,42,.97);
+  color:#fff;
+  border-color:rgba(15,23,42,.18);
+}
+
+
+/* Ajuste Hoje no Cronos: WhatsApp e botões neutros por tema */
+:root:not(.light) #view-todayCronos .todayBtn.wa,
+html:not(.light) #view-todayCronos .todayBtn.wa,
+body:not(.light) #view-todayCronos .todayBtn.wa,
+:root:not(.light) #view-todayCronos a.todayBtn[href*="wa.me"],
+html:not(.light) #view-todayCronos a.todayBtn[href*="wa.me"],
+body:not(.light) #view-todayCronos a.todayBtn[href*="wa.me"],
+:root:not(.light) #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
+html:not(.light) #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
+body:not(.light) #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
+:root:not(.light) #view-todayCronos a.todayBtn[href*="web.whatsapp.com"],
+html:not(.light) #view-todayCronos a.todayBtn[href*="web.whatsapp.com"],
+body:not(.light) #view-todayCronos a.todayBtn[href*="web.whatsapp.com"]{
+  background:linear-gradient(135deg, rgba(34,197,94,.24), rgba(20,184,166,.14)) !important;
+  border-color:rgba(34,197,94,.50) !important;
+  color:#dcfce7 !important;
+}
+:root.light #view-todayCronos .todayBtn.wa,
+html.light #view-todayCronos .todayBtn.wa,
+body.light #view-todayCronos .todayBtn.wa,
+:root.light #view-todayCronos a.todayBtn[href*="wa.me"],
+html.light #view-todayCronos a.todayBtn[href*="wa.me"],
+body.light #view-todayCronos a.todayBtn[href*="wa.me"],
+:root.light #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
+html.light #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
+body.light #view-todayCronos a.todayBtn[href*="api.whatsapp.com"],
+:root.light #view-todayCronos a.todayBtn[href*="web.whatsapp.com"],
+html.light #view-todayCronos a.todayBtn[href*="web.whatsapp.com"],
+body.light #view-todayCronos a.todayBtn[href*="web.whatsapp.com"]{
+  background:linear-gradient(135deg, #16a34a, #22c55e) !important;
+  border-color:rgba(22,163,74,.65) !important;
+  color:#ffffff !important;
+  box-shadow:0 8px 18px rgba(22,163,74,.18) !important;
+}
+:root.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not(.wa):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]),
+html.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not(.wa):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]),
+body.light #view-todayCronos .todayBtn:not(.ok):not(.warn):not(.danger):not(.primary):not(.wa):not([onclick*="openLead"]):not([href*="wa.me"]):not([href*="api.whatsapp.com"]):not([href*="web.whatsapp.com"]){
+  background:#e5e7eb !important;
+  border-color:rgba(100,116,139,.32) !important;
+  color:#334155 !important;
+}
+
+:root.light .instMetric,
+html.light .instMetric,
+body.light .instMetric{
+  background:#ffffff !important;
+  border-color:rgba(15,23,42,.10) !important;
+}
+:root.light .instAlert.ok,
+html.light .instAlert.ok,
+body.light .instAlert.ok{
+  background:rgba(34,197,94,.12) !important;
+  border-color:rgba(22,163,74,.28) !important;
+}
+:root.light .instAlert.pending,
+html.light .instAlert.pending,
+body.light .instAlert.pending{
+  background:rgba(245,158,11,.12) !important;
+  border-color:rgba(217,119,6,.28) !important;
+}
+:root.light .instAlert.late,
+html.light .instAlert.late,
+body.light .instAlert.late{
+  background:rgba(244,63,94,.10) !important;
+  border-color:rgba(225,29,72,.24) !important;
+}
+:root.light .instAlert.neutral,
+html.light .instAlert.neutral,
+body.light .instAlert.neutral{
+  background:rgba(15,23,42,.035) !important;
+  border-color:rgba(15,23,42,.10) !important;
+  color:#475569 !important;
+}
+:root.light .instExtra summary,
+html.light .instExtra summary,
+body.light .instExtra summary{
+  color:#0f172a !important;
+}
+
+/* Ajuste Recebimentos: status semântico também no modo claro */
+:root.light .chip,
+html.light .chip,
+body.light .chip{
+  background:rgba(15,23,42,.035) !important;
+  border-color:rgba(15,23,42,.12) !important;
+  color:#475569 !important;
+}
+:root.light .chip b,
+html.light .chip b,
+body.light .chip b{
+  color:#0f172a !important;
+  -webkit-text-fill-color:#0f172a !important;
+}
+
+:root.light .badge,
+html.light .badge,
+body.light .badge{
+  font-weight:850;
+  border-width:1px;
+}
+
+:root.light .badge.pending,
+html.light .badge.pending,
+body.light .badge.pending{
+  color:#b45309 !important;
+  -webkit-text-fill-color:#b45309 !important;
+  background:rgba(245,158,11,.16) !important;
+  border-color:rgba(217,119,6,.34) !important;
+}
+
+:root.light .badge.ok,
+html.light .badge.ok,
+body.light .badge.ok{
+  color:#15803d !important;
+  -webkit-text-fill-color:#15803d !important;
+  background:rgba(34,197,94,.15) !important;
+  border-color:rgba(22,163,74,.34) !important;
+}
+
+:root.light .badge.late,
+html.light .badge.late,
+body.light .badge.late{
+  color:#be123c !important;
+  -webkit-text-fill-color:#be123c !important;
+  background:rgba(244,63,94,.13) !important;
+  border-color:rgba(225,29,72,.34) !important;
+}
+
+:root.light #view-installments .badge.pending,
+html.light #view-installments .badge.pending,
+body.light #view-installments .badge.pending{
+  color:#b45309 !important;
+  -webkit-text-fill-color:#b45309 !important;
+}
+:root.light #view-installments .badge.ok,
+html.light #view-installments .badge.ok,
+body.light #view-installments .badge.ok{
+  color:#15803d !important;
+  -webkit-text-fill-color:#15803d !important;
+}
+:root.light #view-installments .badge.late,
+html.light #view-installments .badge.late,
+body.light #view-installments .badge.late{
+  color:#be123c !important;
+  -webkit-text-fill-color:#be123c !important;
 }
