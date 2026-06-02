@@ -33,10 +33,11 @@
   S.inputs={total:'',entry:'',entryPct:'',entryMode:'entry',pv:'',n:'',rp:'',P:'',...(S.inputs||{})};
   if(!S.inputs.total && S.inputs.pv) S.inputs.total=S.inputs.pv;
   if(!S.inputs.entry) S.inputs.entry='';
-  if(!S.inputs.entryPct) S.inputs.entryPct='';
+  S.inputs.entryPct=cleanExampleInput(S.inputs.entryPct);
   S.risk=S.risk||{inputs:{},result:null,error:'',source:'manual',snapshot:null,dirty:false,animating:false};
   S.risk.inputs={...RISK_DEFAULT_INPUTS,...(S.risk.inputs||{})};
   window.__CRONOS_CREDITO_STATE__=S;
+  let credSearchRenderTimer=null;
 
   function hasCronos(){return typeof window.loadDB==='function'&&typeof window.currentActor==='function'}
   function load(){try{return window.loadDB()}catch(_){return null}}
@@ -91,6 +92,10 @@
       .trim();
   }
   function brnum(v,d=2){return Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d})}
+  function cleanExampleInput(v){
+    const s=String(v??'').trim();
+    return /^ex(?:emplo)?\s*:?\s*20\s*%?$/i.test(s)?'':s;
+  }
   function docLabel(v){return ({complete:'Completo',basic:'Básico',incomplete:'Incompleto',none:'Não informado'})[String(v||'basic')]||'Básico'}
   function phone(v){return String(v||'').replace(/\D/g,'')}
   function mainHost(){return qs('main.main')||qs('.main')||document.body}
@@ -129,7 +134,9 @@
       #${VIEW_ID} .credEntryPctGroup label{display:block!important}
       #${VIEW_ID} .credEntryPctInline{display:grid!important;grid-template-columns:minmax(0,1fr) 94px!important;gap:10px!important;align-items:center!important}
       #${VIEW_ID} #credEntryPct{opacity:1!important;text-align:center!important;font-weight:900!important;letter-spacing:-.01em!important;color:#dbeafe!important;-webkit-text-fill-color:#dbeafe!important;background:rgba(96,165,250,.10)!important;border-color:rgba(147,197,253,.22)!important;cursor:text!important}
+      #${VIEW_ID} #credEntryPct::placeholder{color:rgba(219,234,254,.46)!important;-webkit-text-fill-color:rgba(219,234,254,.46)!important;font-weight:800!important}
       :root.light #${VIEW_ID} #credEntryPct,html.light #${VIEW_ID} #credEntryPct,body.light #${VIEW_ID} #credEntryPct{opacity:1!important;color:#0f172a!important;-webkit-text-fill-color:#0f172a!important;background:rgba(37,99,235,.12)!important;border-color:rgba(37,99,235,.30)!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.65)!important}
+      :root.light #${VIEW_ID} #credEntryPct::placeholder,html.light #${VIEW_ID} #credEntryPct::placeholder,body.light #${VIEW_ID} #credEntryPct::placeholder{color:rgba(15,23,42,.38)!important;-webkit-text-fill-color:rgba(15,23,42,.38)!important}
       #${VIEW_ID} .credEntryPctBadge{display:none!important}
       @media(max-width:720px){#${VIEW_ID} .credEntryPctInline{grid-template-columns:1fr!important}#${VIEW_ID} #credEntryPct{text-align:left!important}}
       .credActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
@@ -687,6 +694,21 @@
       .sort((a,b)=>b.score-a.score || String(a.contact.name||'').localeCompare(String(b.contact.name||''),'pt-BR'))
       .slice(0,8);
   }
+  function searchSuggestionsHTML(sug){
+    const list=Array.isArray(sug)?sug:[];
+    if(list.length){
+      return list.map(x=>`<button class="credSuggestion" onclick="CRONOS_CREDITO.selectEntry('${esc(x.entry.id)}')"><b>${esc(x.contact.name||'(sem nome)')}</b><div class="credMuted">${esc(x.contact.phone||'')} • ${esc(x.entry.treatment||x.entry.tratamento||'Lead')}</div></button>`).join('');
+    }
+    return `<div class="credMuted">${String(S.search||'').trim().length<2?'Digite pelo menos 2 letras para buscar.':'Nenhum paciente encontrado com esse nome.'}</div>`;
+  }
+  function updateSearchSuggestions(){
+    const box=$('credSuggestionsBox');
+    const hint=$('credSearchHintBox');
+    if(!box&&!hint)return;
+    const sug=searchEntries();
+    if(box) box.innerHTML=searchSuggestionsHTML(sug);
+    if(hint) hint.innerHTML=sug.length>=8?`<div class="credSearchHint">Mostrando os 8 mais relevantes. Digite mais letras para refinar.</div>`:'';
+  }
   function paid(p){return !!(p?.paidAt||p?.cashDate||p?.paid)||String(p?.status||'').toUpperCase()==='PAGA'}
   function planTotals(plan){
     const pays=Array.isArray(plan?.payments)?plan.payments:[],
@@ -744,8 +766,11 @@
 
   function updateCreditDerived(source){
     const total=parse(S.inputs.total);
-    const entryRaw=parse(S.inputs.entry);
-    const pctRaw=parseRate(S.inputs.entryPct);
+    const entryText=String(S.inputs.entry||'').trim();
+    const pctText=cleanExampleInput(S.inputs.entryPct);
+    S.inputs.entryPct=pctText;
+    const entryRaw=parse(entryText);
+    const pctRaw=parseRate(pctText);
     const entryEl=$('credEntry');
     const pctEl=$('credEntryPct');
     const pctBadge=$('credEntryPctBadge');
@@ -760,35 +785,46 @@
       let entryPct=0;
 
       if(S.inputs.entryMode==='entryPct'){
-        entryPct=Math.max(0,Number(pctRaw||0));
-        en=total>0?(total*entryPct/100):0;
-        S.inputs.entry=(S.inputs.entryPct||'').trim()?brnum(en):'';
+        const hasPct=pctText.trim().length>0;
+        entryPct=hasPct?Math.max(0,Number(pctRaw||0)):0;
+        en=hasPct&&total>0?(total*entryPct/100):0;
+        S.inputs.entry=hasPct?brnum(en):'';
         if(entryEl) entryEl.value=S.inputs.entry;
+        if(pctEl && pctEl.value!==pctText) pctEl.value=pctText;
       }else{
-        en=Math.max(0,Number(entryRaw||0));
-        entryPct=total>0?(en/total)*100:0;
-        S.inputs.entryPct=brnum(entryPct,1)+'%';
+        const hasEntry=entryText.length>0 && entryRaw!==null;
+        en=hasEntry?Math.max(0,Number(entryRaw||0)):0;
+        entryPct=hasEntry&&total>0?(en/total)*100:0;
+        S.inputs.entryPct=hasEntry?(brnum(entryPct,1)+'%'):'';
         if(pctEl) pctEl.value=S.inputs.entryPct;
-        if(pctBadge) pctBadge.textContent=S.inputs.entryPct;
+        if(pctBadge) pctBadge.textContent=S.inputs.entryPct||'—';
       }
 
       const financed=Math.max(0,total-en);
       S.inputs.pv=brnum(financed);
       if(pvEl) pvEl.value=S.inputs.pv;
-      if(pctBadge) pctBadge.textContent=(S.inputs.entryMode==='entryPct'?(S.inputs.entryPct||'0,0%'):S.inputs.entryPct)||'0,0%';
+      if(pctBadge) pctBadge.textContent=S.inputs.entryPct||'—';
     }else{
       S.inputs.pv='';
       if(pvEl) pvEl.value='';
       if(S.inputs.entryMode!=='entryPct'){
         S.inputs.entryPct='';
         if(pctEl) pctEl.value='';
+      }else if(pctEl){
+        pctEl.value=S.inputs.entryPct||'';
       }
       if(pctBadge) pctBadge.textContent='—';
     }
   }
   function rememberInputs(source){
     const map={total:'credTotal',entry:'credEntry',entryPct:'credEntryPct',n:'credN',rp:'credRate',P:'credPMT'};
-    Object.keys(map).forEach(k=>{const el=$(map[k]); if(el)S.inputs[k]=el.value});
+    Object.keys(map).forEach(k=>{const el=$(map[k]); if(el)S.inputs[k]=k==='entryPct'?cleanExampleInput(el.value):el.value});
+    if(source==='entryPct'){
+      const pctEl=$('credEntryPct');
+      const cleaned=cleanExampleInput(S.inputs.entryPct);
+      if(pctEl&&pctEl.value!==cleaned)pctEl.value=cleaned;
+      S.inputs.entryPct=cleaned;
+    }
     updateCreditDerived(source);
   }
   function setInputValue(key,value){
@@ -820,10 +856,14 @@
     render();
   }
   function search(v){
-    rememberInputs();
-    S.search=String(v||'');S.entryId='';S.planKey='';
-    render();
-    setTimeout(()=>{const el=$('credSearch'); if(el){el.focus(); el.selectionStart=el.selectionEnd=el.value.length}},0);
+    S.search=String(v||'');
+    S.entryId='';
+    S.planKey='';
+    if(credSearchRenderTimer) clearTimeout(credSearchRenderTimer);
+    credSearchRenderTimer=setTimeout(()=>{
+      credSearchRenderTimer=null;
+      updateSearchSuggestions();
+    },80);
   }
 
   function pmt(pv,n,i){if(n<=0)return null; if(Math.abs(i)<1e-12)return pv/n; const den=1-Math.pow(1+i,-n); return den>0?pv*i/den:null}
@@ -1464,12 +1504,12 @@ Observação: documento interno de apoio à decisão, baseado nos dados registra
     return `<div class="credCard"><h3>Paciente vinculado</h3>${
       e?`<div class="credSelected"><div><b>${esc(c.name||'(sem nome)')}</b><div class="credMuted">${esc(c.phone||'')}${c.cpf?' • CPF '+esc(c.cpf):''}</div></div><button class="credBtn" onclick="CRONOS_CREDITO.selectEntry('')">Trocar</button></div>${
         opts.length?`<div class="credPlanList">${opts.map(o=>`<button class="credPlan ${sel&&sel.key===o.key?'active':''}" onclick="CRONOS_CREDITO.usePlan('${esc(o.key)}')"><div class="credPlanTop"><div><b>${esc(o.title)}</b><div class="credMuted">${esc(o.subtitle||'')}</div></div><span class="credPill">${esc(o.type)}</span></div><div class="credPills"><span class="credPill">Total ${money(o.total)}</span><span class="credPill">Pago ${money(o.paid)}</span><span class="credPill">Saldo ${money(o.open||o.total)}</span></div></button>`).join('')}</div>`:`<div class="credAlert" style="margin-top:12px"><b>Nenhum plano ativo encontrado para este paciente.</b><br>Use a <b>Simulação livre</b> e informe o valor manualmente.</div>`
-      }`:`<label class="credMuted" style="font-weight:800">Buscar por nome, telefone ou CPF</label><input id="credSearch" value="${esc(S.search)}" placeholder="Digite o nome do paciente" oninput="CRONOS_CREDITO.search(this.value)"><div class="credSuggestions">${sug.length?sug.map(x=>`<button class="credSuggestion" onclick="CRONOS_CREDITO.selectEntry('${esc(x.entry.id)}')"><b>${esc(x.contact.name||'(sem nome)')}</b><div class="credMuted">${esc(x.contact.phone||'')} • ${esc(x.entry.treatment||x.entry.tratamento||'Lead')}</div></button>`).join(''):`<div class="credMuted">${String(S.search||'').trim().length<2?'Digite pelo menos 2 letras para buscar.':'Nenhum paciente encontrado com esse nome.'}</div>`}</div>${sug.length>=8?`<div class="credSearchHint">Mostrando os 8 mais relevantes. Digite mais letras para refinar.</div>`:''}`
+      }`:`<label class="credMuted" style="font-weight:800">Buscar por nome, telefone ou CPF</label><input id="credSearch" value="${esc(S.search)}" placeholder="Digite o nome do paciente" autocomplete="off" oninput="CRONOS_CREDITO.search(this.value)"><div id="credSuggestionsBox" class="credSuggestions">${searchSuggestionsHTML(sug)}</div><div id="credSearchHintBox">${sug.length>=8?`<div class="credSearchHint">Mostrando os 8 mais relevantes. Digite mais letras para refinar.</div>`:''}</div>`
     }</div>`;
   }
   function calcCard(){
     const r=S.result,e=getEntry(),c=e?contactOf(load(),e):null;
-    return `<div class="credCard"><h3>Cálculo financeiro</h3><div class="credMuted" style="margin-bottom:12px">Preencha <b>valor total/proposta</b>, <b>entrada opcional</b>, <b>nº de meses</b> e <b>taxa mensal</b>. O Cronos calcula o <b>saldo financiado</b> e a <b>prestação</b>.</div><div class="credForm"><div><label>Valor total/proposta</label><input id="credTotal" value="${esc(S.inputs.total||'')}" oninput="CRONOS_CREDITO.rememberInputs('total')" placeholder="Ex: 2930,00"></div><div class="credEntryPctGroup"><label>Entrada opcional</label><div class="credEntryPctInline"><input id="credEntry" value="${esc(S.inputs.entry||'')}" oninput="CRONOS_CREDITO.rememberInputs('entry')" placeholder="Ex: 500,00"><input id="credEntryPct" value="${esc(S.inputs.entryPct||'')}" oninput="CRONOS_CREDITO.rememberInputs('entryPct')" title="Digite a porcentagem para o Cronos calcular a entrada" placeholder="Ex: 20%"></div></div><div><label>Valor financiado/saldo</label><input id="credPV" value="${esc(S.inputs.pv||'')}" readonly aria-readonly="true" tabindex="-1" placeholder="calculado automaticamente"></div><div><label>Nº de meses</label><input id="credN" value="${esc(S.inputs.n||'')}" oninput="CRONOS_CREDITO.rememberInputs()" placeholder="Ex: 12"></div><div><label>Taxa de juros mensal (%)</label><input id="credRate" value="${esc(S.inputs.rp||'')}" oninput="CRONOS_CREDITO.rememberInputs()" placeholder="Ex: 2,5"></div><div><label>Valor da prestação</label><input id="credPMT" value="${esc(S.inputs.P||'')}" readonly aria-readonly="true" tabindex="-1" placeholder="calculado automaticamente"></div></div><div class="credActions"><button class="credBtn primary" onclick="CRONOS_CREDITO.calc()">Calcular prestação</button><button class="credBtn" onclick="CRONOS_CREDITO.clear()">Limpar</button>${r?`<button class="credBtn ok" onclick="CRONOS_CREDITO.copy()">Copiar</button>${c?.phone?`<button class="credBtn wa" onclick="CRONOS_CREDITO.whats()">WhatsApp</button>`:''}<button class="credBtn" onclick="CRONOS_CREDITO.print()">Imprimir simulação</button>${e?`<button class="credBtn" onclick="CRONOS_CREDITO.saveHistoryRecord()">Salvar histórico</button>`:''}`:''}</div>${S.error?`<div class="credAlert" style="margin-top:12px">${esc(S.error)}</div>`:''}</div>`;
+    return `<div class="credCard"><h3>Cálculo financeiro</h3><div class="credMuted" style="margin-bottom:12px">Preencha <b>valor total/proposta</b>, <b>entrada opcional</b>, <b>nº de meses</b> e <b>taxa mensal</b>. O Cronos calcula o <b>saldo financiado</b> e a <b>prestação</b>.</div><div class="credForm"><div><label>Valor total/proposta</label><input id="credTotal" value="${esc(S.inputs.total||'')}" oninput="CRONOS_CREDITO.rememberInputs('total')" placeholder="Ex: 2930,00"></div><div class="credEntryPctGroup"><label>Entrada opcional</label><div class="credEntryPctInline"><input id="credEntry" value="${esc(S.inputs.entry||'')}" oninput="CRONOS_CREDITO.rememberInputs('entry')" placeholder="Ex: 500,00"><input id="credEntryPct" value="${esc(cleanExampleInput(S.inputs.entryPct||''))}" onfocus="if(/^ex(?:emplo)?\s*:?\s*20\s*%?$/i.test(this.value.trim()))this.value=''" oninput="CRONOS_CREDITO.rememberInputs('entryPct')" title="Digite a porcentagem para o Cronos calcular a entrada" placeholder="Ex: 20%"></div></div><div><label>Valor financiado/saldo</label><input id="credPV" value="${esc(S.inputs.pv||'')}" readonly aria-readonly="true" tabindex="-1" placeholder="calculado automaticamente"></div><div><label>Nº de meses</label><input id="credN" value="${esc(S.inputs.n||'')}" oninput="CRONOS_CREDITO.rememberInputs()" placeholder="Ex: 12"></div><div><label>Taxa de juros mensal (%)</label><input id="credRate" value="${esc(S.inputs.rp||'')}" oninput="CRONOS_CREDITO.rememberInputs()" placeholder="Ex: 2,5"></div><div><label>Valor da prestação</label><input id="credPMT" value="${esc(S.inputs.P||'')}" readonly aria-readonly="true" tabindex="-1" placeholder="calculado automaticamente"></div></div><div class="credActions"><button class="credBtn primary" onclick="CRONOS_CREDITO.calc()">Calcular prestação</button><button class="credBtn" onclick="CRONOS_CREDITO.clear()">Limpar</button>${r?`<button class="credBtn ok" onclick="CRONOS_CREDITO.copy()">Copiar</button>${c?.phone?`<button class="credBtn wa" onclick="CRONOS_CREDITO.whats()">WhatsApp</button>`:''}<button class="credBtn" onclick="CRONOS_CREDITO.print()">Imprimir simulação</button>${e?`<button class="credBtn" onclick="CRONOS_CREDITO.saveHistoryRecord()">Salvar histórico</button>`:''}`:''}</div>${S.error?`<div class="credAlert" style="margin-top:12px">${esc(S.error)}</div>`:''}</div>`;
   }
 
 

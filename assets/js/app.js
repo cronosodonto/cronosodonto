@@ -1606,28 +1606,57 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
         return `<div class="chip">${p.number||""}/${p.total||""} • ${dateTxt} • <b>${moneyBR(p.amount)}</b> ${statusChip}</div>`;
       }).join("");
 
+      const openToneClass = totals.openBalance <= 0 ? "is-ok" : (lateCount > 0 ? "is-late" : "is-pending");
+      const nextToneClass = lateCount > 0 ? "is-late" : (pendingCount > 0 ? "is-pending" : "");
+      const spotlightHtml = lateCount > 0
+        ? `<div class="instAlert late">⚠ ${lateCount} parcela(s) atrasada(s) no mês • ${moneyBR(lateSum)}</div>`
+        : pendingCount > 0
+          ? `<div class="instAlert pending">🕒 ${pendingCount} parcela(s) pendente(s) no mês • ${moneyBR(pendingSum)}</div>`
+          : paidCount > 0
+            ? `<div class="instAlert ok">✅ ${paidCount} paga(s) no mês • ${moneyBR(paidSum)}</div>`
+            : `<div class="instAlert neutral">Sem movimentação no mês selecionado.</div>`;
+      const extraMonthChips = [
+        `<span class="chip">Lançado: <b>${moneyBR(totals.scheduled)}</b></span>`,
+        `<span class="chip">Pagas no mês: <b>${moneyBR(paidSum)}</b></span>`,
+        `<span class="chip">Pendentes no mês: <b>${moneyBR(pendingSum)}</b></span>`,
+        `<span class="chip">Atrasado no mês: <b>${moneyBR(lateSum)}</b></span>`,
+        `<span class="chip">Futuro no mês: <b>${moneyBR(futureSum)}</b></span>`,
+        ...(badges.length ? badges : [])
+      ].join("");
+
       return `
-        <div class="instRow" id="${rowId}">
+        <div class="instRow instRowClean" id="${rowId}">
           <div class="instHead">
-            <div style="min-width:0">
+            <div style="min-width:0;flex:1">
               <div class="instName">${escapeHTML(contact.name)} <span class="muted" style="font-weight:600">• ${escapeHTML(contact.phone||"")}</span></div>
-              <div class="instMeta">
+              <div class="instMeta instMetaTop">
                 <span class="chip">Orçamento: <b>${escapeHTML(plan.title || "Plano financeiro")}</b></span>
                 ${financialPlanStatusLabel(plan)}
-                <span class="chip">Total: <b>${moneyBR(totals.total)}</b></span>
-                <span class="chip">Lançado: <b>${moneyBR(totals.scheduled)}</b></span>
-                <span class="chip">Pago: <b>${moneyBR(totals.paid)}</b></span>
-                <span class="chip">Saldo aberto: <b>${moneyBR(totals.openBalance)}</b></span>
-                <span class="chip">Próx.: <b>${nextDue ? fmtBR(nextDue) : "—"}</b></span>
-                ${badges.join(" ")}
               </div>
-              <div class="instMeta">
-                <span class="chip">Pagas no mês: <b>${moneyBR(paidSum)}</b></span>
-                <span class="chip">Pendentes no mês: <b>${moneyBR(pendingSum)}</b></span>
-                <span class="chip">Atrasado no mês: <b>${moneyBR(lateSum)}</b></span>
-                <span class="chip">Futuro no mês: <b>${moneyBR(futureSum)}</b></span>
+              <div class="instSummary">
+                <div class="instMetric">
+                  <span class="instMetricLabel">Total</span>
+                  <strong>${moneyBR(totals.total)}</strong>
+                </div>
+                <div class="instMetric ${totals.paid > 0 ? 'is-ok' : ''}">
+                  <span class="instMetricLabel">Pago</span>
+                  <strong>${moneyBR(totals.paid)}</strong>
+                </div>
+                <div class="instMetric ${openToneClass}">
+                  <span class="instMetricLabel">Aberto</span>
+                  <strong>${moneyBR(totals.openBalance)}</strong>
+                </div>
+                <div class="instMetric ${nextToneClass}">
+                  <span class="instMetricLabel">Próx.</span>
+                  <strong>${nextDue ? fmtBR(nextDue) : "—"}</strong>
+                </div>
               </div>
-              <div class="instMeta" style="margin-top:8px">${periodDetails}</div>
+              ${spotlightHtml}
+              <details class="instExtra">
+                <summary>Detalhes financeiros</summary>
+                <div class="instMeta compact">${extraMonthChips}</div>
+                <div class="instMeta compact">${periodDetails || `<span class="muted">Sem parcelas do período para detalhar.</span>`}</div>
+              </details>
             </div>
             <div class="instBtns">
               <button class="btn" onclick="openLeadEntry('${entry.id}')">Abrir lead</button>
@@ -2688,6 +2717,10 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
     try{ syncFichaFinancialLinks(entry); }catch(e){ console.warn("Falha ao conciliar antecipação com a ficha:", e); }
   });
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  cronosAuditAction(db, { action:"credit_anticipated", entityType:"finance", entityId:"credit_anticipation", value:netTotal, details:`${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)} • caixa ${fmtBR(settlementDate)}` });
+  affectedEntries.forEach(entry=>{
+    cronosAuditAction(db, { action:"credit_anticipated", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:netTotal, details:`Antecipação de crédito no período • caixa ${fmtBR(settlementDate)}` });
+  });
   let cloudOk = false;
   try{
     cloudOk = await saveDB(db, { immediate:true });
@@ -2820,6 +2853,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
         });
       }
       try{ syncFichaFinancialLinks(commit.entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
+      cronosAuditAction(commitDB, { action:"payment_paid", entityType:"entry", entityId:commit.entry.id, entryId:commit.entry.id, contactId:commit.entry.contactId, value:parseMoney(commitPayment.amount), details:`${commit.plan.title || "Plano financeiro"} • pagamento ${commitPayment.number || ""}/${commitPayment.total || ""} • caixa ${fmtBR(payDate)}` });
 
       cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, true);
     }
@@ -2916,6 +2950,7 @@ async function undoFinancialPayment(entryId, planId, paymentId){
       });
     }
     markFinancialMutation(commit.entry, commit.plan, payment, nowISO);
+    cronosAuditAction(commitDB, { action:"payment_undo", entityType:"entry", entityId:commit.entry.id, entryId:commit.entry.id, contactId:commit.entry.contactId, value:parseMoney(payment.amount), details:`${commit.plan.title || "Plano financeiro"} • pagamento ${payment.number || ""}/${payment.total || ""}` });
     if(String(commit.plan.status || "").toLowerCase().includes("concl")) commit.plan.status = "Aguardando";
     syncInstallmentTasks(commitDB, actor);
 
@@ -2979,6 +3014,7 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
     rec.lastUpdateAt = nowISO;
   }
   markFinancialMutation(entry, plan, payment, nowISO);
+  cronosAuditAction(db, { action:"payment_date_transferred", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:parseMoney(payment.amount), details:`${plan.title || "Plano financeiro"} • caixa ${fmtBR(current)} → ${fmtBR(next)}` });
 
   await saveConfirmedFinancialChange(db, entry, before, {
     operationLabel: "uma data sendo transferida",
@@ -3014,6 +3050,7 @@ async function deleteFinancialPayment(entryId, planId, paymentId){
   try{ pruneOrphanFinancialPaymentRecords(db, entry); }catch(_){ }
   try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após excluir pagamento:", err); }
   markFinancialMutation(entry, plan, null, nowISO);
+  cronosAuditAction(db, { action:"payment_deleted", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, details:`${plan.title || "Plano financeiro"} • parcela/pagamento removido` });
   syncInstallmentTasks(db, actor);
 
   await saveConfirmedFinancialChange(db, entry, snapshot, {
@@ -3940,25 +3977,52 @@ function renderInstallmentsView(){
       return `<div class="chip">${p.number}/${p.total} • ${dateTxt} • <b>${moneyBR(p.amount)}</b> ${statusChip}</div>`;
     }).join("");
 
+    const nextToneClass = monthLateCount > 0 ? "is-late" : (monthPendingCount > 0 ? "is-pending" : "");
+    const spotlightHtml = monthLateCount > 0
+      ? `<div class="instAlert late">⚠ ${monthLateCount} parcela(s) atrasada(s) no mês • ${moneyBR(monthLateSum)}</div>`
+      : monthPendingCount > 0
+        ? `<div class="instAlert pending">🕒 ${monthPendingCount} parcela(s) pendente(s) no mês • ${moneyBR(monthPendingSum)}</div>`
+        : monthPaidCount > 0
+          ? `<div class="instAlert ok">✅ ${monthPaidCount} paga(s) no mês • ${moneyBR(monthPaidSum)}</div>`
+          : `<div class="instAlert neutral">Sem movimentação no mês selecionado.</div>`;
+    const extraMonthChips = [
+      `<span class="chip">Forma: <b>${escapeHTML(pm)}</b></span>`,
+      `<span class="chip">Pagas no mês: <b>${moneyBR(monthPaidSum)}</b></span>`,
+      `<span class="chip">Pendentes no mês: <b>${moneyBR(monthPendingSum)}</b></span>`,
+      `<span class="chip">Atrasado no mês: <b>${moneyBR(monthLateSum)}</b></span>`,
+      `<span class="chip">Futuro no mês: <b>${moneyBR(monthFutureSum)}</b></span>`,
+      ...(badges.length ? badges : [])
+    ].join("");
+
     return `
-      <div class="instRow" id="${rowId}">
+      <div class="instRow instRowClean" id="${rowId}">
         <div class="instHead">
-          <div style="min-width:0">
+          <div style="min-width:0;flex:1">
             <div class="instName">${escapeHTML(c.name)} <span class="muted" style="font-weight:600">• ${escapeHTML(c.phone||"")}</span></div>
-            <div class="instMeta">
-              <span class="chip">Parcelas gerais: <b>${overall.paidCount}/${overall.total}</b></span>
-              <span class="chip">Forma: <b>${escapeHTML(pm)}</b></span>
-              <span class="chip">Próx.: <b>${escapeHTML(next)}</b></span>
-              <span class="chip">Parcela: <b>${each}</b></span>
-              ${badges.join(" ")}
+            <div class="instSummary">
+              <div class="instMetric">
+                <span class="instMetricLabel">Parcelas</span>
+                <strong>${overall.paidCount}/${overall.total}</strong>
+              </div>
+              <div class="instMetric">
+                <span class="instMetricLabel">Parcela</span>
+                <strong>${each}</strong>
+              </div>
+              <div class="instMetric ${nextToneClass}">
+                <span class="instMetricLabel">Próx.</span>
+                <strong>${escapeHTML(next)}</strong>
+              </div>
+              <div class="instMetric">
+                <span class="instMetricLabel">Forma</span>
+                <strong>${escapeHTML(pm)}</strong>
+              </div>
             </div>
-            <div class="instMeta">
-              <span class="chip">Pagas no mês: <b>${moneyBR(monthPaidSum)}</b></span>
-              <span class="chip">Pendentes no mês: <b>${moneyBR(monthPendingSum)}</b></span>
-              <span class="chip">Atrasado no mês: <b>${moneyBR(monthLateSum)}</b></span>
-              <span class="chip">Futuro no mês: <b>${moneyBR(monthFutureSum)}</b></span>
-            </div>
-            <div class="instMeta" style="margin-top:8px">${periodDetails}</div>
+            ${spotlightHtml}
+            <details class="instExtra">
+              <summary>Detalhes do mês</summary>
+              <div class="instMeta compact">${extraMonthChips}</div>
+              <div class="instMeta compact">${periodDetails || `<span class="muted">Sem parcelas do período para detalhar.</span>`}</div>
+            </details>
           </div>
           <div class="instBtns">
             <button class="btn" onclick="openLeadEntry('${e.id}')">Abrir lead</button>
@@ -4125,6 +4189,7 @@ async function payInstallment(entryId, number){
   });
 
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  cronosAuditAction(db, { action:"payment_paid", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:parseMoney(p.amount), details:`Parcela ${p.number}/${p.total} • caixa ${fmtBR(payDate)}` });
 
   __cronosFinancialMutationBusy = true;
   toast("Salvando baixa...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
@@ -4190,6 +4255,7 @@ async function undoInstallmentPay(entryId, number){
   if(idx>=0) db.payments.splice(idx,1);
 
   try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  cronosAuditAction(db, { action:"payment_undo", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:amt, details:`Parcela ${number}/${p.total}` });
   refreshFinancialUIAfterPayment();
   let cloudOk = false;
   try{
@@ -4242,6 +4308,7 @@ async function transferInstallmentCashDate(entryId, number){
     rec.updatedAt = nowISO;
     rec.lastUpdateAt = nowISO;
   }
+  cronosAuditAction(db, { action:"payment_date_transferred", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:amt, details:`Parcela ${number}/${p.total} • caixa ${fmtBR(current)} → ${fmtBR(next)}` });
 
   refreshFinancialUIAfterPayment();
   let cloudOk = false;
@@ -4673,6 +4740,275 @@ function moneyBR(v){
   return n.toLocaleString("pt-BR", {style:"currency", currency:"BRL"});
 }
 
+
+/* -------- Rastreabilidade / explicações -------- */
+function cronosAttr(s){ return escapeHTML(String(s ?? "")).replace(/\n/g, "&#10;"); }
+function cronosActorLabel(actor=currentActor()){
+  return String(actor?.name || actor?.username || actor?.email || "Usuário não identificado").trim() || "Usuário não identificado";
+}
+function cronosFormatDateTime(value){
+  if(!value) return "—";
+  try{
+    if(typeof fmtDateTimeLocal === "function") return fmtDateTimeLocal(value);
+  }catch(_){ }
+  const d = new Date(value);
+  if(Number.isNaN(d.getTime())) return String(value).slice(0,16);
+  return d.toLocaleString("pt-BR", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"});
+}
+function cronosActionLabel(action){
+  const map = {
+    lead_created:"Lead criado",
+    lead_updated:"Lead atualizado",
+    status_changed:"Status alterado",
+    contact_created:"Contato criado",
+    contact_updated:"Contato atualizado",
+    payment_created:"Recebimento criado",
+    payment_paid:"Baixa realizada",
+    payment_undo:"Baixa desfeita",
+    payment_date_transferred:"Data da baixa transferida",
+    payment_deleted:"Pagamento/parcela excluído",
+    credit_anticipated:"Antecipação de crédito",
+    ficha_updated:"Ficha atualizada"
+  };
+  return map[action] || String(action || "Ação registrada");
+}
+function ensureActivityLog(db){
+  if(!db || typeof db !== "object") return [];
+  if(!Array.isArray(db.activityLog)) db.activityLog = [];
+  return db.activityLog;
+}
+function cronosAuditAction(db, payload={}){
+  try{
+    const actor = currentActor() || {};
+    const now = payload.at || new Date().toISOString();
+    const rec = {
+      id: uid("audit"),
+      at: now,
+      masterId: payload.masterId || actor.masterId || "",
+      actorId: actor.id || actor.authUid || actor.email || actor.username || "",
+      actorName: payload.actorName || cronosActorLabel(actor),
+      actorRole: actor.role || "",
+      entityType: payload.entityType || "geral",
+      entityId: String(payload.entityId || payload.entryId || payload.contactId || ""),
+      entryId: String(payload.entryId || ""),
+      contactId: String(payload.contactId || ""),
+      action: payload.action || "updated",
+      label: payload.label || cronosActionLabel(payload.action),
+      details: payload.details || "",
+      before: payload.before || null,
+      after: payload.after || null,
+      value: payload.value ?? null,
+      source: payload.source || "cronos"
+    };
+    const log = ensureActivityLog(db);
+    log.push(rec);
+    const masterId = String(rec.masterId || "");
+    const own = log.filter(x=>String(x?.masterId || "") === masterId || !masterId);
+    if(own.length > 2500){
+      const keep = new Set(own.slice(-2200).map(x=>x.id));
+      db.activityLog = log.filter(x=>String(x?.masterId || "") !== masterId || keep.has(x.id));
+    }
+    return rec;
+  }catch(err){
+    console.warn("Falha ao registrar auditoria:", err);
+    return null;
+  }
+}
+function cronosEntryAuditRecords(db, entry){
+  const e = entry || {};
+  const eid = String(e.id || "");
+  const cid = String(e.contactId || "");
+  const logs = ensureActivityLog(db || loadDB())
+    .filter(x=>{
+      if(!x) return false;
+      return String(x.entryId || x.entityId || "") === eid || (cid && String(x.contactId || "") === cid && ["contact_created","contact_updated"].includes(String(x.action||"")));
+    })
+    .map(x=>({
+      at:x.at,
+      actorName:x.actorName || x.by || "—",
+      label:x.label || cronosActionLabel(x.action),
+      details:x.details || "",
+      source:"activity"
+    }));
+  const statusLogs = (Array.isArray(e.statusLog) ? e.statusLog : []).map(x=>({
+    at:x.at,
+    actorName:x.by || "—",
+    label:"Status alterado",
+    details:`${x.from || "—"} → ${x.to || "—"}`,
+    source:"status"
+  })).filter(x=>!logs.some(l=>String(l.at||"").slice(0,19)===String(x.at||"").slice(0,19) && String(l.label||"").includes("Status")));
+  const merged = logs.concat(statusLogs)
+    .filter(x=>x.at || x.label)
+    .sort((a,b)=>String(b.at||"").localeCompare(String(a.at||"")));
+  return merged;
+}
+function cronosAuditSummaryText(db, entry, contact=null){
+  const recs = cronosEntryAuditRecords(db, entry).slice(0,5);
+  if(recs.length){
+    return recs.map(r=>`${cronosFormatDateTime(r.at)}\n${r.label}${r.details ? ` • ${r.details}` : ""}\nPor: ${r.actorName || "—"}`).join("\n\n");
+  }
+  const created = entry?.createdAt || contact?.createdAt || entry?.firstContactAt || "";
+  const updated = entry?.lastUpdateAt || entry?.updatedAt || contact?.lastUpdateAt || contact?.updatedAt || "";
+  return `Criado em: ${cronosFormatDateTime(created)}\nPor: ${entry?.createdBy || contact?.createdBy || "registro antigo"}\n\nÚltima atualização: ${cronosFormatDateTime(updated)}\nPor: ${entry?.updatedBy || contact?.updatedBy || "registro antigo"}`;
+}
+function cronosAuditInfoButton(db, entry, contact=null){
+  const eid = escapeJSString(String(entry?.id || ""));
+  const tip = cronosAuditSummaryText(db, entry, contact);
+  return `<button type="button" class="cronosInfo cronosAuditInfo" data-tip="${cronosAttr(tip)}" aria-label="Ver histórico de ações" onclick="CRONOS_SHOW_AUDIT('entry','${eid}'); event.stopPropagation(); return false;">i</button>`;
+}
+function cronosExplainInfo(text, label="Explicação"){
+  return `<button type="button" class="cronosInfo" data-tip="${cronosAttr(text)}" aria-label="${cronosAttr(label)}" onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;">i</button>`;
+}
+let __cronosFloatingTipEl = null;
+let __cronosFloatingTipOwner = null;
+let __cronosFloatingTipPinned = false;
+let __cronosFloatingTipTimer = null;
+
+function cronosGetFloatingTipEl(){
+  if(__cronosFloatingTipEl && document.body?.contains(__cronosFloatingTipEl)) return __cronosFloatingTipEl;
+  const el = document.createElement("div");
+  el.id = "cronosFloatingTip";
+  el.className = "cronosFloatingTip";
+  el.setAttribute("role", "tooltip");
+  document.body.appendChild(el);
+  __cronosFloatingTipEl = el;
+  return el;
+}
+function cronosPlaceFloatingTip(anchor){
+  try{
+    const tip = cronosGetFloatingTipEl();
+    if(!anchor || !document.body.contains(anchor)) return;
+    const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+    const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+    const margin = 12;
+    const gap = 10;
+    tip.style.maxWidth = `${Math.max(180, Math.min(360, vw - margin * 2))}px`;
+    tip.style.left = "0px";
+    tip.style.top = "0px";
+    tip.classList.add("is-visible");
+
+    const r = anchor.getBoundingClientRect();
+    const tr = tip.getBoundingClientRect();
+    let left = r.left + (r.width / 2) - (tr.width / 2);
+    left = Math.max(margin, Math.min(left, vw - tr.width - margin));
+
+    let top = r.top - tr.height - gap;
+    if(top < margin){
+      top = r.bottom + gap;
+    }
+    if(top + tr.height > vh - margin){
+      top = Math.max(margin, vh - tr.height - margin);
+    }
+
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(top)}px`;
+  }catch(_){ }
+}
+function cronosShowFloatingTip(anchor, opts = {}){
+  try{
+    const text = anchor?.dataset?.tip || anchor?.getAttribute?.("title") || "";
+    if(!text) return;
+    clearTimeout(__cronosFloatingTipTimer);
+    const tip = cronosGetFloatingTipEl();
+    tip.textContent = text;
+    __cronosFloatingTipOwner = anchor;
+    __cronosFloatingTipPinned = !!opts.pinned;
+    cronosPlaceFloatingTip(anchor);
+    if(__cronosFloatingTipPinned){
+      __cronosFloatingTipTimer = setTimeout(()=>cronosHideFloatingTip(true), 6500);
+    }
+  }catch(_){ }
+}
+function cronosHideFloatingTip(force = false){
+  try{
+    if(__cronosFloatingTipPinned && !force) return;
+    clearTimeout(__cronosFloatingTipTimer);
+    __cronosFloatingTipPinned = false;
+    __cronosFloatingTipOwner = null;
+    if(__cronosFloatingTipEl){
+      __cronosFloatingTipEl.classList.remove("is-visible");
+    }
+  }catch(_){ }
+}
+function cronosInstallFloatingTips(){
+  if(window.__CRONOS_FLOATING_TIPS_INSTALLED__) return;
+  window.__CRONOS_FLOATING_TIPS_INSTALLED__ = true;
+
+  document.addEventListener("mouseover", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(!node) return;
+    cronosShowFloatingTip(node, {pinned:false});
+  }, true);
+
+  document.addEventListener("mouseout", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(!node) return;
+    const next = ev.relatedTarget?.closest?.(".cronosInfo[data-tip]");
+    if(next === node) return;
+    cronosHideFloatingTip(false);
+  }, true);
+
+  document.addEventListener("focusin", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(node) cronosShowFloatingTip(node, {pinned:false});
+  }, true);
+
+  document.addEventListener("focusout", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(node) cronosHideFloatingTip(false);
+  }, true);
+
+  document.addEventListener("pointerdown", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(!node) cronosHideFloatingTip(true);
+  }, true);
+
+  window.addEventListener("resize", ()=>{
+    if(__cronosFloatingTipOwner) cronosPlaceFloatingTip(__cronosFloatingTipOwner);
+  }, {passive:true});
+
+  document.addEventListener("scroll", ()=>{
+    if(__cronosFloatingTipOwner) cronosPlaceFloatingTip(__cronosFloatingTipOwner);
+  }, true);
+}
+cronosInstallFloatingTips();
+
+window.CRONOS_SHOW_TIP = function(node){
+  try{
+    if(!node) return;
+    cronosShowFloatingTip(node, {pinned:true});
+  }catch(_){ }
+};
+window.CRONOS_SHOW_AUDIT = function(entityType, entityId){
+  try{
+    const db = loadDB();
+    const eid = String(entityId || "");
+    const entry = (db.entries || []).find(e=>String(e.id)===eid);
+    if(!entry) return toast("Histórico", "Registro não encontrado.");
+    const contact = (db.contacts || []).find(c=>String(c.id)===String(entry.contactId)) || null;
+    const recs = cronosEntryAuditRecords(db, entry).slice(0,60);
+    const fallback = !recs.length;
+    const rows = fallback
+      ? [{at: entry.createdAt || entry.firstContactAt || "", label:"Registro antigo", details:"Sem auditoria detalhada salva", actorName: entry.createdBy || contact?.createdBy || "—"}]
+      : recs;
+    openModal({
+      title:"Histórico de ações",
+      sub: contact?.name ? `${contact.name} • rastreabilidade do lead` : "Rastreabilidade do lead",
+      bodyHTML:`<div class="auditTimeline">${rows.map(r=>`
+        <div class="auditItem">
+          <div class="auditWhen">${escapeHTML(cronosFormatDateTime(r.at))}</div>
+          <div class="auditMain"><b>${escapeHTML(r.label || "Ação")}</b>${r.details ? `<span>${escapeHTML(r.details)}</span>` : ""}</div>
+          <div class="auditBy">Por: <b>${escapeHTML(r.actorName || "—")}</b></div>
+        </div>`).join("")}</div>`,
+      footHTML:`<button type="button" class="btn" onclick="closeModal()">Fechar</button>`,
+      maxWidth:"760px"
+    });
+  }catch(err){
+    console.warn("Falha ao abrir auditoria", err);
+    toast("Histórico", "Não consegui abrir agora.");
+  }
+};
+
 function normPhone(s){
   return String(s||"").replace(/\D/g,"");
 }
@@ -4808,7 +5144,7 @@ db = {
 }
 */
 function freshDB(){
-  return { masters:[], users:[], contacts:[], entries:[], tasks:[], payments:[], settings:{ waTemplate: "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊" }, version:"cloud_v1", createdAt:new Date().toISOString() };
+  return { masters:[], users:[], contacts:[], entries:[], tasks:[], payments:[], activityLog:[], settings:{ waTemplate: "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊" }, version:"cloud_v1", createdAt:new Date().toISOString() };
 }
 
 const CLOUD_TABLE = "clinic_state";
@@ -5392,6 +5728,7 @@ function normalizeDBShape(db){
   if(!Array.isArray(out.entries)) out.entries = [];
   if(!Array.isArray(out.tasks)) out.tasks = [];
   if(!Array.isArray(out.payments)) out.payments = [];
+  if(!Array.isArray(out.activityLog)) out.activityLog = [];
   if(!out.settings || typeof out.settings !== "object") out.settings = {};
   if(typeof out.settings.waTemplate !== "string" || !out.settings.waTemplate.trim()){
     out.settings.waTemplate = base.settings.waTemplate;
@@ -7838,9 +8175,9 @@ function renderDashboard(){
   }
 
   grid.innerHTML = `
-    <div class="sgHead">Status</div>
+    <div class="sgHead">Status ${cronosExplainInfo("Status atual do lead no funil. Esse bloco não representa, sozinho, o caixa recebido no mês.", "Explicar Status")}</div>
     <div class="sgHead center">Leads</div>
-    <div class="sgHead right">Financeiro</div>
+    <div class="sgHead right">Orçado / Em aberto ${cronosExplainInfo("Total: soma do valor orçado dos leads naquele status. Aberto: orçamento menos valores pagos vinculados a esses leads. Pode ser diferente do R$ Recebido, porque o recebido vem das baixas/pagamentos do período selecionado.", "Explicar Financeiro por status")}</div>
   `;
   if(!ordered.length){
     const a=document.createElement("div"); a.className="muted"; a.style.gridColumn="1 / -1"; a.style.padding="12px";
@@ -7950,6 +8287,10 @@ if(!prev.length){
       const c = dashContactsById.get(String(e.contactId || ""));
       const tagRes = e.tags?.includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : "";
       const entryId = escapeHTML(String(e.id || ""));
+      const svgFicha = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>`;
+      const svgEdit  = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
+      const btnEdit = `<button type="button" class="iconBtn cronos-action-edit" title="Abrir / editar lead" onclick="openLeadEntry('${entryId}')">${svgEdit}</button>`;
+      const btnFicha = `<button type="button" class="iconBtn btnFicha cronos-action-ficha" data-ficha-entry="${entryId}" title="Ficha" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')">${svgFicha}</button>`;
       return `
         <div class="card" style="padding:10px; margin-bottom:10px">
           <div style="display:flex; justify-content:space-between; gap:10px">
@@ -7959,10 +8300,11 @@ if(!prev.length){
                 ${escapeHTML((()=>{ const phone = c?.phone || "—"; const st = String(e.status || "").trim(); return st ? `${phone} • ${st}` : phone; })())}
               </div>
             </div>
-            <div style="display:flex; gap:6px; align-items:start">
+            <div class="leadActionsRow" style="gap:6px; align-items:flex-start; justify-content:flex-end">
               ${tagRes}
-              <button class="miniBtn" onclick="openLeadEntry('${entryId}')">Abrir</button>
-              <button type="button" class="miniBtn" data-ficha-entry="${entryId}" title="Ficha" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')">Ficha</button>
+              ${cronosAuditInfoButton(db, e, c)}
+              ${btnEdit}
+              ${btnFicha}
             </div>
           </div>
         </div>
@@ -9311,6 +9653,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
         <div class="muted" style="font-size:12px; display:flex; gap:10px; flex-wrap:wrap">
           <span class="tagPill">1º contato global: <b>${c.firstSeenAt ? fmtBR(c.firstSeenAt.slice(0,10)) : "—"}</b></span>
           <span class="tagPill">Últ. atualização (mês): <b>${e.lastUpdateAt ? fmtBR(e.lastUpdateAt.slice(0,10)) : "—"}</b></span>
+          ${e.id ? `<span class="tagPill" style="display:inline-flex;align-items:center;gap:6px">Histórico ${cronosAuditInfoButton(loadDB(), e, c)}</span>` : ``}
           ${(e.tags||[]).includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : ``}
         </div>
       </div>
@@ -9853,6 +10196,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
     }
 
     let contact;
+    const contactBeforeAudit = existingIndex >= 0 ? JSON.parse(JSON.stringify(db.contacts[existingIndex] || {})) : null;
     if(existingIndex >= 0){
       db.contacts[existingIndex].name = contactDraft.name;
       db.contacts[existingIndex].phone = contactDraft.phone;
@@ -9872,6 +10216,13 @@ function wireLeadModal(actor, editingEntryId, isNew){
         lastUpdateAt: now
       };
       db.contacts.push(contact);
+      cronosAuditAction(db, { action:"contact_created", entityType:"contact", entityId:contact.id, contactId:contact.id, details:`Paciente: ${contact.name}`, after:{ name:contact.name, phone:contact.phone } });
+    }
+    if(existingIndex >= 0 && contactBeforeAudit){
+      const contactChanged = ["name","phone","cpf","birthDate"].some(k=>String(contactBeforeAudit[k] || "") !== String(contact?.[k] || ""));
+      if(contactChanged){
+        cronosAuditAction(db, { action:"contact_updated", entityType:"contact", entityId:contact.id, contactId:contact.id, details:`Paciente: ${contact.name}`, before:{ name:contactBeforeAudit.name, phone:contactBeforeAudit.phone }, after:{ name:contact.name, phone:contact.phone } });
+      }
     }
 
     const status = val("lf_status");
@@ -9930,9 +10281,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
       if(!entry) return toast("Erro", "Entrada não encontrada");
       entry.contactId = contact.id;
     }else{
-      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [] };
+      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [], createdAt: now, createdBy: cronosActorLabel(actor) };
       db.entries.push(entry);
     }
+
+    const entryBeforeAudit = editingEntryId ? JSON.parse(JSON.stringify(entry || {})) : null;
 
     const originalMonthKey = String(entry.monthKey || monthKey || "");
     const originalStatus = String(entry.status || "");
@@ -9970,6 +10323,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
     entry.monthKey = monthKey;
     entry.firstContactAt = firstContactAt;
     entry.lastUpdateAt = now;
+    entry.updatedAt = now;
+    entry.updatedBy = cronosActorLabel(actor);
     entry.status = shouldRegisterRescue ? originalStatus : status;
     entry.origin = origin;
     entry.originOther = originOther;
@@ -10022,12 +10377,15 @@ function wireLeadModal(actor, editingEntryId, isNew){
       const rescuePrevPaid = rescueEntry ? getEntryPaidValue(rescueEntry) : 0;
       const rescuePrevStatus = rescueEntry ? String(rescueEntry.status || "") : "";
       if(!rescueEntry){
-        rescueEntry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey: rescueMonthKey, statusLog: [], tags: [] };
+        rescueEntry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey: rescueMonthKey, statusLog: [], tags: [], createdAt: now, createdBy: cronosActorLabel(actor) };
         db.entries.push(rescueEntry);
+        cronosAuditAction(db, { action:"lead_created", entityType:"entry", entityId:rescueEntry.id, entryId:rescueEntry.id, contactId:contact.id, details:`Lead resgatado em ${monthLabel(rescueMonthKey)}`, after:{ status } });
       }
 
       rescueEntry.firstContactAt = rescueEntry.firstContactAt || rescueDate;
       rescueEntry.lastUpdateAt = now;
+      rescueEntry.updatedAt = now;
+      rescueEntry.updatedBy = cronosActorLabel(actor);
       rescueEntry.status = status;
       rescueEntry.origin = origin;
       rescueEntry.originOther = originOther;
@@ -10067,8 +10425,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
         value: paidDelta,
         method: payMethod || "",
         desc: "Resgate / pagamento manual",
-        source: "leadManualConfirmed"
+        source: "leadManualConfirmed",
+        createdBy: cronosActorLabel(actor),
+        updatedBy: cronosActorLabel(actor)
       });
+      cronosAuditAction(db, { action:"payment_paid", entityType:"entry", entityId:rescueEntry.id, entryId:rescueEntry.id, contactId:contact.id, value:paidDelta, details:`Pagamento manual/resgate • ${moneyBR(paidDelta)} • caixa ${fmtBR(rescueDate)}` });
     }
 
     if(shouldRegisterDirectPayment){
@@ -10086,8 +10447,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
         value: paidDelta,
         method: payMethod || "",
         desc: "Pagamento manual",
-        source: "leadManualConfirmed"
+        source: "leadManualConfirmed",
+        createdBy: cronosActorLabel(actor),
+        updatedBy: cronosActorLabel(actor)
       });
+      cronosAuditAction(db, { action:"payment_paid", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:contact.id, value:paidDelta, details:`Pagamento manual • ${moneyBR(paidDelta)} • caixa ${fmtBR(rescueDate)}` });
     }
 
     /* ===== Parcelamento antigo removido do cadastro do lead =====
@@ -10111,6 +10475,19 @@ function wireLeadModal(actor, editingEntryId, isNew){
         entry.installPlan = { amount: instAmount, n: instN, firstDue: firstDue, payMethod: payMethod, entryAmount: entryAmount, each: Number((instAmount/instN).toFixed(2)) };
         buildInstallments(entry);
       }
+    }
+
+    if(!editingEntryId){
+      cronosAuditAction(db, { action:"lead_created", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:contact.id, details:`${name} • ${monthLabel(monthKey)}`, after:{ status:entry.status, monthKey:entry.monthKey, budget:entry.valueBudget ?? null } });
+    }else{
+      const changes = [];
+      if(entryBeforeAudit){
+        if(String(entryBeforeAudit.status || "") !== String(entry.status || "")) changes.push(`status ${entryBeforeAudit.status || "—"} → ${entry.status || "—"}`);
+        if(String(entryBeforeAudit.monthKey || "") !== String(entry.monthKey || "")) changes.push(`mês ${monthLabel(entryBeforeAudit.monthKey || "")} → ${monthLabel(entry.monthKey || "")}`);
+        if(String(entryBeforeAudit.apptDate || "") !== String(entry.apptDate || "") || String(entryBeforeAudit.apptTime || "") !== String(entry.apptTime || "")) changes.push("agendamento alterado");
+        if(Number(entryBeforeAudit.valueBudget || 0) !== Number(entry.valueBudget || 0)) changes.push(`orçamento ${moneyBR(entryBeforeAudit.valueBudget || 0)} → ${moneyBR(entry.valueBudget || 0)}`);
+      }
+      cronosAuditAction(db, { action:"lead_updated", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:contact.id, details:changes.length ? changes.join(" • ") : `Lead atualizado: ${name}`, before:entryBeforeAudit ? {status:entryBeforeAudit.status, monthKey:entryBeforeAudit.monthKey, budget:entryBeforeAudit.valueBudget} : null, after:{status:entry.status, monthKey:entry.monthKey, budget:entry.valueBudget} });
     }
 
     const cloudPromise = saveDB(db, { immediate:true });
@@ -10276,9 +10653,11 @@ function markOK(entryId){
     const vp = parseMoney(entry.valuePaid);
     entry.valueClosed = vp || null;
 
+    entry.updatedBy = cronosActorLabel(actor);
     entry.statusLog = entry.statusLog || [];
     if(fromStatus !== toStatus){
       entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
+      cronosAuditAction(db, { action:"status_changed", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, details:`${fromStatus || "—"} → ${toStatus || "—"}`, before:{status:fromStatus}, after:{status:toStatus} });
     }
 
     saveDB(db);
@@ -11116,9 +11495,12 @@ const hiddenCount = Math.max(0, sortedList.length - visibleList.length);
   const old = e.status;
   if(old===newStatus) return;
   e.status = newStatus;
-  e.lastUpdateAt = todayISO();
+  e.lastUpdateAt = new Date().toISOString();
+  e.updatedAt = e.lastUpdateAt;
+  e.updatedBy = cronosActorLabel(actor);
   e.statusLog = e.statusLog || [];
-  e.statusLog.push({at: new Date().toISOString(), from: old, to: newStatus, by: actor.name});
+  e.statusLog.push({at: e.lastUpdateAt, from: old, to: newStatus, by: actor.name});
+  cronosAuditAction(db, { action:"status_changed", entityType:"entry", entityId:e.id, entryId:e.id, contactId:e.contactId, details:`Funil: ${old || "—"} → ${newStatus || "—"}`, before:{status:old}, after:{status:newStatus} });
   saveDB(db);
   renderAll();
 }
@@ -11281,7 +11663,9 @@ function renderTasks(){
   const c = e ? db.contacts.find(x=>x.id===e.contactId) : null;
   const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
   const overdue = due && due < today && !t.done;
-  const cls = t.done ? "taskOk" : (overdue ? "taskBad" : "");
+  const cls = t.done ? "taskOk" : (overdue ? "taskBad" : "");  const svgEdit = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
+  const svgOk = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg>`;
+  const svgReopen = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10V4h6"></path><path d="M3.05 4.91A10 10 0 1 1 6 17.3"></path></svg>`;
   return `
     <tr class="${cls}">
       <td class="nowrap">${taskStatusLabel(t)}</td>
@@ -11291,11 +11675,11 @@ function renderTasks(){
       <td>${escapeHTML(t.notes||"")}</td>
       <td>
         <div class="taskActionsCell">
-          <div class="taskActionsRow">
-            <button class="miniBtn" onclick="openTaskEdit('${t.id}')" title="Editar">✏️</button>
-            ${`<button class="miniBtn ok" onclick="toggleTaskDone(\'${t.id}\')" title="${t.done?'Reabrir':'Concluir'}">${t.done?'↩️':'✔️'}</button>`}
+          <div class="taskActionsRow leadActionsRow">
+            <button class="iconBtn cronos-action-edit" onclick="openTaskEdit('${t.id}')" title="Editar tarefa">${svgEdit}</button>
+            <button class="iconBtn ${t.done ? '' : 'cronos-action-ok'}" onclick="toggleTaskDone('${t.id}')" title="${t.done?'Reabrir':'Concluir'}">${t.done ? svgReopen : svgOk}</button>
           </div>
-          ${e?`<button class="miniBtn taskOpenLead" onclick="openLeadEntry('${e.id}')">Abrir lead</button>`:""}
+          ${e?`<button class="btn primary taskOpenLead" onclick="openLeadEntry('${e.id}')">Abrir lead</button>`:""}
         </div>
       </td>
     </tr>

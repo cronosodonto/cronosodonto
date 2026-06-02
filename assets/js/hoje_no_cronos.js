@@ -430,7 +430,7 @@
         font-size:12px;
         text-decoration:none;
       }
-      html.light #${VIEW_ID} .todayBtn{background:rgba(255,255,255,.62)}
+      html.light #${VIEW_ID} .todayBtn{background:#e5e7eb; color:#334155; border-color:rgba(100,116,139,.32)}
       .todayBtn:hover{filter:brightness(1.08)}
       .todayBtn.primary{background:rgba(124,92,255,.18); border-color:rgba(124,92,255,.38)}
       .todayBtn.ok{background:rgba(34,197,94,.14); border-color:rgba(34,197,94,.35)}
@@ -447,7 +447,7 @@
       body.light #${VIEW_ID} .todayBtn.wa,
       html.light #${VIEW_ID} a.todayBtn[href*="wa.me"],
       body.light #${VIEW_ID} a.todayBtn[href*="wa.me"]{
-        background:#22c55e !important;
+        background:linear-gradient(135deg, #16a34a, #22c55e) !important;
         border-color:#16a34a !important;
         color:#ffffff !important;
         box-shadow:0 8px 16px rgba(34,197,94,.18) !important;
@@ -1733,7 +1733,7 @@
               <button class="todayBtn ok" onclick="CRONOS_TODAY.payFinancial('${escapeHTML(e.id)}','${escapeHTML(plan.id)}','${escapeHTML(p.id)}')">Dar baixa</button>
               <button class="todayBtn primary" onclick="CRONOS_TODAY.openReceipt('${escapeHTML(e.id)}','${escapeHTML(plan.id)}')">Abrir recebimento</button>
               <button class="todayBtn" onclick="CRONOS_TODAY.copy(${JSON.stringify(buildDirectReceiptChargeMessage(db, e, plan, p, null)).replace(/"/g,'&quot;')})">Copiar</button>
-              ${contactPhone(db,e) ? `<a class="todayBtn" target="_blank" href="${waLink(contactPhone(db,e), buildDirectReceiptChargeMessage(db, e, plan, p, null))}">WhatsApp</a>` : ""}
+              ${contactPhone(db,e) ? `<a class="todayBtn wa" target="_blank" href="${waLink(contactPhone(db,e), buildDirectReceiptChargeMessage(db, e, plan, p, null))}">WhatsApp</a>` : ""}
               <button class="todayBtn" onclick="CRONOS_TODAY.openLead('${escapeHTML(e.id)}')">Abrir lead</button>
             </div>
           </div>
@@ -1754,7 +1754,7 @@
             <button class="todayBtn ok" onclick="CRONOS_TODAY.payLegacy('${escapeHTML(e.id)}', ${Number(p.number || 0)})">Dar baixa</button>
             <button class="todayBtn primary" onclick="CRONOS_TODAY.openReceipt('${escapeHTML(e.id)}')">Abrir recebimento</button>
             <button class="todayBtn" onclick="CRONOS_TODAY.copy(${JSON.stringify(buildDirectReceiptChargeMessage(db, e, null, null, p)).replace(/"/g,'&quot;')})">Copiar</button>
-            ${contactPhone(db,e) ? `<a class="todayBtn" target="_blank" href="${waLink(contactPhone(db,e), buildDirectReceiptChargeMessage(db, e, null, null, p))}">WhatsApp</a>` : ""}
+            ${contactPhone(db,e) ? `<a class="todayBtn wa" target="_blank" href="${waLink(contactPhone(db,e), buildDirectReceiptChargeMessage(db, e, null, null, p))}">WhatsApp</a>` : ""}
             <button class="todayBtn" onclick="CRONOS_TODAY.openLead('${escapeHTML(e.id)}')">Abrir lead</button>
           </div>
         </div>
@@ -1784,7 +1784,7 @@
           </div>
           <div class="todayActions">
             <button class="todayBtn" onclick="CRONOS_TODAY.copy(${JSON.stringify(msg).replace(/"/g,'&quot;')})">Copiar</button>
-            ${c.phone ? `<a class="todayBtn" target="_blank" href="${waLink(c.phone, msg)}">WhatsApp</a>` : ""}
+            ${c.phone ? `<a class="todayBtn wa" target="_blank" href="${waLink(c.phone, msg)}">WhatsApp</a>` : ""}
             ${e ? `<button class="todayBtn" onclick="CRONOS_TODAY.openLead('${escapeHTML(e.id)}')">Abrir lead</button>` : ""}
           </div>
         </div>
@@ -1834,7 +1834,7 @@
               const flowPhone = contactPhone(db,e) || c.phone || e.phone || e.telefone || e.whatsapp || e.whatsApp || e.celular || e.mobile;
               if(!flowPhone) return "";
               const flowMsg = msg || "";
-              return `<a class="todayBtn" target="_blank" href="${waLink(flowPhone, flowMsg)}">WhatsApp</a>`;
+              return `<a class="todayBtn wa" target="_blank" href="${waLink(flowPhone, flowMsg)}">WhatsApp</a>`;
             })()}
             ${link ? `<a class="todayBtn" target="_blank" href="${escapeHTML(link)}">Abrir link</a>` : ""}
             <button class="todayBtn ok" onclick="CRONOS_TODAY.doneFlow('${escapeHTML(item.run.id)}', ${Number(step.index || 0)})">Marcar enviado</button>
