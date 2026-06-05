@@ -557,8 +557,10 @@ function renumberFinancialPlanPayments(plan){
 
 function financialPlanTotalFromFicha(entry){
   try{
-    const items = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
-    return items.reduce((sum,item)=> sum + parseMoney(item.valorFechado ?? item.valorBase ?? 0), 0);
+    const items = (typeof cronosActiveFichaPlanItems === "function")
+      ? cronosActiveFichaPlanItems(entry)
+      : (Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : []);
+    return items.reduce((sum,item)=> sum + ((typeof cronosFichaItemBudgetValue === "function") ? cronosFichaItemBudgetValue(item) : parseMoney(item.valorFechado ?? item.valorBase ?? 0)), 0);
   }catch(_){
     return 0;
   }
@@ -939,6 +941,7 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
 
   (db?.payments || []).forEach((p, idx)=>{
     if(!cronosSameMasterPayment(p, masterId, entryById, contactById, entriesByContact)) return;
+    if(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(p)) return;
     const status = String(p?.status || "").toUpperCase();
     if(status && status !== "PAGA" && p?.paid !== true && !p?.paidAt && !p?.cashDate && !p?.date) return;
     const amount = cronosPaymentAmount(p);
@@ -984,9 +987,9 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
 
   entries.forEach(entry=>{
     const patient = cronosPatientNameForPayment({}, entry, contactById);
-    ensureFinancialPlans(entry).forEach((plan, planIdx)=>{
+    ((typeof cronosActiveFinancialPlans === "function") ? cronosActiveFinancialPlans(entry) : ensureFinancialPlans(entry)).forEach((plan, planIdx)=>{
       const isLegacyAdapterPlan = legacyPlanShouldBeSkippedAsAdapter(entry, plan);
-      (plan.payments || []).forEach((p, idx)=>{
+      ((typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (plan.payments || [])).forEach((p, idx)=>{
         if(!financialPaymentPaid(p)) return;
         const planId = String(plan.id || planIdx);
         const paymentId = String(p.id || idx);
@@ -1012,7 +1015,7 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
   entries.forEach(entry=>{
     if(entry?.installPlan?.migratedToFinancialPlanId) return;
     const patient = cronosPatientNameForPayment({}, entry, contactById);
-    (entry.installments || []).forEach((p, idx)=>{
+    ((typeof cronosActiveLegacyInstallments === "function") ? cronosActiveLegacyInstallments(entry) : (entry.installments || [])).forEach((p, idx)=>{
       if(!(p?.paidAt || p?.cashDate || p?.paid || String(p?.status || "").toUpperCase()==="PAGA")) return;
       const legacyNum = String(p.number || idx+1);
       if(legacyLinks.has(`${String(entry.id)}|${legacyNum}`)) return;
@@ -1186,6 +1189,20 @@ window.cronosAuditRecebidos = function(monthKey){
   }
   return { total, count: events.length, rows, skipped, legacySkipped };
 };
+window.cronosAuditDashboardReceita = function(monthKey){
+  const db = loadDB();
+  const actor = currentActor();
+  const mk = String(monthKey || (getUIFilters()?.monthKey && getUIFilters().monthKey !== "all" ? getUIFilters().monthKey : monthKeyOf(todayISO()))).slice(0,7);
+  const [y,m] = mk.split('-').map(Number);
+  const fromISO = `${mk}-01`;
+  const toISO = `${mk}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
+  const rows = cronosOfficialReceivedEventsForRange(db, actor, fromISO, toISO);
+  const total = rows.reduce((s,ev)=>s + parseMoney(ev.amount || ev.value || 0), 0);
+  console.log(`CRONOS DASHBOARD/PERFORMANCE RECEITA OFICIAL ${mk}: ${moneyBR(total)} em ${rows.length} baixa(s).`);
+  console.table(rows.map((ev,i)=>({n:i+1,data:fmtBR(ev.iso),paciente:ev.patient,valor:moneyBR(ev.amount||ev.value),fonte:ev.source,detalhe:ev.desc,entryId:ev.entryId,contactId:ev.contactId})));
+  return {total,count:rows.length,rows};
+};
+
 window.cronosAuditRecebidosPorFonte = function(monthKey){
   const mk = String(monthKey || monthKeyOf(todayISO())).slice(0,7);
   const fromISO = `${mk}-01`;
@@ -1264,17 +1281,17 @@ window.cronosAuditPacientePagamentos = function(nome){
 function financialPlanTotals(plan){
   plan = plan || {};
   const total = parseMoney(plan.amount || plan.total || 0);
-  const payments = Array.isArray(plan.payments) ? plan.payments : [];
-  const scheduled = payments.reduce((s,p)=>s+parseMoney(p.amount),0);
-  const paid = payments.filter(financialPaymentPaid).reduce((s,p)=>s+parseMoney(p.amount),0);
-  const pending = payments.filter(p=>!financialPaymentPaid(p)).reduce((s,p)=>s+parseMoney(p.amount),0);
+  const payments = (typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (Array.isArray(plan.payments) ? plan.payments : []);
+  const scheduled = payments.reduce((s,p)=>s+parseMoney(p.amount ?? p.value ?? p.valor ?? 0),0);
+  const paid = payments.filter(financialPaymentPaid).reduce((s,p)=>s+parseMoney(p.amount ?? p.value ?? p.valor ?? 0),0);
+  const pending = payments.filter(p=>!financialPaymentPaid(p)).reduce((s,p)=>s+parseMoney(p.amount ?? p.value ?? p.valor ?? 0),0);
   const remainingToSchedule = Math.max(0, total - scheduled);
   const openBalance = Math.max(0, total - paid);
   return {total, scheduled, paid, pending, remainingToSchedule, openBalance};
 }
 
 function financialPlanNextDue(plan){
-  const pending = (plan?.payments || []).filter(p=>!financialPaymentPaid(p) && p.dueDate);
+  const pending = ((typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (plan?.payments || [])).filter(p=>!financialPaymentPaid(p) && p.dueDate);
   pending.sort((a,b)=>String(a.dueDate||"").localeCompare(String(b.dueDate||"")));
   return pending[0]?.dueDate || "";
 }
@@ -7566,112 +7583,256 @@ function setDashStatusFilter(status){
   renderDashboard();
 }
 
+
+function cronosIsDeletedLike(obj){
+  if(!obj || typeof obj !== "object") return false;
+  if(obj.deletedAt || obj.removedAt || obj.archivedAt || obj.canceledAt || obj.cancelledAt) return true;
+  if(obj.deleted === true || obj.removed === true || obj.archived === true || obj.canceled === true || obj.cancelled === true || obj.isDeleted === true) return true;
+  const st = String(obj.status || obj.situacao || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .trim().toLowerCase();
+  return ["excluido", "excluida", "deletado", "deletada", "removido", "removida", "cancelado", "cancelada", "canceled", "cancelled"].includes(st);
+}
+function cronosTombstoneIdSet(value){
+  if(!value) return new Set();
+  if(value instanceof Set) return new Set([...value].map(String));
+  if(Array.isArray(value)) return new Set(value.map(x=>String(typeof x === "object" ? (x?.id || x?.paymentId || x?.planId || x?.key || "") : x)).filter(Boolean));
+  if(typeof value === "object") return new Set(Object.keys(value).filter(k=>value[k]));
+  return new Set(String(value).split(/[;,|\s]+/).map(x=>x.trim()).filter(Boolean));
+}
+function cronosLegacyInstallmentTombstoneKey(pay, number){
+  return String(pay?.id || pay?.installmentId || pay?.paymentId || pay?.number || number || "");
+}
+function cronosActiveFichaPlanItems(entry){
+  const items = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
+  return items.filter(item=>!cronosIsDeletedLike(item));
+}
+function cronosActiveFinancialPlans(entry){
+  const deletedPlanIds = cronosTombstoneIdSet(entry?.deletedFinancialPlanIds || entry?.financialPlansDeleted || entry?.removedFinancialPlanIds);
+  return (Array.isArray(entry?.financialPlans) ? entry.financialPlans : []).filter(plan=>{
+    const id = String(plan?.id || "");
+    if(id && deletedPlanIds.has(id)) return false;
+    return !cronosIsDeletedLike(plan);
+  });
+}
+function cronosActiveFinancialPayments(plan){
+  const deletedPaymentIds = cronosTombstoneIdSet(plan?.deletedPaymentIds || plan?.paymentsDeleted || plan?.removedPaymentIds);
+  return (Array.isArray(plan?.payments) ? plan.payments : []).filter(pay=>{
+    const id = String(pay?.id || pay?.paymentId || pay?.installmentId || "");
+    if(id && deletedPaymentIds.has(id)) return false;
+    return !cronosIsDeletedLike(pay);
+  });
+}
+function cronosActiveLegacyInstallments(entry){
+  if(!entry || entry.deletedLegacyInstallmentPlanAt) return [];
+  const deletedLegacy = cronosTombstoneIdSet(entry.deletedLegacyInstallments || entry.deletedInstallments || entry.removedInstallments);
+  return (Array.isArray(entry.installments) ? entry.installments : []).filter((pay, idx)=>{
+    if(cronosIsDeletedLike(pay)) return false;
+    const key = cronosLegacyInstallmentTombstoneKey(pay, pay?.number || idx+1);
+    if(key && deletedLegacy.has(key)) return false;
+    return true;
+  });
+}
+function cronosFichaItemBudgetValue(item){
+  if(!item || cronosIsDeletedLike(item)) return 0;
+  const closedKeys = [
+    "valorFechado", "valorOrcamento", "valorOrçado", "valorPaciente",
+    "valorCobrado", "valorFinal", "precoFechado", "preçoFechado",
+    "priceClosed", "closedValue", "budgetValue", "orcamento", "valor"
+  ];
+  for(const key of closedKeys){
+    if(Object.prototype.hasOwnProperty.call(item, key)){
+      const n = parseMoney(item?.[key]);
+      if(n > 0) return n;
+    }
+  }
+  const genericKeys = ["value", "amount", "total"];
+  for(const key of genericKeys){
+    if(Object.prototype.hasOwnProperty.call(item, key)){
+      const n = parseMoney(item?.[key]);
+      if(n > 0) return n;
+    }
+  }
+  return parseMoney(item?.valorBase ?? item?.valorTabela ?? item?.tabela ?? 0);
+}
+function cronosFichaBudgetTotal(entry){
+  return cronosActiveFichaPlanItems(entry).reduce((sum,item)=> sum + cronosFichaItemBudgetValue(item), 0);
+}
+function cronosPlanBudgetTotal(entry, opts={}){
+  const fichaHasBudget = opts.fichaHasBudget === true;
+  return cronosActiveFinancialPlans(entry).reduce((sum,plan)=>{
+    if(fichaHasBudget && typeof legacyPlanShouldBeSkippedAsAdapter === "function" && legacyPlanShouldBeSkippedAsAdapter(entry, plan)) return sum;
+    const payments = cronosActiveFinancialPayments(plan);
+    const scheduled = payments.reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+    const paid = payments.filter(p=> typeof financialPaymentPaid === "function" ? financialPaymentPaid(p) : (!!p?.paidAt || !!p?.cashDate || p?.paid === true || String(p?.status||"").toUpperCase()==="PAGA"))
+      .reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+    const declared = parseMoney(plan?.amount ?? plan?.total ?? plan?.valor ?? plan?.value ?? 0);
+    return sum + Math.max(declared, scheduled, paid);
+  }, 0);
+}
+function cronosDashboardHasLeadScopedFilter(filters={}){
+  return !!(
+    String(filters?.search || "").trim() ||
+    String(filters?.status || "").trim() ||
+    String(filters?.campaign || "").trim() ||
+    String(filters?.treatment || "").trim() ||
+    String(filters?.origin || "").trim() ||
+    String(window.__DASH_STATUS_ACTIVE || "").trim() ||
+    String(window.__KPI_ACTIVE || "").trim()
+  );
+}
+function cronosFilterReceivedEventsByRows(events, rows){
+  const rowList = Array.isArray(rows) ? rows : [];
+  if(!rowList.length) return [];
+  const rowIds = new Set(rowList.map(e=>String(e?.id || "")).filter(Boolean));
+  const contactIds = new Set(rowList.map(e=>String(e?.contactId || "")).filter(Boolean));
+  return (events || []).filter(ev=>{
+    const eid = String(ev?.entryId || ev?.raw?.entryId || "").trim();
+    const cid = String(ev?.contactId || ev?.raw?.contactId || "").trim();
+    if(eid && rowIds.has(eid)) return true;
+    if(cid && contactIds.has(cid)) return true;
+    return false;
+  });
+}
+function cronosOfficialReceivedEventsForRange(db, actor, fromISO, toISO){
+  const events = (typeof buildCronosReceivedEvents === "function")
+    ? buildCronosReceivedEvents(db, actor, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true })
+    : getReceivedEventsForPeriod(db, actor, fromISO, toISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+  const from = pickISOFlexible(fromISO || "");
+  const to = pickISOFlexible(toISO || "");
+  return (events || []).filter(ev=>{
+    const iso = pickISOFlexible(ev?.iso || ev?.date || "");
+    if(!iso) return false;
+    if(from && iso < from) return false;
+    if(to && iso > to) return false;
+    return true;
+  });
+}
+
 function getEntryBudgetValue(e){
   if(!e) return 0;
 
+  // Regra oficial: ficha ativa > planos/recebimentos ativos > legado.
+  // Valor de tabela só entra como último recurso quando o item não tem valor de orçamento/fechado.
   try{
-    const plans = Array.isArray(e.financialPlans) ? e.financialPlans : [];
-    const totalPlans = plans.reduce((sum,p)=>sum + Math.max(parseMoney(p.amount || 0), parseMoney(p.total || 0)), 0);
-    if(totalPlans > 0) return totalPlans;
-  }catch(_){}
-
-  try{
-    const items = Array.isArray(e?.ficha?.plano) ? e.ficha.plano : [];
-    const fichaTotal = items.reduce((sum,item)=>sum + Math.max(parseMoney(item.valorFechado ?? 0), parseMoney(item.valorBase ?? 0), parseMoney(item.valor ?? 0), parseMoney(item.value ?? 0)), 0);
+    const fichaTotal = cronosFichaBudgetTotal(e);
     if(fichaTotal > 0) return fichaTotal;
-  }catch(_){}
+  }catch(_){ }
 
-  const budget = parseMoney(e.valueBudget ?? e.budget ?? e.orcamento ?? e.valorOrcamento ?? 0);
+  try{
+    const planTotal = cronosPlanBudgetTotal(e);
+    if(planTotal > 0) return planTotal;
+  }catch(_){ }
+
+  try{
+    if(!e?.deletedLegacyInstallmentPlanAt){
+      const inst = cronosActiveLegacyInstallments(e);
+      const legacyInstallTotal = inst.reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+      const declaredLegacy = parseMoney(e?.installPlan?.amount ?? e?.installPlan?.total ?? 0);
+      const total = Math.max(legacyInstallTotal, declaredLegacy);
+      if(total > 0) return total;
+    }
+  }catch(_){ }
+
+  const budget = Math.max(
+    parseMoney(e.valueBudget ?? 0),
+    parseMoney(e.budget ?? 0),
+    parseMoney(e.orcamento ?? 0),
+    parseMoney(e.valorOrcamento ?? 0)
+  );
   if(budget > 0) return budget;
   return parseMoney(e.valueEstimated ?? 0);
 }
 function getEntryPaidValue(e){
   if(!e) return 0;
-
   try{
-    const plans = Array.isArray(e.financialPlans) ? e.financialPlans : [];
-    if(plans.length){
-      return plans.reduce((sum,p)=>{
-        const pays = Array.isArray(p.payments) ? p.payments : [];
-        return sum + pays
-          .filter(pay=>financialPaymentPaid ? financialPaymentPaid(pay) : (!!pay.paidAt || !!pay.cashDate || pay.status === "PAGA" || pay.paid === true))
-          .reduce((s,pay)=>s + parseMoney(pay.amount || 0), 0);
-      }, 0);
+    if(typeof cronosEntryFinancialSummary === "function"){
+      return parseMoney(cronosEntryFinancialSummary(e, loadDB())?.paid ?? 0);
     }
-  }catch(_){}
-
-  return (e.valuePaid!=null && !isNaN(parseMoney(e.valuePaid)))
-    ? parseMoney(e.valuePaid)
-    : ((e.valueClosed!=null && !isNaN(parseMoney(e.valueClosed))) ? parseMoney(e.valueClosed) : 0);
+  }catch(_){ }
+  try{
+    const plans = cronosActiveFinancialPlans(e);
+    const planPaid = plans.reduce((sum,p)=>{
+      return sum + cronosActiveFinancialPayments(p)
+        .filter(pay=>financialPaymentPaid ? financialPaymentPaid(pay) : (!!pay.paidAt || !!pay.cashDate || pay.status === "PAGA" || pay.paid === true))
+        .reduce((s,pay)=>s + parseMoney(pay.amount || pay.value || pay.valor || 0), 0);
+    }, 0);
+    if(planPaid > 0) return planPaid;
+  }catch(_){ }
+  return Math.max(
+    parseMoney(e.valuePaid ?? 0),
+    parseMoney(e.valorPago ?? 0),
+    parseMoney(e.valorRecebido ?? 0),
+    parseMoney(e.totalRecebido ?? 0),
+    parseMoney(e.paidValue ?? 0),
+    parseMoney(e.receivedValue ?? 0),
+    parseMoney(e.amountPaid ?? 0),
+    parseMoney(e.paidAmount ?? 0),
+    parseMoney(e.totalPaid ?? 0),
+    parseMoney(e.received ?? 0),
+    parseMoney(e.pago ?? 0)
+  );
 }
 
 function cronosEntryFinancialSummary(entry, db=null){
   if(!entry) return {budget:0, paid:0, open:0, source:"empty"};
-
   const max0 = n => Math.max(0, Number(n || 0));
   const paidLike = p => {
+    if(!p || (typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(p))) return false;
     const st = String(p?.status || "").trim().toUpperCase();
     return !!(p?.paidAt || p?.cashDate || p?.paidDate || p?.paymentDate || p?.paid === true || st === "PAGA" || st === "PAGO");
   };
 
-  // 1) Recebimentos novos (financialPlans) — fonte principal e AUTORITATIVA.
-  // O espelho em db.payments serve para caixa/auditoria, mas não pode somar por cima
-  // nem manter valor pago depois que a parcela/recebimento foi excluído.
+  let fichaTotal = 0;
+  try{ fichaTotal = cronosFichaBudgetTotal(entry); }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler ficha", e); }
+
   let planTotal = 0;
   let planPaid = 0;
   let hasFinancialPlans = false;
   const validFinancialPlanIds = new Set();
   const validFinancialPaymentKeys = new Set();
   try{
-    const plans = Array.isArray(entry.financialPlans) ? entry.financialPlans : [];
+    const plans = cronosActiveFinancialPlans(entry);
     hasFinancialPlans = plans.length > 0;
     plans.forEach(plan=>{
       const planId = String(plan?.id || "");
       if(planId) validFinancialPlanIds.add(planId);
-      const t = (typeof financialPlanTotals === "function") ? financialPlanTotals(plan) : null;
-      const payments = Array.isArray(plan?.payments) ? plan.payments : [];
+      const payments = cronosActiveFinancialPayments(plan);
       payments.forEach(pay=>{
         const payId = String(pay?.id || "");
-        if(planId && payId && paidLike(pay)) validFinancialPaymentKeys.add(`${planId}::${payId}`);
+        if(planId && payId) validFinancialPaymentKeys.add(`${planId}::${payId}`);
       });
-      const scheduled = t ? parseMoney(t.scheduled) : payments.reduce((s,p)=>s + parseMoney(p.amount), 0);
-      const paid = t ? parseMoney(t.paid) : payments.filter(paidLike).reduce((s,p)=>s + parseMoney(p.amount), 0);
+      const scheduled = payments.reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+      const paid = payments.filter(paidLike).reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
       const declaredTotal = parseMoney(plan?.amount ?? plan?.total ?? plan?.valor ?? plan?.value ?? 0);
-      planTotal += Math.max(declaredTotal, scheduled, paid);
+      const shouldSkipAdapter = fichaTotal > 0 && typeof legacyPlanShouldBeSkippedAsAdapter === "function" && legacyPlanShouldBeSkippedAsAdapter(entry, plan);
+      if(!shouldSkipAdapter) planTotal += Math.max(declaredTotal, scheduled, paid);
       planPaid += paid;
     });
   }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler recebimentos", e); }
 
-  // 2) Caixa/recebimentos globais — fallback para baixas antigas NÃO espelhadas em financialPlans.
-  // Regra: se o pagamento aponta para um financialPlan existente, quem manda é o plano.
-  // Se a parcela foi removida do plano, o registro espelho não entra mais no total pago.
   let dbPaid = 0;
   try{
     if(db && Array.isArray(db.payments)){
       const eid = String(entry.id || "");
       db.payments.forEach(p=>{
         if(String(p?.entryId || "") !== eid) return;
-        const planId = String(p?.financialPlanId || "");
-        const payId = String(p?.financialPaymentId || "");
-        if(planId){
-          if(validFinancialPlanIds.has(planId)) return;
-          if(hasFinancialPlans && String(p?.source || "").toLowerCase().includes("financial")) return;
-        }
-        if(planId && payId && !validFinancialPaymentKeys.has(`${planId}::${payId}`)) return;
-        const st = String(p?.status || "").trim().toUpperCase();
-        if(st && st !== "PAGA" && st !== "PAGO" && p?.paid !== true && !p?.paidAt && !p?.cashDate && !p?.date) return;
+        if(!paidLike(p)) return;
+        const planId = String(p?.financialPlanId || p?.planId || "");
+        const payId = String(p?.financialPaymentId || p?.paymentId || p?.installmentId || "");
+        if(planId && validFinancialPlanIds.has(planId)) return; // já contado no plano ativo
+        if(planId && payId && validFinancialPaymentKeys.has(`${planId}::${payId}`)) return;
         dbPaid += (typeof cronosPaymentAmount === "function") ? parseMoney(cronosPaymentAmount(p)) : parseMoney(p?.value ?? p?.amount ?? p?.valor ?? 0);
       });
     }
   }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler caixa", e); }
 
-  // 3) Parcelamentos legados não migrados para Recebimentos.
   let legacyInstallTotal = 0;
   let legacyInstallPaid = 0;
   try{
     const migrated = !!(entry.installPlan && entry.installPlan.migratedToFinancialPlanId);
-    if(entry.installPlan && !migrated){
-      const inst = Array.isArray(entry.installments) ? entry.installments : [];
+    if(entry.installPlan && !migrated && !entry.deletedLegacyInstallmentPlanAt){
+      const inst = cronosActiveLegacyInstallments(entry);
       const instTotal = inst.reduce((s,p)=>s + parseMoney(p.amount ?? p.value ?? p.valor ?? 0), 0);
       const instPaid = inst.filter(paidLike).reduce((s,p)=>s + parseMoney(p.amount ?? p.value ?? p.valor ?? 0), 0);
       legacyInstallTotal = Math.max(parseMoney(entry.installPlan.amount ?? entry.installPlan.total ?? 0), instTotal, instPaid);
@@ -7679,16 +7840,6 @@ function cronosEntryFinancialSummary(entry, db=null){
     }
   }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler parcelamento legado", e); }
 
-  // 4) Ficha/plano de tratamento. Ela define o orçamento quando ainda não existe recebimento criado.
-  let fichaTotal = 0;
-  try{
-    const fichaItems = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
-    fichaTotal = fichaItems.reduce((sum,item)=>{
-      return sum + parseMoney(item?.valorFechado ?? item?.valorBase ?? item?.valor ?? item?.value ?? item?.amount ?? 0);
-    }, 0);
-  }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler ficha", e); }
-
-  // 5) Campos antigos do lead. São fallback; não podem superar financialPlans ativos.
   const legacyBudget = Math.max(
     parseMoney(entry.valueBudget ?? 0),
     parseMoney(entry.valueEstimated ?? 0),
@@ -7696,9 +7847,7 @@ function cronosEntryFinancialSummary(entry, db=null){
     parseMoney(entry.orcamento ?? 0),
     parseMoney(entry.valorOrcamento ?? 0)
   );
-
   const explicitLegacyPaid = Math.max(
-    parseMoney(entry.valuePaid ?? 0),
     parseMoney(entry.valorPago ?? 0),
     parseMoney(entry.valorRecebido ?? 0),
     parseMoney(entry.totalRecebido ?? 0),
@@ -7708,26 +7857,33 @@ function cronosEntryFinancialSummary(entry, db=null){
     parseMoney(entry.paidAmount ?? 0),
     parseMoney(entry.totalPaid ?? 0),
     parseMoney(entry.received ?? 0),
-    parseMoney(entry.pago ?? 0)
+    parseMoney(entry.pago ?? 0),
+    // valuePaid fica fora quando há ficha nova: em alguns leads ele representa valor realizado, não dinheiro pago.
+    fichaTotal > 0 ? 0 : parseMoney(entry.valuePaid ?? 0)
   );
-
   const legacyClosedFallback = parseMoney(entry.valueClosed ?? entry.valueClosedGross ?? 0);
-  const receiptPaid = (hasFinancialPlans ? planPaid : Math.max(planPaid, dbPaid)) + legacyInstallPaid;
 
-  const budget = max0(Math.max(legacyBudget, fichaTotal, planTotal + legacyInstallTotal));
-  let paid = hasFinancialPlans
-    ? max0(receiptPaid)
-    : max0(Math.max(receiptPaid, explicitLegacyPaid));
+  let budget = 0;
+  if(fichaTotal > 0) budget = fichaTotal;
+  else if(planTotal > 0) budget = planTotal;
+  else if(legacyInstallTotal > 0) budget = legacyInstallTotal;
+  else budget = legacyBudget;
+  budget = max0(budget);
 
-  // Compatibilidade: em leads antigos, valueClosed às vezes era usado como “pago”.
-  // Só entra se não houver ficha/recebimento/parcelamento para evitar pintar orçamento novo como recebido no chute.
+  let paid = 0;
+  if(fichaTotal > 0){
+    paid = Math.max(planPaid, dbPaid, legacyInstallPaid, explicitLegacyPaid);
+  }else if(hasFinancialPlans){
+    paid = Math.max(planPaid, dbPaid) + legacyInstallPaid;
+  }else{
+    paid = Math.max(planPaid, dbPaid, legacyInstallPaid, explicitLegacyPaid);
+  }
   if(paid <= 0 && legacyClosedFallback > 0 && fichaTotal <= 0 && planTotal <= 0 && legacyInstallTotal <= 0){
     paid = legacyClosedFallback;
   }
-
-  paid = Math.min(paid, budget > 0 ? Math.max(budget, paid) : paid);
+  paid = max0(paid);
   const open = max0((budget || 0) - (paid || 0));
-  const source = planTotal > 0 ? "recebimentos" : (fichaTotal > 0 ? "ficha" : (legacyInstallTotal > 0 ? "parcelamento" : "legado"));
+  const source = fichaTotal > 0 ? "ficha" : (planTotal > 0 ? "recebimentos" : (legacyInstallTotal > 0 ? "parcelamento" : "legado"));
   return {budget, paid, open, source, planTotal, planPaid, dbPaid, fichaTotal, legacyBudget, legacyInstallTotal, legacyInstallPaid};
 }
 window.cronosEntryFinancialSummary = cronosEntryFinancialSummary;
@@ -7907,7 +8063,9 @@ function buildDashboardRevenueData(rows, db, actor, filters){
     rowsLength: rowsSafe.length,
     entriesLength: Array.isArray(db?.entries) ? db.entries.length : 0,
     contactsLength: Array.isArray(db?.contacts) ? db.contacts.length : 0,
-    paymentsLength: Array.isArray(db?.payments) ? db.payments.length : 0
+    paymentsLength: Array.isArray(db?.payments) ? db.payments.length : 0,
+    version: window.__CRONOS_DATA_VERSION__ || 0,
+    calcVersion: 'v37-finance-unificado'
   });
   const cache = window.__CRONOS_DASH_REVENUE_CACHE__;
   if(cache && cache.rows === rowsSafe && cache.db === db && cache.key === cacheKey && (Date.now() - cache.ts) < 1500){
@@ -8004,8 +8162,9 @@ function buildDashboardRevenueData(rows, db, actor, filters){
     const monthRowsSafe = rowsSafe.filter(e=>String(e?.monthKey||"")===monthKey);
     addGrossToSeries(monthKey, grossSeries, grossDetails, monthRowsSafe);
 
-    let monthPayments = getReceivedEventsForPeriod(db, actor, effectiveFromISO, effectiveToISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+    let monthPayments = cronosOfficialReceivedEventsForRange(db, actor, effectiveFromISO, effectiveToISO);
     if(monthKey === currentMonthKey) monthPayments = monthPayments.filter(p=>p.iso <= todayISO);
+    if(cronosDashboardHasLeadScopedFilter(filters)) monthPayments = cronosFilterReceivedEventsByRows(monthPayments, rowsSafe);
 
     monthPayments.forEach(p=>{
       const val = Number(p.value || p.amount || 0);
@@ -8054,7 +8213,8 @@ function buildDashboardRevenueData(rows, db, actor, filters){
   const yearEndISO = `${selectedYear}-12-31`;
   const effectiveYearFromISO = fromISO && fromISO > yearStartISO ? fromISO : yearStartISO;
   const effectiveYearToISO = toISO && toISO < yearEndISO ? toISO : yearEndISO;
-  const yearPayments = getReceivedEventsForPeriod(db, actor, effectiveYearFromISO, effectiveYearToISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+  let yearPayments = cronosOfficialReceivedEventsForRange(db, actor, effectiveYearFromISO, effectiveYearToISO);
+  if(cronosDashboardHasLeadScopedFilter(filters)) yearPayments = cronosFilterReceivedEventsByRows(yearPayments, rowsSafe);
 
   yearPayments.forEach(p=>{
     const iso = p.iso || p.__iso || "";
@@ -8091,20 +8251,31 @@ function renderDashboard(){
 
   const actor = currentActor();
   const db = loadDB();
-  const dashRevenue = buildDashboardRevenueData(rows, db, actor, getUIFilters());
-  const totalPaid = dashRevenue.totalReceived;
+  const uiFilters = getUIFilters();
+  const dashRevenue = buildDashboardRevenueData(rows, db, actor, uiFilters);
+  const leadScopedFinancialFilter = cronosDashboardHasLeadScopedFilter(uiFilters);
+  let totalPaid = dashRevenue.totalReceived;
 
   const isRescueEntry = (e)=> Array.isArray(e?.tags) && e.tags.includes("Resgatado");
   const totalBase = rows.length || 0;
 
   rows.forEach(e=>{
-    const budget = isRescueEntry(e) ? 0 : getEntryBudgetValue(e);
+    if(isRescueEntry(e)) return;
+    const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+    const budget = parseMoney(summary?.budget ?? getEntryBudgetValue(e));
     totalBudget += (budget||0);
   });
 
-  // Dashboard consolidado:
-  // "R$ em aberto" precisa bater com as próprias KPIs:
-  // Valor orçado - R$ recebido real no período/filtro.
+  if(leadScopedFinancialFilter){
+    totalPaid = rows.reduce((sum,e)=>{
+      if(isRescueEntry(e)) return sum;
+      const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+      return sum + parseMoney(summary?.paid ?? getEntryPaidValue(e) ?? 0);
+    }, 0);
+  }
+
+  // Sem filtro de lead, R$ Recebido vem do caixa oficial do período (mesma fonte da Performance).
+  // Com filtro de paciente/status, acompanha os leads filtrados.
   totalOpen = Math.max(0, (totalBudget || 0) - (totalPaid || 0));
 
   rowsForDashboardDetail.forEach(e=>{
@@ -8113,8 +8284,8 @@ function renderDashboard(){
     // Resumo por Status:
     // Total precisa ser sempre baseado no Valor do orçamento do lead, não no valor de tabela/plano.
     // Aberto precisa ser Valor do orçamento - valor pago reconhecido.
-    const budget = isRescueEntry(e) ? 0 : (getEntryBudgetValue(e) || 0);
-    const paid = isRescueEntry(e) ? 0 : Number(summary?.paid ?? getEntryPaidValue(e) ?? 0);
+    const budget = isRescueEntry(e) ? 0 : parseMoney(summary?.budget ?? getEntryBudgetValue(e) ?? 0);
+    const paid = isRescueEntry(e) ? 0 : parseMoney(summary?.paid ?? getEntryPaidValue(e) ?? 0);
     const open = Math.max(0, (budget || 0) - (paid || 0));
 
     byStatus.set(e.status, (byStatus.get(e.status)||0) + 1);
@@ -8147,7 +8318,8 @@ function renderDashboard(){
 
   try{
     const budgetCount = rows.reduce((acc,e)=>{
-      const b = isRescueEntry(e) ? 0 : getEntryBudgetValue(e);
+      const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+      const b = isRescueEntry(e) ? 0 : parseMoney(summary?.budget ?? getEntryBudgetValue(e));
       return acc + ((b && b>0) ? 1 : 0);
     }, 0);
     const avg = budgetCount ? (totalBudget / budgetCount) : 0;
@@ -8177,7 +8349,7 @@ function renderDashboard(){
   grid.innerHTML = `
     <div class="sgHead">Status ${cronosExplainInfo("Status atual do lead no funil. Esse bloco não representa, sozinho, o caixa recebido no mês.", "Explicar Status")}</div>
     <div class="sgHead center">Leads</div>
-    <div class="sgHead right">Orçado / Em aberto ${cronosExplainInfo("Total: soma do valor orçado dos leads naquele status. Aberto: orçamento menos valores pagos vinculados a esses leads. Pode ser diferente do R$ Recebido, porque o recebido vem das baixas/pagamentos do período selecionado.", "Explicar Financeiro por status")}</div>
+    <div class="sgHead right">Orçado / Em aberto ${cronosExplainInfo("Orçado: soma do valor orçado dos leads naquele status. Aberto: orçamento menos valores pagos vinculados a esses leads. Pode ser diferente do R$ Recebido, porque o recebido vem das baixas/pagamentos do período selecionado.", "Explicar Financeiro por status")}</div>
   `;
   if(!ordered.length){
     const a=document.createElement("div"); a.className="muted"; a.style.gridColumn="1 / -1"; a.style.padding="12px";
@@ -8212,7 +8384,7 @@ function renderDashboard(){
       const statusOpenValue = byStatusValue.get(s) || 0;
       c3.innerHTML = `
         <div style="line-height:1.25; display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
-          <div style="white-space:nowrap;"><span class="muted" style="font-size:11px">Total:</span> <b style="font-size:14px">${moneyBR(statusTotalValue)}</b></div>
+          <div style="white-space:nowrap;"><span class="muted" style="font-size:11px">Orçado:</span> <b style="font-size:14px">${moneyBR(statusTotalValue)}</b></div>
           <div style="white-space:nowrap;"><span class="muted" style="font-size:11px">Aberto:</span> <b style="font-size:14px">${moneyBR(statusOpenValue)}</b></div>
         </div>
       `;
@@ -9744,6 +9916,12 @@ function openLeadEntry(entryId){
 
 
 function printLeadEntry(entryId){
+  // Usa a mesma impressão da ficha principal de Leads, evitando divergência no Funil.
+  try{
+    if(typeof window.printFicha === "function") return window.printFicha(entryId);
+  }catch(err){
+    console.warn("printLeadEntry: falha ao delegar para printFicha; usando fallback antigo.", err);
+  }
   const actor = currentActor();
   const db = loadDB();
   const e = (db.entries || []).find(x=>String(x.id)===String(entryId));
@@ -9757,7 +9935,7 @@ function printLeadEntry(entryId){
   }catch(err){ console.warn("Falha ao preparar ficha para impressão:", err); }
 
   const ficha = e.ficha && typeof e.ficha === "object" ? e.ficha : { plano:[], odontograma:{}, avaliacoes:[] };
-  const plano = Array.isArray(ficha.plano) ? ficha.plano.slice() : [];
+  const plano = (typeof cronosActiveFichaPlanItems === "function") ? cronosActiveFichaPlanItems(e).slice() : (Array.isArray(ficha.plano) ? ficha.plano.filter(item=>!(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(item))) : []);
   const avaliacoes = Array.isArray(ficha.avaliacoes) ? ficha.avaliacoes.slice() : [];
   const byEval = new Map(avaliacoes.map(av=>[String(av.id || "eval_1"), av]));
   const getEval = (item)=>{
@@ -9794,11 +9972,11 @@ function printLeadEntry(entryId){
     totals = { totalBase, totalFechado, totalDesconto:totalBase-totalFechado, totalPago:0, totalFeito, emAberto:totalFechado, descontoPct: totalBase ? ((totalBase-totalFechado)/totalBase)*100 : 0 };
   }
 
-  const financialPlans = Array.isArray(e.financialPlans) ? e.financialPlans : [];
+  const financialPlans = (typeof cronosActiveFinancialPlans === "function") ? cronosActiveFinancialPlans(e) : (Array.isArray(e.financialPlans) ? e.financialPlans : []);
   const planRows = financialPlans.map((plan, idx)=>{
     let ft = null;
     try{ ft = typeof financialPlanTotals === "function" ? financialPlanTotals(plan) : null; }catch(_){ ft = null; }
-    const pays = Array.isArray(plan.payments) ? plan.payments : [];
+    const pays = (typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (Array.isArray(plan.payments) ? plan.payments : []);
     return { plan, idx, totals:ft || { total:num(plan.amount || plan.total || 0), paid:0, open:num(plan.amount || plan.total || 0) }, pays };
   });
 
@@ -9860,7 +10038,7 @@ function printLeadEntry(entryId){
   body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:26px; color:var(--ink); background:#fff;}
   .head{display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:16px;}
   .brand{display:flex;align-items:center;gap:12px;min-width:0}.brand img{width:auto;height:46px;max-width:132px;object-fit:contain}.brandTitle{font-size:19px;font-weight:900;line-height:1.05}.sub{font-size:12px;color:var(--muted);margin-top:4px}.stamp{font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
-  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:12px;margin:14px 0}.card{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}.card.soft{background:var(--soft)}.label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.055em;font-weight:800}.val{font-size:14px;margin-top:5px}.muted{color:var(--muted)}.small{font-size:12px}.mono{font-variant-numeric:tabular-nums}.money{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 16px}.summary .box{border:1px solid var(--line);border-radius:14px;padding:10px;background:var(--soft)}.summary .num{font-size:18px;font-weight:900;margin-top:4px}.ok{color:#15803d}.warn{color:#b45309}.bad{color:#b91c1c}
+  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:12px;margin:14px 0}.card{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}.card.soft{background:var(--soft)}.label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.055em;font-weight:800}.val{font-size:14px;margin-top:5px}.muted{color:var(--muted)}.small{font-size:12px}.mono{font-variant-numeric:tabular-nums}.money{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 16px}.summary .box{border:1px solid var(--line);border-radius:14px;padding:10px;background:var(--soft)}.summary .num{font-size:18px;font-weight:900;margin-top:4px}.summary .numMark{display:inline-block;border-radius:999px;padding:4px 10px;background:#eef4ff;box-shadow:inset 0 0 0 1px #bfd4ff}.summary .numMark.discount{background:#ecfdf3;box-shadow:inset 0 0 0 1px #bbf7d0}.ok{color:#15803d}.warn{color:#b45309}.bad{color:#b91c1c}
   h2{font-size:15px;margin:18px 0 8px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid var(--line);padding:8px 7px;font-size:11.5px;text-align:left;vertical-align:top}th{background:var(--soft);color:#334155;text-transform:uppercase;letter-spacing:.04em;font-size:10px}.empty{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px;background:var(--soft)}.planCard{border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px;break-inside:avoid}.planHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.planTotals{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 4px;color:var(--muted);font-size:12px}.miniTable{margin-top:8px}.notes{white-space:pre-wrap;line-height:1.45}.footer{margin-top:18px;border-top:1px solid var(--line);padding-top:10px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:12px}
   @media print{body{margin:14mm}.card,.box,.planCard{break-inside:avoid}.noPrint{display:none!important}}
 </style>
@@ -9893,8 +10071,8 @@ function printLeadEntry(entryId){
 
   <div class="summary">
     <div class="box"><div class="label">Valor de tabela</div><div class="num">${m(totals.totalBase || 0)}</div></div>
-    <div class="box"><div class="label">Valor do orçamento</div><div class="num">${m(totals.totalFechado || 0)}</div></div>
-    <div class="box"><div class="label">Desconto</div><div class="num warn">${m(totals.totalDesconto || 0)}</div><div class="small muted">${Number(totals.descontoPct || 0).toFixed(2)}%</div></div>
+    <div class="box"><div class="label">Valor do orçamento</div><div class="num"><span class="numMark">${m(totals.totalFechado || 0)}</span></div></div>
+    <div class="box"><div class="label">Desconto</div><div class="num warn"><span class="numMark discount">${m(totals.totalDesconto || 0)}</span></div><div class="small muted"><span class="numMark discount">${Number(totals.descontoPct || 0).toFixed(2)}%</span></div></div>
     <div class="box"><div class="label">Total realizado</div><div class="num ok">${m(totals.totalFeito || 0)}</div></div>
     <div class="box"><div class="label">Total pago</div><div class="num ok">${m(totals.totalPago || 0)}</div></div>
     <div class="box"><div class="label">Em aberto</div><div class="num bad">${m(totals.emAberto || 0)}</div></div>
@@ -11314,8 +11492,8 @@ function kanbanPotentialValue(entry, db){
 
   let ficha = 0;
   try{
-    const items = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
-    ficha = items.reduce((sum,item)=>sum + parseMoney(item?.valorFechado ?? item?.valorBase ?? item?.valor ?? item?.value ?? item?.amount ?? 0), 0);
+    const items = (typeof cronosActiveFichaPlanItems === "function") ? cronosActiveFichaPlanItems(entry) : (Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : []);
+    ficha = items.reduce((sum,item)=>sum + ((typeof cronosFichaItemBudgetValue === "function") ? cronosFichaItemBudgetValue(item) : parseMoney(item?.valorFechado ?? item?.valorBase ?? item?.valor ?? item?.value ?? item?.amount ?? 0)), 0);
   }catch(_){ }
 
   let financial = 0;
@@ -11378,9 +11556,10 @@ const hiddenCount = Math.max(0, sortedList.length - visibleList.length);
           ${list.length ? visibleList
             .map(e=>{
               const c = contactsById.get(String(e.contactId || ""));
-              const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid))) ? Number(e.valuePaid) : 0;
-              const budget = (e.valueBudget!=null && !isNaN(Number(e.valueBudget))) ? Number(e.valueBudget) : 0;
-              const open = Math.max(0, budget - paid);
+              const finSummary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+              const paid = parseMoney(finSummary?.paid ?? e.valuePaid ?? 0);
+              const budget = parseMoney(finSummary?.budget ?? e.valueBudget ?? 0);
+              const open = parseMoney(finSummary?.open ?? Math.max(0, budget - paid));
               const apptDateRaw = (e.apptDate || e.agendamentoData || e.appointmentDate || "").toString().trim();
               const apptTimeRaw = (e.apptTime || e.agendamentoHora || e.appointmentTime || "").toString().trim();
               const apptLabel = `${apptDateRaw ? fmtBR(apptDateRaw) : ""}${apptTimeRaw ? ` às ${apptTimeRaw}` : ""}`.trim() || "—";
@@ -13834,7 +14013,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .fichaTotalsUnderOdonto{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:14px}
         .totalBox{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
         .totalBox .label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
-        .totalBox .value{font-size:19px;font-weight:800}
+        .totalBox .value{font-size:19px;font-weight:800}.totalBox .value.valueHighlight{display:inline-flex;align-items:center;border-radius:999px;padding:4px 10px;margin-left:-2px;background:rgba(37,99,235,.10);box-shadow:inset 0 0 0 1px rgba(37,99,235,.18)}.totalBox .value.valueHighlight.discount{background:rgba(22,163,74,.11);box-shadow:inset 0 0 0 1px rgba(22,163,74,.20)}
         .odontoFull{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03);margin-bottom:14px}
         .odontoGrid{display:grid;grid-template-columns:minmax(520px,1.05fr) minmax(390px,.95fr);gap:14px;align-items:start}
         .odontoPanel{border:1px solid var(--line);border-radius:14px;padding:14px;background:rgba(255,255,255,.025)}
@@ -14009,12 +14188,13 @@ document.addEventListener("DOMContentLoaded", () => {
       return (Number(num||0) / Number(den||0)) * 100;
     }
     function calcFichaTotals(plano=[], entry=null){
+      plano = (Array.isArray(plano) ? plano : []).filter(x=>!(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(x)));
       const totalBase = plano.reduce((s,x)=>s + Number(x.valorBase||0), 0);
       const totalFechado = plano.reduce((s,x)=>s + Number(x.valorFechado||0), 0);
       const totalDesconto = totalBase - totalFechado;
       const totalPago = fichaLinkedFinancialPaidTotal(entry, plano);
       const totalFeito = plano.filter(x=>isFichaItemClinicallyDone(entry, x)).reduce((s,x)=>s + Number(x.valorFechado||0), 0);
-      const emAberto = totalFechado - totalPago;
+      const emAberto = Math.max(0, totalFechado - totalPago);
       return {
         totalBase, totalFechado, totalDesconto, totalPago, totalFeito,
         emAberto, descontoPct: percent(totalDesconto, totalBase)
@@ -14111,7 +14291,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function fichaEvaluationSummaryHTML(ficha){
       const map = new Map();
-      (ficha.plano || []).forEach(item=>{
+      (ficha.plano || []).filter(item=>!(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(item))).forEach(item=>{
         const id = item.avaliacaoId || 'eval_1';
         if(!map.has(id)) map.set(id, {count:0, total:0});
         const row = map.get(id);
@@ -14129,7 +14309,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function getFichaEvaluationItems(ficha, evaluationId){
       const evalId = String(evaluationId || ficha?.activeEvaluationId || 'eval_1');
-      return (Array.isArray(ficha?.plano) ? ficha.plano : []).filter(item=>String(item.avaliacaoId || 'eval_1') === evalId);
+      return (Array.isArray(ficha?.plano) ? ficha.plano : []).filter(item=>String(item.avaliacaoId || 'eval_1') === evalId && !(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(item)));
     }
 
     function resetFichaTransientSelection(state){
@@ -15050,8 +15230,8 @@ window.CRONOS_PROC_UI = {
 
               <div class="totalsGrid fichaTotalsUnderOdonto">
                 <div class="totalBox"><span class="label">Valor de tabela</span><div class="value" id="fichaTotalBase">${moneyBR(totals.totalBase)}</div></div>
-                <div class="totalBox"><span class="label">Valor de orçamento</span><div class="value" id="fichaTotalFechado">${moneyBR(totals.totalFechado)}</div></div>
-                <div class="totalBox"><span class="label">Desconto total</span><div class="value" id="fichaTotalDesconto">${moneyBR(totals.totalDesconto)}</div><div class="small" id="fichaTotalDescontoPct">${totals.descontoPct.toFixed(2)}%</div></div>
+                <div class="totalBox"><span class="label">Valor de orçamento</span><div class="value valueHighlight" id="fichaTotalFechado">${moneyBR(totals.totalFechado)}</div></div>
+                <div class="totalBox"><span class="label">Desconto total</span><div class="value valueHighlight discount" id="fichaTotalDesconto">${moneyBR(totals.totalDesconto)}</div><div class="small" id="fichaTotalDescontoPct">${totals.descontoPct.toFixed(2)}%</div></div>
                 <div class="totalBox"><span class="label">Total realizado</span><div class="value" id="fichaTotalFeito">${moneyBR(totals.totalFeito)}</div></div>
                 <div class="totalBox"><span class="label">Total pago</span><div class="value" id="fichaTotalPago">${moneyBR(totals.totalPago)}</div></div>
                 <div class="totalBox"><span class="label">Em aberto</span><div class="value" id="fichaTotalAberto">${moneyBR(totals.emAberto)}</div></div>
@@ -15944,7 +16124,7 @@ window.CRONOS_PROC_UI = {
           .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#555}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;padding:5px 9px;border-radius:999px}
           .chip{width:10px;height:10px;border-radius:999px;display:inline-block}.cp1{background:#ffd400}.cp2{background:#16a34a}.cp3{background:#dc2626}
           table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--print-line);padding:6px 7px;vertical-align:top}th{background:#f7f8fa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
-          .summary{border-top:1.25px solid var(--print-line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid var(--print-line);padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}
+          .summary{border-top:1.25px solid var(--print-line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr)}.sum{border-right:1px solid var(--print-line);padding:8px 9px;min-height:62px}.sum:last-child{border-right:none}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}.printNumHighlight{display:inline-block;border-radius:999px;padding:3px 8px;background:#eef4ff;box-shadow:inset 0 0 0 1px #bfd4ff}.printNumHighlight.discount{background:#ecfdf3;box-shadow:inset 0 0 0 1px #bbf7d0}
           .obs{margin-top:14px;border:1.25px solid var(--print-line);padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
           .foot{margin-top:16px;font-size:11px;color:#333}
           @media print{body{padding:0}.sheet{border:none}tr.done td{background:#bbf7d0 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.paid td,tr.closed td{background:#fef08a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.absent td{background:#fecaca !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.box.paid,.box.plan,.box.closed,.box.done,.box.absent{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
@@ -15975,9 +16155,9 @@ window.CRONOS_PROC_UI = {
             </table>
             <div class="summary">
               <div class="sum"><div class="lbl">Valor tabela</div><div class="val">${moneyBR(totals.totalBase)}</div></div>
-              <div class="sum"><div class="lbl">Valor fechado</div><div class="val">${moneyBR(totals.totalFechado)}</div></div>
-              <div class="sum"><div class="lbl">Desconto</div><div class="val">${moneyBR(totals.totalDesconto)}</div></div>
-              <div class="sum"><div class="lbl">Desconto %</div><div class="val">${totals.descontoPct.toFixed(2)}%</div></div>
+              <div class="sum"><div class="lbl">Valor fechado</div><div class="val"><span class="printNumHighlight">${moneyBR(totals.totalFechado)}</span></div></div>
+              <div class="sum"><div class="lbl">Desconto</div><div class="val"><span class="printNumHighlight discount">${moneyBR(totals.totalDesconto)}</span></div></div>
+              <div class="sum"><div class="lbl">Desconto %</div><div class="val"><span class="printNumHighlight discount">${totals.descontoPct.toFixed(2)}%</span></div></div>
               <div class="sum"><div class="lbl">Valor pago</div><div class="val">${moneyBR(totals.totalPago)}</div></div>
             </div>
           </div>
