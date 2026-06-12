@@ -6963,12 +6963,22 @@ function openWhatsAppForEntry(entryId){
 }
 
 function loadSession(){
-  const raw = localStorage.getItem(SESSIONKEY);
+  // Sessão de acesso deve sobreviver ao F5, mas não ao fechamento do navegador/aba.
+  // Por isso usamos sessionStorage para o login e limpamos qualquer sessão antiga persistida.
+  try{ localStorage.removeItem(SESSIONKEY); }catch(_){ }
+  let raw = null;
+  try{ raw = sessionStorage.getItem(SESSIONKEY); }catch(_){ raw = null; }
   if(!raw) return null;
   try{ return JSON.parse(raw); }catch{ return null; }
 }
-function saveSession(s){ localStorage.setItem(SESSIONKEY, JSON.stringify(s)); }
-function clearSession(){ localStorage.removeItem(SESSIONKEY); }
+function saveSession(s){
+  try{ sessionStorage.setItem(SESSIONKEY, JSON.stringify(s)); }catch(_){ }
+  try{ localStorage.removeItem(SESSIONKEY); }catch(_){ }
+}
+function clearSession(){
+  try{ sessionStorage.removeItem(SESSIONKEY); }catch(_){ }
+  try{ localStorage.removeItem(SESSIONKEY); }catch(_){ }
+}
 
 async function hashPass(p){
   try{
@@ -12772,8 +12782,22 @@ const supabaseUrl = "https://nsqpslierpulanxvsxaw.supabase.co";
 const supabaseKey = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
 
 const CRONOS_MAIN_AUTH_STORAGE_KEY = "cronos-main-auth";
+
+(function cronosUseBrowserSessionForAuth(){
+  // Mantém o login ao atualizar a página (F5), mas evita reabrir o Cronos logado
+  // depois de fechar o navegador/computador.
+  try{
+    const legacyAuth = localStorage.getItem(CRONOS_MAIN_AUTH_STORAGE_KEY);
+    if(legacyAuth && !sessionStorage.getItem(CRONOS_MAIN_AUTH_STORAGE_KEY)){
+      sessionStorage.setItem(CRONOS_MAIN_AUTH_STORAGE_KEY, legacyAuth);
+    }
+    localStorage.removeItem(CRONOS_MAIN_AUTH_STORAGE_KEY);
+  }catch(_){ }
+})();
+
 const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey, {
   auth: {
+    storage: window.sessionStorage,
     storageKey: CRONOS_MAIN_AUTH_STORAGE_KEY,
     persistSession: true,
     autoRefreshToken: true,
