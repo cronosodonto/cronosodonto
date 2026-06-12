@@ -1762,6 +1762,7 @@ function refreshFinancialUIAfterPayment(){
 let __cronosFinancialMutationBusy = false;
 let __cronosFinancialMutationPromise = null;
 let __cronosFinancialMutationLabel = "";
+let __cronosFinancialMutationCloudGateBypass = false;
 const __cronosPendingFinancialPayments = new Set();
 
 function financialPaymentMutationKey(entryId, planId, paymentId){
@@ -1774,6 +1775,15 @@ function setFinancialPaymentMutationPending(entryId, planId, paymentId, pending=
   const key = financialPaymentMutationKey(entryId, planId, paymentId);
   if(pending) __cronosPendingFinancialPayments.add(key);
   else __cronosPendingFinancialPayments.delete(key);
+}
+async function runCloudSaveDuringFinancialMutation(fn){
+  const previous = __cronosFinancialMutationCloudGateBypass;
+  __cronosFinancialMutationCloudGateBypass = true;
+  try{
+    return await fn();
+  }finally{
+    __cronosFinancialMutationCloudGateBypass = previous;
+  }
 }
 function setFinancialPaymentUIState(payment, state=""){
   if(!payment || typeof payment !== "object") return;
@@ -1820,7 +1830,7 @@ async function waitForPreviousCloudWriteBeforeFinancialChange(){
     if(__cloudSaveTimer){
       clearTimeout(__cloudSaveTimer);
       __cloudSaveTimer = null;
-      await scheduleCloudSave(true);
+      await runCloudSaveDuringFinancialMutation(()=>scheduleCloudSave(true));
     }else if(__cloudSaveRunning && __cloudSavePromise){
       await __cloudSavePromise;
     }
@@ -1927,7 +1937,7 @@ async function commitFinancialMutationCloud(db, entry){
     return true;
   }
 
-  return await saveDB(db, { immediate:true });
+  return await runCloudSaveDuringFinancialMutation(()=>saveDB(db, { immediate:true }));
 }
 
 async function saveConfirmedFinancialChange(db, entry, before, labels={}){
@@ -6526,7 +6536,7 @@ function scheduleCloudSave(immediate=false){
 
   // Nunca deixamos o salvamento genérico atropelar uma baixa/alteração financeira atômica.
   // Ele espera a confirmação financeira e só depois persiste o estado mais recente.
-  if(__cronosFinancialMutationBusy && __cronosFinancialMutationPromise){
+  if(__cronosFinancialMutationBusy && __cronosFinancialMutationPromise && !__cronosFinancialMutationCloudGateBypass){
     return __cronosFinancialMutationPromise.then(()=>scheduleCloudSave(true));
   }
   __cloudSaveRevision += 1;
