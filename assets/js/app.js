@@ -15053,7 +15053,8 @@ window.CRONOS_PROC_UI = {
       const db = loadDB();
       const entry = getEntryById(entryId);
       if(!entry) return null;
-      ensureFicha(entry);
+      const ficha = ensureFicha(entry);
+      const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
       saveDB(db);
       window.__fichaFeatureState = {
         entryId: String(entryId),
@@ -15064,7 +15065,10 @@ window.CRONOS_PROC_UI = {
         selectedFace: '',
         price: '',
         selectedTooth: null,
-        selectedItemIds: []
+        selectedItemIds: [],
+        activeEvaluationId: String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1'),
+        activeDentitionType: getFichaDentitionType(ficha, entry),
+        dentitionRequestId: ''
       };
       return window.__fichaFeatureState;
     }
@@ -15318,7 +15322,14 @@ window.CRONOS_PROC_UI = {
       const catalogAll = getProcedureCatalog(db).filter(x=>x.ativo !== false);
       const catalog = catalogAll;
       const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
-      const activeDentition = getFichaDentitionType(ficha, entry);
+      const savedDentition = getFichaDentitionType(ficha, entry);
+      const activeEvaluationId = String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1');
+      if(String(state.activeEvaluationId || '') !== activeEvaluationId){
+        state.activeEvaluationId = activeEvaluationId;
+        state.activeDentitionType = savedDentition;
+        state.dentitionRequestId = '';
+      }
+      const activeDentition = normalizeDentitionType(state.activeDentitionType || savedDentition);
       const activeDentitionTeeth = getOdontoTeethForDentition(activeDentition);
       state.selectedTeeth = sortTeethForDentition((Array.isArray(state.selectedTeeth) ? state.selectedTeeth : []).filter(t=>activeDentitionTeeth.includes(String(t))), activeDentition);
       if(state.selectedTooth && !activeDentitionTeeth.includes(String(state.selectedTooth))) state.selectedTooth = null;
@@ -15607,12 +15618,38 @@ window.CRONOS_PROC_UI = {
         const ficha = ensureFicha(entry);
         const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
         const next = normalizeDentitionType(type);
-        if(normalizeDentitionType(activeEvaluation.dentitionType || ficha.dentitionType || 'permanent') === next) return;
+        const saved = normalizeDentitionType(activeEvaluation.dentitionType || ficha.dentitionType || 'permanent');
+        const visual = normalizeDentitionType(s.activeDentitionType || saved);
+        if(visual === next && saved === next){
+          s.activeEvaluationId = String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1');
+          s.activeDentitionType = next;
+          renderFichaApp();
+          return;
+        }
+        const requestId = `${Date.now()}_${Math.random()}`;
+        s.dentitionRequestId = requestId;
+        s.activeEvaluationId = String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1');
+        s.activeDentitionType = next;
         activeEvaluation.dentitionType = next;
         ficha.dentitionType = next;
         resetFichaTransientSelection(s);
+        try{
+          DB = normalizeDBShape(db || DB || freshDB());
+          window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+          window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+          safeSetLocalDB(DB);
+          if(typeof captureV2Snapshots === 'function') captureV2Snapshots(DB);
+        }catch(_){ }
         renderFichaApp();
-        await confirmFichaMutation(db, entry, before, 'Odontograma atualizado ✅', `Dentição: ${dentitionLabel(next)}.`);
+        const ok = await confirmFichaMutation(db, entry, before, 'Odontograma atualizado ✅', `Dentição: ${dentitionLabel(next)}.`);
+        if(!ok && s.dentitionRequestId === requestId){
+          const currentEntry = getEntryById(s.entryId);
+          const currentFicha = currentEntry ? ensureFicha(currentEntry) : null;
+          s.activeDentitionType = currentFicha ? getFichaDentitionType(currentFicha, currentEntry) : 'permanent';
+          s.activeEvaluationId = currentFicha ? String(currentFicha.activeEvaluationId || 'eval_1') : 'eval_1';
+          s.dentitionRequestId = '';
+          renderFichaApp();
+        }
       },
       toggleTooth(tooth){
         const s = getFichaState(); if(!s) return;
@@ -15967,6 +16004,10 @@ window.CRONOS_PROC_UI = {
         const ficha = ensureFicha(entry);
         if(ficha.avaliacoes.some(a=>String(a.id)===String(evalId))){
           ficha.activeEvaluationId = String(evalId);
+          const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+          s.activeEvaluationId = String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1');
+          s.activeDentitionType = getFichaDentitionType(ficha, entry);
+          s.dentitionRequestId = '';
           resetFichaTransientSelection(s);
           saveFichaMutation(db, entry);
         }
@@ -15984,6 +16025,9 @@ window.CRONOS_PROC_UI = {
         const av = { id: uid('eval'), label: nextFichaEvaluationLabel(ficha), date, dentitionType:getFichaDentitionType(ficha, entry), createdAt:new Date().toISOString() };
         ficha.avaliacoes.push(av);
         ficha.activeEvaluationId = av.id;
+        s.activeEvaluationId = String(av.id);
+        s.activeDentitionType = normalizeDentitionType(av.dentitionType || getFichaDentitionType(ficha, entry));
+        s.dentitionRequestId = '';
         resetFichaTransientSelection(s);
         saveFichaMutation(db, entry);
         renderFichaApp();
@@ -16283,7 +16327,7 @@ window.CRONOS_PROC_UI = {
           .field{border:1px solid var(--print-line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
           .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px}
           .boxWrap{border:1.25px solid var(--print-line);padding:12px 12px 10px}
-          .odonto{position:relative;width:100%;aspect-ratio:1536/560;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#fff;box-sizing:border-box}.odonto .odontoStatusLayer,.odonto .odontoLabelLayer{position:absolute;inset:0;width:100%;height:100%;display:block;user-select:none}.odonto .odontoStatusLayer{z-index:2;pointer-events:none;overflow:visible}.odonto .odontoLabelLayer{z-index:4;pointer-events:none;overflow:visible}.odontoStatusLayer .toothLine{fill:#6b7280;stroke:none;shape-rendering:geometricPrecision}.odontoStatusLayer .odontogramaTooth.paid .toothLine,.odontoStatusLayer .odontogramaTooth.plan .toothLine,.odontoStatusLayer .odontogramaTooth.closed .toothLine{fill:#ca8a04}.odontoStatusLayer .odontogramaTooth.done .toothLine{fill:#16a34a}.odontoStatusLayer .odontogramaTooth.absent .toothLine{fill:#dc2626}.odontoLabelLayer .odontoNumberText{fill:#111827;font-size:38px;font-weight:900;text-anchor:middle;dominant-baseline:middle;letter-spacing:.2px}.odontoLabelLayer.deciduous .odontoNumberText{font-size:10px;font-weight:900}.odontoStatusLayer.deciduous,.odontoLabelLayer.deciduous{transform:scale(.78);transform-origin:50% 50%}
+          .odonto{position:relative;width:100%;aspect-ratio:1536/560;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#fff;box-sizing:border-box}.odonto .odontoStatusLayer,.odonto .odontoLabelLayer{position:absolute;inset:0;width:100%;height:100%;display:block;user-select:none}.odonto .odontoStatusLayer{z-index:2;pointer-events:none;overflow:visible}.odonto .odontoLabelLayer{z-index:4;pointer-events:none;overflow:visible}.odontoStatusLayer .toothLine{fill:#6b7280;stroke:none;shape-rendering:geometricPrecision}.odontoStatusLayer .odontogramaTooth.paid .toothLine,.odontoStatusLayer .odontogramaTooth.plan .toothLine,.odontoStatusLayer .odontogramaTooth.closed .toothLine{fill:#ca8a04}.odontoStatusLayer .odontogramaTooth.done .toothLine{fill:#16a34a}.odontoStatusLayer .odontogramaTooth.absent .toothLine{fill:#dc2626}.odontoLabelLayer .odontoNumberText{fill:#111827;font-size:38px;font-weight:900;text-anchor:middle;dominant-baseline:middle;letter-spacing:.2px}.odontoLabelLayer.deciduous .odontoNumberText{font-size:10px;font-weight:900}.odontoStatusLayer.deciduous,.odontoLabelLayer.deciduous{transform:scale(.78);transform-origin:50% 50%}.odonto.printDeciduous{width:72%;margin-left:auto;margin-right:auto;aspect-ratio:384.53/233.56}.odonto.printDeciduous .odontoStatusLayer.deciduous,.odonto.printDeciduous .odontoLabelLayer.deciduous{transform:scale(.96);transform-origin:50% 50%}
 .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:#555}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;padding:5px 9px;border-radius:999px}
           .chip{width:10px;height:10px;border-radius:999px;display:inline-block}.cp1{background:#ffd400}.cp2{background:#16a34a}.cp3{background:#dc2626}
           table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--print-line);padding:6px 7px;vertical-align:top}th{background:#f7f8fa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
@@ -16307,7 +16351,7 @@ window.CRONOS_PROC_UI = {
 
           <div class="boxWrap" style="margin-top:16px">
             <div class="sectionTitle">Odontograma • ${dentitionLabel(activeDentition)}</div>
-            <div class="odonto">${renderOdontogramSVG(entry, { selectedTeeth: [], interactive: false, getVisualState: getPrintToothVisualState, dentitionType: activeDentition })}</div>
+            <div class="odonto ${activeDentition === 'deciduous' ? 'printDeciduous' : ''}">${renderOdontogramSVG(entry, { selectedTeeth: [], interactive: false, getVisualState: getPrintToothVisualState, dentitionType: activeDentition })}</div>
             <div class="legend"><span><i class="chip" style="background:#6b7280"></i>Neutro</span><span><i class="chip cp1"></i>Pago / Pendente</span><span><i class="chip cp2"></i>Realizado</span><span><i class="chip cp3"></i>Perda dentária / ausente</span></div>
           </div>
 
