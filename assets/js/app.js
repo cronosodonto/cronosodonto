@@ -8972,6 +8972,15 @@ function renderLeadsPagination(totalLeads, totalPages){
   });
 }
 
+
+function cronosDisplayManualField(primary, manual){
+  const p = String(primary || "").trim();
+  const m = String(manual || "").trim();
+  const n = p.normalize ? p.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : p.toLowerCase();
+  if(m && (!p || n === "outros" || n === "outro")) return m;
+  return p || m || "";
+}
+
 function renderLeadsTable(list){
   const cardsWrap = document.getElementById('leadsCards');
   const tbody = document.getElementById('leadsTbody'); // fallback antigo (se existir)
@@ -9030,8 +9039,12 @@ function renderLeadsTable(list){
 
     const priBadge = prioridade ? `<span class="badge ${priClass}">${escapeHTML(prioridade)}</span>` : '';
 
-    const tratamento = escapeHTML((e.treatment || e.tratamento || e.procedimento || e.trat || c?.treatment || c?.tratamento || '')||'') || '—';
-    const origem = escapeHTML((e.source || e.origem || e.origin || c?.source || c?.origem || c?.origin || '')||'') || '—';
+    const tratamentoRaw = (e.treatment || e.tratamento || e.procedimento || e.trat || c?.treatment || c?.tratamento || '') || '';
+    const tratamentoManual = (e.treatmentOther || e.tratamentoOutro || e.treatment_other || c?.treatmentOther || c?.tratamentoOutro || '') || '';
+    const origemRaw = (e.source || e.origem || e.origin || c?.source || c?.origem || c?.origin || '') || '';
+    const origemManual = (e.originOther || e.origemOutro || e.origin_other || c?.originOther || c?.origemOutro || '') || '';
+    const tratamento = escapeHTML(cronosDisplayManualField(tratamentoRaw, tratamentoManual)) || '—';
+    const origem = escapeHTML(cronosDisplayManualField(origemRaw, origemManual)) || '—';
 
     const apptDate = (e.apptDate || e.agendamentoData || e.appointmentDate || c?.apptDate || c?.agendamentoData || c?.appointmentDate || '').toString().trim();
     const apptTime = (e.apptTime || e.agendamentoHora || e.appointmentTime || c?.apptTime || c?.agendamentoHora || c?.appointmentTime || '').toString().trim();
@@ -10083,8 +10096,8 @@ function printLeadEntry(entryId){
     <div class="card soft">
       <div class="label">Resumo comercial</div>
       <div class="val">Status: <b>${h(e.status || "—")}</b></div>
-      <div class="val muted">Tratamento: ${h(e.treatmentOther ? `${e.treatment} — ${e.treatmentOther}` : (e.treatment || "—"))}</div>
-      <div class="val muted">Origem: ${h(e.originOther ? `${e.origin} — ${e.originOther}` : (e.origin || "—"))}</div>
+      <div class="val muted">Tratamento: ${h(cronosDisplayManualField(e.treatment, e.treatmentOther) || "—")}</div>
+      <div class="val muted">Origem: ${h(cronosDisplayManualField(e.origin, e.originOther) || "—")}</div>
       <div class="val muted">Agendamento: ${e.apptDate ? `${h(fmtBR(e.apptDate))} ${h(e.apptTime || "")}`.trim() : "—"}</div>
     </div>
   </div>
@@ -11891,34 +11904,38 @@ function openNewTask(){
   if(!actor) return;
   if(!actor.perms.edit || !canAccessView("tasks", actor)) return toast("Sem permissão", "Seu nível não pode criar tarefas.");
   const db = loadDB();
-  const monthKey = val("fMonth") || todayISO().slice(0,7);
+  const masterId = String(actor.masterId || "");
 
-  const entries = filteredEntries();
-  const opts = entries.map(e=>{
-    const c = db.contacts.find(x=>x.id===e.contactId);
-    return `<option value="${e.id}">${escapeHTML(c?.name||"—")} • ${escapeHTML(c?.phone||"")}</option>`;
-  }).join("");
+  const entries = (db.entries || [])
+    .filter(e=>!masterId || String(e.masterId || "") === masterId)
+    .sort((a,b)=>String(b.lastUpdateAt || b.apptDate || b.firstContactAt || b.monthKey || "").localeCompare(String(a.lastUpdateAt || a.apptDate || a.firstContactAt || a.monthKey || "")));
 
   openModal({
     title:"Nova tarefa",
-    sub:"Crie um follow-up com vencimento. O mês do filtro é usado como referência.",
+    sub:"Crie um follow-up buscando qualquer lead cadastrado, independente do mês filtrado.",
     bodyHTML: `
       <div class="twoCol">
-        <div>
+        <div style="position:relative">
           <label>Lead *</label>
-          <select id="tf_entry">${opts || `<option value="">(Sem leads no filtro)</option>`}</select>
+          <input id="tf_entry_search" type="text" autocomplete="off" placeholder="Digite nome ou telefone do paciente"/>
+          <input id="tf_entry" type="hidden"/>
+          <div id="taskLeadSuggest" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:4000;max-height:290px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--panel2);box-shadow:0 18px 40px rgba(0,0,0,.26);padding:6px;backdrop-filter:none"></div>
         </div>
         <div>
           <label>Vencimento *</label>
-          <input id="tf_due" type="date" value="${todayISO()}"/>
+          <input id="tf_due" type="date" value=""/>
         </div>
         <div style="grid-column:1/-1">
           <label>Tarefa *</label>
           <input id="tf_title" placeholder="Ex: Ligar e passar valor do orçamento"/>
         </div>
         <div>
-          <label>Ação</label>
-          <select id="tf_action">${TASK_ACTIONS.map(a=>`<option value="${a}">${a}</option>`).join("")}</select>
+          <label>Ação *</label>
+          <select id="tf_action"><option value="">Selecione a ação...</option>${TASK_ACTIONS.map(a=>`<option value="${a}">${a}</option>`).join("")}</select>
+          <div id="tf_action_other_wrap" style="display:none;margin-top:8px">
+            <label>Qual ação? *</label>
+            <input id="tf_action_other" placeholder="Ex: Enviar contrato, chamar no Instagram..."/>
+          </div>
         </div>
         <div style="grid-column:1/-1">
           <label>Obs</label>
@@ -11931,16 +11948,101 @@ function openNewTask(){
       <button class="btn ok" id="btnSaveTask">Salvar</button>
     `,
     onMount: ()=>{
+      const searchEl = el("tf_entry_search");
+      const hiddenEl = el("tf_entry");
+      const suggestEl = el("taskLeadSuggest");
+      const actionEl = el("tf_action");
+      const actionOtherWrap = el("tf_action_other_wrap");
+      const actionOtherEl = el("tf_action_other");
+      const normalize = (s)=> String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      const leadOptions = entries.map(e=>{
+        const c = db.contacts.find(x=>String(x.id)===String(e.contactId));
+        const monthTxt = e.monthKey ? (typeof monthLabel === "function" ? monthLabel(e.monthKey) : e.monthKey) : "";
+        const statusTxt = e.status || "";
+        const name = c?.name || "—";
+        const phone = c?.phone || "";
+        const label = `${name} • ${phone}${monthTxt ? ` • ${monthTxt}` : ""}${statusTxt ? ` • ${statusTxt}` : ""}`;
+        return { id:String(e.id), name, phone, monthTxt, statusTxt, label, search:normalize(`${name} ${phone} ${monthTxt} ${statusTxt}`) };
+      });
+
+      const syncOtherAction = ()=>{
+        const isOther = String(actionEl?.value || "") === "Outros";
+        if(actionOtherWrap) actionOtherWrap.style.display = isOther ? "block" : "none";
+        if(!isOther && actionOtherEl) actionOtherEl.value = "";
+      };
+      actionEl?.addEventListener("change", syncOtherAction);
+      syncOtherAction();
+
+      const hideSuggestions = ()=>{
+        if(suggestEl) suggestEl.style.display = "none";
+      };
+      const chooseLead = (item)=>{
+        hiddenEl.value = item.id;
+        searchEl.value = item.label;
+        hideSuggestions();
+      };
+      const renderSuggestions = ()=>{
+        hiddenEl.value = "";
+        const q = normalize(searchEl.value.trim());
+        if(!q || q.length < 2){
+          suggestEl.innerHTML = "";
+          hideSuggestions();
+          return;
+        }
+        const matches = leadOptions.filter(item=>item.search.includes(q)).slice(0, 25);
+        if(!matches.length){
+          suggestEl.innerHTML = `<div class="muted" style="padding:10px 12px;font-size:13px;background:transparent">Nenhum lead encontrado.</div>`;
+          suggestEl.style.display = "block";
+          return;
+        }
+        suggestEl.innerHTML = matches.map((item,idx)=>`
+          <button type="button" data-task-lead-idx="${idx}" style="display:block;width:100%;border:0;background:transparent;color:var(--text);text-align:left;padding:9px 11px;border-radius:10px;cursor:pointer;font-weight:500;line-height:1.25">
+            <span style="display:block;font-size:14px;font-weight:700;white-space:normal;word-break:break-word">${escapeHTML(item.name)}</span>
+            <span class="muted" style="display:block;font-size:12px;font-weight:500;margin-top:3px;white-space:normal;word-break:break-word">${escapeHTML([item.phone, item.monthTxt, item.statusTxt].filter(Boolean).join(" • "))}</span>
+          </button>
+        `).join("");
+        suggestEl.querySelectorAll("[data-task-lead-idx]").forEach(btn=>{
+          btn.addEventListener("mouseenter", ()=>{ btn.style.background = "rgba(124,92,255,.12)"; });
+          btn.addEventListener("mouseleave", ()=>{ btn.style.background = "transparent"; });
+          btn.addEventListener("mousedown", (ev)=>{
+            ev.preventDefault();
+            chooseLead(matches[Number(btn.dataset.taskLeadIdx || 0)]);
+          });
+          btn.addEventListener("click", (ev)=>{
+            ev.preventDefault();
+            chooseLead(matches[Number(btn.dataset.taskLeadIdx || 0)]);
+          });
+        });
+        suggestEl.style.display = "block";
+      };
+
+      searchEl?.addEventListener("input", renderSuggestions);
+      searchEl?.addEventListener("focus", ()=>{
+        if(searchEl.value.trim().length >= 2) renderSuggestions();
+      });
+      searchEl?.addEventListener("blur", ()=>setTimeout(hideSuggestions, 180));
+
       const btn = el("btnSaveTask");
       btn.addEventListener("click", ()=>{
-        const entryId = val("tf_entry");
+        let entryId = val("tf_entry");
+        const typed = String(val("tf_entry_search") || "").trim();
+        if(!entryId && typed){
+          const exact = leadOptions.find(item=>item.label === typed);
+          if(exact) entryId = exact.id;
+        }
         const dueDate = val("tf_due");
         const title = val("tf_title").trim();
-        const action = val("tf_action");
+        let action = val("tf_action");
         const notes = val("tf_notes").trim();
-        if(!entryId) return toast("Selecione um lead");
-        if(!dueDate) return toast("Informe o vencimento");
+        if(!entryId) return toast("Selecione um lead", "Digite pelo menos 2 caracteres e escolha o paciente na lista.");
+        if(!dueDate) return toast("Informe o vencimento", "A tarefa precisa de uma data definida.");
         if(!title) return toast("Informe a tarefa");
+        if(!action) return toast("Selecione a ação", "Escolha o tipo de ação da tarefa.");
+        if(action === "Outros"){
+          const customAction = String(val("tf_action_other") || "").trim();
+          if(!customAction) return toast("Informe a ação", "Digite qual ação será feita em 'Outros'.");
+          action = customAction;
+        }
 
         const t = {id: uid("task"), masterId: actor.masterId, entryId, dueDate, title, action, notes, done:false, createdAt:new Date().toISOString()};
         db.tasks = db.tasks || [];
@@ -11961,6 +12063,10 @@ function openTaskEdit(taskId){
   if(!t) return toast("Tarefa não encontrada");
   const entry = db.entries.find(e=>e.id===t.entryId);
   const c = entry ? db.contacts.find(x=>x.id===entry.contactId) : null;
+  const currentAction = String(t.action || "");
+  const isKnownAction = TASK_ACTIONS.includes(currentAction);
+  const selectedAction = isKnownAction ? currentAction : (currentAction ? "Outros" : "");
+  const customAction = (!isKnownAction && currentAction) ? currentAction : "";
 
   openModal({
     title:"Editar tarefa",
@@ -11968,7 +12074,7 @@ function openTaskEdit(taskId){
     bodyHTML: `
       <div class="twoCol">
         <div>
-          <label>Vencimento</label>
+          <label>Vencimento *</label>
           <input id="tf_due" type="date" value="${escapeHTML(t.dueDate||"")}"/>
         </div>
         <div>
@@ -11979,12 +12085,16 @@ function openTaskEdit(taskId){
           </select>
         </div>
         <div style="grid-column:1/-1">
-          <label>Tarefa</label>
+          <label>Tarefa *</label>
           <input id="tf_title" value="${escapeHTML(t.title||"")}"/>
         </div>
         <div>
-          <label>Ação</label>
-          <select id="tf_action">${TASK_ACTIONS.map(a=>`<option value="${a}" ${(t.action===a)?"selected":""}>${a}</option>`).join("")}</select>
+          <label>Ação *</label>
+          <select id="tf_action"><option value="">Selecione a ação...</option>${TASK_ACTIONS.map(a=>`<option value="${a}" ${(selectedAction===a)?"selected":""}>${a}</option>`).join("")}</select>
+          <div id="tf_action_other_wrap" style="display:${selectedAction === "Outros" ? "block" : "none"};margin-top:8px">
+            <label>Qual ação? *</label>
+            <input id="tf_action_other" value="${escapeHTML(customAction)}" placeholder="Ex: Enviar contrato, chamar no Instagram..."/>
+          </div>
         </div>
         <div style="grid-column:1/-1">
           <label>Obs</label>
@@ -11997,11 +12107,33 @@ function openTaskEdit(taskId){
       <button class="btn ok" id="btnSaveTask">Salvar</button>
     `,
     onMount: ()=>{
+      const actionEl = el("tf_action");
+      const actionOtherWrap = el("tf_action_other_wrap");
+      const actionOtherEl = el("tf_action_other");
+      const syncOtherAction = ()=>{
+        const isOther = String(actionEl?.value || "") === "Outros";
+        if(actionOtherWrap) actionOtherWrap.style.display = isOther ? "block" : "none";
+        if(!isOther && actionOtherEl) actionOtherEl.value = "";
+      };
+      actionEl?.addEventListener("change", syncOtherAction);
+      syncOtherAction();
+
       el("btnSaveTask").addEventListener("click", ()=>{
-        t.dueDate = val("tf_due");
+        const dueDate = val("tf_due");
+        const title = val("tf_title").trim();
+        let action = val("tf_action");
+        if(!dueDate) return toast("Informe o vencimento", "A tarefa precisa de uma data definida.");
+        if(!title) return toast("Informe a tarefa");
+        if(!action) return toast("Selecione a ação", "Escolha o tipo de ação da tarefa.");
+        if(action === "Outros"){
+          const customAction = String(val("tf_action_other") || "").trim();
+          if(!customAction) return toast("Informe a ação", "Digite qual ação será feita em 'Outros'.");
+          action = customAction;
+        }
+        t.dueDate = dueDate;
         t.done = el("tf_done").value ==="1";
-        t.title = val("tf_title").trim();
-        t.action = val("tf_action");
+        t.title = title;
+        t.action = action;
         t.notes = val("tf_notes").trim();
         saveDB(db);
         closeModal();
