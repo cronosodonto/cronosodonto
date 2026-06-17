@@ -608,6 +608,53 @@ to { transform: rotate(360deg); }
     .authPassToggle svg{width:22px; height:22px; display:block; pointer-events:none;}
     :root.light .authPassToggle:hover{background:transparent;}
 
+
+
+    /* Login — CTA principal com mais contraste e cara de produto */
+    #authView #btnLogin{
+      justify-content:center;
+      min-height:48px;
+      padding:13px 18px;
+      border:0;
+      border-radius:16px;
+      color:#ffffff;
+      font-weight:900;
+      letter-spacing:.025em;
+      text-transform:none;
+      background:linear-gradient(135deg, #2563eb 0%, #0ea5e9 48%, #10b981 100%);
+      box-shadow:0 16px 34px rgba(37,99,235,.28), inset 0 1px 0 rgba(255,255,255,.28);
+    }
+    :root:not(.light) #authView #btnLogin{
+      background:linear-gradient(135deg, #3b82f6 0%, #06b6d4 48%, #2ee59d 100%);
+      box-shadow:0 18px 40px rgba(6,182,212,.20), 0 10px 26px rgba(46,229,157,.12), inset 0 1px 0 rgba(255,255,255,.22);
+    }
+    #authView #btnLogin:hover{
+      transform:translateY(-1px);
+      background:linear-gradient(135deg, #1d4ed8 0%, #0284c7 48%, #059669 100%);
+      box-shadow:0 20px 42px rgba(37,99,235,.34), inset 0 1px 0 rgba(255,255,255,.30);
+      filter:saturate(1.04) brightness(1.02);
+    }
+    :root:not(.light) #authView #btnLogin:hover{
+      background:linear-gradient(135deg, #2563eb 0%, #0891b2 48%, #10b981 100%);
+      box-shadow:0 22px 44px rgba(6,182,212,.24), 0 12px 30px rgba(46,229,157,.15), inset 0 1px 0 rgba(255,255,255,.24);
+    }
+    #authView #btnLogin:active{
+      transform:translateY(0);
+      filter:saturate(1.02) brightness(.98);
+      box-shadow:0 10px 22px rgba(37,99,235,.24), inset 0 1px 0 rgba(255,255,255,.18);
+    }
+    #authView #btnLogin:disabled,
+    #authView #btnLogin.loading{
+      opacity:.86;
+      cursor:wait;
+      transform:none;
+      filter:none;
+    }
+    #authView #btnLogin .spinner{
+      border-color:rgba(255,255,255,.34);
+      border-top-color:#ffffff;
+    }
+
     /* Toast */
     .toast{
       position:fixed; right:16px; bottom:16px;
