@@ -10530,21 +10530,62 @@ function wireLeadModal(actor, editingEntryId, isNew){
       existingIndex = db.contacts.findIndex(c=>String(c.id)===String(selectedId) && c.masterId===actor.masterId);
     }
 
-    const samePhoneContacts = db.contacts.filter(c=>
-      c.masterId === actor.masterId &&
-      String(c.phone || "") === String(phone || "")
-    );
+    const normalizePersonName = (v)=> String(v || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ");
 
-    if(isNew && !selectedId && samePhoneContacts.length){
-      const names = samePhoneContacts.map(c=>c.name).filter(Boolean).slice(0,3).join(", ");
-      const continuar = confirm(
-        "Já existe contato com esse mesmo telefone.\n\n" +
-        (names ? "Contato(s): " + names + "\n\n" : "") +
-        "OK = cadastrar como OUTRO paciente usando o mesmo número.\n" +
-        "Cancelar = voltar e escolher uma sugestão existente."
+    const sameMasterContacts = db.contacts.filter(c=> c.masterId === actor.masterId);
+    const currentNameKey = normalizePersonName(name);
+    const currentCpf = String(contactDraft.cpf || "").replace(/\D/g, "");
+    const currentBirth = String(contactDraft.birthDate || "").trim();
+
+    const duplicateByCpf = currentCpf && currentCpf.length >= 11
+      ? sameMasterContacts.find(c=>
+          String(c.id || "") !== String(selectedId || "") &&
+          String(c.cpf || "").replace(/\D/g, "") === currentCpf
+        )
+      : null;
+
+    const duplicateByNamePhone = currentNameKey && phone
+      ? sameMasterContacts.find(c=>
+          String(c.id || "") !== String(selectedId || "") &&
+          normalizePersonName(c.name) === currentNameKey &&
+          String(c.phone || "") === String(phone || "")
+        )
+      : null;
+
+    const duplicateByNameBirth = currentNameKey && currentBirth
+      ? sameMasterContacts.find(c=>
+          String(c.id || "") !== String(selectedId || "") &&
+          normalizePersonName(c.name) === currentNameKey &&
+          String(c.birthDate || "") === currentBirth
+        )
+      : null;
+
+    const duplicateContact = duplicateByCpf || duplicateByNamePhone || duplicateByNameBirth;
+
+    if(isNew && !selectedId && duplicateContact){
+      const motivo = duplicateByCpf
+        ? "mesmo CPF"
+        : (duplicateByNameBirth ? "mesmo nome e data de nascimento" : "mesmo nome e telefone");
+
+      const abrirExistente = confirm(
+        "Encontramos um cadastro possivelmente igual (" + motivo + ").\n\n" +
+        "Paciente: " + (duplicateContact.name || "Sem nome") + "\n" +
+        "Telefone: " + (formatPhoneBR(duplicateContact.phone || "") || "—") + "\n\n" +
+        "OK = abrir o cadastro existente.\n" +
+        "Cancelar = voltar ao formulário sem salvar."
       );
-      if(!continuar) return;
-      existingIndex = -1;
+
+      if(abrirExistente){
+        loadExistingContactIntoModal(duplicateContact.id, actor, isNew);
+      }else{
+        toast("Cadastro mantido aberto", "Revise nome, CPF ou data antes de salvar como outro paciente.");
+      }
+      return;
     }
 
     if(editingEntryRef && existingIndex >= 0){
@@ -10557,14 +10598,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
         String(oldContact.birthDate || "") !== String(contactDraft.birthDate || "");
 
       if(linkedCount > 1 && personalChanged){
-        shouldSplitSharedContact = confirm(
-          "Este contato está vinculado a " + linkedCount + " leads.\n\n" +
-          "OK = separar ESTE lead como outro paciente, mantendo o mesmo telefone.\n" +
-          "Cancelar = atualizar o contato compartilhado em todos os leads vinculados."
-        );
-        if(shouldSplitSharedContact){
-          existingIndex = -1;
-        }
+        // Telefone pode ser compartilhado por familiares. Ao editar dados pessoais
+        // de um lead vinculado a vários registros, o Cronos separa apenas ESTE lead,
+        // sem alterar os demais cadastros que usam o mesmo contato.
+        shouldSplitSharedContact = true;
+        existingIndex = -1;
       }
     }
 
