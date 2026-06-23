@@ -10116,10 +10116,68 @@ function cronosMergeFichaSafe(primaryFicha, secondaryFicha){
   if(cronosFichaHasContent(primary) && !cronosFichaHasContent(secondary)) return primary;
   if(!cronosFichaHasContent(primary) && !cronosFichaHasContent(secondary)) return primary || secondary || null;
 
-  primary.plano = cronosMergeUniqueArray(primary.plano, secondary.plano);
-  primary.avaliacoes = cronosMergeUniqueArray(primary.avaliacoes, secondary.avaliacoes);
+  // Quando os dois cadastros têm ficha, NÃO misturamos tudo dentro da mesma avaliação.
+  // Cada avaliação da ficha secundária vira uma nova avaliação no cadastro principal,
+  // preservando a data e os procedimentos como um registro separado.
+  if(!Array.isArray(primary.plano)) primary.plano = [];
+  if(!Array.isArray(primary.avaliacoes)) primary.avaliacoes = [];
+  if(!primary.odontograma || typeof primary.odontograma !== "object") primary.odontograma = {};
+  if(!Array.isArray(secondary.plano)) secondary.plano = [];
+  if(!Array.isArray(secondary.avaliacoes)) secondary.avaliacoes = [];
+  if(!secondary.odontograma || typeof secondary.odontograma !== "object") secondary.odontograma = {};
+
+  if(!primary.avaliacoes.length){
+    primary.avaliacoes.push({ id:"eval_1", label:"Avaliação 1", date:todayISO(), createdAt:new Date().toISOString() });
+  }
+  if(!secondary.avaliacoes.length && secondary.plano.length){
+    const fallbackDate = String(secondary.updatedAt || secondary.createdAt || todayISO()).slice(0,10);
+    secondary.avaliacoes.push({
+      id:"eval_sec_1",
+      label:"Avaliação importada",
+      date:/^\d{4}-\d{2}-\d{2}$/.test(fallbackDate) ? fallbackDate : todayISO(),
+      createdAt:new Date().toISOString()
+    });
+  }
+
+  const nextLabel = ()=> `Avaliação ${primary.avaliacoes.length + 1}`;
+  const evalMap = new Map();
+  secondary.avaliacoes.forEach(secAv=>{
+    const secId = String(secAv?.id || "eval_sec");
+    const date = String(secAv?.date || secAv?.createdAt || secondary.updatedAt || todayISO()).slice(0,10);
+    const newAv = {
+      ...cronosCloneSafe(secAv || {}),
+      id: uid("eval_merge"),
+      label: nextLabel(),
+      date:/^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayISO(),
+      createdAt: secAv?.createdAt || new Date().toISOString(),
+      mergedFrom: secId
+    };
+    primary.avaliacoes.push(newAv);
+    evalMap.set(secId, newAv);
+  });
+
+  const fallbackEval = primary.avaliacoes[primary.avaliacoes.length - 1] || primary.avaliacoes[0];
+  const existingItemIds = new Set(primary.plano.map(item=>String(item?.id || "")).filter(Boolean));
+  secondary.plano.forEach(item=>{
+    const cloned = cronosCloneSafe(item || {});
+    const originalId = String(cloned.id || "");
+    if(!cloned.id || existingItemIds.has(String(cloned.id))){
+      cloned.id = uid("plan_merge");
+    }
+    existingItemIds.add(String(cloned.id));
+    const oldEvalId = String(cloned.avaliacaoId || secondary.activeEvaluationId || secondary.avaliacoes?.[0]?.id || "");
+    const mapped = evalMap.get(oldEvalId) || fallbackEval;
+    cloned.avaliacaoId = mapped?.id || cloned.avaliacaoId || "eval_1";
+    cloned.avaliacaoLabel = mapped?.label || cloned.avaliacaoLabel || "Avaliação mesclada";
+    cloned.avaliacaoData = mapped?.date || cloned.avaliacaoData || todayISO();
+    cloned.mergedFromFichaItemId = originalId || cloned.mergedFromFichaItemId || "";
+    primary.plano.push(cloned);
+  });
+
+  // Odontograma não é mesclado sobrescrevendo dente/campo já preenchido.
+  // O principal prevalece; dados que só existiam na ficha secundária entram sem apagar o atual.
   primary.odontograma = { ...(secondary.odontograma || {}), ...(primary.odontograma || {}) };
-  primary.activeEvaluationId = primary.activeEvaluationId || secondary.activeEvaluationId || primary.avaliacoes?.[0]?.id || "";
+  primary.activeEvaluationId = primary.activeEvaluationId || primary.avaliacoes?.[0]?.id || "";
   primary.updatedAt = [primary.updatedAt, secondary.updatedAt, new Date().toISOString()].filter(Boolean).sort().pop();
   return primary;
 }
