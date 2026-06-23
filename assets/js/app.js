@@ -1,0 +1,16594 @@
+function debounce(fn, delay){
+  let t;
+  return function(...args){
+    clearTimeout(t);
+    t = setTimeout(()=>fn.apply(this,args), delay||300);
+  };
+}
+
+
+window.__CRONOS_SESSION_CHECKING__ = true;
+window.__CRONOS_BOOTING__ = true;
+
+(function(){
+  function showToast(title, message, type = 'info') {
+    try {
+      const prefix = type ? `[${String(type).toUpperCase()}]` : '[INFO]';
+      console.log(prefix, title || '', message || '');
+    } catch (e) {}
+  }
+
+  function fallbackBeforeBoot(msg){
+    try{
+      if(window.__CRONOS_SESSION_CHECKING__ || window.__CRONOS_BOOTING__) return;
+      var boot=document.getElementById('bootSplashView');
+      var a=document.getElementById('authView');
+      var b=document.getElementById('appView');
+      if(boot) boot.classList.add('hidden');
+      if(a) a.classList.remove('hidden');
+      if(b) b.classList.add('hidden');
+      showToast(msg || 'Falha ao iniciar.');
+    }catch(e){}
+  }
+
+  function handleErr(msg){
+    if(window.__CRONOS_BOOTED){
+      showToast(msg || 'Erro inesperado.');
+      return;
+    }
+    fallbackBeforeBoot(msg);
+  }
+
+  window.addEventListener('error', function(e){ handleErr(e && e.message); });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e && e.reason;
+    handleErr(r && (r.message || r) );
+  });
+
+  
+  setTimeout(function(){
+    if(window.__CRONOS_BOOTED || window.__CRONOS_SESSION_CHECKING__ || window.__CRONOS_BOOTING__) return;
+    var boot=document.getElementById('bootSplashView');
+    var a=document.getElementById('authView');
+    var b=document.getElementById('appView');
+    if(boot && !boot.classList.contains('hidden')) return;
+    if(a && b && a.classList.contains('hidden') && b.classList.contains('hidden')){
+      fallbackBeforeBoot('Boot não exibiu nenhuma tela (fallback automático).');
+    }
+  }, 6500);
+})();
+
+/* =========================
+   Recebimentos e parcelas
+   ========================= */
+
+function parseMoney(v){
+  if(v == null || v === "") return 0;
+  if(typeof v === "number") return (isFinite(v) && !isNaN(v)) ? v : 0;
+  const raw = String(v).trim();
+  if(!raw) return 0;
+  const cleaned = raw.replace(/[^0-9,.-]/g, "");
+  if(!cleaned || cleaned === "-" || cleaned === "," || cleaned === ".") return 0;
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  let normalized = cleaned;
+  if(lastComma >= 0 && lastDot >= 0){
+    // BR: 1.234,56 | US: 1,234.56
+    normalized = lastComma > lastDot
+      ? cleaned.replace(/\./g, "").replace(/,/g, ".")
+      : cleaned.replace(/,/g, "");
+  }else if(lastComma >= 0){
+    normalized = cleaned.replace(/\./g, "").replace(/,/g, ".");
+  }else if(lastDot >= 0){
+    const parts = cleaned.split(".");
+    const last = parts[parts.length - 1] || "";
+    // Se parece milhar puro (1.000 / 12.000), remove separador. Se parece decimal, preserva.
+    normalized = (parts.length > 1 && last.length === 3 && parts.slice(1).every(x=>x.length===3))
+      ? cleaned.replace(/\./g, "")
+      : cleaned;
+  }
+  const n = Number(normalized);
+  return (isFinite(n) && !isNaN(n)) ? n : 0;
+}
+function parseBRNum(v){
+  const s = String(v ?? "").trim();
+  if(!s) return null;
+  const n = Number(s.replace(/\./g, "").replace(/,/g, ".").replace(/[^0-9.-]/g, ""));
+  return (isFinite(n) && !isNaN(n)) ? n : null;
+}
+function cronosLocalISODate(date=new Date()){
+  const d = date instanceof Date ? date : new Date(date);
+  if(isNaN(d)) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function cronosLocalMonthKey(date=new Date()){
+  return cronosLocalISODate(date).slice(0,7);
+}
+function isoDate(d){ return (d instanceof Date) ? cronosLocalISODate(d) : String(d||"").slice(0,10); }
+function addMonthsISO(iso, k){
+  const [y,m,d] = iso.split("-").map(x=>parseInt(x,10));
+  const dt = new Date(y, (m-1)+k, d||1);
+  return isoDate(dt);
+}
+function monthKeyOf(iso){ return (iso||"").slice(0,7); }
+
+function ensureInstallmentsForEntry(entry){
+  entry.installments = entry.installments || [];
+
+  if(entry.installPlan && (!Array.isArray(entry.installments) || entry.installments.length===0)){
+    try{ buildInstallments(entry); }catch(e){ console.warn("buildInstallments falhou:", e); }
+  }
+
+  (entry.installments||[]).forEach(p=>{
+    if(p.due && !p.dueDate) p.dueDate = p.due;
+    if(p.paid && !p.paidAt) p.paidAt = p.paid;
+    const hoje = new Date();
+const dataParcela = new Date(p.dueDate || p.due || 0);
+
+const forma = (p.payMethod || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+if (forma.includes("credito")) {
+  if (dataParcela <= hoje && !p.paidAt) {
+    p.paidAt = new Date().toISOString();
+    p.status = "PAGA";
+  }
+}
+    if(!p.payMethod && entry.installPlan?.payMethod) p.payMethod = entry.installPlan.payMethod;
+    if(!p.total && entry.installPlan?.n) p.total = parseInt(entry.installPlan.n||0,10) || p.total || 0;
+    if(!p.status){
+      p.status = p.paidAt ? "PAGA" : "PENDENTE";
+    }
+    if(p.paidAt && p.status!=="PAGA") p.status="PAGA";
+  });
+}
+
+function buildInstallments(entry){
+  const plan = entry.installPlan;
+  if(!plan) return;
+  const amt = parseMoney(plan.amount);
+  const n = Math.max(1, parseInt(plan.n||1,10));
+  const each = n ? (amt / n) : 0;
+  let first = plan.firstDue;
+  if(!first){
+    const today = new Date();
+    const next = new Date(today.getFullYear(), today.getMonth()+1, today.getDate());
+    first = isoDate(next);
+  }
+  entry.installments = [];
+  for(let i=1;i<=n;i++){
+    entry.installments.push({
+      number:i,
+      total:n,
+      amount: Number(each.toFixed(2)),
+      dueDate: addMonthsISO(first, i-1),
+      status:"PENDENTE",
+      paidAt:"",
+      payMethod: plan.payMethod || ""
+    });
+  }
+}
+
+function isAutomaticInstallmentTask(t){
+  if(!t || typeof t !== "object") return false;
+  const key = String(t.key || "");
+  const type = String(t.type || "");
+  const title = String(t.title || t.name || "");
+  const notes = String(t.notes || t.desc || "");
+  return (
+    key.startsWith("INST:") ||
+    key.startsWith("FININST:") ||
+    type === "installment" ||
+    title.startsWith("Inadimplente:") ||
+    (
+      notes.includes("Parcela") &&
+      (t.entryId || t.wa === true || String(t.action || "").toLowerCase().includes("whatsapp"))
+    )
+  );
+}
+
+function stableInstallmentTaskId(key){
+  return `task_${String(key || "").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+function scrubInstallmentTasksForMaster(db, masterId){
+  db.tasks = Array.isArray(db.tasks) ? db.tasks : [];
+  db.entries = Array.isArray(db.entries) ? db.entries : [];
+  db.contacts = Array.isArray(db.contacts) ? db.contacts : [];
+
+  if(!masterId) return {before: db.tasks.length, after: db.tasks.length, removed: 0, created: 0};
+
+  const before = db.tasks.length;
+  const today = todayISO();
+  const contactsById = new Map((db.contacts||[])
+    .filter(c=>c.masterId===masterId)
+    .map(c=>[c.id,c]));
+
+  db.tasks = db.tasks.filter(t=>{
+    if(t?.masterId && t.masterId !== masterId) return true;
+    return !isAutomaticInstallmentTask(t);
+  });
+
+  const createdKeys = new Set();
+  const rebuilt = [];
+
+  (db.entries||[])
+    .filter(e=>e.masterId===masterId && e.installPlan && !e.installPlan.migratedToFinancialPlanId)
+    .forEach(e=>{
+      ensureInstallmentsForEntry(e);
+      (e.installments||[]).forEach(p=>{
+        const due = p.dueDate || p.due || "";
+        const isPaid = !!p.paidAt || p.status === "PAGA";
+        const isLate = !!due && due < today && !isPaid;
+
+        if(!isLate) return;
+
+        const key = `INST:${e.id}:${due}:${p.number}`;
+        if(createdKeys.has(key)) return;
+        createdKeys.add(key);
+
+        const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
+        const title = `Inadimplente: ${c.name} • Parcela ${p.number}/${p.total}`;
+        const notes = `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod||e.installPlan.payMethod||"—"}`;
+
+        rebuilt.push({
+          id: stableInstallmentTaskId(key),
+          masterId,
+          key,
+          type: "installment",
+          entryId: e.id,
+          contactId: e.contactId || "",
+          title,
+          action: "WhatsApp",
+          notes,
+          done: false,
+          createdAt: new Date().toISOString(),
+          dueDate: due,
+          phone: c.phone || "",
+          wa: true,
+          autoGenerated: true
+        });
+      });
+    });
+
+
+  (db.entries||[])
+    .filter(e=>e.masterId===masterId)
+    .forEach(e=>{
+      const plans = ensureFinancialPlans(e);
+      if(!plans.length) return;
+      const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
+      plans.forEach(plan=>{
+        (plan.payments||[]).forEach(p=>{
+          const due = p.dueDate || "";
+          const isPaid = financialPaymentPaid(p);
+          const isLate = !!due && due < today && !isPaid;
+          if(!isLate) return;
+
+          const key = `FININST:${e.id}:${plan.id}:${p.id}`;
+          if(createdKeys.has(key)) return;
+          createdKeys.add(key);
+
+          rebuilt.push({
+            id: stableInstallmentTaskId(key),
+            masterId,
+            key,
+            type: "installment",
+            entryId: e.id,
+            contactId: e.contactId || "",
+            financialPlanId: plan.id,
+            financialPaymentId: p.id,
+            title: `Inadimplente: ${c.name} • ${plan.title || "Orçamento"} • Parcela ${p.number||""}/${p.total||""}`,
+            action: "WhatsApp",
+            notes: `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod || "—"}`,
+            done: false,
+            createdAt: new Date().toISOString(),
+            dueDate: due,
+            phone: c.phone || "",
+            wa: true,
+            autoGenerated: true
+          });
+        });
+      });
+    });
+
+  db.tasks.push(...rebuilt);
+
+  const seen = new Set();
+  db.tasks = db.tasks.filter(t=>{
+    const semanticKey = isAutomaticInstallmentTask(t)
+      ? String(t.key || t.id || "")
+      : String(t.id || t.key || `${t.masterId||""}|${t.title||""}|${t.dueDate||""}|${t.notes||""}`);
+    if(!semanticKey) return true;
+    if(seen.has(semanticKey)) return false;
+    seen.add(semanticKey);
+    return true;
+  });
+
+  return {before, after: db.tasks.length, removed: before - (db.tasks.length - rebuilt.length), created: rebuilt.length};
+}
+
+function scrubInstallmentTasksForAllMasters(db){
+  const masterIds = new Set();
+  (db.masters||[]).forEach(m=>{ if(m?.id) masterIds.add(String(m.id)); });
+  (db.users||[]).forEach(u=>{ if(u?.masterId) masterIds.add(String(u.masterId)); });
+  (db.entries||[]).forEach(e=>{ if(e?.masterId) masterIds.add(String(e.masterId)); });
+
+  const stats = [];
+  masterIds.forEach(masterId=>{
+    stats.push({masterId, ...scrubInstallmentTasksForMaster(db, masterId)});
+  });
+  return stats;
+}
+
+function syncInstallmentTasks(db, actor){
+  const masterId = actor?.masterId;
+  if(!masterId) return;
+  return scrubInstallmentTasksForMaster(db, masterId);
+}
+
+function installmentsKPIs(db, actor, monthKey){
+  const today = todayISO();
+  const masterId = actor?.masterId;
+  const entries = (db.entries||[]).filter(e=>e.masterId===masterId && e.installPlan && !e.installPlan.migratedToFinancialPlanId);
+  let monthSum=0, monthN=0, lateSum=0, lateN=0, futureSum=0, futureN=0;
+
+  entries.forEach(e=>{
+    ensureInstallmentsForEntry(e);
+    (e.installments||[]).forEach(p=>{
+      const due = p.dueDate;
+      const paid = !!p.paidAt || p.status==="PAGA";
+      if(paid) return;
+      if(due && monthKeyOf(due)===monthKey){ monthSum += p.amount; monthN++; }
+      if(due && due < today){ lateSum += p.amount; lateN++; }
+      if(due && due > today){ futureSum += p.amount; futureN++; }
+    });
+  });
+
+  (db.entries||[])
+    .filter(e=>e.masterId===masterId)
+    .forEach(e=>{
+      ensureFinancialPlans(e).forEach(plan=>{
+        (plan.payments||[]).forEach(p=>{
+          const due = p.dueDate;
+          const paid = financialPaymentPaid(p);
+          if(paid) return;
+          if(due && monthKeyOf(due)===monthKey){ monthSum += parseMoney(p.amount); monthN++; }
+          if(due && due < today){ lateSum += parseMoney(p.amount); lateN++; }
+          if(due && due > today){ futureSum += parseMoney(p.amount); futureN++; }
+        });
+      });
+    });
+
+  return {monthSum, monthN, lateSum, lateN, futureSum, futureN};
+}
+
+function entryInstallmentSummary(entry){
+  ensureInstallmentsForEntry(entry);
+  const today = todayISO();
+  const pending = (entry.installments||[]).filter(p=>!(p.paidAt||p.status==="PAGA"));
+  const paidCount = (entry.installments||[]).length - pending.length;
+  let nextDue = "";
+  pending.sort((a,b)=> (a.dueDate||"").localeCompare(b.dueDate||""));
+  if(pending.length) nextDue = pending[0].dueDate || "";
+  const lateCount = pending.filter(p=>p.dueDate && p.dueDate < today).length;
+  return {paidCount, total:(entry.installments||[]).length, nextDue, lateCount};
+}
+
+
+/* CRONOS_PATCH_RECEBIMENTOS_BUSCA_SCROLL_V14_1 - busca sem re-render total e scroll de procedimentos preservado */
+/* Recebimentos */
+
+function ensureFinancialPlans(entry){
+  if(!entry) return [];
+  if(!Array.isArray(entry.financialPlans)) entry.financialPlans = [];
+  entry.financialPlans.forEach(plan=>{
+    if(!plan.id) plan.id = uid("budget");
+    if(!plan.createdAt) plan.createdAt = new Date().toISOString();
+    if(!plan.status) plan.status = "Aguardando";
+    if(!Array.isArray(plan.payments)) plan.payments = [];
+    renumberFinancialPlanPayments(plan);
+  });
+  return entry.financialPlans;
+}
+
+function ensureFichaForRecebimentos(entry){
+  if(!entry) return {plano:[], odontograma:{}, avaliacoes:[]};
+  if(!entry.ficha || typeof entry.ficha !== "object"){
+    entry.ficha = { plano: [], odontograma: {}, avaliacoes: [] };
+  }
+  if(!Array.isArray(entry.ficha.plano)) entry.ficha.plano = [];
+  if(!entry.ficha.odontograma || typeof entry.ficha.odontograma !== "object") entry.ficha.odontograma = {};
+  if(!Array.isArray(entry.ficha.avaliacoes)) entry.ficha.avaliacoes = [];
+
+  if(!entry.ficha.avaliacoes.length){
+    const evalDate = String(entry.firstContactAt || entry.monthKey || todayISO()).slice(0,10);
+    entry.ficha.avaliacoes.push({
+      id: "eval_1",
+      label: "Avaliação 1",
+      date: /^\d{4}-\d{2}-\d{2}$/.test(evalDate) ? evalDate : todayISO(),
+      createdAt: new Date().toISOString()
+    });
+  }
+  if(!entry.ficha.activeEvaluationId){
+    entry.ficha.activeEvaluationId = entry.ficha.avaliacoes[entry.ficha.avaliacoes.length - 1]?.id || "eval_1";
+  }
+
+  const firstEval = entry.ficha.avaliacoes[0] || { id:"eval_1", label:"Avaliação 1", date: todayISO() };
+  entry.ficha.plano.forEach(item=>{
+    if(!item.id) item.id = uid("plan");
+    if(!item.avaliacaoId) item.avaliacaoId = firstEval.id;
+    if(!item.avaliacaoLabel) item.avaliacaoLabel = firstEval.label || "Avaliação 1";
+    if(!item.avaliacaoData) item.avaliacaoData = firstEval.date || todayISO();
+    if(item.recebimentoId && !item.financialPlanId) item.financialPlanId = item.recebimentoId;
+    if(item.financialPlanId && !item.recebimentoId) item.recebimentoId = item.financialPlanId;
+  });
+
+  try{ syncFichaFinancialLinks(entry); }catch(_){}
+  return entry.ficha;
+}
+
+function getFinancialPlanForFichaItemInRecebimentos(entry, item){
+  if(!entry || !item) return null;
+  const plan = findFinancialPlanByFichaItem(entry, item);
+  if(plan){
+    item.financialPlanId = String(plan.id);
+    item.recebimentoId = String(plan.id);
+  }
+  return plan;
+}
+
+function isFichaItemAvailableForRecebimentos(entry, item){
+  const plan = getFinancialPlanForFichaItemInRecebimentos(entry, item);
+  if(plan) return false;
+  if(item?.pago) return false;
+  return true;
+}
+
+
+function legacyInstallmentAlreadyMigrated(entry){
+  return !!(entry?.installPlan && entry.installPlan.migratedToFinancialPlanId);
+}
+
+function migrateLegacyInstallmentsToFinancialPlan(entry){
+  if(!entry || !entry.installPlan) return null;
+
+  try{ ensureInstallmentsForEntry(entry); }catch(_){}
+
+  const legacyInstallments = Array.isArray(entry.installments) ? entry.installments : [];
+  const hasLegacyInstallments = legacyInstallments.length > 0;
+  const entryAmount = parseMoney(entry.installPlan?.entryAmount || 0);
+
+  if(!hasLegacyInstallments && !entryAmount) return null;
+
+  const plans = ensureFinancialPlans(entry);
+  const existingId = entry.installPlan.migratedToFinancialPlanId;
+  let existingPlan = existingId ? plans.find(p=>String(p.id)===String(existingId)) : null;
+  if(!existingPlan){
+    existingPlan = plans.find(p=>p.source === "legacyInstallments" || p.legacyInstallPlan === true);
+  }
+  if(existingPlan){
+    entry.installPlan.migratedToFinancialPlanId = existingPlan.id;
+    renumberFinancialPlanPayments(existingPlan);
+    return existingPlan;
+  }
+
+  const legacyAmount = parseMoney(entry.installPlan?.amount || 0);
+  const legacyTotalFromFields = entryLegacyFinancialTotal(entry);
+  const legacyTotalFromParts = legacyAmount + entryAmount;
+  const legacyTotalFromInstallments = legacyInstallments.reduce((sum,p)=>sum + parseMoney(p.amount), 0) + entryAmount;
+  const total = legacyTotalFromFields || legacyTotalFromParts || legacyTotalFromInstallments || 0;
+  const payMethod = entry.installPlan?.payMethod || "";
+
+  const planId = `legacy_${String(entry.id || uid("entry")).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+
+  const payments = [];
+
+  if(entryAmount > 0){
+    const paidLegacy = parseMoney(entry.valuePaid ?? entry.valorPago ?? entry.valorRecebido ?? entry.totalRecebido ?? 0);
+    const entryPaid = paidLegacy >= entryAmount;
+    const entryDate = entry.lastPaymentDate || entry.firstContactAt || (entry.monthKey ? `${String(entry.monthKey).slice(0,7)}-01` : todayISO());
+    payments.push({
+      id: `legacy_entry_${String(entry.id || "").replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+      amount: entryAmount,
+      dueDate: entryDate,
+      payMethod,
+      notes: "Entrada migrada do cadastro antigo",
+      status: entryPaid ? "PAGA" : "PENDENTE",
+      paidAt: entryPaid ? entryDate : "",
+      cashDate: entryPaid ? entryDate : "",
+      createdAt: new Date().toISOString(),
+      source: "legacyEntry"
+    });
+  }
+
+  legacyInstallments.forEach((p, idx)=>{
+    const paid = !!p.paidAt || p.status === "PAGA" || p.paid === true;
+    const dueDate = p.dueDate || p.due || addMonthsISO(entry.installPlan?.firstDue || todayISO(), idx);
+    payments.push({
+      id: p.id ? `legacy_${String(p.id).replace(/[^a-zA-Z0-9_-]/g, "_")}` : `legacy_${String(entry.id || "").replace(/[^a-zA-Z0-9_-]/g, "_")}_${idx+1}`,
+      amount: parseMoney(p.amount),
+      dueDate,
+      payMethod: p.payMethod || payMethod,
+      notes: p.notes || "Parcela migrada do cadastro antigo",
+      status: paid ? "PAGA" : "PENDENTE",
+      paidAt: paid ? (p.paidAt || p.paid || "") : "",
+      cashDate: paid ? (p.cashDate || p.paidAt || p.paid || "") : "",
+      createdAt: p.createdAt || new Date().toISOString(),
+      source: "legacyInstallment"
+    });
+  });
+
+  const plan = {
+    id: planId,
+    title: "Parcelamento legado",
+    dentist: "",
+    amount: total,
+    status: "Aprovado",
+    createdAt: entry.installPlan?.createdAt || entry.firstContactAt || new Date().toISOString(),
+    createdBy: "Migração automática",
+    source: "legacyInstallments",
+    legacyInstallPlan: true,
+    payments
+  };
+
+  renumberFinancialPlanPayments(plan);
+  plans.push(plan);
+  entry.installPlan.migratedToFinancialPlanId = plan.id;
+  return plan;
+}
+
+
+function renumberFinancialPlanPayments(plan){
+  if(!plan || !Array.isArray(plan.payments)) return;
+  plan.payments.sort((a,b)=>String(a.dueDate||"").localeCompare(String(b.dueDate||"")) || String(a.createdAt||"").localeCompare(String(b.createdAt||"")));
+  const total = plan.payments.length;
+  plan.payments.forEach((p,idx)=>{
+    if(!p.id) p.id = uid("pay");
+    p.number = idx + 1;
+    p.total = total;
+    if(!p.status) p.status = p.paidAt ? "PAGA" : "PENDENTE";
+    if(p.paidAt && p.status !== "PAGA") p.status = "PAGA";
+    if(!p.cashDate && p.paidAt) p.cashDate = String(p.paidAt).slice(0,10);
+  });
+}
+
+function financialPlanTotalFromFicha(entry){
+  try{
+    const items = (typeof cronosActiveFichaPlanItems === "function")
+      ? cronosActiveFichaPlanItems(entry)
+      : (Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : []);
+    return items.reduce((sum,item)=> sum + ((typeof cronosFichaItemBudgetValue === "function") ? cronosFichaItemBudgetValue(item) : parseMoney(item.valorFechado ?? item.valorBase ?? 0)), 0);
+  }catch(_){
+    return 0;
+  }
+}
+
+function entryLegacyFinancialTotal(entry){
+  const candidates = [
+    entry?.valueClosed, entry?.valueBudget, entry?.valueEstimated, entry?.value,
+    entry?.budgetValue, entry?.proposalValue
+  ];
+  for(const v of candidates){
+    const n = parseMoney(v);
+    if(n > 0) return n;
+  }
+  return 0;
+}
+
+function suggestedFinancialPlanTotal(entry){
+  const ficha = financialPlanTotalFromFicha(entry);
+  if(ficha > 0) return ficha;
+  return entryLegacyFinancialTotal(entry);
+}
+
+function financialPaymentPaid(payment){
+  return !!payment?.paidAt || payment?.status === "PAGA" || payment?.paid === true;
+}
+
+
+/* =========================
+   Caixa unificado (v84 - legado no ano original)
+   Regra oficial: dinheiro conta no mês da baixa/data de caixa; legado histórico entra no mês do lead quando não houver baixa detalhada naquele mesmo mês.
+   Fonte usada por Dashboard, Performance e Recebimentos para não virar Babel financeira.
+   Lead legado/manual antigo entra com data real; se não houver data, usa o mês original do lead como âncora histórica, sem jogar no mês atual.
+   ========================= */
+function cronosPaymentCashISO(payment, allowLegacyDueFallback=false){
+  const iso = pickISOFlexible(
+    payment?.cashDate ||
+    payment?.paidAt ||
+    payment?.paymentDate ||
+    payment?.paidDate ||
+    payment?.date ||
+    payment?.paid ||
+    ""
+  );
+  if(iso) return iso;
+  return allowLegacyDueFallback ? pickISOFlexible(payment?.dueDate || payment?.due || payment?.vencimento || "") : "";
+}
+function cronosLegacyManualPaymentNeedsMonthRepair(payment){
+  const desc = String(payment?.desc || payment?.description || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().trim();
+  const source = String(payment?.source || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().trim();
+
+  return (
+    !payment?.financialPlanId &&
+    !payment?.financialPaymentId &&
+    !payment?.legacyInstallmentNumber &&
+    !payment?.cashDate &&
+    !payment?.paidAt &&
+    !payment?.paymentDate &&
+    !payment?.paidDate &&
+    !payment?.status &&
+    !source &&
+    (desc === "pagamento manual" || desc === "resgate / pagamento manual")
+  );
+}
+function cronosPaymentOfficialISO(payment, entry=null, allowLegacyDueFallback=false){
+  const rawISO = cronosPaymentCashISO(payment, allowLegacyDueFallback);
+  if(!rawISO) return "";
+
+  const needsRepair = cronosLegacyManualPaymentNeedsMonthRepair(payment);
+  const entryMonth = cronosLegacySafeMonthKeyFromEntry(entry);
+
+  if(needsRepair && !entryMonth){
+    return "";
+  }
+
+  if(needsRepair && entryMonth){
+    const rawMonth = rawISO.slice(0,7);
+    if(rawMonth !== entryMonth){
+      const y = Number(entryMonth.slice(0,4));
+      const m = Number(entryMonth.slice(5,7));
+      const rawDay = Number(rawISO.slice(8,10));
+      const maxDay = new Date(y, m, 0).getDate();
+      const safeDay = String(Math.min(Math.max(rawDay || 1, 1), maxDay)).padStart(2, "0");
+      return `${entryMonth}-${safeDay}`;
+    }
+  }
+  return rawISO;
+}
+function cronosPaymentDateRepairInfo(payment, entry=null, allowLegacyDueFallback=false){
+  const originalISO = cronosPaymentCashISO(payment, allowLegacyDueFallback);
+  const officialISO = cronosPaymentOfficialISO(payment, entry, allowLegacyDueFallback);
+  const needsRepair = cronosLegacyManualPaymentNeedsMonthRepair(payment);
+  const entryMonth = cronosLegacySafeMonthKeyFromEntry(entry);
+  if(originalISO && !officialISO && needsRepair && !entryMonth){
+    return {
+      originalISO,
+      officialISO: "",
+      entryMonth: "",
+      reason: "Pagamento manual legado sem mês original do lead: fora do caixa mensal"
+    };
+  }
+  if(originalISO && officialISO && originalISO !== officialISO){
+    return {
+      originalISO,
+      officialISO,
+      entryMonth,
+      reason: "Pagamento manual legado reancorado para o mês original do lead"
+    };
+  }
+  return null;
+}
+function cronosPaymentAmount(payment){
+  return parseMoney(payment?.value ?? payment?.amount ?? payment?.valor ?? payment?.total ?? 0);
+}
+function cronosMonthFromISOValue(raw){
+  const iso = pickISOFlexible(raw);
+  return iso ? iso.slice(0,7) : "";
+}
+function cronosValidMonthKey(raw){
+  const mk = String(raw || "").trim().slice(0,7);
+  return /^\d{4}-\d{2}$/.test(mk) ? mk : "";
+}
+function cronosLegacySafeMonthKeyFromEntry(entry){
+  if(!entry) return "";
+
+  const explicitMonth = [
+    entry.originalMonthKey,
+    entry.legacyMonthKey,
+    entry.paymentMonthKey,
+    entry.receivedMonthKey,
+    entry.cashMonthKey,
+    entry.baixaMonthKey,
+    entry.legacyPaymentMonthKey,
+    entry.originalPaymentMonthKey,
+    entry.monthKeyOriginal,
+    entry.mesOriginal,
+    entry.mesPagamentoOriginal
+  ].map(cronosValidMonthKey).find(Boolean);
+  if(explicitMonth) return explicitMonth;
+
+  const dateFields = [
+    entry.originalPaymentDate,
+    entry.legacyPaymentDate,
+    entry.dataPagamentoOriginal,
+    entry.dataRecebimentoOriginal,
+    entry.originalPaidAt,
+    entry.legacyPaidAt,
+    entry.originalCashDate,
+    entry.legacyCashDate,
+    entry.dataPagamento,
+    entry.dataRecebimento,
+    entry.pagoEm,
+    entry.recebidoEm,
+    entry.paymentDate,
+    entry.paidDate,
+    entry.datePaid,
+    entry.cashDate,
+    entry.receivedDate,
+    entry.receivedAt,
+    entry.receiptDate,
+    entry.baixaDate,
+    entry.dataBaixa,
+    entry.paymentAt,
+    entry.paidAt,
+    entry.paidOn,
+    entry.firstContactAt,
+    entry.createdAt,
+    entry.createdISO,
+    entry.dataCadastro,
+    entry.cadastroEm,
+    entry.legacyCreatedAt,
+    entry.originalCreatedAt,
+    entry.apptDate,
+    entry.date
+  ];
+  for(const raw of dateFields){
+    const mk = cronosMonthFromISOValue(raw);
+    if(mk) return mk;
+  }
+
+  return "";
+}
+function cronosLegacySafeAnchorISO(entry){
+  const mk = cronosLegacySafeMonthKeyFromEntry(entry);
+  return mk ? { iso: `${mk}-01`, monthKey: mk, reason: "Legado sem data exata preservado no mês/ano original detectado; não usa o ano atual" } : null;
+}
+function cronosEntryLegacyPaymentISO(entry){
+  const entryMonth = cronosLegacySafeMonthKeyFromEntry(entry);
+  const candidates = [
+    ["dataPagamento", entry?.dataPagamento],
+    ["dataRecebimento", entry?.dataRecebimento],
+    ["pagoEm", entry?.pagoEm],
+    ["recebidoEm", entry?.recebidoEm],
+    ["paymentDate", entry?.paymentDate],
+    ["paidDate", entry?.paidDate],
+    ["datePaid", entry?.datePaid],
+    ["cashDate", entry?.cashDate],
+    ["receivedDate", entry?.receivedDate],
+    ["receivedAt", entry?.receivedAt],
+    ["receiptDate", entry?.receiptDate],
+    ["baixaDate", entry?.baixaDate],
+    ["dataBaixa", entry?.dataBaixa],
+    ["paymentAt", entry?.paymentAt],
+    ["paidAt", entry?.paidAt],
+    ["paidOn", entry?.paidOn],
+    ["lastPaymentDate", entry?.lastPaymentDate]
+  ];
+  const valid = [];
+  for(const [field, raw] of candidates){
+    const iso = pickISOFlexible(raw);
+    if(iso) valid.push({ field, iso });
+  }
+
+  if(!valid.length) return "";
+
+  if(entryMonth){
+    const sameMonth = valid.find(x=>String(x.iso).slice(0,7) === entryMonth);
+    if(sameMonth) return sameMonth.iso;
+
+    const explicit = valid.find(x=>x.field !== "lastPaymentDate");
+    if(explicit) return explicit.iso;
+
+    const last = valid.find(x=>x.field === "lastPaymentDate");
+    if(last?.iso){
+      const y = Number(entryMonth.slice(0,4));
+      const m = Number(entryMonth.slice(5,7));
+      const rawDay = Number(String(last.iso).slice(8,10));
+      const maxDay = new Date(y, m, 0).getDate();
+      const safeDay = String(Math.min(Math.max(rawDay || 1, 1), maxDay)).padStart(2, "0");
+      return `${entryMonth}-${safeDay}`;
+    }
+    return "";
+  }
+
+  const explicit = valid.find(x=>x.field !== "lastPaymentDate");
+  return explicit?.iso || "";
+}
+function cronosSameMasterPayment(payment, masterId, entryById, contactById, entriesByContact){
+  if(!masterId) return true;
+  if(payment?.masterId && payment.masterId === masterId) return true;
+  if(payment?.masterId && payment.masterId !== masterId) return false;
+  const entryId = String(payment?.entryId || "");
+  if(entryId){
+    const e = entryById.get(entryId);
+    return !!e && (!e.masterId || e.masterId === masterId);
+  }
+  const contactId = String(payment?.contactId || "");
+  if(contactId){
+    if(contactById.has(contactId)) return true;
+    if(entriesByContact.has(contactId)) return true;
+  }
+  return false;
+}
+function cronosPatientNameForPayment(obj, entry, contactById){
+  const contactId = String(obj?.contactId || entry?.contactId || "");
+  const c = contactId ? contactById.get(contactId) : null;
+  return c?.name || obj?.contactName || obj?.name || entry?.name || entry?.lead || "Sem paciente vinculado";
+}
+function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}){
+  const masterId = actor?.masterId || actor?.clinicId || "";
+  const today = todayISO();
+  const fromISO = pickISOFlexible(options.fromISO || options.from || "");
+  const toISO = pickISOFlexible(options.toISO || options.to || "");
+  const untilToday = options.untilToday !== false;
+  const includeLegacyDueFallback = options.includeLegacyDueFallback === true;
+  const includeUndatedLegacyByEntryMonth = options.includeUndatedLegacyByEntryMonth !== false;
+
+  const entries = (db?.entries || []).filter(e=>!masterId || !e.masterId || e.masterId===masterId);
+  const contacts = (db?.contacts || []).filter(c=>!masterId || !c.masterId || c.masterId===masterId);
+  const entryById = new Map(entries.map(e=>[String(e.id), e]));
+  const contactById = new Map(contacts.map(c=>[String(c.id), c]));
+  const entriesByContact = new Map();
+  entries.forEach(e=>{
+    const cid = String(e.contactId || "");
+    if(cid && !entriesByContact.has(cid)) entriesByContact.set(cid, e);
+  });
+
+  const events = [];
+  const skippedDuplicates = [];
+  const skippedLegacy = [];
+  const seen = new Set();
+  const seenLoose = new Map();
+  const planLinks = new Set();
+  const legacyLinks = new Set();
+  const detailedEntryIds = new Set();
+  const detailedContactIds = new Set();
+
+  function centsKey(value){
+    return String(Math.round(parseMoney(value) * 100));
+  }
+  function normalizeTextKey(value){
+    return String(value || "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  }
+  function canonicalPatientKey(meta={}){
+    const entryId = String(meta.entryId || "").trim();
+    if(entryId) return `entry:${entryId}`;
+    const contactId = String(meta.contactId || "").trim();
+    if(contactId) return `contact:${contactId}`;
+    return `patient:${normalizeTextKey(meta.patient || "Sem paciente")}`;
+  }
+  function sourceGroup(source=""){
+    const s = normalizeTextKey(source);
+    if(s.includes("caixa") || s.includes("recebimento")) return "cash";
+    if(s.includes("plano") || s.includes("financeiro") || s.includes("orcamento")) return "plan";
+    if(s.includes("parcelamento") || s.includes("legado")) return "legacy";
+    if(s.includes("lead")) return "lead";
+    return s || "other";
+  }
+  function loosePaymentKey(amount, iso, meta={}){
+    return `${canonicalPatientKey(meta)}|${String(iso||"").slice(0,10)}|${centsKey(amount)}`;
+  }
+
+  function inRange(iso){
+    if(!iso) return false;
+    if(untilToday && iso > today) return false;
+    if(fromISO && iso < fromISO) return false;
+    if(toISO && iso > toISO) return false;
+    return true;
+  }
+  function addEvent(key, amount, iso, meta={}){
+    amount = parseMoney(amount);
+    iso = pickISOFlexible(iso);
+    if(!amount || !inRange(iso)) return false;
+    const safeKey = String(key || `${iso}:${amount}:${meta.entryId||""}:${meta.contactId||""}:${meta.desc||meta.source||""}`);
+    if(seen.has(safeKey)) return false;
+
+    const group = sourceGroup(meta.source || meta.desc || "Recebimento");
+    const looseKey = loosePaymentKey(amount, iso, meta);
+    const previous = seenLoose.get(looseKey);
+    if(previous){
+      skippedDuplicates.push({
+        skippedKey: safeKey,
+        keptKey: previous.key,
+        looseKey,
+        amount,
+        iso,
+        patient: meta.patient || previous.patient || "Sem paciente vinculado",
+        skippedSource: meta.source || meta.desc || group,
+        keptSource: previous.source || previous.group,
+        group
+      });
+      return false;
+    }
+
+    seen.add(safeKey);
+    const entryId = String(meta.entryId || "");
+    const contactId = String(meta.contactId || "");
+    if(entryId) detailedEntryIds.add(entryId);
+    if(contactId) detailedContactIds.add(contactId);
+    const ev = {
+      key: safeKey,
+      looseKey,
+      id: String(meta.id || safeKey),
+      amount,
+      value: amount,
+      iso,
+      monthKey: iso.slice(0,7),
+      entryId,
+      contactId,
+      patient: meta.patient || "Sem paciente vinculado",
+      method: String(meta.method || ""),
+      source: String(meta.source || "Recebimento"),
+      sourceGroup: group,
+      desc: String(meta.desc || meta.source || "Recebimento").trim(),
+      dateRepair: meta.dateRepair || null,
+      raw: meta.raw || null
+    };
+    events.push(ev);
+    seenLoose.set(looseKey, ev);
+    return true;
+  }
+
+  (db?.payments || []).forEach((p, idx)=>{
+    if(!cronosSameMasterPayment(p, masterId, entryById, contactById, entriesByContact)) return;
+    if(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(p)) return;
+    const status = String(p?.status || "").toUpperCase();
+    if(status && status !== "PAGA" && p?.paid !== true && !p?.paidAt && !p?.cashDate && !p?.date) return;
+    const amount = cronosPaymentAmount(p);
+    const entryId = String(p?.entryId || "");
+    const contactId = String(p?.contactId || "");
+    const entry = entryId ? entryById.get(entryId) : (contactId ? entriesByContact.get(contactId) : null);
+    const iso = cronosPaymentOfficialISO(p, entry, includeLegacyDueFallback);
+    const dateRepair = cronosPaymentDateRepairInfo(p, entry, includeLegacyDueFallback);
+    const patient = cronosPatientNameForPayment(p, entry, contactById);
+    if(!iso && cronosLegacyManualPaymentNeedsMonthRepair(p)){
+      skippedLegacy.push({
+        entryId: entryId || entry?.id || "",
+        contactId: contactId || entry?.contactId || "",
+        patient,
+        amount,
+        reason: dateRepair?.reason || "Pagamento manual legado sem data/mês confiável: fora do caixa mensal",
+        source: "Pagamento manual legado órfão",
+        raw: p
+      });
+      return;
+    }
+    const financialPlanId = String(p?.financialPlanId || "");
+    const financialPaymentId = String(p?.financialPaymentId || "");
+    if(entryId && financialPlanId && financialPaymentId){
+      planLinks.add(`${entryId}|${financialPlanId}|${financialPaymentId}`);
+    }
+    const legacyNum = p?.legacyInstallmentNumber || ((String(p?.desc || "").match(/Parcela\s+(\d+)\//i)||[])[1] || "");
+    if(entryId && legacyNum){
+      legacyLinks.add(`${entryId}|${legacyNum}`);
+    }
+    addEvent(`cash:${p?.id || idx}:${entryId}:${contactId}:${iso}:${amount}`, amount, iso, {
+      id: p?.id,
+      entryId: entryId || entry?.id || "",
+      contactId: contactId || entry?.contactId || "",
+      patient,
+      method: p?.method || p?.payMethod || "",
+      source: p?.source || "Caixa/Recebimentos",
+      desc: p?.desc || p?.description || "Lançamento no caixa/recebimentos",
+      dateRepair,
+      raw: p
+    });
+  });
+
+  entries.forEach(entry=>{
+    const patient = cronosPatientNameForPayment({}, entry, contactById);
+    ((typeof cronosActiveFinancialPlans === "function") ? cronosActiveFinancialPlans(entry) : ensureFinancialPlans(entry)).forEach((plan, planIdx)=>{
+      const isLegacyAdapterPlan = legacyPlanShouldBeSkippedAsAdapter(entry, plan);
+      ((typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (plan.payments || [])).forEach((p, idx)=>{
+        if(!financialPaymentPaid(p)) return;
+        const planId = String(plan.id || planIdx);
+        const paymentId = String(p.id || idx);
+        const link = `${String(entry.id)}|${planId}|${paymentId}`;
+        if(planLinks.has(link)) return;
+        const iso = cronosPaymentCashISO(p, includeLegacyDueFallback || isLegacyAdapterPlan);
+        const amount = cronosPaymentAmount(p);
+        const sourceName = isLegacyAdapterPlan ? (plan.title || "Parcelamento legado estruturado") : (plan.title || "Plano financeiro");
+        const added = addEvent(`fin:${entry.id}:${planId}:${paymentId}:${iso}:${amount}`, amount, iso, {
+          entryId: entry.id,
+          contactId: entry.contactId || "",
+          patient,
+          method: p.payMethod || "",
+          source: sourceName,
+          desc: `${sourceName} • pagamento ${p.number || idx+1}/${p.total || (plan.payments||[]).length}`,
+          raw: p
+        });
+        if(added) planLinks.add(link);
+      });
+    });
+  });
+
+  entries.forEach(entry=>{
+    if(entry?.installPlan?.migratedToFinancialPlanId) return;
+    const patient = cronosPatientNameForPayment({}, entry, contactById);
+    ((typeof cronosActiveLegacyInstallments === "function") ? cronosActiveLegacyInstallments(entry) : (entry.installments || [])).forEach((p, idx)=>{
+      if(!(p?.paidAt || p?.cashDate || p?.paid || String(p?.status || "").toUpperCase()==="PAGA")) return;
+      const legacyNum = String(p.number || idx+1);
+      if(legacyLinks.has(`${String(entry.id)}|${legacyNum}`)) return;
+      const iso = cronosPaymentCashISO(p, includeLegacyDueFallback);
+      const amount = cronosPaymentAmount(p);
+      addEvent(`legacyInst:${entry.id}:${legacyNum}:${iso}:${amount}`, amount, iso, {
+        entryId: entry.id,
+        contactId: entry.contactId || "",
+        patient,
+        method: p.payMethod || entry.installPlan?.payMethod || "",
+        source: "Parcelamento legado",
+        desc: `Parcela ${legacyNum}/${p.total || ""}`,
+        raw: p
+      });
+    });
+  });
+
+  function hasDetailedForEntryInMonth(eid, cid, mk){
+    if(!mk) return false;
+    return events.some(ev=>{
+      const sameEntry = eid && String(ev.entryId || "") === String(eid);
+      const sameContact = cid && String(ev.contactId || "") === String(cid);
+      return (sameEntry || sameContact) && String(ev.iso || "").slice(0,7) === mk;
+    });
+  }
+
+  entries.forEach(entry=>{
+    const eid = String(entry.id || "");
+    const cid = String(entry.contactId || "");
+    const patient = cronosPatientNameForPayment({}, entry, contactById);
+
+    const legacyISO = cronosEntryLegacyPaymentISO(entry);
+    if(legacyISO){
+      const legacyMonth = String(legacyISO).slice(0,7);
+      if(hasDetailedForEntryInMonth(eid, cid, legacyMonth)) return;
+      const paidDated = getEntryCashPaidValue(entry);
+      if(!paidDated) return;
+      addEvent(`entryPaid:${eid}:${cid}:${legacyISO}:${paidDated}`, paidDated, legacyISO, {
+        entryId: eid,
+        contactId: cid,
+        patient,
+        method: entry.payMethod || entry.paymentMethod || "",
+        source: "Lead legado datado",
+        desc: "Valor pago salvo no lead — data real de pagamento",
+        raw: entry
+      });
+      return;
+    }
+
+    const legacyAnchor = cronosLegacySafeAnchorISO(entry);
+    const entryMonth = legacyAnchor?.monthKey || "";
+    const paidUndated = getEntryHistoricalValuePaidOnly(entry);
+    if(!paidUndated){
+      const maybe = getEntryStrictUndatedLegacyPaidValue(entry);
+      if(maybe){
+        skippedLegacy.push({ entryId:eid, contactId:cid, patient, amount:maybe, reason:"Valor legado sem data ignorado por não ser valuePaid histórico seguro", source:"Lead legado sem data", raw:entry });
+      }
+      return;
+    }
+
+    if(includeUndatedLegacyByEntryMonth && /^\d{4}-\d{2}$/.test(entryMonth)){
+      if(hasDetailedForEntryInMonth(eid, cid, entryMonth)) return;
+      const anchoredISO = legacyAnchor?.iso || `${entryMonth}-01`;
+      addEvent(`entryPaidMonthV84:${eid}:${cid}:${entryMonth}:${paidUndated}`, paidUndated, anchoredISO, {
+        entryId: eid,
+        contactId: cid,
+        patient,
+        method: entry.payMethod || entry.paymentMethod || "",
+        source: "Lead legado valuePaid",
+        desc: "ValuePaid legado recuperado no mês/ano original detectado",
+        dateRepair: {
+          originalISO: "",
+          officialISO: anchoredISO,
+          entryMonth,
+          reason: legacyAnchor?.reason || "Legado sem data exata preservado fora do ano atual"
+        },
+        raw: entry
+      });
+      return;
+    }
+
+    skippedLegacy.push({
+      entryId: eid,
+      contactId: cid,
+      patient,
+      amount: paidUndated,
+      reason: "Lead legado com valuePaid, mas sem mês original confiável: fora do caixa mensal",
+      source: "Lead legado sem mês",
+      raw: entry
+    });
+  });
+
+  events.sort((a,b)=>String(a.iso).localeCompare(String(b.iso)) || String(a.patient).localeCompare(String(b.patient)));
+  Object.defineProperty(events, "skippedDuplicates", {
+    value: skippedDuplicates,
+    enumerable: false,
+    configurable: true
+  });
+  Object.defineProperty(events, "skippedLegacy", {
+    value: skippedLegacy,
+    enumerable: false,
+    configurable: true
+  });
+  return events;
+}
+function getReceivedEventsForPeriod(db=loadDB(), actor=currentActor(), fromISO="", toISO="", options={}){
+  return buildCronosReceivedEvents(db, actor, {...options, fromISO, toISO});
+}
+function summarizeReceivedEvents(events=[]){
+  return (events || []).reduce((acc, ev)=>{
+    acc.total += parseMoney(ev.amount);
+    acc.count += 1;
+    return acc;
+  }, {total:0, count:0});
+}
+function summarizeReceivedForMonth(db=loadDB(), actor=currentActor(), monthKey=monthKeyOf(todayISO()), options={}){
+  const [y,m] = String(monthKey || monthKeyOf(todayISO())).split("-").map(Number);
+  const fromISO = `${y}-${String(m).padStart(2,"0")}-01`;
+  const toISO = `${y}-${String(m).padStart(2,"0")}-${String(new Date(y, m, 0).getDate()).padStart(2,"0")}`;
+  return summarizeReceivedEvents(getReceivedEventsForPeriod(db, actor, fromISO, toISO, options));
+}
+window.buildCronosReceivedEvents = buildCronosReceivedEvents;
+window.getReceivedEventsForPeriod = getReceivedEventsForPeriod;
+window.summarizeReceivedForMonth = summarizeReceivedForMonth;
+window.cronosAuditRecebidos = function(monthKey){
+  const mk = String(monthKey || monthKeyOf(todayISO())).slice(0,7);
+  const y = Number(mk.slice(0,4));
+  const m = Number(mk.slice(5,7));
+  const fromISO = `${y}-${String(m).padStart(2,"0")}-01`;
+  const toISO = `${y}-${String(m).padStart(2,"0")}-${String(new Date(y,m,0).getDate()).padStart(2,"0")}`;
+  const events = getReceivedEventsForPeriod(loadDB(), currentActor(), fromISO, toISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+  const rows = events.map((ev, idx)=>({
+    n: idx+1,
+    data: fmtBR(ev.iso),
+    paciente: ev.patient,
+    valor: moneyBR(ev.amount),
+    fonte: ev.source,
+    detalhe: ev.desc,
+    dataOriginal: ev.dateRepair?.originalISO ? fmtBR(ev.dateRepair.originalISO) : "",
+    correcao: ev.dateRepair?.reason || "",
+    chave: ev.looseKey || ev.key
+  }));
+  const skipped = (events.skippedDuplicates || []).map((ev, idx)=>({
+    n: idx+1,
+    data: fmtBR(ev.iso),
+    paciente: ev.patient,
+    valor: moneyBR(ev.amount),
+    ignorado: ev.skippedSource,
+    mantido: ev.keptSource,
+    chave: ev.looseKey
+  }));
+  const legacySkipped = (events.skippedLegacy || []).map((ev, idx)=>({
+    n: idx+1,
+    paciente: ev.patient,
+    valor: moneyBR(ev.amount),
+    fonte: ev.source || "Lead/pagamento legado",
+    motivo: ev.reason
+  }));
+  const total = events.reduce((s,ev)=>s+parseMoney(ev.amount),0);
+  console.log(`CRONOS AUDITORIA RECEBIDOS ${mk}: ${moneyBR(total)} em ${events.length} baixa(s).`);
+  console.table(rows);
+  if(skipped.length){
+    console.warn(`Duplicidades ignoradas: ${skipped.length}`);
+    console.table(skipped);
+  }else{
+    console.log("Nenhuma duplicidade ignorada.");
+  }
+  if(legacySkipped.length){
+    console.warn(`Valores legados sem data real fora do caixa mensal: ${legacySkipped.length}`);
+    console.table(legacySkipped);
+  }
+  return { total, count: events.length, rows, skipped, legacySkipped };
+};
+window.cronosAuditDashboardReceita = function(monthKey){
+  const db = loadDB();
+  const actor = currentActor();
+  const mk = String(monthKey || (getUIFilters()?.monthKey && getUIFilters().monthKey !== "all" ? getUIFilters().monthKey : monthKeyOf(todayISO()))).slice(0,7);
+  const [y,m] = mk.split('-').map(Number);
+  const fromISO = `${mk}-01`;
+  const toISO = `${mk}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
+  const rows = cronosOfficialReceivedEventsForRange(db, actor, fromISO, toISO);
+  const total = rows.reduce((s,ev)=>s + parseMoney(ev.amount || ev.value || 0), 0);
+  console.log(`CRONOS DASHBOARD/PERFORMANCE RECEITA OFICIAL ${mk}: ${moneyBR(total)} em ${rows.length} baixa(s).`);
+  console.table(rows.map((ev,i)=>({n:i+1,data:fmtBR(ev.iso),paciente:ev.patient,valor:moneyBR(ev.amount||ev.value),fonte:ev.source,detalhe:ev.desc,entryId:ev.entryId,contactId:ev.contactId})));
+  return {total,count:rows.length,rows};
+};
+
+window.cronosAuditRecebidosPorFonte = function(monthKey){
+  const mk = String(monthKey || monthKeyOf(todayISO())).slice(0,7);
+  const fromISO = `${mk}-01`;
+  const toISO = endOfMonthISO(mk);
+  const events = getReceivedEventsForPeriod(loadDB(), currentActor(), fromISO, toISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+  const by = new Map();
+  (events || []).forEach(ev=>{
+    const key = ev.source || ev.sourceGroup || 'Sem fonte';
+    const item = by.get(key) || { fonte:key, total:0, baixas:0 };
+    item.total += parseMoney(ev.amount);
+    item.baixas += 1;
+    by.set(key, item);
+  });
+  const rows = Array.from(by.values()).map(x=>({ ...x, totalBR: moneyBR(x.total) })).sort((a,b)=>b.total-a.total);
+  console.table(rows);
+  return rows;
+};
+
+window.cronosAuditRecebidosTotalPorFonte = function(){
+  const events = buildCronosReceivedEvents(loadDB(), currentActor(), { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true, untilToday:true });
+  const by = new Map();
+  (events || []).forEach(ev=>{
+    const key = ev.source || ev.sourceGroup || 'Sem fonte';
+    const item = by.get(key) || { fonte:key, total:0, baixas:0 };
+    item.total += parseMoney(ev.amount);
+    item.baixas += 1;
+    by.set(key, item);
+  });
+  const rows = Array.from(by.values()).map(x=>({ ...x, totalBR: moneyBR(x.total) })).sort((a,b)=>b.total-a.total);
+  const total = rows.reduce((sum,x)=>sum+parseMoney(x.total),0);
+  console.log(`CRONOS AUDITORIA TOTAL RECEBIDO (v83): ${moneyBR(total)} em ${(events||[]).length} baixa(s).`);
+  console.table(rows);
+  if(events.skippedDuplicates?.length){
+    console.warn(`Adaptadores/duplicidades ignorados: ${events.skippedDuplicates.length}`);
+  }
+  return { total, totalBR: moneyBR(total), count:(events||[]).length, rows, skippedDuplicates:events.skippedDuplicates||[], skippedLegacy:events.skippedLegacy||[] };
+};
+
+window.cronosAuditPacientePagamentos = function(nome){
+  const termo = String(nome || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  const db = loadDB();
+  const actor = currentActor();
+  const masterId = actor?.masterId || actor?.clinicId || "";
+  const contacts = (db?.contacts || []).filter(c=>!masterId || !c.masterId || c.masterId===masterId);
+  const entries = (db?.entries || []).filter(e=>!masterId || !e.masterId || e.masterId===masterId);
+  const contactById = new Map(contacts.map(c=>[String(c.id), c]));
+  const entryById = new Map(entries.map(e=>[String(e.id), e]));
+  const entriesByContact = new Map();
+  entries.forEach(e=>{ const cid = String(e.contactId||""); if(cid && !entriesByContact.has(cid)) entriesByContact.set(cid, e); });
+  const norm = v=>String(v||"").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const rows = [];
+  (db?.payments || []).forEach((p,idx)=>{
+    const entry = p?.entryId ? entryById.get(String(p.entryId)) : (p?.contactId ? entriesByContact.get(String(p.contactId)) : null);
+    const patient = cronosPatientNameForPayment(p, entry, contactById);
+    if(termo && !norm(patient).includes(termo)) return;
+    const oficial = cronosPaymentOfficialISO(p, entry, false);
+    const original = cronosPaymentCashISO(p, false);
+    rows.push({
+      n: idx+1,
+      paciente: patient,
+      valor: moneyBR(cronosPaymentAmount(p)),
+      dataOriginal: original ? fmtBR(original) : "",
+      dataUsadaNoCaixa: oficial ? fmtBR(oficial) : "",
+      mesLead: String(entry?.monthKey || ""),
+      desc: p?.desc || p?.description || "",
+      source: p?.source || "",
+      status: p?.status || "",
+      entryId: p?.entryId || "",
+      paymentId: p?.id || ""
+    });
+  });
+  console.table(rows);
+  return rows;
+};
+
+function financialPlanTotals(plan){
+  plan = plan || {};
+  const total = parseMoney(plan.amount || plan.total || 0);
+  const payments = (typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (Array.isArray(plan.payments) ? plan.payments : []);
+  const scheduled = payments.reduce((s,p)=>s+parseMoney(p.amount ?? p.value ?? p.valor ?? 0),0);
+  const paid = payments.filter(financialPaymentPaid).reduce((s,p)=>s+parseMoney(p.amount ?? p.value ?? p.valor ?? 0),0);
+  const pending = payments.filter(p=>!financialPaymentPaid(p)).reduce((s,p)=>s+parseMoney(p.amount ?? p.value ?? p.valor ?? 0),0);
+  const remainingToSchedule = Math.max(0, total - scheduled);
+  const openBalance = Math.max(0, total - paid);
+  return {total, scheduled, paid, pending, remainingToSchedule, openBalance};
+}
+
+function financialPlanNextDue(plan){
+  const pending = ((typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (plan?.payments || [])).filter(p=>!financialPaymentPaid(p) && p.dueDate);
+  pending.sort((a,b)=>String(a.dueDate||"").localeCompare(String(b.dueDate||"")));
+  return pending[0]?.dueDate || "";
+}
+
+
+function financialPlanIsFullyPaid(plan){
+  if(!plan) return false;
+  const t = financialPlanTotals(plan);
+  const target = Number(t.total || plan.amount || 0);
+  return target > 0 && Number(t.paid || 0) >= (target - 0.01);
+}
+
+function financialPlanHasAnyPayment(plan){
+  if(!plan) return false;
+  const pays = Array.isArray(plan.payments) ? plan.payments : [];
+  return pays.length > 0 || Number(financialPlanTotals(plan).scheduled || 0) > 0;
+}
+
+function getPlanFichaItemIds(plan){
+  if(!plan) return [];
+  const raw = [];
+  [
+    plan.fichaItemIds,
+    plan.fichaItensIds,
+    plan.itemIds,
+    plan.procedureItemIds,
+    plan.fichaProcedureIds,
+    plan.selectedItemIds,
+    plan.linkedFichaItemIds
+  ].forEach(arr=>{
+    if(Array.isArray(arr)) raw.push(...arr);
+  });
+  if(Array.isArray(plan.fichaItems)){
+    plan.fichaItems.forEach(x=> raw.push(typeof x === 'object' ? (x.id || x.itemId || x.fichaItemId) : x));
+  }
+  return Array.from(new Set(raw.map(x=>String(x||'').trim()).filter(Boolean)));
+}
+
+function setPlanFichaItemIds(plan, ids){
+  if(!plan) return [];
+  const merged = Array.from(new Set([...(getPlanFichaItemIds(plan)||[]), ...((ids||[]).map(x=>String(x||'').trim()).filter(Boolean))]));
+  plan.fichaItemIds = merged;
+  return merged;
+}
+
+function planContainsFichaItem(plan, itemId){
+  const id = String(itemId || '').trim();
+  if(!id) return false;
+  return getPlanFichaItemIds(plan).includes(id);
+}
+
+function getFichaPlanoSafe(entry){
+  if(!entry) return [];
+  if(!entry.ficha || typeof entry.ficha !== 'object') entry.ficha = { plano: [], odontograma: {}, avaliacoes: [] };
+  if(!Array.isArray(entry.ficha.plano)) entry.ficha.plano = [];
+  if(!entry.ficha.odontograma || typeof entry.ficha.odontograma !== 'object') entry.ficha.odontograma = {};
+  if(!Array.isArray(entry.ficha.avaliacoes)) entry.ficha.avaliacoes = [];
+  return entry.ficha.plano;
+}
+
+function findFinancialPlanByFichaItem(entry, itemOrId){
+  if(!entry || !itemOrId) return null;
+  const itemObj = typeof itemOrId === 'object' ? itemOrId : null;
+  const targetItemId = itemObj ? String(itemObj.id || '').trim() : String(itemOrId || '').trim();
+  const directId = String(itemObj?.financialPlanId || itemObj?.recebimentoId || itemObj?.budgetId || itemObj?.paymentPlanId || '').trim();
+  const plans = ensureFinancialPlans(entry);
+
+  if(directId){
+    const direct = plans.find(p=>String(p.id)===directId);
+    if(direct){
+      if(targetItemId) setPlanFichaItemIds(direct, [targetItemId]);
+      return direct;
+    }
+  }
+  if(!targetItemId) return null;
+
+  return plans.find(plan=>planContainsFichaItem(plan, targetItemId)) || null;
+}
+
+function updateFichaItemFinanceStatusFromPlan(item, plan){
+  if(!item || !plan) return;
+  item.financialPlanId = String(plan.id);
+  item.recebimentoId = String(plan.id);
+  const totals = financialPlanTotals(plan);
+  if(financialPlanIsFullyPaid(plan)){
+    item.financeStatus = 'pago';
+    item.pago = true;
+  }else if(Number(totals.paid || 0) > 0){
+    item.financeStatus = 'parcial';
+    item.pago = false;
+  }else if(financialPlanHasAnyPayment(plan)){
+    item.financeStatus = 'em_pagamento';
+    item.pago = false;
+  }else{
+    item.financeStatus = 'recebimento_criado';
+    item.pago = false;
+  }
+}
+
+function syncFichaFinancialLinks(entry){
+  if(!entry) return entry;
+  const plano = getFichaPlanoSafe(entry);
+  const plans = ensureFinancialPlans(entry);
+
+  // 1) Se o item já aponta para um recebimento, garante o caminho inverso no plano.
+  plano.forEach(item=>{
+    if(!item || !item.id) return;
+    const directId = String(item.financialPlanId || item.recebimentoId || '').trim();
+    if(!directId) return;
+    const plan = plans.find(p=>String(p.id)===directId);
+    if(plan) setPlanFichaItemIds(plan, [String(item.id)]);
+  });
+
+  // 2) Se o plano tem fichaItemIds, garante o vínculo em cada procedimento.
+  const itemById = new Map(plano.filter(item=>item && item.id).map(item=>[String(item.id), item]));
+  plans.forEach(plan=>{
+    const ids = getPlanFichaItemIds(plan);
+    if(!ids.length) return;
+    setPlanFichaItemIds(plan, ids);
+    ids.forEach(id=>{
+      const item = itemById.get(String(id));
+      if(item) updateFichaItemFinanceStatusFromPlan(item, plan);
+    });
+  });
+
+  return entry;
+}
+
+function fichaLinkedFinancialPaidTotal(entry, plano=[]){
+  if(!entry) return 0;
+  let total = 0;
+  const seenPlans = new Set();
+
+  // Pagamentos vinculados diretamente aos procedimentos da ficha.
+  (plano || []).forEach(item=>{
+    const plan = findFinancialPlanByFichaItem(entry, item);
+    if(plan){
+      const pid = String(plan.id || '');
+      if(seenPlans.has(pid)) return;
+      seenPlans.add(pid);
+      const linkedIds = getPlanFichaItemIds(plan);
+      const linkedTotal = (plano || [])
+        .filter(x=>linkedIds.includes(String(x.id || '')))
+        .reduce((s,x)=>s + Number(x.valorFechado || 0), 0);
+      const paid = Number(financialPlanTotals(plan).paid || 0);
+      total += Math.min(paid, linkedTotal || Number(plan.amount || 0) || paid);
+      return;
+    }
+    if(item?.pago) total += Number(item.valorFechado || 0);
+  });
+
+  // Pagamentos do paciente que ainda não foram alocados em procedimentos específicos.
+  // Ex.: entrada/recebimento avulso de R$ 4.000,00. O valor precisa aparecer
+  // no resumo da ficha, mas sem pintar procedimentos como pagos no chute.
+  ensureFinancialPlans(entry).forEach(plan=>{
+    const pid = String(plan?.id || '');
+    if(!pid || seenPlans.has(pid)) return;
+    const paid = Number(financialPlanTotals(plan).paid || 0);
+    if(paid <= 0) return;
+    const linkedIds = getPlanFichaItemIds(plan);
+    if(linkedIds.length) return;
+    seenPlans.add(pid);
+    total += paid;
+  });
+
+  const totalFechado = (plano || []).reduce((s,x)=>s + Number(x.valorFechado || 0), 0);
+
+  // Sincroniza o resumo da Ficha com o mesmo resumo financeiro usado nos cards.
+  // Antes, a Ficha lia só pagamentos vinculados/financeiros e o card também aceitava
+  // baixas antigas/campos legados do lead. Resultado: o mesmo paciente podia aparecer
+  // como Pago 530 na Ficha e Pago 630 no card. A Ficha agora usa o maior valor oficial
+  // quando a avaliação visível representa o orçamento completo do lead, sem pintar itens
+  // individualmente como pagos no chute.
+  try{
+    const allFichaItems = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
+    const allFichaTotal = allFichaItems.reduce((s,x)=>s + Number(x?.valorFechado || 0), 0);
+    const visibleIsWholeFicha = !allFichaTotal || !totalFechado || Math.abs(allFichaTotal - totalFechado) < 0.01;
+    if(visibleIsWholeFicha && typeof cronosEntryFinancialSummary === 'function'){
+      const dbRef = (typeof loadDB === 'function') ? loadDB() : null;
+      const summary = cronosEntryFinancialSummary(entry, dbRef);
+      const summaryPaid = parseMoney(summary?.paid || 0);
+      if(summaryPaid > total) total = summaryPaid;
+    }
+  }catch(_){ }
+
+  return Math.min(total, totalFechado || total);
+}
+
+function financialPlanStatusLabel(plan){
+  const st = String(plan?.status || "Aguardando");
+  if(st.toLowerCase().includes("aprov")) return `<span class="badge ok">Aprovado</span>`;
+  if(st.toLowerCase().includes("reprov")) return `<span class="badge late">Reprovado</span>`;
+  if(st.toLowerCase().includes("concl")) return `<span class="badge ok">Concluído</span>`;
+  return `<span class="badge pending">Aguardando</span>`;
+}
+
+function getFinancialPlan(db, entryId, planId){
+  const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
+  if(!entry) return {entry:null, plan:null};
+  const plan = ensureFinancialPlans(entry).find(p=>String(p.id)===String(planId));
+  return {entry, plan};
+}
+
+function ensureNewInstallmentButton(){
+  try{
+    const list = el("instList");
+    if(!list || el("instNewFlowBar")) return;
+    const bar = document.createElement("div");
+    bar.id = "instNewFlowBar";
+    bar.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 16px;padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.03)";
+    bar.innerHTML = `
+      <div>
+        <div style="font-weight:900">Recebimentos</div>
+        <div class="muted" style="font-size:12px">Escolha o paciente, vincule procedimentos da ficha e lance pagamentos à vista ou parcelados.</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn ok" type="button" onclick="openCreditAnticipationModal()">Antecipar crédito</button>
+        <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">+ Novo recebimento</button>
+      </div>
+    `;
+    list.parentNode.insertBefore(bar, list);
+  }catch(e){
+    console.warn("Não foi possível inserir botão de novo recebimento:", e);
+  }
+}
+
+function buildFinancialPlanCards(db, actor, mk, q, filter, today){
+  // Paginação do novo modelo deve aparecer no final da lista geral de Recebimentos,
+  // não no meio entre os cards novos e os parcelamentos antigos.
+  window.__instFinancialPagerHtml = "";
+  const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===actor.masterId).map(c=>[String(c.id),c]));
+  const rows = [];
+  (db.entries||[])
+    .filter(e=>e.masterId===actor.masterId)
+    .forEach(entry=>{
+      const plans = ensureFinancialPlans(entry);
+      if(!plans.length) return;
+      const contact = contactsById.get(String(entry.contactId)) || {name:"(sem nome)", phone:""};
+      const hay = `${contact.name||""} ${contact.phone||""}`.toLowerCase();
+      if(q && !hay.includes(q)) return;
+
+      plans.forEach(plan=>{
+        renumberFinancialPlanPayments(plan);
+        const payments = Array.isArray(plan.payments) ? plan.payments : [];
+        const monthPayments = payments.filter(p=>{
+          const paid = financialPaymentPaid(p);
+          const cashISO = cronosPaymentCashISO(p, false);
+          const dueISO = p?.dueDate || p?.due || "";
+          if(paid) return cashISO && monthKeyOf(cashISO) === mk;
+          return dueISO && monthKeyOf(dueISO) === mk;
+        });
+        if(!monthPayments.length) return;
+
+        let paidSum=0, pendingSum=0, lateSum=0, futureSum=0;
+        let paidCount=0, pendingCount=0, lateCount=0, futureCount=0;
+
+        monthPayments.forEach(p=>{
+          const paid = financialPaymentPaid(p);
+          const amount = parseMoney(p.amount);
+          if(paid){
+            const cashISO = cronosPaymentCashISO(p, false);
+            if(cashISO && monthKeyOf(cashISO) === mk){ paidSum += amount; paidCount++; }
+            return;
+          }
+          pendingSum += amount; pendingCount++;
+          if(p.dueDate && p.dueDate < today){ lateSum += amount; lateCount++; }
+          else { futureSum += amount; futureCount++; }
+        });
+
+        if(filter === "paid" && paidCount <= 0) return;
+        if(filter === "dueMonth" && pendingCount <= 0) return;
+        if(filter === "late" && lateCount <= 0) return;
+        if(filter === "open" && futureCount <= 0) return;
+
+        rows.push({entry, contact, plan, monthPayments, paidSum, pendingSum, lateSum, futureSum, paidCount, pendingCount, lateCount, futureCount});
+      });
+    });
+
+  rows.sort((A,B)=>{
+    const aRank = A.lateCount>0 ? 3 : A.pendingCount>0 ? 2 : A.paidCount>0 ? 1 : 0;
+    const bRank = B.lateCount>0 ? 3 : B.pendingCount>0 ? 2 : B.paidCount>0 ? 1 : 0;
+    if(aRank !== bRank) return bRank - aRank;
+    const ad = cronosPaymentCashISO(A.monthPayments[0], false) || A.monthPayments[0]?.dueDate || "9999-99-99";
+    const bd = cronosPaymentCashISO(B.monthPayments[0], false) || B.monthPayments[0]?.dueDate || "9999-99-99";
+    return ad.localeCompare(bd);
+  });
+
+  if(!rows.length) return "";
+
+  window.__instFinancialState = window.__instFinancialState || { page:1, sig:"" };
+  const finSig = `${mk}|${filter}|${q}`;
+  if(window.__instFinancialState.sig !== finSig){
+    window.__instFinancialState.sig = finSig;
+    window.__instFinancialState.page = 1;
+  }
+  const finPageSize = 10;
+  const finTotalPages = Math.max(1, Math.ceil(rows.length / finPageSize));
+  const finPage = Math.min(finTotalPages, Math.max(1, window.__instFinancialState.page || 1));
+  window.__instFinancialState.page = finPage;
+  const finStart = (finPage - 1) * finPageSize;
+  const renderRows = rows.slice(finStart, finStart + finPageSize);
+  const finPagerHtml = finTotalPages > 1 ? `
+    <div class="instPager" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;">
+      <div class="muted">Novo modelo: página ${finPage} de ${finTotalPages} • ${rows.length} registro(s)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn small" ${finPage<=1 ? 'disabled' : ''} onclick="window.__instFinancialState.page=Math.max(1,(window.__instFinancialState.page||1)-1);renderInstallmentsView();">Anterior</button>
+        <button class="btn small" ${finPage>=finTotalPages ? 'disabled' : ''} onclick="window.__instFinancialState.page=Math.min(${finTotalPages},(window.__instFinancialState.page||1)+1);renderInstallmentsView();">Próxima</button>
+      </div>
+    </div>
+  ` : '';
+  window.__instFinancialPagerHtml = finPagerHtml;
+
+  return `
+    <div style="margin-bottom:10px;font-weight:900">Novo modelo de orçamentos</div>
+    ${renderRows.map(({entry, contact, plan, monthPayments, paidSum, pendingSum, lateSum, futureSum, paidCount, pendingCount, lateCount, futureCount})=>{
+      const totals = financialPlanTotals(plan);
+      const nextDue = financialPlanNextDue(plan);
+      const rowId = `finrow_${entry.id}_${plan.id}`;
+      const badges = [];
+      if(paidCount) badges.push(`<span class="badge ok">✅ ${paidCount} paga(s)</span>`);
+      if(lateCount) badges.push(`<span class="badge late">⚠️ ${lateCount} atrasada(s)</span>`);
+      if(futureCount) badges.push(`<span class="badge pending">🕒 ${futureCount} pendente(s)</span>`);
+      const periodDetails = monthPayments.map(p=>{
+        const paid = financialPaymentPaid(p);
+        const cashISO = cronosPaymentCashISO(p, false);
+        const late = !paid && p.dueDate && p.dueDate < today;
+        const statusChip = paid ? `<span class="badge ok">PAGA</span>` : (late ? `<span class="badge late">ATRASADA</span>` : `<span class="badge pending">PENDENTE</span>`);
+        const dateTxt = paid ? `Pago: ${fmtBR(cashISO || p.paidAt || p.cashDate || "")}` : `Venc: ${fmtBR(p.dueDate)}`;
+        return `<div class="chip">${p.number||""}/${p.total||""} • ${dateTxt} • <b>${moneyBR(p.amount)}</b> ${statusChip}</div>`;
+      }).join("");
+
+      const openToneClass = totals.openBalance <= 0 ? "is-ok" : (lateCount > 0 ? "is-late" : "is-pending");
+      const nextToneClass = lateCount > 0 ? "is-late" : (pendingCount > 0 ? "is-pending" : "");
+      const spotlightHtml = lateCount > 0
+        ? `<div class="instAlert late">⚠ ${lateCount} parcela(s) atrasada(s) no mês • ${moneyBR(lateSum)}</div>`
+        : pendingCount > 0
+          ? `<div class="instAlert pending">🕒 ${pendingCount} parcela(s) pendente(s) no mês • ${moneyBR(pendingSum)}</div>`
+          : paidCount > 0
+            ? `<div class="instAlert ok">✅ ${paidCount} paga(s) no mês • ${moneyBR(paidSum)}</div>`
+            : `<div class="instAlert neutral">Sem movimentação no mês selecionado.</div>`;
+      const extraMonthChips = [
+        `<span class="chip">Lançado: <b>${moneyBR(totals.scheduled)}</b></span>`,
+        `<span class="chip">Pagas no mês: <b>${moneyBR(paidSum)}</b></span>`,
+        `<span class="chip">Pendentes no mês: <b>${moneyBR(pendingSum)}</b></span>`,
+        `<span class="chip">Atrasado no mês: <b>${moneyBR(lateSum)}</b></span>`,
+        `<span class="chip">Futuro no mês: <b>${moneyBR(futureSum)}</b></span>`,
+        ...(badges.length ? badges : [])
+      ].join("");
+
+      return `
+        <div class="instRow instRowClean" id="${rowId}">
+          <div class="instHead">
+            <div style="min-width:0;flex:1">
+              <div class="instName">${escapeHTML(contact.name)} <span class="muted" style="font-weight:600">• ${escapeHTML(contact.phone||"")}</span></div>
+              <div class="instMeta instMetaTop">
+                <span class="chip">Orçamento: <b>${escapeHTML(plan.title || "Plano financeiro")}</b></span>
+                ${financialPlanStatusLabel(plan)}
+              </div>
+              <div class="instSummary">
+                <div class="instMetric">
+                  <span class="instMetricLabel">Total</span>
+                  <strong>${moneyBR(totals.total)}</strong>
+                </div>
+                <div class="instMetric ${totals.paid > 0 ? 'is-ok' : ''}">
+                  <span class="instMetricLabel">Pago</span>
+                  <strong>${moneyBR(totals.paid)}</strong>
+                </div>
+                <div class="instMetric ${openToneClass}">
+                  <span class="instMetricLabel">Aberto</span>
+                  <strong>${moneyBR(totals.openBalance)}</strong>
+                </div>
+                <div class="instMetric ${nextToneClass}">
+                  <span class="instMetricLabel">Próx.</span>
+                  <strong>${nextDue ? fmtBR(nextDue) : "—"}</strong>
+                </div>
+              </div>
+              ${spotlightHtml}
+              <details class="instExtra">
+                <summary>Detalhes financeiros</summary>
+                <div class="instMeta compact">${extraMonthChips}</div>
+                <div class="instMeta compact">${periodDetails || `<span class="muted">Sem parcelas do período para detalhar.</span>`}</div>
+              </details>
+            </div>
+            <div class="instBtns">
+              <button class="btn" onclick="openLeadEntry('${entry.id}')">Abrir lead</button>
+              <button class="btn primary" onclick="openNewFinancialInstallment('${entry.id}','${plan.id}')">Gerenciar</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("")}
+    <div style="height:10px"></div>
+  `;
+}
+
+function renderFinancialPaymentTable(entry, plan, contact){
+  renumberFinancialPlanPayments(plan);
+  const today = todayISO();
+  const canSensitive = canManageFinancialSensitiveActions();
+  const rows = (plan.payments||[]).map(p=>{
+    const uiMutation = String(p?.__cronosUiMutation || "");
+    const mutating = !!uiMutation || isFinancialPaymentMutationPending(entry?.id, plan?.id, p?.id);
+    const paid = financialPaymentPaid(p);
+    const late = !paid && p.dueDate && p.dueDate < today;
+    const processingLabel = uiMutation === "undo" ? "DESFAZENDO..." : "SALVANDO...";
+    const st = mutating
+      ? `<span class="badge pending">${processingLabel}</span>`
+      : (paid ? `<span class="badge ok">PAGO</span>` : (late ? `<span class="badge late">ATRASADO</span>` : `<span class="badge pending">PENDENTE</span>`));
+    const action = mutating
+      ? `<button type="button" class="btn" disabled style="opacity:.65;cursor:wait">${processingLabel}</button>`
+      : (paid
+          ? (canSensitive
+              ? `<a class="miniLink" href="javascript:void(0)" onclick="undoFinancialPayment('${entry.id}','${plan.id}','${p.id}')">Desfazer</a>`
+              : `<span class="muted" style="font-size:12px">Pago</span>`)
+          : `<button type="button" class="btn ok" onclick="payFinancialPayment('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(p.id)}'); return false;">Dar baixa</button>`);
+    const transfer = (!mutating && paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferFinancialPaymentCashDate('${entry.id}','${plan.id}','${p.id}')">Transferir data</a>` : "";
+    const cashISO = cronosPaymentCashISO(p, false);
+    const deleteBtn = (!mutating && canSensitive) ? `<button type="button" class="miniBtn danger" onclick="deleteFinancialPayment('${entry.id}','${plan.id}','${p.id}')" title="Excluir pagamento">🗑️</button>` : "";
+    return `
+      <tr>
+        <td class="mono">${p.number||""}/${p.total||""}</td>
+        <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
+        <td class="mono">${moneyBR(p.amount)}</td>
+        <td>${escapeHTML(p.payMethod || "—")}</td>
+        <td>${st}${(!mutating && cashISO) ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}${(!mutating && (p.creditAnticipated || p.settlementType === "antecipacao_credito")) ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
+        <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${deleteBtn}</td>
+      </tr>
+    `;
+  }).join("");
+  return `
+    <table class="instTable financialPaymentTable" style="width:auto;min-width:720px;max-width:820px;table-layout:fixed">
+      <colgroup>
+        <col style="width:72px">
+        <col style="width:112px">
+        <col style="width:128px">
+        <col style="width:145px">
+        <col style="width:125px">
+        <col style="width:138px">
+      </colgroup>
+      <thead><tr>
+        <th>Parcela</th><th>Venc.</th><th>Valor</th><th>Forma</th><th>Status</th><th>Ações</th>
+      </tr></thead>
+      <tbody>${rows || `<tr><td colspan="6" class="muted">Nenhum pagamento lançado nesse orçamento.</td></tr>`}</tbody>
+    </table>
+  `;
+}
+
+function toggleFinancialPlanRow(rowId){
+  window.__instOpen = window.__instOpen || {};
+  const row = el(rowId);
+  if(!row) return;
+  row.classList.toggle("open");
+  window.__instOpen[rowId] = row.classList.contains("open");
+  const btn = row.querySelector(`[data-toggle-inst="${rowId}"]`);
+  if(btn) btn.textContent = row.classList.contains("open") ? "Fechar pagamentos" : "Ver pagamentos";
+}
+
+function refreshFinancialUIAfterPayment(){
+  try{ window.__CRONOS_DASH_REVENUE_CACHE__ = null; }catch(_){ }
+  try{ window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null; }catch(_){ }
+  try{ renderNewFinancialInstallmentApp(); }catch(err){ console.error("Falha ao atualizar painel de recebimento:", err); }
+  try{ renderInstallmentsView(); }catch(err){ console.error("Falha ao atualizar Recebimentos:", err); }
+  try{ renderDashboard(); }catch(err){ console.error("Falha ao atualizar Dashboard após baixa:", err); }
+  try{ window.__cronosRenderFichaApp?.(); }catch(err){ console.error("Falha ao atualizar Ficha após baixa:", err); }
+  try{ updateSidebarPills(); }catch(err){ console.error("Falha ao atualizar indicadores laterais:", err); }
+}
+
+let __cronosFinancialMutationBusy = false;
+let __cronosFinancialMutationPromise = null;
+let __cronosFinancialMutationLabel = "";
+let __cronosFinancialMutationCloudGateBypass = false;
+const __cronosPendingFinancialPayments = new Set();
+
+function financialPaymentMutationKey(entryId, planId, paymentId){
+  return `${String(entryId||"")}::${String(planId||"")}::${String(paymentId||"")}`;
+}
+function isFinancialPaymentMutationPending(entryId, planId, paymentId){
+  return __cronosPendingFinancialPayments.has(financialPaymentMutationKey(entryId, planId, paymentId));
+}
+function setFinancialPaymentMutationPending(entryId, planId, paymentId, pending=true){
+  const key = financialPaymentMutationKey(entryId, planId, paymentId);
+  if(pending) __cronosPendingFinancialPayments.add(key);
+  else __cronosPendingFinancialPayments.delete(key);
+}
+async function runCloudSaveDuringFinancialMutation(fn){
+  const previous = __cronosFinancialMutationCloudGateBypass;
+  __cronosFinancialMutationCloudGateBypass = true;
+  try{
+    return await fn();
+  }finally{
+    __cronosFinancialMutationCloudGateBypass = previous;
+  }
+}
+function setFinancialPaymentUIState(payment, state=""){
+  if(!payment || typeof payment !== "object") return;
+  try{
+    if(state){
+      Object.defineProperty(payment, "__cronosUiMutation", {
+        value: String(state),
+        writable: true,
+        configurable: true,
+        enumerable: false
+      });
+    }else{
+      delete payment.__cronosUiMutation;
+    }
+  }catch(_){
+    try{
+      if(state) payment.__cronosUiMutation = String(state);
+      else delete payment.__cronosUiMutation;
+    }catch(__){}
+  }
+}
+function financialMutationBusyText(){
+  return __cronosFinancialMutationLabel
+    ? `Já existe ${__cronosFinancialMutationLabel} sendo confirmada na nuvem.`
+    : "Já existe uma alteração financeira sendo confirmada na nuvem.";
+}
+function startFinancialMutationWait(label="uma alteração financeira"){
+  __cronosFinancialMutationBusy = true;
+  __cronosFinancialMutationLabel = String(label || "uma alteração financeira");
+  let finish = null;
+  __cronosFinancialMutationPromise = new Promise(resolve=>{ finish = resolve; });
+  return ()=>{
+    __cronosFinancialMutationBusy = false;
+    __cronosFinancialMutationLabel = "";
+    try{ finish?.(); }catch(_){}
+    __cronosFinancialMutationPromise = null;
+  };
+}
+
+async function waitForPreviousCloudWriteBeforeFinancialChange(){
+  // A baixa não pode disputar escrita com algum saveDB anterior que ainda esteja rodando.
+  // Primeiro deixamos a escrita anterior terminar; a alteração financeira vem depois.
+  try{
+    if(__cloudSaveTimer){
+      clearTimeout(__cloudSaveTimer);
+      __cloudSaveTimer = null;
+      await runCloudSaveDuringFinancialMutation(()=>scheduleCloudSave(true));
+    }else if(__cloudSaveRunning && __cloudSavePromise){
+      await __cloudSavePromise;
+    }
+  }catch(err){
+    console.warn("Não foi possível aguardar sincronização anterior antes do financeiro:", err);
+  }
+}
+
+try{
+  window.addEventListener("beforeunload", function(event){
+    if(__cronosFinancialMutationBusy){
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
+}catch(_){ }
+
+function cloneCronosCriticalSnapshot(db){
+  try{ return normalizeDBShape(JSON.parse(JSON.stringify(db || freshDB()))); }
+  catch(_){ return normalizeDBShape(db || freshDB()); }
+}
+
+function restoreCronosCriticalSnapshot(snapshot){
+  DB = normalizeDBShape(snapshot || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  try{ safeSetLocalDB(DB); }catch(_){ }
+  try{ if(typeof captureV2Snapshots === "function") captureV2Snapshots(DB); }catch(_){ }
+  refreshFinancialUIAfterPayment();
+}
+
+function showFinancialMutationPreview(db){
+  // Exibe imediatamente SALVANDO... sem persistir estado otimista antes da confirmação real.
+  DB = normalizeDBShape(db || DB || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  refreshFinancialUIAfterPayment();
+}
+function waitCronos(ms){
+  return new Promise(resolve=>setTimeout(resolve, ms));
+}
+function findPaymentInsideEntryPayload(payload, planId, paymentId){
+  const plans = Array.isArray(payload?.financialPlans) ? payload.financialPlans : [];
+  const plan = plans.find(p=>String(p?.id)===String(planId));
+  return (Array.isArray(plan?.payments) ? plan.payments : []).find(p=>String(p?.id)===String(paymentId)) || null;
+}
+async function verifyFinancialPaymentCloudState(entryId, planId, paymentId, paidExpected=true){
+  if(!(typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID)){
+    return false;
+  }
+  const { data, error } = await supabaseClient
+    .from("clinic_leads")
+    .select("legacy_payload")
+    .eq("clinic_id", String(CLOUD_CLINIC_ID))
+    .eq("id", String(entryId))
+    .maybeSingle();
+  if(error){
+    console.warn("Não foi possível verificar automaticamente a baixa na tabela V2:", error);
+    return false;
+  }
+  const payment = findPaymentInsideEntryPayload(data?.legacy_payload || {}, planId, paymentId);
+  if(!payment) return false;
+  return paidExpected ? financialPaymentPaid(payment) : !financialPaymentPaid(payment);
+}
+async function commitPaymentWithAutoConfirmation(db, entry, planId, paymentId, paidExpected=true){
+  // A RPC é transacional: quando retorna sucesso, a baixa já foi confirmada no banco.
+  // Sem espera artificial ou polling de minutos.
+  return await commitFinancialMutationCloud(db, entry);
+}
+
+async function commitFinancialMutationCloud(db, entry){
+  if(isSupportMode()){
+    toast("Modo suporte", "Alterações financeiras não são salvas no modo suporte.");
+    return false;
+  }
+
+  // Pagamentos ainda usam clinic_state, enquanto a ficha/lead já usa clinic_leads.
+  // Esta RPC grava os dois pontos numa única transação no banco.
+  if(typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID && entry?.id){
+    const { data, error } = await supabaseClient.rpc("cronos_v2_commit_financial_mutation", {
+      p_clinic_id: String(CLOUD_CLINIC_ID),
+      p_entry_id: String(entry.id),
+      p_entry_payload: entry,
+      p_payments: Array.isArray(db?.payments) ? db.payments : [],
+      p_tasks: Array.isArray(db?.tasks) ? db.tasks : []
+    });
+    if(error) throw error;
+    if(!data || data.ok !== true){
+      throw new Error(data?.error || "A nuvem não confirmou a alteração financeira.");
+    }
+
+    // Daqui em diante o banco JÁ confirmou. Qualquer falha de cache/render local
+    // não pode transformar sucesso real em mensagem de falha ou reverter a tela.
+    try{
+      DB = normalizeDBShape(db || DB || freshDB());
+      window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      try{ safeSetLocalDB(DB); }catch(cacheErr){ console.warn("Financeiro salvo na nuvem; cache local não atualizado:", cacheErr); }
+      try{ captureV2Snapshots(DB); }catch(snapshotErr){ console.warn("Financeiro salvo na nuvem; snapshot V2 não atualizado:", snapshotErr); }
+      CLOUD_DB_READY = true;
+    }catch(postCommitErr){
+      console.error("Alteração financeira foi salva na nuvem, mas houve falha ao preparar a interface local:", postCommitErr);
+    }
+    return true;
+  }
+
+  return await runCloudSaveDuringFinancialMutation(()=>saveDB(db, { immediate:true }));
+}
+
+async function saveConfirmedFinancialChange(db, entry, before, labels={}){
+  if(__cronosFinancialMutationBusy){
+    toast("Aguarde", financialMutationBusyText());
+    return false;
+  }
+
+  const finishMutation = startFinancialMutationWait(labels.operationLabel || "uma alteração financeira");
+  toast(
+    labels.pendingTitle || "Salvando alteração...",
+    labels.pendingMessage || "Aguarde a confirmação da nuvem antes de atualizar a página."
+  );
+
+  let cloudOk = false;
+  try{
+    cloudOk = await commitFinancialMutationCloud(db, entry);
+  }catch(err){
+    console.error(labels.consoleLabel || "Falha ao salvar alteração financeira:", err);
+  }finally{
+    finishMutation();
+  }
+
+  if(!cloudOk){
+    restoreCronosCriticalSnapshot(before);
+    toast(
+      labels.failTitle || "Alteração não registrada",
+      labels.failMessage || "A nuvem não confirmou a operação. O estado anterior foi restaurado."
+    );
+    return false;
+  }
+
+  refreshFinancialUIAfterPayment();
+  if(labels.successTitle){
+    toast(labels.successTitle, labels.successMessage || "");
+  }
+  return true;
+}
+
+function findFinancePaymentRecord(db, entryId, planId, paymentId){
+  return (db.payments||[]).find(p=>String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId));
+}
+function clonePlainFinancialRecord(record){
+  try{ return record ? JSON.parse(JSON.stringify(record)) : null; }
+  catch(_){ return record ? { ...record } : null; }
+}
+function matchingFinancePaymentRecord(record, entryId, planId, paymentId){
+  return !!record
+    && String(record.entryId)===String(entryId)
+    && String(record.financialPlanId)===String(planId)
+    && String(record.financialPaymentId)===String(paymentId);
+}
+function setPaymentUndoRecordSnapshot(payment, hadRecord, record, atISO){
+  if(!payment || typeof payment !== "object") return;
+  payment.cronosUndoPaymentRecord = {
+    hadRecord: !!hadRecord,
+    record: hadRecord ? clonePlainFinancialRecord(record) : null,
+    at: atISO || new Date().toISOString()
+  };
+}
+function popPaymentUndoRecordSnapshot(payment){
+  if(!payment || typeof payment !== "object") return null;
+  const snap = payment.cronosUndoPaymentRecord || null;
+  try{ delete payment.cronosUndoPaymentRecord; }catch(_){ payment.cronosUndoPaymentRecord = null; }
+  return snap;
+}
+function restoreOrRemoveFinancePaymentRecordOnUndo(db, entryId, planId, paymentId, undoSnapshot){
+  db.payments = Array.isArray(db?.payments) ? db.payments : [];
+  const kept = [];
+  db.payments.forEach(rec=>{
+    if(!matchingFinancePaymentRecord(rec, entryId, planId, paymentId)){
+      kept.push(rec);
+    }
+  });
+
+  if(undoSnapshot?.hadRecord && undoSnapshot.record){
+    // Se já existia um lançamento antes da baixa de teste, desfazer deve restaurar esse estado,
+    // não apagar o que o Dashboard já contava antes. Sem isso, o total pode cair 2 mil do nada.
+    kept.push(clonePlainFinancialRecord(undoSnapshot.record));
+  }
+
+  db.payments = kept;
+}
+
+function persistLocalDBNow(db){
+  try{
+    DB = normalizeDBShape(db || DB || freshDB());
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    return safeSetLocalDB(DB);
+  }catch(err){
+    console.warn("Falha ao persistir localmente:", err);
+    return false;
+  }
+}
+
+function canManageFinancialSensitiveActions(actor=currentActor()){
+  const role = String(actor?.role || "").toUpperCase();
+  return !!actor && (actor.isPrimaryMaster === true || role === "MASTER" || role === "GERENTE");
+}
+
+function blockedFinancialSensitiveAction(){
+  toast("Acesso limitado", "Só gerente e Master podem aprovar, desfazer baixa, transferir data ou excluir recebimentos/parcelas.");
+  return false;
+}
+
+
+function askPaymentCashDate({title="Data do pagamento", subtitle="", defaultDate=todayISO()}={}){
+  return new Promise(resolve=>{
+    const old = document.getElementById("cronosCashDateModal");
+    if(old) old.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "cronosCashDateModal";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(6px)";
+    overlay.innerHTML = `
+      <div style="width:min(420px,96vw);border:1px solid var(--line);border-radius:20px;background:var(--panel);box-shadow:var(--shadow);padding:18px;color:var(--text)">
+        <div style="font-size:18px;font-weight:900;margin-bottom:6px">${escapeHTML(title)}</div>
+        <div class="muted" style="font-size:13px;line-height:1.4;margin-bottom:14px">${escapeHTML(subtitle || "Escolha o dia em que o dinheiro realmente entrou no caixa.")}</div>
+        <label class="muted" style="display:block;font-size:12px;margin-bottom:6px">Data do pagamento / caixa</label>
+        <input id="cronosCashDateInput" class="input" type="date" value="${escapeHTML(String(defaultDate || todayISO()).slice(0,10))}" style="width:100%">
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;flex-wrap:wrap">
+          <button type="button" class="btn" id="cronosCashDateCancel">Cancelar</button>
+          <button type="button" class="btn primary" id="cronosCashDateConfirm">Confirmar baixa</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const input = document.getElementById("cronosCashDateInput");
+    const finish = (val)=>{
+      overlay.remove();
+      resolve(val);
+    };
+    document.getElementById("cronosCashDateCancel")?.addEventListener("click", ()=>finish(null));
+    document.getElementById("cronosCashDateConfirm")?.addEventListener("click", ()=>{
+      const v = String(input?.value || "").slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(v)){
+        try{ toast("Data inválida", "Escolha uma data válida no calendário."); }catch(_){}
+        return;
+      }
+      finish(v);
+    });
+    overlay.addEventListener("click", ev=>{
+      if(ev.target === overlay) finish(null);
+    });
+    input?.focus();
+    if(input?.showPicker){
+      setTimeout(()=>{ try{ input.showPicker(); }catch(_){} }, 120);
+    }
+  });
+}
+
+
+
+/* Antecipação de crédito */
+function markFinancialMutation(entry, plan=null, payment=null, nowISO=new Date().toISOString()){
+  if(entry){
+    entry.updatedAt = nowISO;
+    entry.lastUpdateAt = nowISO;
+    entry.financeUpdatedAt = nowISO;
+  }
+  if(plan){
+    plan.updatedAt = nowISO;
+    plan.lastUpdateAt = nowISO;
+  }
+  if(payment){
+    payment.updatedAt = nowISO;
+    payment.lastUpdateAt = nowISO;
+  }
+}
+
+
+function cronosTombstoneListAdd(list, id, nowISO=new Date().toISOString()){
+  const cleanId = String(id || "").trim();
+  if(!cleanId) return Array.isArray(list) ? list : [];
+  const arr = Array.isArray(list) ? list.slice() : [];
+  const prev = arr.find(x=>String((x && typeof x === "object") ? x.id : x).trim() === cleanId);
+  if(prev && typeof prev === "object"){
+    prev.deletedAt = nowISO;
+    prev.updatedAt = nowISO;
+    return arr;
+  }
+  arr.push({id: cleanId, deletedAt: nowISO, updatedAt: nowISO});
+  return arr;
+}
+
+function cronosTombstoneIdSet(list){
+  const set = new Set();
+  (Array.isArray(list) ? list : []).forEach(x=>{
+    const id = String((x && typeof x === "object") ? x.id : x).trim();
+    if(id) set.add(id);
+  });
+  return set;
+}
+
+function tombstoneFinancialPlan(entry, planId, nowISO=new Date().toISOString()){
+  if(!entry) return;
+  entry.deletedFinancialPlanIds = cronosTombstoneListAdd(entry.deletedFinancialPlanIds, planId, nowISO);
+  markFinancialMutation(entry, null, null, nowISO);
+}
+
+function tombstoneFinancialPayment(plan, paymentId, nowISO=new Date().toISOString()){
+  if(!plan) return;
+  plan.deletedPaymentIds = cronosTombstoneListAdd(plan.deletedPaymentIds, paymentId, nowISO);
+  markFinancialMutation(null, plan, null, nowISO);
+}
+
+function cronosLegacyInstallmentTombstoneKey(parcela, fallbackNumber=""){
+  const number = String(parcela?.number || fallbackNumber || "").trim();
+  const due = String(parcela?.dueDate || parcela?.due || "").trim();
+  const amount = String(parseMoney(parcela?.amount ?? parcela?.value ?? parcela?.valor ?? 0));
+  return `${number}|${due}|${amount}`;
+}
+
+function applyFinancialTombstonesToEntry(entry){
+  if(!entry || typeof entry !== "object") return entry;
+  const deletedPlanIds = cronosTombstoneIdSet(entry.deletedFinancialPlanIds);
+  if(Array.isArray(entry.financialPlans)){
+    entry.financialPlans = entry.financialPlans.filter(plan=>!deletedPlanIds.has(String(plan?.id || "")));
+    entry.financialPlans.forEach(plan=>{
+      const deletedPaymentIds = cronosTombstoneIdSet(plan?.deletedPaymentIds);
+      if(deletedPaymentIds.size && Array.isArray(plan.payments)){
+        plan.payments = plan.payments.filter(pay=>!deletedPaymentIds.has(String(pay?.id || "")));
+        try{ renumberFinancialPlanPayments(plan); }catch(_){ }
+      }
+    });
+  }
+  if(entry.deletedLegacyInstallmentPlanAt){
+    entry.installPlan = null;
+    entry.installments = [];
+  }else{
+    const deletedLegacy = cronosTombstoneIdSet(entry.deletedLegacyInstallments);
+    if(deletedLegacy.size && Array.isArray(entry.installments)){
+      entry.installments = entry.installments.filter(pay=>!deletedLegacy.has(cronosLegacyInstallmentTombstoneKey(pay, pay?.number)));
+      try{ normalizeInstallmentsAfterMutation(entry); }catch(_){ }
+    }
+  }
+  return entry;
+}
+
+function applyFinancialTombstones(db){
+  try{
+    if(!db || !Array.isArray(db.entries)) return db;
+    db.entries.forEach(entry=>applyFinancialTombstonesToEntry(entry));
+  }catch(err){
+    console.warn("Falha ao aplicar exclusões financeiras:", err);
+  }
+  return db;
+}
+
+
+function markFichaMutation(entry, item=null, nowISO=new Date().toISOString()){
+  if(!entry || typeof entry !== "object") return nowISO;
+  entry.updatedAt = nowISO;
+  entry.fichaUpdatedAt = nowISO;
+  if(entry.ficha && typeof entry.ficha === "object"){
+    entry.ficha.updatedAt = nowISO;
+    entry.ficha.lastSyncAt = nowISO;
+  }
+  if(item && typeof item === "object"){
+    item.updatedAt = nowISO;
+    item.lastUpdateAt = nowISO;
+  }
+  return nowISO;
+}
+
+let __cronosFichaSaveQueue = Promise.resolve(true);
+let __cronosFichaMutationRevision = 0;
+
+function cloneFichaLeadSnapshot(entry){
+  try{ return JSON.parse(JSON.stringify(entry || {})); }catch(_){ return { ...(entry || {}) }; }
+}
+
+async function queueFichaV2LeadSave(entry){
+  const row = leadToV2Row(cloneFichaLeadSnapshot(entry));
+  const run = async ()=>{
+    await upsertV2Rows(CLOUD_LEADS_V2_TABLE, [row]);
+    return true;
+  };
+  // Serializa as gravações da mesma ficha. Sem isso, dois cliques rápidos podiam
+  // chegar fora de ordem no Supabase e o estado anterior sobrescrever o mais novo.
+  const pending = __cronosFichaSaveQueue.then(run, run);
+  __cronosFichaSaveQueue = pending.catch(()=>false);
+  return pending;
+}
+
+async function saveFichaMutation(db, entry, options={}){
+  try{ markFichaMutation(entry); }catch(_){ }
+
+  // Em tables_v2, a Ficha mora dentro do lead em clinic_leads.
+  // Salvar a ficha não deve depender do clinic_state (tarefas/recebimentos/configurações),
+  // porque uma falha ali fazia procedimento parecer salvo e desaparecer no F5.
+  if(!isSupportMode() && typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID){
+    try{
+      await queueFichaV2LeadSave(entry);
+      DB = normalizeDBShape(db || DB || freshDB());
+      window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      safeSetLocalDB(DB);
+      captureV2Snapshots(DB);
+      return true;
+    }catch(error){
+      console.error("Falha ao salvar ficha em tables_v2:", error);
+      if(!options.silent){
+        toast("Ficha não salva", "A nuvem não confirmou esta alteração. Tente novamente antes de sair da ficha.");
+      }
+      return false;
+    }
+  }
+
+  return saveDB(db, { immediate:true, ...(options || {}) });
+}
+
+async function confirmFichaMutation(db, entry, before, successTitle="", successMessage=""){
+  const revision = ++__cronosFichaMutationRevision;
+  toast("Salvando ficha...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
+  const ok = await saveFichaMutation(db, entry, { silent:true });
+  if(!ok){
+    // Se houve outra mudança depois desta, não voltamos a ficha inteira para
+    // um snapshot antigo e não apagamos visualmente a alteração mais recente.
+    if(revision === __cronosFichaMutationRevision){
+      restoreCronosCriticalSnapshot(before);
+      try{ window.__cronosRenderFichaApp?.(); }catch(_){ }
+      toast("Alteração não salva", "A nuvem não confirmou. A Ficha voltou ao estado anterior.");
+    }else{
+      toast("Uma alteração anterior não foi confirmada", "Mantive a edição mais recente. Aguarde o salvamento e confira antes de atualizar.");
+    }
+    return false;
+  }
+  if(successTitle) toast(successTitle, successMessage);
+  return true;
+}
+
+function pruneOrphanFinancialPaymentRecords(db, entry=null){
+  try{
+    if(!db || !Array.isArray(db.payments)) return 0;
+    const entries = entry ? [entry] : (Array.isArray(db.entries) ? db.entries : []);
+    const entryById = new Map(entries.filter(Boolean).map(e=>[String(e.id || ""), e]));
+    let removed = 0;
+    db.payments = db.payments.filter(p=>{
+      const entryId = String(p?.entryId || "");
+      const target = entryById.get(entryId);
+      if(!target) return true;
+      const planId = String(p?.financialPlanId || "");
+      if(!planId) return true;
+      const plans = Array.isArray(target.financialPlans) ? target.financialPlans : [];
+      const plan = plans.find(x=>String(x?.id || "") === planId);
+      if(!plan){ removed++; return false; }
+      const payId = String(p?.financialPaymentId || "");
+      if(payId){
+        const pay = (Array.isArray(plan.payments) ? plan.payments : []).find(x=>String(x?.id || "") === payId);
+        if(!pay || !(financialPaymentPaid ? financialPaymentPaid(pay) : (!!pay.paidAt || !!pay.cashDate || String(pay.status||"").toUpperCase()==="PAGA"))){
+          removed++;
+          return false;
+        }
+      }
+      return true;
+    });
+    return removed;
+  }catch(err){
+    console.warn("Falha ao limpar pagamentos financeiros órfãos:", err);
+    return 0;
+  }
+}
+
+function normalizeCreditMethodText(value){
+  return String(value || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isCreditPaymentMethod(method){
+  const m = normalizeCreditMethodText(method);
+  if(!m) return false;
+  if(m.includes("debito")) return false;
+  return m.includes("credito") || (m.includes("cartao") && !m.includes("debito"));
+}
+
+function creditAnticipationKey(type, entryId, planId, paymentIdOrNumber){
+  return [type, entryId || "", planId || "", paymentIdOrNumber || ""].map(v=>String(v).replace(/\|/g,"_")).join("|");
+}
+
+function cronosISOFromAny(raw){
+  if(!raw) return "";
+  try{
+    if(typeof pickISOFlexible === "function"){
+      const picked = pickISOFlexible(raw);
+      if(picked) return picked;
+    }
+  }catch(_){ }
+  const s = String(raw || "").trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if(br) return `${br[3]}-${br[2]}-${br[1]}`;
+  return "";
+}
+
+function collectCreditAnticipationCandidates(db, actor, scope="month", monthKey="", query=""){
+  const masterId = actor?.masterId || actor?.clinicId || "";
+  const q = normalizeCreditMethodText(query || "");
+  const mk = String(monthKey || "").slice(0,7);
+  const contactsById = new Map((db.contacts || [])
+    .filter(c=>!masterId || !c.masterId || c.masterId === masterId)
+    .map(c=>[String(c.id), c]));
+  const candidates = [];
+
+  function contactMatches(contact){
+    if(!q) return true;
+    const hay = normalizeCreditMethodText(`${contact?.name || ""} ${contact?.phone || ""} ${contact?.cpf || ""}`);
+    return hay.includes(q);
+  }
+  function monthMatches(dueDate){
+    if(scope !== "month") return true;
+    return !!mk && String(dueDate || "").slice(0,7) === mk;
+  }
+  function scopeAllowsContact(contact){
+    if(scope === "patient") return contactMatches(contact);
+    if(scope === "search") return contactMatches(contact);
+    return true;
+  }
+
+  (db.entries || [])
+    .filter(e=>!masterId || !e.masterId || e.masterId === masterId)
+    .forEach(entry=>{
+      const contact = contactsById.get(String(entry.contactId)) || {name:"(sem nome)", phone:""};
+      if(!scopeAllowsContact(contact)) return;
+
+      ensureFinancialPlans(entry).forEach(plan=>{
+        renumberFinancialPlanPayments(plan);
+        (plan.payments || []).forEach(payment=>{
+          if(!payment.id) payment.id = uid("pay");
+          if(financialPaymentPaid(payment)) return;
+          if(!isCreditPaymentMethod(payment.payMethod || plan.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
+          const dueDate = cronosISOFromAny(payment.dueDate || payment.due || "");
+          if(!monthMatches(dueDate)) return;
+          const amount = parseMoney(payment.amount);
+          if(amount <= 0) return;
+          candidates.push({
+            key: creditAnticipationKey("financial", entry.id, plan.id, payment.id),
+            type: "financial",
+            entry, plan, payment, contact,
+            amount,
+            dueDate,
+            method: payment.payMethod || plan.payMethod || "Cartão de crédito",
+            label: `${contact.name || "Sem nome"} • ${plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
+            patientKey: String(contact.id || entry.contactId || contact.name || entry.id)
+          });
+        });
+      });
+
+      if(entry.installPlan && !entry.installPlan.migratedToFinancialPlanId){
+        try{ ensureInstallmentsForEntry(entry); }catch(_){ }
+        (entry.installments || []).forEach(inst=>{
+          if(inst.paidAt || inst.cashDate || String(inst.status || "").toUpperCase() === "PAGA") return;
+          if(!isCreditPaymentMethod(inst.payMethod || entry.installPlan?.payMethod || entry.payMethod || entry.paymentMethod || "")) return;
+          const dueDate = cronosISOFromAny(inst.dueDate || inst.due || "");
+          if(!monthMatches(dueDate)) return;
+          const amount = parseMoney(inst.amount);
+          if(amount <= 0) return;
+          candidates.push({
+            key: creditAnticipationKey("legacy", entry.id, "legacy", inst.number),
+            type: "legacy",
+            entry,
+            plan: null,
+            payment: inst,
+            contact,
+            amount,
+            dueDate,
+            method: inst.payMethod || entry.installPlan?.payMethod || "Cartão de crédito",
+            label: `${contact.name || "Sem nome"} • Parcelamento • ${inst.number || ""}/${inst.total || ""}`,
+            patientKey: String(contact.id || entry.contactId || contact.name || entry.id)
+          });
+        });
+      }
+    });
+
+  candidates.sort((a,b)=>String(a.contact?.name || "").localeCompare(String(b.contact?.name || ""), "pt-BR") || String(a.dueDate || "9999-99-99").localeCompare(String(b.dueDate || "9999-99-99")) || String(a.label).localeCompare(String(b.label)));
+  return candidates;
+}
+
+function openCreditAnticipationModal(){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  const db = loadDB();
+  const old = document.getElementById("cronosCreditAnticipationModal");
+  if(old) old.remove();
+
+  const monthValue = (el("instMonth")?.value || todayISO().slice(0,7)).slice(0,7);
+  const searchValue = (el("instSearch")?.value || "").trim();
+  let candidates = [];
+
+  const overlay = document.createElement("div");
+  overlay.id = "cronosCreditAnticipationModal";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(6px)";
+  overlay.innerHTML = `
+    <div style="width:min(780px,96vw);max-height:92vh;overflow:auto;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:var(--shadow);padding:18px;color:var(--text)">
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:20px;font-weight:950">Antecipação de crédito</div>
+          <div class="muted" style="font-size:13px;line-height:1.45;margin-top:4px">Dê baixa em lote nas parcelas de cartão de crédito e informe a taxa para o Cronos registrar o valor líquido recebido.</div>
+        </div>
+        <button type="button" class="btn" id="cronosCreditAnticipationClose">Fechar</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px">
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Data da baixa</span>
+          <input id="creditAntDate" class="input" type="date" value="${escapeHTML(todayISO())}" style="width:100%;margin-top:6px">
+        </label>
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Taxa do cartão (%)</span>
+          <input id="creditAntFee" class="input" type="text" inputmode="decimal" value="0" placeholder="Ex.: 3,49" style="width:100%;margin-top:6px">
+        </label>
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Parcelas consideradas</span>
+          <select id="creditAntScope" class="input" style="width:100%;margin-top:6px">
+            <option value="month">Crédito pendente do mês selecionado</option>
+            <option value="patient">Paciente específico</option>
+            <option value="search">Crédito pendente da busca atual</option>
+            <option value="all">Todos os créditos pendentes</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="creditAntPatientBox" style="display:none;margin:0 0 12px">
+        <label style="display:block">
+          <span class="muted" style="font-size:12px;font-weight:800">Buscar paciente</span>
+          <input id="creditAntPatientSearch" class="input" type="text" placeholder="Digite nome, telefone ou CPF" style="width:100%;margin-top:6px">
+        </label>
+        <div class="muted" style="font-size:12px;margin-top:6px">Ao selecionar “Paciente específico”, use a busca e marque todos para baixar todas as parcelas pendentes de crédito desse paciente.</div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.035)">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:13px">
+          <input type="checkbox" id="creditAntSelectAll" checked>
+          Marcar todos
+        </label>
+        <div class="muted" id="creditAntContext" style="font-size:12px"></div>
+      </div>
+
+      <div id="creditAntList" style="border:1px solid var(--line);border-radius:16px;overflow:auto;max-height:300px"></div>
+
+      <div id="creditAntSummary" style="margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(34,197,94,.08)"></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;flex-wrap:wrap">
+        <button type="button" class="btn" id="creditAntCancel">Cancelar</button>
+        <button type="button" class="btn ok" id="creditAntConfirm">Confirmar antecipação</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const listEl = document.getElementById("creditAntList");
+  const summaryEl = document.getElementById("creditAntSummary");
+  const scopeEl = document.getElementById("creditAntScope");
+  const feeEl = document.getElementById("creditAntFee");
+  const selectAllEl = document.getElementById("creditAntSelectAll");
+  const contextEl = document.getElementById("creditAntContext");
+  const patientBoxEl = document.getElementById("creditAntPatientBox");
+  const patientSearchEl = document.getElementById("creditAntPatientSearch");
+
+  function selectedKeys(){
+    return new Set(Array.from(listEl.querySelectorAll('input[data-credit-ant-item]:checked')).map(i=>i.value));
+  }
+
+  function updateSummary(){
+    const keys = selectedKeys();
+    const selected = candidates.filter(c=>keys.has(c.key));
+    const gross = selected.reduce((s,c)=>s+c.amount,0);
+    const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
+    const fee = gross * feePercent / 100;
+    const net = Math.max(0, gross - fee);
+    summaryEl.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+        <div><div class="muted" style="font-size:12px;font-weight:800">Selecionadas</div><b>${selected.length}</b></div>
+        <div><div class="muted" style="font-size:12px;font-weight:800">Valor bruto</div><b>${moneyBR(gross)}</b></div>
+        <div><div class="muted" style="font-size:12px;font-weight:800">Taxa/desconto</div><b>${moneyBR(fee)}</b></div>
+        <div><div class="muted" style="font-size:12px;font-weight:800">Valor líquido</div><b style="color:#22c55e">${moneyBR(net)}</b></div>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">A baixa marcará as parcelas como pagas, mantendo o valor bruto no plano e registrando o valor líquido no caixa/recebimentos. A ficha acompanha o financeiro vinculado.</div>
+    `;
+  }
+
+  function renderCandidates(){
+    const scope = scopeEl.value || "month";
+    const patientQuery = String(patientSearchEl?.value || "").trim();
+    const queryForScope = scope === "patient" ? patientQuery : (scope === "search" ? searchValue : "");
+    patientBoxEl.style.display = scope === "patient" ? "block" : "none";
+    candidates = collectCreditAnticipationCandidates(db, actor, scope, monthValue, queryForScope);
+    contextEl.textContent = scope === "patient"
+      ? (patientQuery ? `Paciente: ${patientQuery}` : "Digite para buscar o paciente")
+      : scope === "search"
+        ? `Busca atual: ${searchValue || "sem busca"}`
+        : scope === "all"
+          ? "Todos os créditos pendentes"
+          : `Mês: ${monthValue}`;
+    if(scope === "patient" && !patientQuery){
+      listEl.innerHTML = `<div class="muted" style="padding:14px">Digite o nome, telefone ou CPF para listar as parcelas de crédito desse paciente.</div>`;
+      updateSummary();
+      return;
+    }
+    if(!candidates.length){
+      listEl.innerHTML = `<div class="muted" style="padding:14px">Nenhuma parcela de cartão de crédito pendente encontrada.</div>`;
+      updateSummary();
+      return;
+    }
+    const feePreview = Math.max(0, parseBRNum(feeEl.value) || 0);
+    listEl.innerHTML = candidates.map(c=>{
+      const netPreview = Math.max(0, c.amount - (c.amount * feePreview / 100));
+      return `
+        <label style="display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:center;padding:11px 12px;border-bottom:1px solid var(--line);cursor:pointer">
+          <input type="checkbox" data-credit-ant-item value="${escapeHTML(c.key)}" checked>
+          <span style="min-width:0">
+            <span style="display:block;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(c.label)}</span>
+            <span class="muted" style="display:block;font-size:12px">Venc.: ${c.dueDate ? fmtBR(c.dueDate) : "—"} • ${escapeHTML(c.method || "Cartão de crédito")}</span>
+          </span>
+          <span style="text-align:right;white-space:nowrap">
+            <b>${moneyBR(c.amount)}</b>
+            <span class="muted" style="display:block;font-size:11px">líq. ${moneyBR(netPreview)}</span>
+          </span>
+        </label>
+      `;
+    }).join("");
+    listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>ch.addEventListener("change", updateSummary));
+    updateSummary();
+  }
+
+  document.getElementById("cronosCreditAnticipationClose")?.addEventListener("click", ()=>overlay.remove());
+  document.getElementById("creditAntCancel")?.addEventListener("click", ()=>overlay.remove());
+  overlay.addEventListener("click", ev=>{ if(ev.target === overlay) overlay.remove(); });
+  scopeEl.addEventListener("change", renderCandidates);
+  patientSearchEl?.addEventListener("input", debounce(renderCandidates, 180));
+  feeEl.addEventListener("input", renderCandidates);
+  selectAllEl.addEventListener("change", ()=>{
+    listEl.querySelectorAll('input[data-credit-ant-item]').forEach(ch=>{ ch.checked = selectAllEl.checked; });
+    updateSummary();
+  });
+  const confirmBtn = document.getElementById("creditAntConfirm");
+  confirmBtn?.addEventListener("click", async ()=>{
+    if(confirmBtn.dataset.busy === "1") return;
+
+    const date = String(document.getElementById("creditAntDate")?.value || "").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Data inválida", "Escolha a data da baixa da antecipação.");
+
+    const keys = selectedKeys();
+    const selected = candidates.filter(c=>keys.has(c.key));
+    if(!selected.length) return toast("Nada selecionado", "Marque pelo menos uma parcela de crédito para antecipar.");
+
+    const feePercent = Math.max(0, parseBRNum(feeEl.value) || 0);
+    const ok = confirm(`Confirmar antecipação de ${selected.length} parcela(s) em ${fmtBR(date)}?\n\nTaxa: ${feePercent.toLocaleString("pt-BR", {maximumFractionDigits:4})}%`);
+    if(!ok) return;
+
+    const originalText = confirmBtn.textContent;
+    confirmBtn.dataset.busy = "1";
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Processando...";
+    toast("Processando antecipação", "Aguarde a confirmação da baixa e da sincronização na nuvem.");
+
+    try{
+      await applyCreditAnticipation(db, selected, date, feePercent);
+      overlay.remove();
+    }catch(err){
+      console.error("Erro ao confirmar antecipação de crédito", err);
+      toast("Erro ao antecipar crédito", err?.message || "Não foi possível concluir a baixa antecipada. Tente novamente.");
+      confirmBtn.dataset.busy = "0";
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = originalText || "Confirmar antecipação";
+    }
+  });
+
+  renderCandidates();
+}
+
+async function applyCreditAnticipation(db, candidates, settlementDate, feePercent=0){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  db.payments = db.payments || [];
+  const nowISO = new Date().toISOString();
+  let count = 0;
+  let grossTotal = 0;
+  let feeTotal = 0;
+  let netTotal = 0;
+  const affectedEntries = new Set();
+
+  candidates.forEach(c=>{
+    const payment = c.payment;
+    if(!payment || financialPaymentPaid(payment)) return;
+    const gross = parseMoney(payment.amount);
+    if(gross <= 0) return;
+    const feeAmount = Number((gross * (Math.max(0, feePercent) / 100)).toFixed(2));
+    const net = Number(Math.max(0, gross - feeAmount).toFixed(2));
+    grossTotal += gross;
+    feeTotal += feeAmount;
+    netTotal += net;
+    count++;
+
+    payment.status = "PAGA";
+    payment.paidAt = settlementDate;
+    payment.cashDate = settlementDate;
+    payment.manualPayment = true;
+    payment.autoCreditSettlement = false;
+    payment.creditAnticipated = true;
+    payment.settlementType = "antecipacao_credito";
+    payment.grossValue = gross;
+    payment.cashValue = net;
+    payment.netValue = net;
+    payment.cardFeePercent = Math.max(0, feePercent);
+    payment.cardFeeAmount = feeAmount;
+    markFinancialMutation(c.entry, c.plan, payment, nowISO);
+    if(c.entry) affectedEntries.add(c.entry);
+
+    if(c.type === "financial"){
+      let rec = findFinancePaymentRecord(db, c.entry.id, c.plan.id, payment.id);
+      if(!rec){
+        rec = {
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId: c.entry.id,
+          contactId: c.entry.contactId || "",
+          financialPlanId: c.plan.id,
+          financialPaymentId: payment.id,
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          date: settlementDate,
+          paidAt: settlementDate,
+          cashDate: settlementDate,
+          status: "PAGA",
+          value: net,
+          grossValue: gross,
+          cardFeePercent: Math.max(0, feePercent),
+          cardFeeAmount: feeAmount,
+          method: payment.payMethod || c.method || "Cartão de crédito",
+          desc: `Antecipação de crédito • ${c.plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
+          source: "creditAnticipation",
+          settlementType: "antecipacao_credito"
+        };
+        db.payments.push(rec);
+      }else{
+        rec.date = settlementDate;
+        rec.paidAt = settlementDate;
+        rec.cashDate = settlementDate;
+        rec.status = "PAGA";
+        rec.at = nowISO;
+        rec.updatedAt = nowISO;
+        rec.value = net;
+        rec.grossValue = gross;
+        rec.cardFeePercent = Math.max(0, feePercent);
+        rec.cardFeeAmount = feeAmount;
+        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
+        rec.source = "creditAnticipation";
+        rec.settlementType = "antecipacao_credito";
+      }
+    }else{
+      c.entry.valuePaid = parseMoney(c.entry.valuePaid) + gross;
+      c.entry.valueClosed = (c.entry.status === "Fechou") ? c.entry.valuePaid : c.entry.valueClosed;
+      const legacyNum = String(payment.number || "");
+      let rec = db.payments.find(x=>String(x.entryId)===String(c.entry.id) && String(x.legacyInstallmentNumber || "") === legacyNum);
+      if(!rec){
+        rec = {
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId: c.entry.id,
+          contactId: c.entry.contactId || "",
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          date: settlementDate,
+          paidAt: settlementDate,
+          cashDate: settlementDate,
+          status: "PAGA",
+          value: net,
+          grossValue: gross,
+          cardFeePercent: Math.max(0, feePercent),
+          cardFeeAmount: feeAmount,
+          method: payment.payMethod || c.method || "Cartão de crédito",
+          desc: `Antecipação de crédito • Parcela ${payment.number || ""}/${payment.total || ""}`,
+          source: "creditAnticipation",
+          settlementType: "antecipacao_credito",
+          legacyInstallmentNumber: payment.number
+        };
+        db.payments.push(rec);
+      }else{
+        rec.date = settlementDate;
+        rec.paidAt = settlementDate;
+        rec.cashDate = settlementDate;
+        rec.status = "PAGA";
+        rec.at = nowISO;
+        rec.updatedAt = nowISO;
+        rec.value = net;
+        rec.grossValue = gross;
+        rec.cardFeePercent = Math.max(0, feePercent);
+        rec.cardFeeAmount = feeAmount;
+        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
+        rec.source = "creditAnticipation";
+        rec.settlementType = "antecipacao_credito";
+      }
+    }
+  });
+
+  if(!count) return toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
+  affectedEntries.forEach(entry=>{
+    try{ syncFichaFinancialLinks(entry); }catch(e){ console.warn("Falha ao conciliar antecipação com a ficha:", e); }
+  });
+  try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  cronosAuditAction(db, { action:"credit_anticipated", entityType:"finance", entityId:"credit_anticipation", value:netTotal, details:`${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)} • caixa ${fmtBR(settlementDate)}` });
+  affectedEntries.forEach(entry=>{
+    cronosAuditAction(db, { action:"credit_anticipated", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:netTotal, details:`Antecipação de crédito no período • caixa ${fmtBR(settlementDate)}` });
+  });
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar antecipação de crédito na nuvem", err);
+    safeSetLocalDB(db);
+  }
+  if(cloudOk){
+    toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
+  }else{
+    toast("Antecipação salva no navegador", "A nuvem ainda não confirmou. Clique em Atualizar depois de alguns segundos para conferir a sincronização.");
+  }
+  renderAll();
+}
+
+async function payFinancialPayment(entryId, planId, paymentId){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
+  const actor = currentActor();
+  const db = loadDB();
+  const initial = getFinancialPlan(db, entryId, planId);
+  if(!initial.entry || !initial.plan) return toast("Erro", "Recebimento não encontrado.");
+  const initialPayment = (initial.plan.payments||[]).find(p=>String(p.id)===String(paymentId));
+  if(!initialPayment) return toast("Erro", "Pagamento não encontrado.");
+  if(financialPaymentPaid(initialPayment)) return toast("Já foi", "Esse pagamento já está baixado.");
+
+  const payDate = await askPaymentCashDate({
+    title: "Dar baixa no pagamento",
+    subtitle: `${initial.plan.title || "Plano financeiro"} • ${moneyBR(initialPayment.amount)}${initialPayment.dueDate ? ` • venc. ${fmtBR(initialPayment.dueDate)}` : ""}`,
+    defaultDate: todayISO()
+  });
+  if(!payDate) return;
+
+  setFinancialPaymentMutationPending(entryId, planId, paymentId, true);
+  setFinancialPaymentUIState(initialPayment, "pay");
+  const finishMutation = startFinancialMutationWait("uma baixa");
+
+  // O usuário vê que a ação está em andamento desde o primeiro segundo,
+  // inclusive enquanto uma gravação anterior termina.
+  showFinancialMutationPreview(db);
+  toast("Salvando baixa...", "Confirmando a operação na nuvem.");
+
+  let before = cloneCronosCriticalSnapshot(db);
+  let commitDB = null;
+  let commitPayment = null;
+  let cloudOk = false;
+
+  try{
+    await waitForPreviousCloudWriteBeforeFinancialChange();
+
+    const currentDB = loadDB();
+    const current = getFinancialPlan(currentDB, entryId, planId);
+    const visiblePayment = (current.plan?.payments||[]).find(p=>String(p.id)===String(paymentId));
+    if(!current.entry || !current.plan || !visiblePayment){
+      throw new Error("Pagamento não encontrado após sincronização.");
+    }
+    if(financialPaymentPaid(visiblePayment)){
+      cloudOk = true;
+    }else{
+      // Modificamos apenas a cópia enviada ao banco. Na tela, o item permanece
+      // SALVANDO... em vez de aparecer PAGO antes da confirmação.
+      before = cloneCronosCriticalSnapshot(currentDB);
+      commitDB = cloneCronosCriticalSnapshot(currentDB);
+      const commit = getFinancialPlan(commitDB, entryId, planId);
+      commitPayment = (commit.plan?.payments||[]).find(p=>String(p.id)===String(paymentId));
+      if(!commit.entry || !commit.plan || !commitPayment){
+        throw new Error("Pagamento não encontrado na cópia de confirmação.");
+      }
+
+      const nowISO = new Date().toISOString();
+      commitPayment.status = "PAGA";
+      commitPayment.paidAt = payDate;
+      commitPayment.cashDate = payDate;
+      commitPayment.paid = true;
+      markFinancialMutation(commit.entry, commit.plan, commitPayment, nowISO);
+
+      commitDB.payments = commitDB.payments || [];
+      let rec = findFinancePaymentRecord(commitDB, entryId, planId, paymentId);
+      const recBeforePay = clonePlainFinancialRecord(rec);
+      setPaymentUndoRecordSnapshot(commitPayment, !!recBeforePay, recBeforePay, nowISO);
+      if(!rec){
+        rec = {
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId,
+          contactId: commit.entry.contactId || "",
+          financialPlanId: planId,
+          financialPaymentId: paymentId,
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          lastUpdateAt: nowISO,
+          date: payDate,
+          paidAt: payDate,
+          cashDate: payDate,
+          status: "PAGA",
+          value: parseMoney(commitPayment.amount),
+          method: commitPayment.payMethod || "",
+          desc: `Orçamento: ${commit.plan.title || "Plano financeiro"} • Pagamento ${commitPayment.number || ""}/${commitPayment.total || ""}`,
+          source: "financialPlan",
+          cronosFinancialMutation: "baixa",
+          cronosFinancialMutationAt: nowISO
+        };
+        commitDB.payments.push(rec);
+      }else{
+        rec.date = payDate;
+        rec.paidAt = payDate;
+        rec.cashDate = payDate;
+        rec.status = "PAGA";
+        rec.at = nowISO;
+        rec.updatedAt = nowISO;
+        rec.lastUpdateAt = nowISO;
+        rec.value = parseMoney(commitPayment.amount);
+        rec.method = commitPayment.payMethod || rec.method || "";
+        rec.cronosFinancialMutation = "baixa";
+        rec.cronosFinancialMutationAt = nowISO;
+      }
+
+      if(financialPlanIsFullyPaid(commit.plan)) commit.plan.status = "Concluído";
+      syncInstallmentTasks(commitDB, actor);
+      if(Array.isArray(commit.plan.fichaItemIds)){
+        const fullyPaid = financialPlanIsFullyPaid(commit.plan);
+        const linked = commit.plan.fichaItemIds.map(String);
+        ensureFichaForRecebimentos(commit.entry).plano.forEach(item=>{
+          if(linked.includes(String(item.id))){
+            item.pago = !!fullyPaid;
+            item.financeStatus = fullyPaid ? "pago" : "em_pagamento";
+            item.updatedAt = nowISO;
+          }
+        });
+      }
+      try{ syncFichaFinancialLinks(commit.entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
+      cronosAuditAction(commitDB, { action:"payment_paid", entityType:"entry", entityId:commit.entry.id, entryId:commit.entry.id, contactId:commit.entry.contactId, value:parseMoney(commitPayment.amount), details:`${commit.plan.title || "Plano financeiro"} • pagamento ${commitPayment.number || ""}/${commitPayment.total || ""} • caixa ${fmtBR(payDate)}` });
+
+      cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, true);
+    }
+  }catch(err){
+    console.error("Falha ao salvar baixa financeira:", err);
+    cloudOk = false;
+  }finally{
+    setFinancialPaymentMutationPending(entryId, planId, paymentId, false);
+    try{ setFinancialPaymentUIState(initialPayment, ""); }catch(_){}
+    finishMutation();
+  }
+
+  if(cloudOk === true){
+    if(commitDB){
+      DB = normalizeDBShape(commitDB);
+      try{ safeSetLocalDB(DB); }catch(_){}
+      try{ captureV2Snapshots(DB); }catch(_){}
+    }
+    refreshFinancialUIAfterPayment();
+    toast("Baixa feita ✅", `${moneyBR(commitPayment?.amount ?? initialPayment.amount)} • caixa em ${fmtBR(payDate)}`);
+  }else if(cloudOk === null){
+    // Não permite nova baixa como se nada tivesse sido enviado.
+    // A operação demorou além do normal; uma recarga posterior trará a confirmação real.
+    toast("Baixa não confirmada", "A operação não recebeu confirmação da nuvem.");
+    refreshFinancialUIAfterPayment();
+  }else{
+    restoreCronosCriticalSnapshot(before);
+    toast("Baixa não registrada", "A nuvem não confirmou a operação. O pagamento continua pendente; tente novamente.");
+  }
+}
+
+try{ window.payFinancialPayment = payFinancialPayment; }catch(_){ }
+
+document.addEventListener('click', function(ev){
+  const btn = ev.target && ev.target.closest ? ev.target.closest('[data-fin-action="pay"]') : null;
+  if(!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if(typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+  if(btn.__cronosPayClickLock) return;
+  btn.__cronosPayClickLock = true;
+  setTimeout(()=>{ try{ btn.__cronosPayClickLock = false; }catch(_){} }, 1200);
+  const entryId = btn.dataset.entryId;
+  const planId = btn.dataset.planId;
+  const paymentId = btn.dataset.paymentId;
+  if(entryId && planId && paymentId && typeof window.payFinancialPayment === 'function'){
+    window.payFinancialPayment(entryId, planId, paymentId);
+  }
+}, true);
+
+async function undoFinancialPayment(entryId, planId, paymentId){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  const db = loadDB();
+  const initial = getFinancialPlan(db, entryId, planId);
+  if(!initial.entry || !initial.plan) return toast("Erro", "Recebimento não encontrado.");
+  const initialPayment = (initial.plan.payments||[]).find(p=>String(p.id)===String(paymentId));
+  if(!initialPayment) return toast("Erro", "Pagamento não encontrado.");
+
+  setFinancialPaymentMutationPending(entryId, planId, paymentId, true);
+  setFinancialPaymentUIState(initialPayment, "undo");
+  const finishMutation = startFinancialMutationWait("uma baixa sendo desfeita");
+  showFinancialMutationPreview(db);
+  toast("Desfazendo baixa...", "Confirmando a operação na nuvem.");
+
+  const before = cloneCronosCriticalSnapshot(db);
+  const commitDB = cloneCronosCriticalSnapshot(db);
+  const commit = getFinancialPlan(commitDB, entryId, planId);
+  const payment = (commit.plan?.payments||[]).find(p=>String(p.id)===String(paymentId));
+  let cloudOk = false;
+
+  try{
+    if(!commit.entry || !commit.plan || !payment) throw new Error("Pagamento não encontrado na confirmação.");
+    const nowISO = new Date().toISOString();
+    payment.status = "PENDENTE";
+    payment.paidAt = "";
+    payment.cashDate = "";
+    payment.paid = false;
+    payment.updatedAt = nowISO;
+    payment.lastUpdateAt = nowISO;
+    const undoSnapshot = popPaymentUndoRecordSnapshot(payment);
+    restoreOrRemoveFinancePaymentRecordOnUndo(commitDB, entryId, planId, paymentId, undoSnapshot);
+
+    if(Array.isArray(commit.plan.fichaItemIds)){
+      const linked = commit.plan.fichaItemIds.map(String);
+      ensureFichaForRecebimentos(commit.entry).plano.forEach(item=>{
+        if(linked.includes(String(item.id))){
+          item.pago = false;
+          item.financeStatus = "em_pagamento";
+          item.updatedAt = nowISO;
+        }
+      });
+    }
+    markFinancialMutation(commit.entry, commit.plan, payment, nowISO);
+    cronosAuditAction(commitDB, { action:"payment_undo", entityType:"entry", entityId:commit.entry.id, entryId:commit.entry.id, contactId:commit.entry.contactId, value:parseMoney(payment.amount), details:`${commit.plan.title || "Plano financeiro"} • pagamento ${payment.number || ""}/${payment.total || ""}` });
+    if(String(commit.plan.status || "").toLowerCase().includes("concl")) commit.plan.status = "Aguardando";
+    syncInstallmentTasks(commitDB, actor);
+
+    cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, false);
+  }catch(err){
+    console.error("Falha ao salvar desfazer baixa financeira:", err);
+    cloudOk = false;
+  }finally{
+    setFinancialPaymentMutationPending(entryId, planId, paymentId, false);
+    try{ setFinancialPaymentUIState(initialPayment, ""); }catch(_){}
+    finishMutation();
+  }
+
+  if(cloudOk === true){
+    DB = normalizeDBShape(commitDB);
+    try{ safeSetLocalDB(DB); }catch(_){}
+    try{ captureV2Snapshots(DB); }catch(_){}
+    refreshFinancialUIAfterPayment();
+    toast("Baixa desfeita", "Pagamento voltou para pendente.");
+  }else if(cloudOk === null){
+    toast("Desfazimento não confirmado", "A operação não recebeu confirmação da nuvem.");
+    refreshFinancialUIAfterPayment();
+  }else{
+    restoreCronosCriticalSnapshot(before);
+    toast("Baixa não desfeita", "A nuvem não confirmou. O pagamento permanece baixado.");
+  }
+}
+
+async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", financialMutationBusyText());
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  const db = loadDB();
+  const {entry, plan} = getFinancialPlan(db, entryId, planId);
+  if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
+  const payment = (plan.payments||[]).find(p=>String(p.id)===String(paymentId));
+  if(!payment || !financialPaymentPaid(payment)) return toast("Transferência", "Só dá para transferir pagamento baixado.");
+  const current = cronosPaymentCashISO(payment, false) || todayISO();
+  const next = await askPaymentCashDate({
+    title: "Transferir data do caixa",
+    subtitle: `${plan.title || "Plano financeiro"} • ${moneyBR(payment.amount)}. Escolha em que mês/dia esse pagamento deve contar.`,
+    defaultDate: current
+  });
+  if(!next) return;
+
+  const before = cloneCronosCriticalSnapshot(db);
+  const nowISO = new Date().toISOString();
+  payment.cashDate = next;
+  payment.paidAt = next;
+  payment.status = "PAGA";
+  payment.paid = true;
+  const rec = findFinancePaymentRecord(db, entryId, planId, paymentId);
+  if(rec){
+    rec.date = next;
+    rec.cashDate = next;
+    rec.paidAt = next;
+    rec.status = "PAGA";
+    rec.at = nowISO;
+    rec.updatedAt = nowISO;
+    rec.lastUpdateAt = nowISO;
+  }
+  markFinancialMutation(entry, plan, payment, nowISO);
+  cronosAuditAction(db, { action:"payment_date_transferred", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:parseMoney(payment.amount), details:`${plan.title || "Plano financeiro"} • caixa ${fmtBR(current)} → ${fmtBR(next)}` });
+
+  await saveConfirmedFinancialChange(db, entry, before, {
+    operationLabel: "uma data sendo transferida",
+    pendingTitle: "Transferindo data...",
+    pendingMessage: "Aguarde a confirmação da nuvem.",
+    consoleLabel: "Falha ao salvar transferência financeira:",
+    failTitle: "Data não transferida",
+    failMessage: "A nuvem não confirmou. A data anterior foi mantida.",
+    successTitle: "Data transferida ✅",
+    successMessage: `Caixa: ${fmtBR(next)}`
+  });
+}
+async function deleteFinancialPayment(entryId, planId, paymentId){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva na nuvem.");
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  if(!confirm("Excluir este pagamento/parcela?")) return;
+  const db = loadDB();
+  const {entry, plan} = getFinancialPlan(db, entryId, planId);
+  if(!entry || !plan) return toast("Erro", "Recebimento não encontrado.");
+
+  const snapshot = cloneCronosCriticalSnapshot(db);
+  const nowISO = new Date().toISOString();
+  const beforeCount = Array.isArray(plan.payments) ? plan.payments.length : 0;
+  tombstoneFinancialPayment(plan, paymentId, nowISO);
+  plan.payments = (plan.payments||[]).filter(p=>String(p.id)!==String(paymentId));
+  const after = plan.payments.length;
+  if(beforeCount === after) return toast("Atenção", "Não encontrei essa parcela para excluir.");
+
+  renumberFinancialPlanPayments(plan);
+  db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entryId) && String(p.financialPlanId)===String(planId) && String(p.financialPaymentId)===String(paymentId)));
+  try{ pruneOrphanFinancialPaymentRecords(db, entry); }catch(_){ }
+  try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após excluir pagamento:", err); }
+  markFinancialMutation(entry, plan, null, nowISO);
+  cronosAuditAction(db, { action:"payment_deleted", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, details:`${plan.title || "Plano financeiro"} • parcela/pagamento removido` });
+  syncInstallmentTasks(db, actor);
+
+  await saveConfirmedFinancialChange(db, entry, snapshot, {
+    pendingTitle: "Excluindo pagamento...",
+    pendingMessage: "Aguarde a confirmação da nuvem.",
+    consoleLabel: "Falha ao salvar exclusão de pagamento:",
+    failTitle: "Pagamento não removido",
+    failMessage: "A nuvem não confirmou. A parcela foi restaurada.",
+    successTitle: "Pagamento removido",
+    successMessage: ""
+  });
+}
+function openNewFinancialInstallment(entryId="", planId=""){
+  if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
+  let finalPlanId = String(planId||"");
+  try{
+    if(entryId){
+      const db = loadDB();
+      const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
+      const migratedPlan = entry ? migrateLegacyInstallmentsToFinancialPlan(entry) : null;
+      const plans = entry ? ensureFinancialPlans(entry) : [];
+      const passedPlanExists = finalPlanId && plans.some(p=>String(p.id)===String(finalPlanId));
+      if(migratedPlan && (!finalPlanId || !passedPlanExists)){
+        finalPlanId = String(migratedPlan.id);
+      }else if(!finalPlanId && plans.length){
+        finalPlanId = String(plans[0].id);
+      }
+      if(migratedPlan){
+        try{ syncInstallmentTasks(db, currentActor()); }catch(_){}
+        saveDB(db, { immediate:true });
+      }
+    }
+  }catch(e){ console.warn("Migração legado ao abrir recebimento falhou:", e); }
+
+  const st = {
+    search:"",
+    entryId: String(entryId||""),
+    planId: finalPlanId
+  };
+  window.__newFinancialInstallmentState = st;
+  openModal({
+    title: entryId ? "Gerenciar recebimento" : "Novo recebimento",
+    sub: entryId ? "Veja recebimentos existentes, parcelas e vínculos com a ficha." : "Crie recebimentos à vista, parcelados ou vinculados à ficha do paciente.",
+    bodyHTML:'<div id="newFinancialInstallmentApp" style="width:100%"></div>',
+    footHTML:'<button class="btn" onclick="closeModal()">Fechar</button>',
+    onMount: renderNewFinancialInstallmentApp,
+    maxWidth:'min(99vw, 1280px)',
+    width:'min(99vw, 1280px)'
+  });
+}
+
+
+function renderFinancialPlanPaymentEditor(entry, selectedPlan, contact, remaining){
+  if(!entry || !selectedPlan) return "";
+  return `
+    <div class="card selectedPlanPaymentEditor" style="box-shadow:none;margin-top:12px;padding:12px;border-radius:16px;background:rgba(255,255,255,.025);border:1px solid var(--line)">
+      <h3 style="margin:0 0 10px">3. Lançar parcelas</h3>
+      <div class="newPayLayout" style="display:grid;grid-template-columns:max-content max-content;gap:12px;align-items:end;max-width:max-content">
+        <div style="display:grid;gap:10px;min-width:0">
+          <div class="newPayTopGrid" style="display:grid;grid-template-columns:145px 165px 125px 78px;gap:10px;align-items:end">
+            <div style="min-width:0">
+              <label>Vencimento inicial</label>
+              <input id="newPayDue" type="date" value="${todayISO()}">
+            </div>
+            <div style="min-width:0">
+              <label>Forma</label>
+              <select id="newPayMethod">
+                <option>Carnê/Boleto</option>
+                <option>Pix</option>
+                <option>Dinheiro</option>
+                <option>Cartão de crédito</option>
+                <option>Cartão de débito</option>
+              </select>
+            </div>
+            <div style="min-width:0">
+              <label>Valor</label>
+              <input id="newPayAmount" type="number" step="0.01" value="${remaining ? Number(remaining.toFixed(2)) : ""}" placeholder="0,00">
+            </div>
+            <div style="min-width:0">
+              <label>Qtd.</label>
+              <input id="newPayCount" type="number" min="1" step="1" value="1">
+            </div>
+          </div>
+
+          <div class="newPayObsGrid" style="display:grid;grid-template-columns:130px 280px;gap:10px;align-items:start">
+            <div style="min-width:0">
+              <label>Status inicial</label>
+              <select id="newPayStatus">
+                <option value="PENDENTE">Pendente</option>
+                <option value="PAGA">Pago</option>
+              </select>
+            </div>
+            <div style="min-width:0">
+              <label>Observação</label>
+              <textarea id="newPayObs" rows="1" placeholder="Opcional" style="resize:vertical;min-height:44px;max-height:160px;width:100%;box-sizing:border-box"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:end;align-self:end;flex-wrap:wrap;justify-content:flex-start">
+          <button type="button" class="btn primary" style="width:auto;white-space:nowrap;padding-inline:14px" onclick="CRONOS_NEW_FIN_UI.addPayment()">Adicionar parcela</button>
+          <button type="button" class="btn" style="width:auto;white-space:nowrap;padding-inline:14px" onclick="CRONOS_NEW_FIN_UI.fillRemaining()">Usar saldo restante</button>
+        </div>
+      </div>
+      <div style="margin-top:14px">${renderFinancialPaymentTable(entry, selectedPlan, contact)}</div>
+    </div>
+  `;
+}
+
+function cronosNewFinNorm(value){
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function cronosNewFinDigits(value){
+  return String(value || "").replace(/\D/g, "");
+}
+
+function cronosNewFinContactFromEntry(entry, contactsById){
+  const contact = contactsById.get(String(entry?.contactId || ""));
+  if(contact) return contact;
+  return {
+    id: entry?.contactId || "",
+    name: entry?.contactName || entry?.patientName || entry?.nomePaciente || entry?.name || entry?.nome || entry?.lead || entry?.paciente || "(sem nome)",
+    phone: entry?.contactPhone || entry?.patientPhone || entry?.telefone || entry?.phone || entry?.whatsapp || entry?.contato || "",
+    cpf: entry?.cpf || entry?.patientCpf || entry?.contactCpf || ""
+  };
+}
+
+function cronosNewFinSameClinic(entry, contact, actor){
+  const masterId = String(actor?.masterId || "");
+  if(!masterId) return true;
+  const entryMaster = String(entry?.masterId || "");
+  const contactMaster = String(contact?.masterId || "");
+  return !entryMaster || entryMaster === masterId || !contactMaster || contactMaster === masterId;
+}
+
+function cronosNewFinEntryDateKey(entry){
+  return String(entry?.lastUpdateAt || entry?.updatedAt || entry?.createdAt || entry?.firstContactAt || entry?.monthKey || "");
+}
+
+function cronosNewFinLatestEntryForContact(db, actor, contactId){
+  const cid = String(contactId || "").trim();
+  if(!cid) return null;
+  const masterId = String(actor?.masterId || "");
+  const rows = (db.entries || [])
+    .filter(e=>String(e?.contactId || "") === cid)
+    .filter(e=>!masterId || !e?.masterId || String(e.masterId) === masterId)
+    .sort((a,b)=>cronosNewFinEntryDateKey(b).localeCompare(cronosNewFinEntryDateKey(a)));
+  return rows[0] || null;
+}
+
+function cronosNewFinMatchesQuery(contact, entry, qText, qDigits){
+  const textHay = cronosNewFinNorm([
+    contact?.name, contact?.phone, contact?.cpf,
+    entry?.name, entry?.nome, entry?.lead, entry?.paciente, entry?.patientName, entry?.contactName, entry?.nomePaciente,
+    entry?.phone, entry?.telefone, entry?.whatsapp, entry?.contato, entry?.city, entry?.notes,
+    entry?.treatment, entry?.treatmentOther, entry?.origin, entry?.originOther, entry?.status,
+    entry?.monthKey, entry?.firstContactAt, entry?.apptDate,
+    ...(Array.isArray(contact?.tags) ? contact.tags : []),
+    ...(Array.isArray(entry?.tags) ? entry.tags : [])
+  ].filter(Boolean).join(" "));
+
+  const digitHay = cronosNewFinDigits([
+    contact?.phone, contact?.cpf, entry?.phone, entry?.telefone, entry?.whatsapp, entry?.contato, entry?.cpf
+  ].filter(Boolean).join(" "));
+
+  const textOk = qText ? textHay.includes(qText) : false;
+  const digitOk = qDigits ? digitHay.includes(qDigits) : false;
+  return textOk || digitOk;
+}
+
+function buildNewFinancialPatientSuggestions(db, actor, query){
+  const qText = cronosNewFinNorm(query);
+  const qDigits = cronosNewFinDigits(query);
+  if(!qText && !qDigits) return [];
+
+  const contactsById = (typeof getContactsByIdMap === "function")
+    ? getContactsByIdMap(db)
+    : new Map((db.contacts || []).map(c=>[String(c.id), c]));
+
+  const masterId = String(actor?.masterId || "");
+  const seen = new Set();
+  const rows = [];
+
+  const addRow = (entry, contact, source="entry")=>{
+    if(!entry) return;
+    contact = contact || cronosNewFinContactFromEntry(entry, contactsById);
+    if(!cronosNewFinSameClinic(entry, contact, actor)) return;
+    if(!cronosNewFinMatchesQuery(contact, entry, qText, qDigits)) return;
+    const key = String(entry?.id || entry?.contactId || `${contact?.name || ""}|${contact?.phone || ""}`);
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    rows.push({entry, contact, source});
+  };
+
+  // 1) Procura nos leads/entradas, incluindo campos legados do próprio lead.
+  (db.entries || []).forEach(entry=>{
+    const contact = cronosNewFinContactFromEntry(entry, contactsById);
+    addRow(entry, contact, "entry");
+  });
+
+  // 2) Procura também na tabela de contatos. Antes a busca dependia do nome estar
+  // repetido dentro do entry; em bases antigas, o nome fica só no contact.
+  (db.contacts || [])
+    .filter(contact=>!masterId || !contact?.masterId || String(contact.masterId) === masterId)
+    .forEach(contact=>{
+      if(!cronosNewFinMatchesQuery(contact, null, qText, qDigits)) return;
+      const entry = cronosNewFinLatestEntryForContact(db, actor, contact.id);
+      if(entry) addRow(entry, contact, "contact");
+    });
+
+  rows.sort((a,b)=>{
+    const an = cronosNewFinNorm(a.contact?.name || "");
+    const bn = cronosNewFinNorm(b.contact?.name || "");
+    const aStarts = qText && an.startsWith(qText) ? 0 : 1;
+    const bStarts = qText && bn.startsWith(qText) ? 0 : 1;
+    if(aStarts !== bStarts) return aStarts - bStarts;
+    return cronosNewFinEntryDateKey(b.entry).localeCompare(cronosNewFinEntryDateKey(a.entry));
+  });
+
+  return rows.slice(0, 12);
+}
+
+function cronosNewFinPatientSuggestionsHTML(suggestions, q){
+  const list = Array.isArray(suggestions) ? suggestions : [];
+  const query = String(q || "").trim();
+  if(list.length){
+    return list.map(x=>`
+      <button type="button" class="btn" style="text-align:left;justify-content:flex-start" onpointerdown="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')" onclick="return CRONOS_NEW_FIN_UI.selectPatientFromEvent(event,'${escapeHTML(String(x.entry.id || ''))}')">
+        <b>${escapeHTML(x.contact.name || "(sem nome)")}</b> <span class="muted">• ${escapeHTML(x.contact.phone||"")} • ${monthLabel(x.entry.monthKey||todayISO().slice(0,7))}</span>
+      </button>
+    `).join("");
+  }
+  return `<div class="muted">${query ? 'Nenhum lead encontrado com esse termo.' : 'Digite para encontrar um lead já cadastrado.'}</div>`;
+}
+
+function cronosNewFinRenderPatientSuggestionsOnly(value){
+  const st = window.__newFinancialInstallmentState || {};
+  const q = String(value || "").trim();
+  const wrap = el("newFinSuggestionsWrap");
+  if(!wrap || st.entryId){
+    cronosNewFinRenderSafe({focusId:"newFinSearch"});
+    return;
+  }
+  try{
+    const db = loadDB();
+    const actor = currentActor();
+    const suggestions = q ? buildNewFinancialPatientSuggestions(db, actor, q) : [];
+    wrap.innerHTML = cronosNewFinPatientSuggestionsHTML(suggestions, q);
+  }catch(err){
+    console.warn("Falha ao atualizar sugestões de Recebimentos sem redesenhar o modal:", err);
+    cronosNewFinRenderSafe({focusId:"newFinSearch"});
+  }
+}
+
+function cronosNewFinRestoreFichaItemsScroll(top, left){
+  const restore = ()=>{
+    try{
+      const node = document.querySelector('[data-cronos-scroll-key="new-fin-ficha-items"]');
+      if(!node) return;
+      node.scrollTop = Number(top || 0);
+      node.scrollLeft = Number(left || 0);
+    }catch(_){ }
+  };
+  restore();
+  requestAnimationFrame(restore);
+  setTimeout(restore, 0);
+  setTimeout(restore, 80);
+}
+
+function cronosNewFinRenderSafe(opts={}){
+  try{
+    if(typeof __cronosRenderNewFinancialPreservingScroll === "function"){
+      __cronosRenderNewFinancialPreservingScroll(opts);
+    }else{
+      renderNewFinancialInstallmentApp();
+    }
+  }catch(err){
+    console.warn("Falha ao renderizar busca de recebimento; usando fallback.", err);
+    try{ renderNewFinancialInstallmentApp(); }catch(e){ console.error(e); }
+  }
+}
+
+function cronosNewFinWireSearchInput(){
+  const input = el("newFinSearch");
+  if(!input || input.dataset.cronosNewFinWired === "1") return;
+  input.dataset.cronosNewFinWired = "1";
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off");
+  input.setAttribute("autocapitalize", "off");
+  input.setAttribute("spellcheck", "false");
+  let lastValue = String(input.value || "");
+  const handler = ()=>{
+    const value = String(input.value || "");
+    if(value === lastValue) return;
+    lastValue = value;
+    try{ window.CRONOS_NEW_FIN_UI?.search(value); }catch(err){ console.error("Erro na busca de Novo recebimento:", err); }
+  };
+  input.addEventListener("input", handler, {passive:true});
+}
+
+function renderNewFinancialInstallmentApp(){
+  const box = el("newFinancialInstallmentApp");
+  if(!box) return;
+  const actor = currentActor();
+  const db = loadDB();
+  const st = window.__newFinancialInstallmentState || {search:"",entryId:"",planId:""};
+  const contactsById = (typeof getContactsByIdMap === "function")
+    ? getContactsByIdMap(db)
+    : new Map((db.contacts||[]).map(c=>[String(c.id),c]));
+  const entry = (db.entries||[]).find(e=>String(e.id)===String(st.entryId));
+  const contact = entry ? cronosNewFinContactFromEntry(entry, contactsById) : null;
+  const plans = entry ? ensureFinancialPlans(entry) : [];
+  let selectedPlan = plans.find(p=>String(p.id)===String(st.planId)) || null;
+  if(entry && !selectedPlan && plans.length){
+    selectedPlan = plans[0];
+    st.planId = String(selectedPlan.id);
+    window.__newFinancialInstallmentState = st;
+  }
+  const canSensitive = canManageFinancialSensitiveActions();
+  const q = String(st.search||"").trim();
+
+  const suggestions = !entry && q ? buildNewFinancialPatientSuggestions(db, actor, q) : [];
+
+  const fichaForRecebimentos = entry ? ensureFichaForRecebimentos(entry) : null;
+  const fichaSelectableItems = fichaForRecebimentos ? fichaForRecebimentos.plano.filter(item=>isFichaItemAvailableForRecebimentos(entry, item)) : [];
+  const selectedNewFinFichaIds = new Set(Array.isArray(st.fichaItemIds) ? st.fichaItemIds.map(String) : []);
+  const selectedNewFinFichaItems = fichaSelectableItems.filter(item=>selectedNewFinFichaIds.has(String(item.id)));
+  const selectedNewFinFichaTotal = selectedNewFinFichaItems.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
+  const defaultTotal = selectedNewFinFichaTotal || (entry ? suggestedFinancialPlanTotal(entry) : 0);
+  const totals = selectedPlan ? financialPlanTotals(selectedPlan) : null;
+  const remaining = totals ? totals.remainingToSchedule : 0;
+
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr;gap:14px">
+      <div class="card" style="box-shadow:none">
+        <h3 style="margin:0 0 10px">1. Paciente</h3>
+        ${entry ? `
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+            <div>
+              <div style="font-weight:900">${escapeHTML(contact?.name || "(sem nome)")}</div>
+              <div class="muted">${escapeHTML(contact?.phone || "")} • Lead ${escapeHTML(String(entry.id||""))}</div>
+            </div>
+            <button type="button" class="btn small" onclick="CRONOS_NEW_FIN_UI.clearPatient()">Trocar paciente</button>
+          </div>
+        ` : `
+          <label>Buscar paciente/lead</label>
+          <input id="newFinSearch" value="${escapeHTML(st.search||"")}" placeholder="Digite nome ou telefone" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="cronos_new_fin_search">
+          <div id="newFinSuggestionsWrap" style="display:grid;gap:8px;margin-top:10px">
+            ${cronosNewFinPatientSuggestionsHTML(suggestions, q)}
+          </div>
+        `}
+      </div>
+
+      ${entry ? `
+        <div class="card" style="box-shadow:none">
+          <h3 style="margin:0 0 10px">2. Recebimentos do paciente</h3>
+          <div class="small muted" style="margin-top:-6px;margin-bottom:10px">Recebimentos já existentes aparecem aqui mesmo que não tenham vindo da ficha.</div>
+          ${fichaSelectableItems.length ? `
+            <div style="border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.025);margin-bottom:12px">
+              <div style="font-weight:900;margin-bottom:6px">Procedimentos disponíveis da ficha</div>
+              <div class="small muted" style="margin-bottom:8px">Selecione um ou mais procedimentos para gerar um recebimento vinculado. Os que já estão pagos ou em pagamento não aparecem aqui.</div>
+              <div data-cronos-scroll-key="new-fin-ficha-items" style="display:grid;gap:8px;max-height:190px;overflow:auto">
+                ${fichaSelectableItems.map(item=>`
+                  <label class="recebFichaItem" style="display:grid;grid-template-columns:28px minmax(0,1fr) 120px;align-items:center;gap:10px;border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.035);cursor:pointer">
+                    <input type="checkbox" style="margin:0;width:18px;height:18px" ${selectedNewFinFichaIds.has(String(item.id)) ? 'checked' : ''} onchange="CRONOS_NEW_FIN_UI.toggleFichaItem('${escapeHTML(item.id)}')">
+                    <span style="min-width:0;display:block">
+                      <b style="display:block;white-space:normal;line-height:1.25">${escapeHTML(item.procedimento || '—')}</b>
+                      <span class="small muted">${escapeHTML(item.avaliacaoLabel || 'Avaliação')} • ${fmtBR(item.avaliacaoData || '')}${item.dente ? ` • Dente ${escapeHTML(item.dente)}` : ''}${item.face ? ` • Face ${escapeHTML(item.face)}` : ''}</span>
+                    </span>
+                    <b class="mono" style="text-align:right;white-space:nowrap">${moneyBR(item.valorFechado || 0)}</b>
+                  </label>
+                `).join('')}
+              </div>
+              <div class="small" style="margin-top:8px">Selecionado: <b>${selectedNewFinFichaItems.length}</b> item(ns) • <b>${moneyBR(selectedNewFinFichaTotal)}</b></div>
+            </div>
+          ` : `<div class="muted" style="margin-bottom:12px">Nenhum procedimento da ficha sem recebimento. Se o paciente já tinha parcelas antigas, elas aparecem na lista de recebimentos abaixo. Você também pode criar recebimento avulso manual.</div>`}
+
+          <div class="newBudgetGrid" style="display:grid;grid-template-columns:170px 300px 125px;gap:10px;align-items:end;max-width:620px">
+            <div style="min-width:0">
+              <label>Título</label>
+              <input id="newFinTitle" value="${selectedNewFinFichaItems.length ? 'Recebimento da ficha' : 'Recebimento avulso'}" placeholder="Ex: Recebimento">
+            </div>
+            <div style="min-width:0">
+              <label>Dentista avaliador</label>
+              <input id="newFinDentist" placeholder="Opcional">
+            </div>
+            <div style="min-width:0">
+              <label>Valor total</label>
+              <input id="newFinTotal" type="number" step="0.01" value="${Number(defaultTotal || 0) || ""}" placeholder="0,00">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            <button class="btn ok" onclick="CRONOS_NEW_FIN_UI.createPlan()">Criar recebimento</button>
+          </div>
+
+          ${plans.some(p=>p.source === "legacyInstallments" || p.legacyInstallPlan) ? `
+            <div class="muted" style="margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,.025)">
+              Recebimento/parcelamento antigo encontrado e migrado. As parcelas antigas aparecem aqui mesmo sem vínculo com ficha.
+            </div>
+          ` : ""}
+
+          <div style="display:grid;gap:8px;margin-top:14px">
+            ${plans.length ? plans.map(plan=>{
+              const t = financialPlanTotals(plan);
+              const active = selectedPlan && String(selectedPlan.id)===String(plan.id);
+              return `
+                <div style="border:1px solid var(--line);border-radius:14px;padding:10px;background:${active ? 'rgba(124,92,255,.12)' : 'rgba(255,255,255,.03)'}">
+                  <div>
+                    <b>${escapeHTML(plan.title||"Plano financeiro")}</b> ${financialPlanStatusLabel(plan)}
+                    <div class="muted" style="font-size:12px">${escapeHTML(plan.dentist||"Sem avaliador")} • ${fmtBR(String(plan.createdAt||"").slice(0,10))}</div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                      <span class="chip">Total: <b>${moneyBR(t.total)}</b></span>
+                      <span class="chip">Lançado: <b>${moneyBR(t.scheduled)}</b></span>
+                      <span class="chip">Pago: <b>${moneyBR(t.paid)}</b></span>
+                      <span class="chip">Saldo a lançar: <b>${moneyBR(t.remainingToSchedule)}</b></span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+                      <button type="button" class="btn small ${active?'primary':''}" onclick="CRONOS_NEW_FIN_UI.selectPlan('${escapeHTML(plan.id)}')">${active?'Selecionado':'Selecionar'}</button>
+                      ${canSensitive ? `<button type="button" class="btn small" onclick="CRONOS_NEW_FIN_UI.approvePlan('${escapeHTML(plan.id)}')">Aprovar</button>` : ""}
+                      ${canSensitive ? `<button type="button" class="btn small danger" onclick="CRONOS_NEW_FIN_UI.removePlan('${escapeHTML(plan.id)}')">Excluir</button>` : ""}
+                    </div>
+                    ${active ? renderFinancialPlanPaymentEditor(entry, plan, contact, t.remainingToSchedule) : ""}
+                  </div>
+                </div>
+              `;
+            }).join("") : `<div class="muted">Nenhum recebimento criado para este lead ainda.</div>`}
+          </div>
+        </div>
+      ` : ""}
+      ${""}
+    </div>
+  `;
+  requestAnimationFrame(cronosNewFinWireSearchInput);
+}
+
+window.CRONOS_NEW_FIN_UI = {
+  search(v){
+    const value = String(v||"");
+    const st = window.__newFinancialInstallmentState || {};
+    window.__newFinancialInstallmentState = Object.assign(st, {search:value, entryId:"", planId:""});
+    cronosNewFinRenderPatientSuggestionsOnly(value);
+    requestAnimationFrame(()=>{ try{ const input = el("newFinSearch"); input?.focus({preventScroll:true}); input?.setSelectionRange(value.length,value.length); }catch(_){} });
+  },
+  selectPatientFromEvent(ev, entryId){
+    try{
+      if(ev){
+        ev.preventDefault?.();
+        ev.stopPropagation?.();
+      }
+    }catch(_){}
+    this.selectPatient(entryId);
+    return false;
+  },
+  selectPatient(entryId){
+    try{
+      const db = loadDB();
+      const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
+      let migratedPlan = null;
+      if(entry){
+        ensureFichaForRecebimentos(entry);
+        migratedPlan = migrateLegacyInstallmentsToFinancialPlan(entry);
+        if(migratedPlan){
+          try{ syncInstallmentTasks(db, currentActor()); }catch(_){}
+          saveDB(db, { immediate:true });
+        }
+      }
+      const plans = entry ? ensureFinancialPlans(entry) : [];
+      const firstExistingPlanId = plans.length ? String(plans[0].id) : "";
+      window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {
+        entryId:String(entryId),
+        planId:migratedPlan ? String(migratedPlan.id) : firstExistingPlanId,
+        fichaItemIds:[]
+      });
+      renderNewFinancialInstallmentApp();
+      try{ renderInstallmentsView(); }catch(_){}
+    }catch(err){
+      console.error("Erro ao selecionar paciente em Recebimentos:", err);
+      toast("Erro ao abrir paciente", "O clique chegou, mas o Cronos encontrou erro ao carregar a ficha/recebimentos.");
+    }
+  },
+  clearPatient(){
+    window.__newFinancialInstallmentState = {search:"", entryId:"", planId:""};
+    renderNewFinancialInstallmentApp();
+  },
+  toggleFichaItem(itemId){
+    const scroller = document.querySelector('[data-cronos-scroll-key="new-fin-ficha-items"]');
+    const top = scroller ? Number(scroller.scrollTop || 0) : 0;
+    const left = scroller ? Number(scroller.scrollLeft || 0) : 0;
+    const st = window.__newFinancialInstallmentState || {};
+    st.fichaItemIds = Array.isArray(st.fichaItemIds) ? st.fichaItemIds : [];
+    const id = String(itemId || '');
+    const idx = st.fichaItemIds.indexOf(id);
+    if(idx >= 0) st.fichaItemIds.splice(idx,1); else st.fichaItemIds.push(id);
+    window.__newFinancialInstallmentState = st;
+    cronosNewFinRenderSafe();
+    cronosNewFinRestoreFichaItemsScroll(top, left);
+  },
+  async createPlan(){
+    if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    const actor = currentActor();
+    const db = loadDB();
+    const st = window.__newFinancialInstallmentState || {};
+    const entry = (db.entries||[]).find(e=>String(e.id)===String(st.entryId));
+    if(!entry) return toast("Paciente", "Selecione um paciente primeiro.");
+    const ficha = ensureFichaForRecebimentos(entry);
+    const selectedIds = Array.from(new Set((Array.isArray(st.fichaItemIds) ? st.fichaItemIds : []).map(String).filter(Boolean)));
+    const selectedItems = ficha.plano.filter(item=>selectedIds.includes(String(item.id)) && isFichaItemAvailableForRecebimentos(entry, item));
+    const selectedTotal = selectedItems.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
+    const amount = selectedTotal || parseMoney(val("newFinTotal"));
+    if(amount <= 0) return toast("Valor", "Informe o valor total do recebimento.");
+
+    const before = cloneCronosCriticalSnapshot(db);
+    const nowISO = new Date().toISOString();
+    const plan = {
+      id: uid("budget"),
+      title: String(val("newFinTitle") || (selectedItems.length ? "Recebimento da ficha" : "Recebimento avulso")).trim() || "Recebimento",
+      dentist: String(val("newFinDentist") || "").trim(),
+      amount,
+      status: "Aguardando",
+      createdAt: nowISO,
+      updatedAt: nowISO,
+      lastUpdateAt: nowISO,
+      createdBy: actor?.name || "",
+      source: selectedItems.length ? "ficha" : "manual",
+      fichaItemIds: selectedItems.map(item=>String(item.id)),
+      evaluationIds: Array.from(new Set(selectedItems.map(item=>item.avaliacaoId).filter(Boolean))),
+      payments: []
+    };
+    ensureFinancialPlans(entry).push(plan);
+    selectedItems.forEach(item=>{
+      item.financialPlanId = plan.id;
+      item.recebimentoId = plan.id;
+      item.financeStatus = "recebimento_criado";
+      item.pago = false;
+      item.updatedAt = nowISO;
+    });
+    markFinancialMutation(entry, plan, null, nowISO);
+    try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar vínculo da ficha:", err); }
+
+    const ok = await saveConfirmedFinancialChange(db, entry, before, {
+      operationLabel: "um recebimento sendo salvo",
+      pendingTitle: "Salvando recebimento...",
+      pendingMessage: "Aguarde a confirmação da nuvem antes de adicionar parcelas.",
+      consoleLabel: "Falha ao criar recebimento:",
+      failTitle: "Recebimento não criado",
+      failMessage: "A nuvem não confirmou. Nenhum recebimento foi gravado.",
+      successTitle: "Recebimento criado ✅",
+      successMessage: `${plan.title} • ${moneyBR(plan.amount)}`
+    });
+    if(!ok) return;
+
+    window.__newFinancialInstallmentState.planId = plan.id;
+    window.__newFinancialInstallmentState.fichaItemIds = [];
+    renderNewFinancialInstallmentApp();
+    renderInstallmentsView();
+    try{ window.__cronosRenderFichaApp?.(); }catch(_){}
+  },
+  selectPlan(planId){
+    window.__newFinancialInstallmentState = Object.assign(window.__newFinancialInstallmentState || {}, {planId:String(planId)});
+    renderNewFinancialInstallmentApp();
+  },
+  async approvePlan(planId){
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    const actor = currentActor();
+    if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+    const db = loadDB();
+    const st = window.__newFinancialInstallmentState || {};
+    const {entry, plan} = getFinancialPlan(db, st.entryId, planId);
+    if(!entry || !plan) return;
+    const before = cloneCronosCriticalSnapshot(db);
+    const nowISO = new Date().toISOString();
+    plan.status = "Aprovado";
+    markFinancialMutation(entry, plan, null, nowISO);
+
+    const ok = await saveConfirmedFinancialChange(db, entry, before, {
+      pendingTitle: "Aprovando recebimento...",
+      pendingMessage: "Aguarde a confirmação da nuvem.",
+      consoleLabel: "Falha ao aprovar recebimento:",
+      failTitle: "Recebimento não aprovado",
+      failMessage: "A nuvem não confirmou a aprovação.",
+      successTitle: "Recebimento aprovado ✅",
+      successMessage: ""
+    });
+    if(ok){
+      renderNewFinancialInstallmentApp();
+      renderInstallmentsView();
+    }
+  },
+  async removePlan(planId){
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    const actor = currentActor();
+    if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+    if(!confirm("Excluir este recebimento e todos os pagamentos vinculados?")) return;
+    const db = loadDB();
+    const st = window.__newFinancialInstallmentState || {};
+    const entry = (db.entries||[]).find(e=>String(e.id)===String(st.entryId));
+    if(!entry) return;
+    const before = cloneCronosCriticalSnapshot(db);
+    const nowISO = new Date().toISOString();
+    const removedPlan = ensureFinancialPlans(entry).find(p=>String(p.id)===String(planId));
+    tombstoneFinancialPlan(entry, planId, nowISO);
+    entry.financialPlans = ensureFinancialPlans(entry).filter(p=>String(p.id)!==String(planId));
+    db.payments = (db.payments||[]).filter(p=>!(String(p.entryId)===String(entry.id) && String(p.financialPlanId)===String(planId)));
+    try{ pruneOrphanFinancialPaymentRecords(db, entry); }catch(_){ }
+    if(entry.installPlan && String(entry.installPlan.migratedToFinancialPlanId||"")===String(planId)){
+      delete entry.installPlan.migratedToFinancialPlanId;
+    }
+    if(Array.isArray(entry?.ficha?.plano)){
+      entry.ficha.plano.forEach(item=>{
+        if(String(item.financialPlanId || item.recebimentoId || "") === String(planId)){
+          item.financialPlanId = "";
+          item.recebimentoId = "";
+          item.financeStatus = "";
+          item.pago = false;
+          item.updatedAt = nowISO;
+        }
+      });
+    }
+    markFinancialMutation(entry, null, null, nowISO);
+    try{ syncFichaFinancialLinks(entry); }catch(_){ }
+    syncInstallmentTasks(db, actor);
+
+    const ok = await saveConfirmedFinancialChange(db, entry, before, {
+      pendingTitle: "Excluindo recebimento...",
+      pendingMessage: "Aguarde a confirmação da nuvem.",
+      consoleLabel: "Falha ao excluir recebimento:",
+      failTitle: "Recebimento não removido",
+      failMessage: "A nuvem não confirmou. O recebimento foi restaurado.",
+      successTitle: removedPlan?.source === "legacyInstallments" ? "Recebimento legado removido" : "Recebimento removido",
+      successMessage: ""
+    });
+    if(!ok) return;
+
+    if(String(st.planId)===String(planId)) st.planId = "";
+    renderNewFinancialInstallmentApp();
+    renderInstallmentsView();
+    try{ window.__cronosRenderFichaApp?.(); }catch(_){}
+  },
+  fillRemaining(){
+    const db = loadDB();
+    const st = window.__newFinancialInstallmentState || {};
+    const {plan} = getFinancialPlan(db, st.entryId, st.planId);
+    if(!plan) return;
+    const t = financialPlanTotals(plan);
+    setVal("newPayAmount", Number(t.remainingToSchedule.toFixed(2)));
+  },
+  async addPayment(){
+    const actor = currentActor();
+    if(!canOperateRecebimentos(actor)) return blockedRecebimentosAction();
+    const db = loadDB();
+    const st = window.__newFinancialInstallmentState || {};
+    const {entry, plan} = getFinancialPlan(db, st.entryId, st.planId);
+    if(!entry || !plan) return toast("Orçamento", "Selecione um orçamento.");
+    const due = val("newPayDue") || todayISO();
+    const method = val("newPayMethod") || "";
+    const amount = parseMoney(val("newPayAmount"));
+    const count = Math.max(1, parseInt(val("newPayCount") || "1", 10) || 1);
+    const status = val("newPayStatus") || "PENDENTE";
+    const obs = String(val("newPayObs") || "").trim();
+    if(amount <= 0) return toast("Valor", "Informe o valor do pagamento.");
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(due)) return toast("Data", "Informe uma data válida.");
+
+    const paidInitially = status === "PAGA";
+    const initialCashDate = paidInitially ? await askPaymentCashDate({
+      title: "Data da baixa",
+      subtitle: `${plan.title || "Plano financeiro"} • ${moneyBR(amount)}. Escolha em que dia esse pagamento deve entrar no caixa.`,
+      defaultDate: due
+    }) : "";
+    if(paidInitially && !initialCashDate) return;
+
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    const paymentMutationBefore = cloneCronosCriticalSnapshot(db);
+
+    plan.payments = Array.isArray(plan.payments) ? plan.payments : [];
+    const base = Math.floor((amount / count) * 100) / 100;
+    let accumulated = 0;
+    for(let i=1;i<=count;i++){
+      let value = i === count ? Number((amount - accumulated).toFixed(2)) : Number(base.toFixed(2));
+      accumulated += value;
+      const dueDate = addMonthsISO(due, i-1);
+      const paid = paidInitially;
+      const p = {
+        id: uid("pay"),
+        amount: value,
+        dueDate,
+        payMethod: method,
+        notes: obs,
+        status: paid ? "PAGA" : "PENDENTE",
+        paidAt: paid ? initialCashDate : "",
+        cashDate: paid ? initialCashDate : "",
+        paid: !!paid,
+        createdAt: new Date().toISOString()
+      };
+      plan.payments.push(p);
+    }
+    renumberFinancialPlanPayments(plan);
+
+    if(status === "PAGA"){
+      db.payments = db.payments || [];
+      const nowISO = new Date().toISOString();
+      plan.payments.filter(p=>p.status==="PAGA" && !findFinancePaymentRecord(db, entry.id, plan.id, p.id)).forEach(p=>{
+        const cashDate = p.cashDate || initialCashDate || due;
+        db.payments.push({
+          id: uid("p"),
+          masterId: actor.masterId,
+          entryId: entry.id,
+          contactId: entry.contactId || "",
+          financialPlanId: plan.id,
+          financialPaymentId: p.id,
+          at: nowISO,
+          createdAt: nowISO,
+          updatedAt: nowISO,
+          lastUpdateAt: nowISO,
+          date: cashDate,
+          paidAt: cashDate,
+          cashDate,
+          status: "PAGA",
+          value: parseMoney(p.amount),
+          method: p.payMethod || "",
+          desc: `Orçamento: ${plan.title || "Plano financeiro"} • Pagamento ${p.number || ""}/${p.total || ""}`,
+          source: "financialPlan"
+        });
+      });
+    }
+
+    // Salva primeiro o lançamento da parcela; somente depois o botão de baixa passa a operar.
+    const nowMutationISO = new Date().toISOString();
+    markFinancialMutation(entry, plan, null, nowMutationISO);
+    try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar ficha após pagamento:", err); }
+    syncInstallmentTasks(db, actor);
+
+    const ok = await saveConfirmedFinancialChange(db, entry, paymentMutationBefore, {
+      operationLabel: "uma parcela sendo salva",
+      pendingTitle: "Salvando parcela...",
+      pendingMessage: "Aguarde a confirmação da nuvem antes de dar baixa.",
+      consoleLabel: "Falha ao lançar parcela:",
+      failTitle: "Parcela não lançada",
+      failMessage: "A nuvem não confirmou. Reabra o recebimento antes de tentar novamente.",
+      successTitle: "Pagamento lançado ✅",
+      successMessage: `${count} parcela(s) • ${moneyBR(amount)}`
+    });
+    if(!ok) return;
+    renderNewFinancialInstallmentApp();
+    renderInstallmentsView();
+    try{ window.__cronosRenderFichaApp?.(); }catch(_){}
+  }
+};
+
+if(!window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__){
+  // A busca de Recebimentos agora usa apenas o listener direto do campo.
+  // Antes havia listener global + inline + keyup/change, e uma única letra podia redesenhar o modal várias vezes.
+  window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__ = true;
+}
+
+
+function renderInstallmentsView(){
+  const actor = currentActor();
+  if(!actor){ showAuth(); return; }
+  const db = loadDB();
+
+  (db.tasks||[]).forEach(t=>{
+    if(!t.masterId) t.masterId = actor.masterId;
+    if(!t.entryId && typeof t.key==="string" && (t.key.startsWith("INST:") || t.key.startsWith("FININST:"))){
+      const parts = t.key.split(":");
+      if(parts.length>=3) t.entryId = parts[1];
+    }
+    if(!t.title && t.name) t.title = t.name;
+    if(!t.notes && t.desc) t.notes = t.desc;
+    if(!t.action && t.wa) t.action = "WhatsApp";
+    if(t.done==null && t.status!=null){
+      t.done = (String(t.status).toLowerCase().includes("feito") || String(t.status).toLowerCase().includes("done") || String(t.status).toLowerCase().includes("concl"));
+    }
+    if(t.done==null) t.done = false;
+  });
+  (db.payments||[]).forEach(p=>{
+    if(!p.masterId) p.masterId = actor.masterId;
+    if(!p.date && p.at) p.date = String(p.at).slice(0,10);
+  });
+
+  const mm = el("instMonth");
+  const nowMK = todayISO().slice(0,7);
+  if(mm && !mm.value) mm.value = nowMK;
+
+  const mk = mm?.value || nowMK;
+  const q = (el("instSearch")?.value||"").trim().toLowerCase();
+  const filter = (el("instFilter")?.value||"all");
+  const today = todayISO();
+  const canSensitive = canManageFinancialSensitiveActions(actor);
+
+  const k = installmentsKPIs(db, actor, mk);
+  const kReceived = summarizeReceivedForMonth(db, actor, mk);
+  el("kpiInstMonth").textContent = moneyBR(kReceived.total);
+  el("kpiInstMonthN").textContent = `${kReceived.count} baixa(s)`;
+  el("kpiInstLate").textContent = moneyBR(k.lateSum);
+  el("kpiInstLateN").textContent = `${k.lateN} parcelas`;
+  el("kpiInstFuture").textContent = moneyBR(k.futureSum);
+  el("kpiInstFutureN").textContent = `${k.futureN} parcelas`;
+
+  const pill = el("pillInst");
+  if(pill) pill.textContent = String(k.lateN || 0);
+
+  const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===actor.masterId).map(c=>[c.id,c]));
+  const entries = (db.entries||[]).filter(e=>e.masterId===actor.masterId && e.installPlan && !e.installPlan.migratedToFinancialPlanId);
+
+  window.__instHistoryState = window.__instHistoryState || { page:1, sig:"" };
+  const stateSig = `${mk}|${filter}|${q}`;
+  if(window.__instHistoryState.sig !== stateSig){
+    window.__instHistoryState.sig = stateSig;
+    window.__instHistoryState.page = 1;
+  }
+
+  const rows = [];
+  entries.forEach(e=>{
+    ensureInstallmentsForEntry(e);
+    const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
+    const hay = `${c.name} ${c.phone}`.toLowerCase();
+    if(q && !hay.includes(q)) return;
+
+    const monthInstallments = (e.installments||[]).filter(p=>{
+      const paid = !!p.paidAt || !!p.cashDate || p.status === "PAGA";
+      const cashISO = cronosPaymentCashISO(p, false);
+      const dueISO = p?.dueDate || p?.due || "";
+      if(paid) return cashISO && monthKeyOf(cashISO) === mk;
+      return dueISO && monthKeyOf(dueISO) === mk;
+    });
+    if(!monthInstallments.length) return;
+
+    let monthPaidSum=0, monthPendingSum=0, monthLateSum=0, monthFutureSum=0;
+    let monthPaidCount=0, monthPendingCount=0, monthLateCount=0, monthFutureCount=0;
+
+    monthInstallments.forEach(p=>{
+      const paid = !!p.paidAt || !!p.cashDate || p.status === "PAGA";
+      const cashISO = cronosPaymentCashISO(p, false);
+      if(paid){
+        if(cashISO && monthKeyOf(cashISO) === mk){
+          monthPaidSum += parseMoney(p.amount);
+          monthPaidCount++;
+        }
+        return;
+      }
+      monthPendingSum += parseMoney(p.amount);
+      monthPendingCount++;
+      if(p.dueDate && p.dueDate < today){
+        monthLateSum += parseMoney(p.amount);
+        monthLateCount++;
+      } else {
+        monthFutureSum += parseMoney(p.amount);
+        monthFutureCount++;
+      }
+    });
+
+    if(filter === "paid" && monthPaidCount <= 0) return;
+    if(filter === "dueMonth" && monthPendingCount <= 0) return;
+    if(filter === "late" && monthLateCount <= 0) return;
+    if(filter === "open" && monthFutureCount <= 0) return;
+
+    const overall = entryInstallmentSummary(e);
+    rows.push({
+      e, c, overall,
+      monthInstallments,
+      monthPaidSum, monthPendingSum, monthLateSum, monthFutureSum,
+      monthPaidCount, monthPendingCount, monthLateCount, monthFutureCount,
+    });
+  });
+
+  rows.sort((A,B)=>{
+    const aRank = A.monthLateCount>0 ? 3 : A.monthPendingCount>0 ? 2 : A.monthPaidCount>0 ? 1 : 0;
+    const bRank = B.monthLateCount>0 ? 3 : B.monthPendingCount>0 ? 2 : B.monthPaidCount>0 ? 1 : 0;
+    if(aRank !== bRank) return bRank - aRank;
+    const aBol = ((A.e.installPlan?.payMethod||"")==="Boleto")?1:0;
+    const bBol = ((B.e.installPlan?.payMethod||"")==="Boleto")?1:0;
+    if(aBol!==bBol) return bBol-aBol;
+    const aDate = (cronosPaymentCashISO(A.monthInstallments[0], false) || A.monthInstallments[0]?.dueDate || "9999-99-99");
+    const bDate = (cronosPaymentCashISO(B.monthInstallments[0], false) || B.monthInstallments[0]?.dueDate || "9999-99-99");
+    return aDate.localeCompare(bDate);
+  });
+
+  const pageSize = 10;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(totalPages, Math.max(1, window.__instHistoryState.page || 1));
+  window.__instHistoryState.page = currentPage;
+  const start = (currentPage - 1) * pageSize;
+  const pagedRows = rows.slice(start, start + pageSize);
+
+  const list = el("instList");
+  if(!list) return;
+  ensureNewInstallmentButton();
+  const financialCardsHtml = buildFinancialPlanCards(db, actor, mk, q, filter, today);
+  const financialPagerHtml = window.__instFinancialPagerHtml || "";
+
+  if(!rows.length && !financialCardsHtml){
+    list.innerHTML = `<div class="muted">Nenhum recebimento encontrado para o mês e filtro selecionados.</div>`;
+    return;
+  }
+
+  const cardsHtml = pagedRows.map(({e,c,overall,monthInstallments,monthPaidSum,monthPendingSum,monthLateSum,monthFutureSum,monthPaidCount,monthPendingCount,monthLateCount,monthFutureCount})=>{
+    const pm = e.installPlan?.payMethod || "—";
+    const each = e.installPlan?.each ? moneyBR(e.installPlan.each) : moneyBR((parseMoney(e.installPlan.amount)||0)/Math.max(1,parseInt(e.installPlan.n||1,10)));
+    const next = overall.nextDue ? fmtBR(overall.nextDue) : "—";
+    const rowId = `instrow_${e.id}`;
+
+    const badges = [];
+    if(monthPaidCount > 0) badges.push(`<span class="badge ok">✅ ${monthPaidCount} paga(s)</span>`);
+    if(monthLateCount > 0) badges.push(`<span class="badge late">⚠️ ${monthLateCount} atrasada(s)</span>`);
+    if(monthFutureCount > 0) badges.push(`<span class="badge pending">🕒 ${monthFutureCount} pendente(s)</span>`);
+    if(!badges.length && monthPendingCount > 0) badges.push(`<span class="badge pending">🕒 ${monthPendingCount} pendente(s)</span>`);
+
+    const periodDetails = monthInstallments.map(p=>{
+      const paid = !!p.paidAt || !!p.cashDate || p.status === "PAGA";
+      const cashISO = cronosPaymentCashISO(p, false);
+      const late = !paid && p.dueDate && p.dueDate < today;
+      const statusChip = paid
+        ? `<span class="badge ok">PAGA</span>`
+        : late
+          ? `<span class="badge late">ATRASADA</span>`
+          : `<span class="badge pending">PENDENTE</span>`;
+      const dateTxt = paid ? `Pago: ${fmtBR(cashISO || p.paidAt || p.cashDate || "")}` : `Venc: ${fmtBR(p.dueDate)}`;
+      return `<div class="chip">${p.number}/${p.total} • ${dateTxt} • <b>${moneyBR(p.amount)}</b> ${statusChip}</div>`;
+    }).join("");
+
+    const nextToneClass = monthLateCount > 0 ? "is-late" : (monthPendingCount > 0 ? "is-pending" : "");
+    const spotlightHtml = monthLateCount > 0
+      ? `<div class="instAlert late">⚠ ${monthLateCount} parcela(s) atrasada(s) no mês • ${moneyBR(monthLateSum)}</div>`
+      : monthPendingCount > 0
+        ? `<div class="instAlert pending">🕒 ${monthPendingCount} parcela(s) pendente(s) no mês • ${moneyBR(monthPendingSum)}</div>`
+        : monthPaidCount > 0
+          ? `<div class="instAlert ok">✅ ${monthPaidCount} paga(s) no mês • ${moneyBR(monthPaidSum)}</div>`
+          : `<div class="instAlert neutral">Sem movimentação no mês selecionado.</div>`;
+    const extraMonthChips = [
+      `<span class="chip">Forma: <b>${escapeHTML(pm)}</b></span>`,
+      `<span class="chip">Pagas no mês: <b>${moneyBR(monthPaidSum)}</b></span>`,
+      `<span class="chip">Pendentes no mês: <b>${moneyBR(monthPendingSum)}</b></span>`,
+      `<span class="chip">Atrasado no mês: <b>${moneyBR(monthLateSum)}</b></span>`,
+      `<span class="chip">Futuro no mês: <b>${moneyBR(monthFutureSum)}</b></span>`,
+      ...(badges.length ? badges : [])
+    ].join("");
+
+    return `
+      <div class="instRow instRowClean" id="${rowId}">
+        <div class="instHead">
+          <div style="min-width:0;flex:1">
+            <div class="instName">${escapeHTML(c.name)} <span class="muted" style="font-weight:600">• ${escapeHTML(c.phone||"")}</span></div>
+            <div class="instSummary">
+              <div class="instMetric">
+                <span class="instMetricLabel">Parcelas</span>
+                <strong>${overall.paidCount}/${overall.total}</strong>
+              </div>
+              <div class="instMetric">
+                <span class="instMetricLabel">Parcela</span>
+                <strong>${each}</strong>
+              </div>
+              <div class="instMetric ${nextToneClass}">
+                <span class="instMetricLabel">Próx.</span>
+                <strong>${escapeHTML(next)}</strong>
+              </div>
+              <div class="instMetric">
+                <span class="instMetricLabel">Forma</span>
+                <strong>${escapeHTML(pm)}</strong>
+              </div>
+            </div>
+            ${spotlightHtml}
+            <details class="instExtra">
+              <summary>Detalhes do mês</summary>
+              <div class="instMeta compact">${extraMonthChips}</div>
+              <div class="instMeta compact">${periodDetails || `<span class="muted">Sem parcelas do período para detalhar.</span>`}</div>
+            </details>
+          </div>
+          <div class="instBtns">
+            <button class="btn" onclick="openLeadEntry('${e.id}')">Abrir lead</button>
+            <button class="btn primary" data-toggle-inst="${e.id}" onclick="toggleInstRow('${e.id}')">Ver parcelas</button>
+            ${canSensitive ? `<button class="btn danger" onclick="deleteInstallmentPlan('${e.id}')">Excluir</button>` : ""}
+          </div>
+        </div>
+        <div class="instBody">
+          ${renderInstallmentTable(e,c)}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const pagerHtml = totalPages > 1 ? `
+    <div class="instPager" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;">
+      <div class="muted">Página ${currentPage} de ${totalPages} • ${rows.length} registro(s)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn small" ${currentPage<=1 ? 'disabled' : ''} onclick="window.__instHistoryState.page=Math.max(1,(window.__instHistoryState.page||1)-1);renderInstallmentsView();">Anterior</button>
+        <button class="btn small" ${currentPage>=totalPages ? 'disabled' : ''} onclick="window.__instHistoryState.page=Math.min(${totalPages},(window.__instHistoryState.page||1)+1);renderInstallmentsView();">Próxima</button>
+      </div>
+    </div>
+  ` : '';
+
+  list.innerHTML = financialCardsHtml + cardsHtml + financialPagerHtml + pagerHtml;
+
+  try{
+    window.__instOpen = window.__instOpen || {};
+    Object.keys(window.__instOpen).forEach(id=>{
+      const rr = el(id) || el(`instrow_${id}`);
+      if(rr && window.__instOpen[id]) rr.classList.add("open");
+      updateInstallmentToggleLabel(id);
+      const fbtn = rr ? rr.querySelector(`[data-toggle-inst="${id}"]`) : null;
+      if(fbtn) fbtn.textContent = rr.classList.contains("open") ? "Fechar pagamentos" : "Ver pagamentos";
+    });
+  }catch(e){}
+}
+
+function updateInstallmentToggleLabel(entryId){
+  const row = el(`instrow_${entryId}`);
+  const btn = row ? row.querySelector(`[data-toggle-inst="${entryId}"]`) : null;
+  if(!btn) return;
+  btn.textContent = row.classList.contains("open") ? "Fechar parcelas" : "Ver parcelas";
+}
+
+function toggleInstRow(entryId){
+  window.__instOpen = window.__instOpen || {};
+  const row = el(`instrow_${entryId}`);
+  if(!row) return;
+  row.classList.toggle("open");
+  window.__instOpen[entryId] = row.classList.contains("open");
+  updateInstallmentToggleLabel(entryId);
+}
+
+function renderInstallmentTable(entry, contact){
+  ensureInstallmentsForEntry(entry);
+  const today = todayISO();
+  const canSensitive = canManageFinancialSensitiveActions();
+  const pmDefault = entry.installPlan?.payMethod || "";
+  const rows = (entry.installments||[]).map(p=>{
+    const paid = !!p.paidAt || !!p.cashDate || p.status==="PAGA";
+    const late = !paid && p.dueDate && p.dueDate < today;
+    const st = paid ? `<span class="badge ok">PAGO</span>` : (late ? `<span class="badge late">ATRASADO</span>` : `<span class="badge pending">PENDENTE</span>`);
+    const action = paid
+      ? (canSensitive ? `<a class="miniLink" href="javascript:void(0)" onclick="undoInstallmentPay('${entry.id}', ${p.number})">Desfazer</a>` : `<span class="muted" style="font-size:12px">Pago</span>`)
+      : `<button class="btn ok" type="button" onclick="payInstallment('${escapeJSString(entry.id)}', ${Number(p.number)||0}); return false;">Dar baixa</button>`;
+    const transfer = (paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferInstallmentCashDate('${entry.id}', ${p.number})">Transferir data</a>` : "";
+    const wa = !paid ? `<a class="waChargeBtn" href="${waChargeLink(contact.phone, contact.name, entry, p)}" target="_blank"><span class="waChargeIcon">☎</span><span>Cobrar</span></a>` : "";
+    const deleteBtn = canSensitive ? `<button class="miniBtn danger" onclick="deleteInstallment('${entry.id}', ${p.number})" title="Excluir parcela">🗑️</button>` : "";
+    const cashISO = cronosPaymentCashISO(p, false);
+    return `
+      <tr>
+        <td class="mono">${p.number}/${p.total}</td>
+        <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
+        <td class="mono">${moneyBR(p.amount)}</td>
+        <td>${escapeHTML(p.payMethod||pmDefault||"—")}</td>
+        <td>${st} ${cashISO?`<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>`:""}</td>
+        <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${wa} ${deleteBtn}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <table class="instTable">
+      <thead><tr>
+        <th>Parcela</th><th>Venc.</th><th>Valor</th><th>Forma</th><th>Status</th><th>Ações</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function waChargeLink(phone, nome, entry, parcela){
+  const clean = String(phone||"").replace(/\D/g,"");
+  const p = parcela || {};
+  const db = loadDB();
+  const tplDefault = `Oi {nome}! 😊\nSó pra lembrar: a parcela {parcela}/{total} de {valor} vence em {vencimento}. Posso te ajudar por aqui?`;
+  const tpl = (db.settings && db.settings.waChargeTemplate) ? String(db.settings.waChargeTemplate) : tplDefault;
+
+  const msg = tpl
+    .replaceAll("{nome}", String(nome||""))
+    .replaceAll("{parcela}", String(p.number||""))
+    .replaceAll("{total}", String(p.total||""))
+    .replaceAll("{valor}", moneyBR(p.amount||0))
+    .replaceAll("{vencimento}", p.dueDate?fmtBR(p.dueDate):"");
+
+  return `https://wa.me/55${clean}?text=${encodeURIComponent(msg)}`;
+}
+
+async function payInstallment(entryId, number){
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma baixa sendo salva na nuvem.");
+  window.__instOpen = window.__instOpen || {};
+  window.__instOpen[entryId] = true;
+  const actor = currentActor();
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>e.id===entryId);
+  if(!entry) return toast("Erro", "Entrada não encontrada");
+  ensureInstallmentsForEntry(entry);
+  const p = (entry.installments||[]).find(x=>x.number===number);
+  if(!p) return toast("Erro", "Parcela não encontrada");
+  if(p.paidAt || p.cashDate || p.status==="PAGA") return toast("Já foi", "Essa parcela já está baixada.");
+
+  const payDate = await askPaymentCashDate({
+    title: "Dar baixa na parcela",
+    subtitle: `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}${p.dueDate ? ` • venc. ${fmtBR(p.dueDate)}` : ""}`,
+    defaultDate: todayISO()
+  });
+  if(!payDate) return;
+
+  const before = cloneCronosCriticalSnapshot(db);
+  const nowISO = new Date().toISOString();
+  p.paidAt = payDate;
+  p.cashDate = payDate;
+  p.status = "PAGA";
+  p.paid = true;
+  p.updatedAt = nowISO;
+  p.lastUpdateAt = nowISO;
+
+  entry.valuePaid = parseMoney(entry.valuePaid) + parseMoney(p.amount);
+  entry.valueClosed = (entry.status==="Fechou") ? entry.valuePaid : null;
+  entry.updatedAt = nowISO;
+  entry.lastUpdateAt = nowISO;
+  entry.financeUpdatedAt = nowISO;
+
+  db.payments = db.payments || [];
+  db.payments.push({
+    id: uid("p"),
+    masterId: actor.masterId,
+    entryId,
+    contactId: entry.contactId,
+    at: nowISO,
+    createdAt: nowISO,
+    updatedAt: nowISO,
+    lastUpdateAt: nowISO,
+    date: payDate,
+    paidAt: payDate,
+    cashDate: payDate,
+    status: "PAGA",
+    value: p.amount,
+    method: p.payMethod || entry.installPlan?.payMethod || "",
+    desc: `Parcela ${p.number}/${p.total}`,
+    source: "legacyInstallment",
+    legacyInstallmentNumber: p.number
+  });
+
+  try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  cronosAuditAction(db, { action:"payment_paid", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:parseMoney(p.amount), details:`Parcela ${p.number}/${p.total} • caixa ${fmtBR(payDate)}` });
+
+  __cronosFinancialMutationBusy = true;
+  toast("Salvando baixa...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
+  let cloudOk = false;
+  try{
+    cloudOk = await commitFinancialMutationCloud(db, entry);
+  }catch(err){
+    console.error("Falha ao salvar baixa de parcela legada:", err);
+  }finally{
+    __cronosFinancialMutationBusy = false;
+  }
+
+  if(cloudOk){
+    refreshFinancialUIAfterPayment();
+    toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • caixa em ${fmtBR(payDate)}`);
+  }else{
+    restoreCronosCriticalSnapshot(before);
+    toast("Baixa não registrada", "A nuvem não confirmou a operação. A parcela continua pendente; tente novamente.");
+  }
+}
+try{ window.payInstallment = payInstallment; }catch(_){ }
+
+document.addEventListener('click', function(ev){
+  const btn = ev.target && ev.target.closest ? ev.target.closest('[data-inst-action="pay"]') : null;
+  if(!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if(typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+  if(btn.__cronosLegacyPayClickLock) return;
+  btn.__cronosLegacyPayClickLock = true;
+  setTimeout(()=>{ try{ btn.__cronosLegacyPayClickLock = false; }catch(_){} }, 1200);
+  const entryId = btn.dataset.entryId;
+  const number = Number(btn.dataset.number || 0);
+  if(entryId && number && typeof window.payInstallment === 'function'){
+    window.payInstallment(entryId, number);
+  }
+}, true);
+
+async function undoInstallmentPay(entryId, number){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>e.id===entryId);
+  if(!entry) return toast("Erro", "Entrada não encontrada");
+  ensureInstallmentsForEntry(entry);
+  const p = (entry.installments||[]).find(x=>x.number===number);
+  if(!p) return toast("Erro", "Parcela não encontrada");
+  if(!(p.paidAt || p.cashDate || p.status==="PAGA")) return toast("Nada a desfazer", "Essa parcela não está paga.");
+  const nowISO = new Date().toISOString();
+  const amt = parseMoney(p.amount);
+  entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - amt);
+  entry.updatedAt = nowISO;
+  entry.lastUpdateAt = nowISO;
+  entry.financeUpdatedAt = nowISO;
+  p.paidAt = "";
+  p.cashDate = "";
+  p.status = "PENDENTE";
+  p.paid = false;
+  p.updatedAt = nowISO;
+  p.lastUpdateAt = nowISO;
+  db.payments = db.payments || [];
+  const idx = db.payments.findIndex(x=>x.entryId===entryId && x.value===amt && (String(x.legacyInstallmentNumber||"")===String(number) || (x.desc||"").includes(`Parcela ${number}/`)));
+  if(idx>=0) db.payments.splice(idx,1);
+
+  try{ syncInstallmentTasks(db, actor); }catch(_){ }
+  cronosAuditAction(db, { action:"payment_undo", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:amt, details:`Parcela ${number}/${p.total}` });
+  refreshFinancialUIAfterPayment();
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar desfazer baixa legada:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk) toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
+  else toast("Baixa desfeita no navegador", "A nuvem ainda não confirmou.");
+}
+async function transferInstallmentCashDate(entryId, number){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>e.id===entryId);
+  if(!entry) return toast("Erro", "Entrada não encontrada");
+  ensureInstallmentsForEntry(entry);
+  const p = (entry.installments||[]).find(x=>x.number===number);
+  if(!p) return toast("Erro", "Parcela não encontrada");
+  if(!(p.paidAt || p.cashDate || p.status==="PAGA")) return toast("Transferência", "Só dá para transferir parcela baixada.");
+  const current = cronosPaymentCashISO(p, false) || todayISO();
+  const next = await askPaymentCashDate({
+    title: "Transferir data da baixa",
+    subtitle: `Parcela ${number}/${p.total} • ${moneyBR(p.amount)}. Escolha em que mês/dia esse pagamento deve contar.`,
+    defaultDate: current
+  });
+  if(!next) return;
+
+  const nowISO = new Date().toISOString();
+  p.cashDate = next;
+  p.paidAt = next;
+  p.status = "PAGA";
+  p.paid = true;
+  p.updatedAt = nowISO;
+  p.lastUpdateAt = nowISO;
+  entry.updatedAt = nowISO;
+  entry.lastUpdateAt = nowISO;
+  entry.financeUpdatedAt = nowISO;
+
+  const amt = parseMoney(p.amount);
+  db.payments = db.payments || [];
+  const rec = db.payments.find(x=>String(x.entryId)===String(entryId) && parseMoney(x.value)===amt && (String(x.legacyInstallmentNumber||"")===String(number) || String(x.desc||"").includes(`Parcela ${number}/`)));
+  if(rec){
+    rec.date = next;
+    rec.cashDate = next;
+    rec.paidAt = next;
+    rec.status = "PAGA";
+    rec.at = nowISO;
+    rec.updatedAt = nowISO;
+    rec.lastUpdateAt = nowISO;
+  }
+  cronosAuditAction(db, { action:"payment_date_transferred", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:amt, details:`Parcela ${number}/${p.total} • caixa ${fmtBR(current)} → ${fmtBR(next)}` });
+
+  refreshFinancialUIAfterPayment();
+  let cloudOk = false;
+  try{
+    cloudOk = await saveDB(db, { immediate:true });
+  }catch(err){
+    console.error("Falha ao salvar transferência financeira:", err);
+  }
+  refreshFinancialUIAfterPayment();
+  if(cloudOk) toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
+  else toast("Data transferida no navegador", "A nuvem ainda não confirmou.");
+}
+function normalizeInstallmentsAfterMutation(entry){
+  entry.installments = Array.isArray(entry.installments) ? entry.installments : [];
+  const total = entry.installments.length;
+
+  if(!total){
+    entry.installPlan = null;
+    entry.installments = [];
+    return;
+  }
+
+  entry.installments = entry.installments
+    .sort((a,b)=> String(a?.dueDate||"").localeCompare(String(b?.dueDate||"")) || Number(a?.number||0) - Number(b?.number||0))
+    .map((p, idx)=> ({
+      ...p,
+      number: idx + 1,
+      total
+    }));
+
+  if(entry.installPlan){
+    const totalAmount = entry.installments.reduce((sum, parcela)=> sum + parseMoney(parcela.amount), 0);
+    entry.installPlan.n = total;
+    entry.installPlan.amount = Number(totalAmount.toFixed(2));
+    entry.installPlan.each = total ? Number((totalAmount / total).toFixed(2)) : 0;
+    entry.installPlan.firstDue = entry.installments[0]?.dueDate || entry.installPlan.firstDue || "";
+  }
+}
+
+function persistInstallmentMutation(db, actor, entryId, successMsg, successSub=""){
+  try{
+    syncInstallmentTasks(db, actor);
+  }catch(_){ }
+  saveDB(db, { immediate:true });
+  window.__instOpen = window.__instOpen || {};
+  if(entryId) window.__instOpen[entryId] = true;
+  toast(successMsg, successSub);
+  renderAll();
+}
+
+function deleteInstallmentPlan(entryId){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  if(!actor?.perms?.edit) return toast("Sem permissão");
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>e.id===entryId);
+  if(!entry || !entry.installPlan) return toast("Parcelamento não encontrado");
+  ensureInstallmentsForEntry(entry);
+  const contact = (db.contacts||[]).find(c=>c.id===entry.contactId);
+  const totalParcelas = (entry.installments||[]).length;
+  if(!confirm(`Excluir todo o recebimento de ${contact?.name || 'este paciente'}?
+
+Isso vai remover ${totalParcelas} parcela(s), pagamentos lançados por parcelas e tarefas automáticas vinculadas.`)) return;
+
+  const removedPaid = (entry.installments||[])
+    .filter(p=>p.paidAt || p.status === "PAGA")
+    .reduce((sum, p)=> sum + parseMoney(p.amount), 0);
+
+  if(removedPaid > 0){
+    entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - removedPaid);
+    entry.valueClosed = entry.status === "Fechou" ? entry.valuePaid : null;
+  }
+
+  const nowISO = new Date().toISOString();
+  db.payments = (db.payments||[]).filter(pay=>!(String(pay.entryId)===String(entryId) && String(pay.desc||"").startsWith("Parcela ")));
+  entry.installPlan = null;
+  entry.installments = [];
+  entry.deletedLegacyInstallmentPlanAt = nowISO;
+  markFinancialMutation(entry, null, null, nowISO);
+
+  persistInstallmentMutation(db, actor, null, "Parcelamento excluído", `${totalParcelas} parcela(s) removida(s).`);
+}
+
+function deleteInstallment(entryId, number){
+  const actor = currentActor();
+  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
+  if(!actor?.perms?.edit) return toast("Sem permissão");
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>e.id===entryId);
+  if(!entry || !entry.installPlan) return toast("Parcelamento não encontrado");
+  ensureInstallmentsForEntry(entry);
+  const idx = (entry.installments||[]).findIndex(p=>Number(p.number)===Number(number));
+  if(idx < 0) return toast("Parcela não encontrada");
+
+  const parcela = entry.installments[idx];
+  const oldNumber = Number(parcela.number || number);
+  const oldTotal = Number(parcela.total || entry.installments.length || 0);
+
+  if(!confirm(`Excluir a parcela ${oldNumber}/${oldTotal}?`)) return;
+
+  if(parcela.paidAt || parcela.status === "PAGA"){
+    const amt = parseMoney(parcela.amount);
+    entry.valuePaid = Math.max(0, parseMoney(entry.valuePaid) - amt);
+    entry.valueClosed = entry.status === "Fechou" ? entry.valuePaid : null;
+    db.payments = (db.payments||[]).filter(pay=>!(pay.entryId===entryId && Number(pay.value||0)===amt && String(pay.desc||"").includes(`Parcela ${oldNumber}/`)));
+  }
+
+  const nowISO = new Date().toISOString();
+  entry.deletedLegacyInstallments = cronosTombstoneListAdd(entry.deletedLegacyInstallments, cronosLegacyInstallmentTombstoneKey(parcela, oldNumber), nowISO);
+  entry.installments.splice(idx, 1);
+  normalizeInstallmentsAfterMutation(entry);
+  markFinancialMutation(entry, null, null, nowISO);
+  persistInstallmentMutation(db, actor, entryId, "Parcela excluída", `A parcela ${oldNumber}/${oldTotal} foi removida.`);
+}
+
+
+window.cronosSepararContatoDoLead = function(entryId, novoNome){
+  const actor = currentActor && currentActor();
+  const db = loadDB();
+  const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
+  if(!entry) return console.warn("Lead não encontrado:", entryId);
+  const oldContact = (db.contacts||[]).find(c=>String(c.id)===String(entry.contactId)) || {};
+  const newContact = {
+    ...oldContact,
+    id: (crypto.randomUUID ? crypto.randomUUID() : uid("c")),
+    name: novoNome || oldContact.name || "",
+    masterId: oldContact.masterId || actor?.masterId || entry.masterId || "",
+    firstSeenAt: entry.firstContactAt || oldContact.firstSeenAt || todayISO(),
+    lastSeenAt: todayISO()
+  };
+  db.contacts.push(newContact);
+  entry.contactId = newContact.id;
+  saveDB(db, { immediate:true });
+  try{ renderAll(); }catch(_){}
+  console.log("Contato separado para o lead.", {entryId, oldContactId: oldContact.id, newContactId: newContact.id, newContact});
+  return newContact;
+};
+
+window.cronosLimparTarefasParcelamentoAgora = function(){
+  const actor = currentActor && currentActor();
+  if(!actor) return console.warn("Sem usuário logado.");
+  const db = loadDB();
+  const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+  const stats = syncInstallmentTasks(db, actor) || {};
+  const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
+  saveDB(db, { immediate:true });
+  try{ renderAll(); }catch(_){}
+  console.log("Cronos: tarefas de recebimento higienizadas.", {before, after, stats});
+  try{ toast("Tarefas higienizadas", `Antes: ${before} • Depois: ${after}`); }catch(_){}
+  return {before, after, stats};
+};
+
+
+/* Recebimentos */
+const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
+renderAll = function(){
+  try{
+    const actor = currentActor();
+    const db = loadDB();
+    (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
+    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db, { skipCloud:true }); }
+  }catch(e){}
+  __renderAll();
+  try{ relabelInstallmentsToRecebimentos(); }catch(e){}
+  try{
+    if(qs('[data-view="installments"].active')) renderInstallmentsView();
+  }catch(e){}
+};
+
+const __showView = typeof showView === "function" ? showView : function(){};
+showView = function(view){
+  if(typeof setActiveView === "function"){
+    setActiveView(view);
+  }else{
+    __showView(view);
+  }
+  try{ relabelInstallmentsToRecebimentos(); }catch(e){}
+}
+
+document.addEventListener("DOMContentLoaded", ()=>{
+  try{ relabelInstallmentsToRecebimentos(); }catch(e){}
+  const mm = el("instMonth");
+  const ss = el("instSearch");
+  const ff = el("instFilter");
+  mm?.addEventListener("change", ()=>renderInstallmentsView());
+  ss?.addEventListener("input", ()=>renderInstallmentsView());
+  ff?.addEventListener("change", ()=>renderInstallmentsView());
+});
+
+function getSmallLogoDataURI(){
+  try{
+    const db = loadDB ? loadDB() : null;
+    const actor = currentActor ? currentActor() : null;
+    const clinicId = actor?.masterId || actor?.clinicId || null;
+    const branding = db?.settings?.clinicBranding || {};
+    const perClinic = clinicId && branding?.byClinic ? branding.byClinic[String(clinicId)] : null;
+    if(perClinic?.logoDataUri) return perClinic.logoDataUri;
+    if(branding?.defaultLogoDataUri) return branding.defaultLogoDataUri;
+  }catch(_){ }
+  const img = qs("#brandIcon img");
+  if(img && img.src) return img.src;
+  const im2 = qs(".brandMark img");
+  if(im2 && im2.src) return im2.src;
+  return "";
+}
+
+/* =========================
+   Cronos
+   ========================= */
+
+const DBKEY = "cronoscrm_phase1_db";
+const SESSIONKEY = "cronoscrm_phase1_session";
+const THEMEKEY = "cronoscrm_theme";
+window.__KPI_ACTIVE = null; // filtro do KPI clicável
+
+const ROLES = ["MASTER","GERENTE","SECRETARIA","CRC","DENTISTA"];
+
+const STATUS_LIST = [
+  "Agendado","Compareceu","Fechou","Remarcou","Conversando","Faltou","Sem resposta",
+  "Número incorreto","Achou caro","Não tem interesse","Mora longe","Mora em outra cidade",
+  "Fechou em outro lugar","Msg não entregue","Desmarcou"
+, "Concluído"];
+
+const ORIGINS = [
+  "Instagram orgânico","Instagram patrocinado","Fachada da clínica","Pós-tratamento",
+  "Follow-up","Paciente de retorno","Outros"
+];
+
+const TREATMENTS = [
+  "Implante unitário","Prótese protocolo","HOF","Ortodontia","Endodontia","Clínica geral","Outros"
+];
+
+const POSITIVE = new Set(["Agendado","Compareceu","Fechou","Remarcou","Conversando","Concluído"]);
+const DISQUALIFIED = new Set(["Número incorreto","Achou caro","Não tem interesse","Mora longe","Mora em outra cidade","Fechou em outro lugar","Msg não entregue","Mensagem não entregue"]);
+const APP_VIEWS = ["dashboard","leads","kanban","tasks","installments","users","settings"];
+const AUX_MODULES = ["todayCronos","creditSimulator","performance"];
+const ALL_ACCESS_MODULES = [...APP_VIEWS, ...AUX_MODULES];
+
+const PERMS = {
+  // O plano controla módulos da clínica; a matriz abaixo controla a função de cada perfil.
+  MASTER:     {viewAll:true, edit:true, delete:true, manageUsers:true, manageMasters:false, views:[...ALL_ACCESS_MODULES]},
+  GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","todayCronos","leads","kanban","tasks","installments","creditSimulator","performance","users","settings"]},
+  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["todayCronos","leads","kanban","tasks","installments"]},
+  CRC:        {viewAll:true, edit:true, delete:false, manageUsers:false, manageMasters:false, views:["todayCronos","leads","kanban","tasks"]},
+  DENTISTA:   {viewAll:true, edit:false, delete:false, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban"]},
+};
+
+function actorRoleKey(actor=currentActor()){
+  return String(actor?.role || "").trim().toUpperCase();
+}
+function isCRCRole(actor=currentActor()){
+  return actorRoleKey(actor) === "CRC";
+}
+function isFichaReadOnlyForActor(actor=currentActor()){
+  return isCRCRole(actor);
+}
+function denyCRCFichaEdit(){
+  toast("Ficha em visualização", "A CRC pode consultar e imprimir a ficha, mas não pode alterar tratamento ou recebimentos.");
+  return false;
+}
+function canOperateRecebimentos(actor=currentActor()){
+  const role = actorRoleKey(actor);
+  if(!actor || actor.isSupport === true) return false;
+  if(!["MASTER","GERENTE","SECRETARIA"].includes(role)) return false;
+  return canAccessView("installments", actor);
+}
+function blockedRecebimentosAction(){
+  toast("Acesso limitado", "Seu perfil não pode criar ou alterar recebimentos.");
+  return false;
+}
+
+function actorAccessModules(actor=currentActor()){
+  if(!actor) return [];
+  const views = Array.isArray(actor?.perms?.views) && actor.perms.views.length ? actor.perms.views : ["dashboard"];
+  return [...new Set(views.filter(v=>ALL_ACCESS_MODULES.includes(v)))];
+}
+function actorAllowedViews(actor=currentActor()){
+  return actorAccessModules(actor).filter(v=>APP_VIEWS.includes(v));
+}
+function canAccessView(view, actor=currentActor()){
+  return actorAllowedViews(actor).includes(view);
+}
+function canAccessModule(moduleKey, actor=currentActor()){
+  const key = String(moduleKey || "");
+  if(APP_VIEWS.includes(key)) return canAccessView(key, actor);
+  return actorAccessModules(actor).includes(key);
+}
+function firstAllowedView(actor=currentActor()){
+  return actorAllowedViews(actor)[0] || "dashboard";
+}
+function applyRoleVisibility(actor=currentActor()){
+  APP_VIEWS.forEach(view=>{
+    const btn = qs(`.nav button[data-view="${view}"]`);
+    if(btn) btn.classList.toggle("hidden", !canAccessView(view, actor));
+  });
+
+  [
+    { id:"navHojeCronos", module:"todayCronos" },
+    { id:"navCreditoSimulator", module:"creditSimulator" },
+    { id:"navPerformance", module:"performance" }
+  ].forEach(item=>{
+    const btn = el(item.id);
+    if(btn) btn.classList.toggle("hidden", !canAccessModule(item.module, actor));
+  });
+
+  const canEdit = !!actor?.perms?.edit;
+  const canUsers = canAccessView("users", actor) && !!actor?.perms?.manageUsers;
+  const canSettings = canAccessView("settings", actor);
+
+  ["btnNewLeadSide","btnNewLeadTop","btnNewLeadList","btnNewLeadKanban","btnNewTask"].forEach(id=>{
+    const node = el(id);
+    if(node) node.classList.toggle("hidden", !canEdit);
+  });
+  const btnNewFinancialInstallment = el("btnNewFinancialInstallment");
+  if(btnNewFinancialInstallment) btnNewFinancialInstallment.classList.toggle("hidden", !canOperateRecebimentos(actor));
+
+  const btnNewUser = el("btnNewUser");
+  if(btnNewUser) btnNewUser.classList.toggle("hidden", !canUsers);
+
+  ["btnBackup","btnSavePrefs","btnSaveClinicIdentity","btnResetChargeTpl"].forEach(id=>{
+    const node = el(id);
+    if(node) node.classList.toggle("hidden", !canSettings);
+  });
+}
+window.CRONOS_CAN_ACCESS_MODULE = canAccessModule;
+window.CRONOS_APPLY_ROLE_VISIBILITY = applyRoleVisibility;
+
+const el = (id)=>document.getElementById(id);
+
+function showBootSplash(message="Sincronizando seu ambiente..."){
+  const boot = document.getElementById("bootSplashView");
+  const text = document.getElementById("bootSplashText");
+  if(text && message) text.textContent = message;
+  if(boot) boot.classList.remove("hidden");
+}
+function hideBootSplash(){
+  const boot = document.getElementById("bootSplashView");
+  if(boot) boot.classList.add("hidden");
+}
+const qs = (sel,root=document)=>root.querySelector(sel);
+const qsa = (sel,root=document)=>Array.from(root.querySelectorAll(sel));
+
+function relabelInstallmentsToRecebimentos(){
+  try{
+    const replaceTextNodes = (root)=>{
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while(walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach(n=>{
+        if(String(n.nodeValue||"").includes("Parcelamentos")){
+          n.nodeValue = String(n.nodeValue).replace(/Parcelamentos/g, "Recebimentos");
+        }
+        if(String(n.nodeValue||"").includes("Parcelamento")){
+          n.nodeValue = String(n.nodeValue).replace(/Parcelamento/g, "Recebimento");
+        }
+      });
+    };
+
+    document.querySelectorAll('[data-view="installments"], #view-installments, [id*="inst"], [class*="inst"]').forEach(node=>{
+      try{ replaceTextNodes(node); }catch(_){}
+    });
+
+    const nav = document.querySelector('[data-view="installments"]');
+    if(nav){
+      replaceTextNodes(nav);
+      if(nav.textContent && nav.textContent.trim().toLowerCase().includes("parcelamento")){
+        nav.innerHTML = nav.innerHTML.replace(/Parcelamentos/g, "Recebimentos").replace(/Parcelamento/g, "Recebimento");
+      }
+    }
+  }catch(_){}
+}
+
+  const qv = (sel, root=document, fallback="") => {
+    const e = qs(sel, root);
+    return e && typeof e.value !== "undefined" ? e.value : fallback;
+  };
+
+function val(id, fallback=""){
+  const x = el(id);
+  return x ? x.value : fallback;
+}
+function setVal(id, v){
+  const x = el(id);
+  if(x) x.value = v;
+}
+
+
+function toast(msg, sub=""){
+  const t = el("toast");
+  t.innerHTML = `<div>${escapeHTML(msg)}</div>${sub?`<div class="small">${escapeHTML(sub)}</div>`:""}`;
+  t.classList.add("show");
+  clearTimeout(toast._tm);
+  toast._tm = setTimeout(()=>t.classList.remove("show"), 2800);
+}
+
+
+function escapeJSString(s){
+  return String(s ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/</g, "\\x3C");
+}
+
+function escapeHTML(s){
+  return String(s??"").replace(/[&<>"']/g, (m)=>({
+    "&":"&amp;",
+    "<":"&lt;",
+    ">":"&gt;",
+    "\"":"&quot;",
+    "'":"&#039;"
+  }[m]));
+}
+
+function uid(prefix="id"){ return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`; }
+
+function todayISO(){
+  return cronosLocalISODate(new Date());
+}
+function parseISO(s){ return s ? new Date(s+"T00:00:00") : null; }
+function fmtBR(s){
+  if(!s) return "—";
+  const [y,m,d] = s.split("-");
+  return `${d}/${m}/${y}`;
+}
+function moneyBR(v){
+  const n = Number(v||0);
+  return n.toLocaleString("pt-BR", {style:"currency", currency:"BRL"});
+}
+
+
+/* -------- Rastreabilidade / explicações -------- */
+function cronosAttr(s){ return escapeHTML(String(s ?? "")).replace(/\n/g, "&#10;"); }
+function cronosActorLabel(actor=currentActor()){
+  return String(actor?.name || actor?.username || actor?.email || "Usuário não identificado").trim() || "Usuário não identificado";
+}
+function cronosFormatDateTime(value){
+  if(!value) return "—";
+  try{
+    if(typeof fmtDateTimeLocal === "function") return fmtDateTimeLocal(value);
+  }catch(_){ }
+  const d = new Date(value);
+  if(Number.isNaN(d.getTime())) return String(value).slice(0,16);
+  return d.toLocaleString("pt-BR", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"});
+}
+function cronosActionLabel(action){
+  const map = {
+    lead_created:"Lead criado",
+    lead_updated:"Lead atualizado",
+    status_changed:"Status alterado",
+    contact_created:"Contato criado",
+    contact_updated:"Contato atualizado",
+    payment_created:"Recebimento criado",
+    payment_paid:"Baixa realizada",
+    payment_undo:"Baixa desfeita",
+    payment_date_transferred:"Data da baixa transferida",
+    payment_deleted:"Pagamento/parcela excluído",
+    credit_anticipated:"Antecipação de crédito",
+    ficha_updated:"Ficha atualizada"
+  };
+  return map[action] || String(action || "Ação registrada");
+}
+function ensureActivityLog(db){
+  if(!db || typeof db !== "object") return [];
+  if(!Array.isArray(db.activityLog)) db.activityLog = [];
+  return db.activityLog;
+}
+function cronosAuditAction(db, payload={}){
+  try{
+    const actor = currentActor() || {};
+    const now = payload.at || new Date().toISOString();
+    const rec = {
+      id: uid("audit"),
+      at: now,
+      masterId: payload.masterId || actor.masterId || "",
+      actorId: actor.id || actor.authUid || actor.email || actor.username || "",
+      actorName: payload.actorName || cronosActorLabel(actor),
+      actorRole: actor.role || "",
+      entityType: payload.entityType || "geral",
+      entityId: String(payload.entityId || payload.entryId || payload.contactId || ""),
+      entryId: String(payload.entryId || ""),
+      contactId: String(payload.contactId || ""),
+      action: payload.action || "updated",
+      label: payload.label || cronosActionLabel(payload.action),
+      details: payload.details || "",
+      before: payload.before || null,
+      after: payload.after || null,
+      value: payload.value ?? null,
+      source: payload.source || "cronos"
+    };
+    const log = ensureActivityLog(db);
+    log.push(rec);
+    const masterId = String(rec.masterId || "");
+    const own = log.filter(x=>String(x?.masterId || "") === masterId || !masterId);
+    if(own.length > 2500){
+      const keep = new Set(own.slice(-2200).map(x=>x.id));
+      db.activityLog = log.filter(x=>String(x?.masterId || "") !== masterId || keep.has(x.id));
+    }
+    return rec;
+  }catch(err){
+    console.warn("Falha ao registrar auditoria:", err);
+    return null;
+  }
+}
+function cronosEntryAuditRecords(db, entry){
+  const e = entry || {};
+  const eid = String(e.id || "");
+  const cid = String(e.contactId || "");
+  const logs = ensureActivityLog(db || loadDB())
+    .filter(x=>{
+      if(!x) return false;
+      return String(x.entryId || x.entityId || "") === eid || (cid && String(x.contactId || "") === cid && ["contact_created","contact_updated"].includes(String(x.action||"")));
+    })
+    .map(x=>({
+      at:x.at,
+      actorName:x.actorName || x.by || "—",
+      label:x.label || cronosActionLabel(x.action),
+      details:x.details || "",
+      source:"activity"
+    }));
+  const statusLogs = (Array.isArray(e.statusLog) ? e.statusLog : []).map(x=>({
+    at:x.at,
+    actorName:x.by || "—",
+    label:"Status alterado",
+    details:`${x.from || "—"} → ${x.to || "—"}`,
+    source:"status"
+  })).filter(x=>!logs.some(l=>String(l.at||"").slice(0,19)===String(x.at||"").slice(0,19) && String(l.label||"").includes("Status")));
+  const merged = logs.concat(statusLogs)
+    .filter(x=>x.at || x.label)
+    .sort((a,b)=>String(b.at||"").localeCompare(String(a.at||"")));
+  return merged;
+}
+function cronosAuditSummaryText(db, entry, contact=null){
+  const recs = cronosEntryAuditRecords(db, entry).slice(0,5);
+  if(recs.length){
+    return recs.map(r=>`${cronosFormatDateTime(r.at)}\n${r.label}${r.details ? ` • ${r.details}` : ""}\nPor: ${r.actorName || "—"}`).join("\n\n");
+  }
+  const created = entry?.createdAt || contact?.createdAt || entry?.firstContactAt || "";
+  const updated = entry?.lastUpdateAt || entry?.updatedAt || contact?.lastUpdateAt || contact?.updatedAt || "";
+  return `Criado em: ${cronosFormatDateTime(created)}\nPor: ${entry?.createdBy || contact?.createdBy || "registro antigo"}\n\nÚltima atualização: ${cronosFormatDateTime(updated)}\nPor: ${entry?.updatedBy || contact?.updatedBy || "registro antigo"}`;
+}
+function cronosAuditInfoButton(db, entry, contact=null){
+  const eid = escapeJSString(String(entry?.id || ""));
+  const tip = cronosAuditSummaryText(db, entry, contact);
+  return `<button type="button" class="cronosInfo cronosAuditInfo" data-tip="${cronosAttr(tip)}" aria-label="Ver histórico de ações" onclick="CRONOS_SHOW_AUDIT('entry','${eid}'); event.stopPropagation(); return false;">i</button>`;
+}
+function cronosExplainInfo(text, label="Explicação"){
+  return `<button type="button" class="cronosInfo" data-tip="${cronosAttr(text)}" aria-label="${cronosAttr(label)}" onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;">i</button>`;
+}
+let __cronosFloatingTipEl = null;
+let __cronosFloatingTipOwner = null;
+let __cronosFloatingTipPinned = false;
+let __cronosFloatingTipTimer = null;
+
+function cronosGetFloatingTipEl(){
+  if(__cronosFloatingTipEl && document.body?.contains(__cronosFloatingTipEl)) return __cronosFloatingTipEl;
+  const el = document.createElement("div");
+  el.id = "cronosFloatingTip";
+  el.className = "cronosFloatingTip";
+  el.setAttribute("role", "tooltip");
+  document.body.appendChild(el);
+  __cronosFloatingTipEl = el;
+  return el;
+}
+function cronosPlaceFloatingTip(anchor){
+  try{
+    const tip = cronosGetFloatingTipEl();
+    if(!anchor || !document.body.contains(anchor)) return;
+    const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+    const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+    const margin = 12;
+    const gap = 10;
+    tip.style.maxWidth = `${Math.max(180, Math.min(360, vw - margin * 2))}px`;
+    tip.style.left = "0px";
+    tip.style.top = "0px";
+    tip.classList.add("is-visible");
+
+    const r = anchor.getBoundingClientRect();
+    const tr = tip.getBoundingClientRect();
+    let left = r.left + (r.width / 2) - (tr.width / 2);
+    left = Math.max(margin, Math.min(left, vw - tr.width - margin));
+
+    let top = r.top - tr.height - gap;
+    if(top < margin){
+      top = r.bottom + gap;
+    }
+    if(top + tr.height > vh - margin){
+      top = Math.max(margin, vh - tr.height - margin);
+    }
+
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(top)}px`;
+  }catch(_){ }
+}
+function cronosShowFloatingTip(anchor, opts = {}){
+  try{
+    const text = anchor?.dataset?.tip || anchor?.getAttribute?.("title") || "";
+    if(!text) return;
+    clearTimeout(__cronosFloatingTipTimer);
+    const tip = cronosGetFloatingTipEl();
+    tip.textContent = text;
+    __cronosFloatingTipOwner = anchor;
+    __cronosFloatingTipPinned = !!opts.pinned;
+    cronosPlaceFloatingTip(anchor);
+    if(__cronosFloatingTipPinned){
+      __cronosFloatingTipTimer = setTimeout(()=>cronosHideFloatingTip(true), 6500);
+    }
+  }catch(_){ }
+}
+function cronosHideFloatingTip(force = false){
+  try{
+    if(__cronosFloatingTipPinned && !force) return;
+    clearTimeout(__cronosFloatingTipTimer);
+    __cronosFloatingTipPinned = false;
+    __cronosFloatingTipOwner = null;
+    if(__cronosFloatingTipEl){
+      __cronosFloatingTipEl.classList.remove("is-visible");
+    }
+  }catch(_){ }
+}
+function cronosInstallFloatingTips(){
+  if(window.__CRONOS_FLOATING_TIPS_INSTALLED__) return;
+  window.__CRONOS_FLOATING_TIPS_INSTALLED__ = true;
+
+  document.addEventListener("mouseover", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(!node) return;
+    cronosShowFloatingTip(node, {pinned:false});
+  }, true);
+
+  document.addEventListener("mouseout", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(!node) return;
+    const next = ev.relatedTarget?.closest?.(".cronosInfo[data-tip]");
+    if(next === node) return;
+    cronosHideFloatingTip(false);
+  }, true);
+
+  document.addEventListener("focusin", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(node) cronosShowFloatingTip(node, {pinned:false});
+  }, true);
+
+  document.addEventListener("focusout", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(node) cronosHideFloatingTip(false);
+  }, true);
+
+  document.addEventListener("pointerdown", (ev)=>{
+    const node = ev.target?.closest?.(".cronosInfo[data-tip]");
+    if(!node) cronosHideFloatingTip(true);
+  }, true);
+
+  window.addEventListener("resize", ()=>{
+    if(__cronosFloatingTipOwner) cronosPlaceFloatingTip(__cronosFloatingTipOwner);
+  }, {passive:true});
+
+  document.addEventListener("scroll", ()=>{
+    if(__cronosFloatingTipOwner) cronosPlaceFloatingTip(__cronosFloatingTipOwner);
+  }, true);
+}
+cronosInstallFloatingTips();
+
+window.CRONOS_SHOW_TIP = function(node){
+  try{
+    if(!node) return;
+    cronosShowFloatingTip(node, {pinned:true});
+  }catch(_){ }
+};
+window.CRONOS_SHOW_AUDIT = function(entityType, entityId){
+  try{
+    const db = loadDB();
+    const eid = String(entityId || "");
+    const entry = (db.entries || []).find(e=>String(e.id)===eid);
+    if(!entry) return toast("Histórico", "Registro não encontrado.");
+    const contact = (db.contacts || []).find(c=>String(c.id)===String(entry.contactId)) || null;
+    const recs = cronosEntryAuditRecords(db, entry).slice(0,60);
+    const fallback = !recs.length;
+    const rows = fallback
+      ? [{at: entry.createdAt || entry.firstContactAt || "", label:"Registro antigo", details:"Sem auditoria detalhada salva", actorName: entry.createdBy || contact?.createdBy || "—"}]
+      : recs;
+    openModal({
+      title:"Histórico de ações",
+      sub: contact?.name ? `${contact.name} • rastreabilidade do lead` : "Rastreabilidade do lead",
+      bodyHTML:`<div class="auditTimeline">${rows.map(r=>`
+        <div class="auditItem">
+          <div class="auditWhen">${escapeHTML(cronosFormatDateTime(r.at))}</div>
+          <div class="auditMain"><b>${escapeHTML(r.label || "Ação")}</b>${r.details ? `<span>${escapeHTML(r.details)}</span>` : ""}</div>
+          <div class="auditBy">Por: <b>${escapeHTML(r.actorName || "—")}</b></div>
+        </div>`).join("")}</div>`,
+      footHTML:`<button type="button" class="btn" onclick="closeModal()">Fechar</button>`,
+      maxWidth:"760px"
+    });
+  }catch(err){
+    console.warn("Falha ao abrir auditoria", err);
+    toast("Histórico", "Não consegui abrir agora.");
+  }
+};
+
+function normPhone(s){
+  return String(s||"").replace(/\D/g,"");
+}
+function formatPhoneBR(v){
+  const s = normPhone(v).slice(0, 11);
+  if(!s) return "";
+  if(s.length <= 2) return `(${s}`;
+  const ddd = s.slice(0, 2);
+  const rest = s.slice(2);
+  if(s.length <= 6) return `(${ddd}) ${rest}`;
+  if(s.length <= 10) return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+  return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5, 9)}`;
+}
+function formatCPFInput(v){
+  const s = String(v||"").replace(/\D/g,"").slice(0, 11);
+  if(s.length <= 3) return s;
+  if(s.length <= 6) return `${s.slice(0, 3)}.${s.slice(3)}`;
+  if(s.length <= 9) return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6)}`;
+  return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9, 11)}`;
+}
+function monthKeyFromDate(iso){
+  if(!iso) return todayISO().slice(0,7);
+  return iso.slice(0,7);
+}
+function monthLabel(key){
+  const [y,m] = key.split("-");
+  const nomes = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+  return `${nomes[Number(m)-1]} ${y}`;
+}
+function formatCPF(v){
+  const s = String(v||"").replace(/\D/g,"").slice(0,11);
+  if(s.length !== 11) return formatCPFInput(v);
+  return s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+}
+function calcAgeFromISO(iso){
+  const s = String(iso||"").trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y,m,d] = s.split("-").map(Number);
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  const passed = (now.getMonth()+1 > m) || ((now.getMonth()+1 === m) && now.getDate() >= d);
+  if(!passed) age -= 1;
+  return (Number.isFinite(age) && age >= 0 && age < 130) ? age : null;
+}
+function birthWithAgeLabel(iso){
+  const s = String(iso||"").trim();
+  if(!s) return "";
+  const birth = fmtBR(s);
+  const age = calcAgeFromISO(s);
+  return age == null ? birth : `${birth} · ${age} anos`;
+}
+
+/* -------- Tema claro/escuro -------- */
+function applyTheme(theme){
+  const root = document.documentElement;
+  const body = document.body;
+  const isLight = theme === "light";
+
+  // Evita o "flash cinza" nas contagens do menu lateral durante troca de tema.
+  // A classe dura só o tempo da troca visual e congela as pílulas no estado correto.
+  try{
+    clearTimeout(window.__CRONOS_THEME_SWITCH_TIMER__);
+    root.classList.add("cronos-theme-switching", "themeSwitching");
+    if(body) body.classList.add("cronos-theme-switching", "themeSwitching");
+    // A troca visual precisa ser atômica: congela transições por poucos frames
+    // para evitar sidebar/botões claros atrasados no modo escuro.
+    window.__CRONOS_THEME_SWITCH_TIMER__ = setTimeout(()=>{
+      try{
+        root.classList.remove("cronos-theme-switching", "themeSwitching");
+        if(document.body) document.body.classList.remove("cronos-theme-switching", "themeSwitching");
+      }catch(_){ }
+    }, 120);
+  }catch(_){ }
+
+  if(isLight){
+    root.classList.add("light");
+    if(body) body.classList.add("light");
+    setThemeIcons("☾");
+  }else{
+    root.classList.remove("light");
+    if(body) body.classList.remove("light");
+    setThemeIcons("☼");
+  }
+  try{ root.style.colorScheme = isLight ? "light" : "dark"; }catch(_){ }
+  try{
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if(meta) meta.setAttribute("content", isLight ? "#dbeafe" : "#0f172a");
+  }catch(_){ }
+  localStorage.setItem(THEMEKEY, isLight ? "light" : "dark");
+
+  const syncInjectedThemeBits = ()=>{
+    try{
+      if(window.CRONOS_TODAY && typeof window.CRONOS_TODAY.syncNavBadgeStyle === "function"){
+        window.CRONOS_TODAY.syncNavBadgeStyle();
+      }
+    }catch(_){ }
+  };
+  try{
+    syncInjectedThemeBits();
+    requestAnimationFrame(syncInjectedThemeBits);
+    setTimeout(syncInjectedThemeBits, 80);
+  }catch(_){ }
+}
+function setThemeIcons(icon){
+  const a = el("themeToggle"); const b = el("themeToggleAuth");
+  if(a) a.innerHTML = `<small>${icon}</small>`;
+  if(b) b.innerHTML = `<small>${icon}</small>`;
+}
+function repaintDashboardChartsForTheme(){
+  try{
+    const dash = el("view-dashboard");
+    if(!dash || dash.classList.contains("hidden")) return;
+    requestAnimationFrame(()=>{
+      try{ renderDashboardCharts(filteredEntries()); }catch(_){ try{ renderDashboard(); }catch(__){} }
+    });
+  }catch(_){ }
+}
+function toggleTheme(){
+  const cur = localStorage.getItem(THEMEKEY) || "dark";
+  applyTheme(cur === "dark" ? "light" : "dark");
+  repaintDashboardChartsForTheme();
+}
+
+/* -------- Estrutura de dados --------
+db = {
+  masters: [{id,name,email,passHash,createdAt}],
+  users: [{id,masterId,name,username,email,passHash,role,createdAt}],
+  contacts: [{id, masterId, name, phone, cpf, birthDate, firstSeenAt, lastSeenAt}],
+  entries: [{id, masterId, contactId, monthKey, firstContactAt, lastUpdateAt, status, origin, originOther,
+            treatment, treatmentOther, city, notes, apptDate, apptTime, callAttempts, callResult,
+            tags:[], statusLog:[{at,from,to,by}]}],
+  settings: {}
+}
+*/
+function freshDB(){
+  return { masters:[], users:[], contacts:[], entries:[], tasks:[], payments:[], activityLog:[], settings:{ waTemplate: "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊" }, version:"cloud_v1", createdAt:new Date().toISOString() };
+}
+
+const CLOUD_TABLE = "clinic_state";
+const CLOUD_MEMBERS_TABLE = "clinic_members";
+let DB = null;
+let CLOUD_DB_READY = false;
+let CLOUD_ROW_ID = null;
+let CLOUD_OWNER_UID = null;
+let CLOUD_OWNER_EMAIL = "";
+let CLOUD_CLINIC_OWNER_UID = null;
+let CLOUD_CLINIC_OWNER_EMAIL = "";
+let CLOUD_ACCESS_KIND = "guest"; // owner | member | guest
+let CLOUD_MEMBER_INFO = null;
+let __localMemoryDB = null; // fallback para clínicas grandes quando localStorage estoura
+let __localCacheDisabledForLargeDB = false; // evita tentar gravar base grande no localStorage infinitamente
+let __localCacheQuotaWarned = false;
+let CLOUD_LOAD_TEMPORARY_FAILURE = false; // falha de leitura/timeout não é "usuário sem vínculo"
+let CLOUD_LAST_LOAD_ERROR = null;
+
+// FASE 2: fontes estruturadas para contatos/leads. A interface ainda opera com arrays
+// em memória nesta ponte inicial, mas a persistência passa a ser por tabela quando ativada.
+const CLOUD_DATA_SOURCES_TABLE = "clinic_data_sources";
+const CLOUD_CONTACTS_V2_TABLE = "clinic_contacts";
+const CLOUD_LEADS_V2_TABLE = "clinic_leads";
+let CLOUD_CLINIC_ID = "";
+let CLOUD_DATA_SOURCES = {
+  contacts_source: "legacy_json",
+  leads_source: "legacy_json",
+  payments_source: "legacy_json",
+  tasks_source: "legacy_json",
+  patient_files_source: "legacy_json"
+};
+let __v2Snapshots = { contacts: new Map(), entries: new Map() };
+let __cloudSaveTimer = null;
+let __cloudSavePromise = null;
+let __cloudSaveRevision = 0;
+let __cloudSaveRunning = false;
+let __cloudToastSuppressedUntil = 0;
+
+function suppressCloudFailureToasts(ms=6000){
+  __cloudToastSuppressedUntil = Math.max(__cloudToastSuppressedUntil || 0, Date.now() + Number(ms || 0));
+}
+
+function shouldSuppressCloudFailureToast(){
+  return Date.now() < (__cloudToastSuppressedUntil || 0)
+    || CLOUD_ACCESS_KIND === "member_pending"
+    || CLOUD_ACCESS_KIND === "member_inactive"
+    || window.__CRONOS_LOGIN_BUSY__ === true;
+}
+
+function cancelPendingCloudSync(){
+  if(__cloudSaveTimer){
+    clearTimeout(__cloudSaveTimer);
+    __cloudSaveTimer = null;
+  }
+}
+
+const SUPPORT_STORAGE_KEY = "cronos_support_context";
+const SUPPORT_DBKEY = "cronos_support_db";
+const SUPPORT_TOKEN_KEY = "cronos_support_token";
+let __supportMemoryContext = null;
+let __supportMemoryDB = null;
+let __supportStorageDisabledForLargeDB = false;
+let __supportStorageQuotaWarned = false;
+
+function getSupportContext(){
+  if(__supportMemoryContext) return __supportMemoryContext;
+  try{
+    return JSON.parse(sessionStorage.getItem(SUPPORT_STORAGE_KEY) || "null");
+  }catch(_){
+    return null;
+  }
+}
+function setSupportContext(ctx){
+  __supportMemoryContext = ctx || null;
+  if(!ctx){
+    try{ sessionStorage.removeItem(SUPPORT_STORAGE_KEY); }catch(_){}
+    return;
+  }
+
+  // O contexto de suporte pode vir com data gigante. Guardar isso inteiro no
+  // sessionStorage estoura a cota e deixa o modo suporte instável. A memória da aba
+  // guarda o objeto completo; no sessionStorage fica só o metadado leve.
+  try{
+    const lightCtx = { ...ctx };
+    delete lightCtx.data;
+    sessionStorage.setItem(SUPPORT_STORAGE_KEY, JSON.stringify(lightCtx));
+  }catch(_){
+    // Em clínicas grandes, sessionStorage pode estourar. A memória da aba continua valendo.
+  }
+}
+function getSupportDB(){
+  if(__supportMemoryDB) return normalizeDBShape(__supportMemoryDB);
+  try{
+    return normalizeDBShape(JSON.parse(sessionStorage.getItem(SUPPORT_DBKEY) || "null"));
+  }catch(_){
+    return null;
+  }
+}
+function setSupportDB(db){
+  if(!db){
+    __supportMemoryDB = null;
+    __supportStorageDisabledForLargeDB = false;
+    try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
+    return;
+  }
+
+  const normalized = normalizeDBShape(db);
+  __supportMemoryDB = normalized;
+
+  if(__supportStorageDisabledForLargeDB) return;
+
+  try{
+    const serialized = JSON.stringify(normalized);
+
+    // Evita bater no limite do sessionStorage toda hora. O modo suporte continua
+    // usando a memória da aba, que é suficiente enquanto a aba está aberta.
+    if(serialized.length > 2_500_000){
+      __supportStorageDisabledForLargeDB = true;
+      if(!__supportStorageQuotaWarned){
+        __supportStorageQuotaWarned = true;
+        console.warn("Cronos suporte: base grande demais para sessionStorage. Mantendo em memória da aba.");
+      }
+      try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
+      return;
+    }
+
+    sessionStorage.setItem(SUPPORT_DBKEY, serialized);
+  }catch(err){
+    __supportStorageDisabledForLargeDB = true;
+    if(!__supportStorageQuotaWarned){
+      __supportStorageQuotaWarned = true;
+      console.warn("Cronos suporte: base grande demais para sessionStorage. Mantendo em memória da aba.", err);
+    }
+    try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
+  }
+}
+function clearSupportContext(){
+  __supportMemoryContext = null;
+  __supportMemoryDB = null;
+  __supportStorageDisabledForLargeDB = false;
+  try{ sessionStorage.removeItem(SUPPORT_STORAGE_KEY); }catch(_){}
+  try{ sessionStorage.removeItem(SUPPORT_DBKEY); }catch(_){}
+  try{ sessionStorage.removeItem(SUPPORT_TOKEN_KEY); }catch(_){}
+}
+function isSupportMode(){
+  return !!getSupportContext();
+}
+
+function supportSourceIsV2(support, collection){
+  const key = collection === "contacts" ? "contacts_source" : "leads_source";
+  return String(support?.data_sources?.[key] || "legacy_json") === "tables_v2";
+}
+
+function validateSupportHydration(support){
+  if(!support || !support.data || typeof support.data !== "object"){
+    return { ok:false, message:"Acesso de suporte validado, mas os dados da clínica não foram retornados." };
+  }
+
+  const hydration = support.v2_hydration || {};
+  const problems = [];
+
+  if(supportSourceIsV2(support, "contacts")){
+    const rows = Array.isArray(support.data.contacts) ? support.data.contacts.length : -1;
+    const expected = Number(hydration.contacts_count);
+    if(hydration.contacts_ready !== true || rows < 0 || !Number.isFinite(expected) || rows !== expected){
+      problems.push("contatos");
+    }
+  }
+
+  if(supportSourceIsV2(support, "entries")){
+    const rows = Array.isArray(support.data.entries) ? support.data.entries.length : -1;
+    const expected = Number(hydration.leads_count);
+    if(hydration.leads_ready !== true || rows < 0 || !Number.isFinite(expected) || rows !== expected){
+      problems.push("leads");
+    }
+  }
+
+  if(problems.length){
+    return {
+      ok:false,
+      message:`A clínica ainda não terminou de carregar ${problems.join(" e ")} pelo modo suporte.`
+    };
+  }
+
+  return { ok:true };
+}
+
+async function fetchSupportAccessReady(supportToken, maxAttempts=3){
+  let lastError = null;
+
+  for(let attempt = 1; attempt <= maxAttempts; attempt++){
+    try{
+      const res = await fetch(`${supabaseUrl}/functions/v1/resolve-support-access`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": supabaseKey
+        },
+        body: JSON.stringify({ support_token: supportToken })
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if(!res.ok){
+        throw new Error(json?.error || "Falha ao validar o acesso de suporte.");
+      }
+
+      const support = json.support || null;
+      if(!support){
+        throw new Error("Acesso de suporte validado, mas sem dados de suporte.");
+      }
+
+      const validation = validateSupportHydration(support);
+      if(!validation.ok){
+        throw new Error(validation.message);
+      }
+
+      return support;
+    }catch(error){
+      lastError = error;
+      if(attempt < maxAttempts){
+        setSupportEntryLoading(
+          true,
+          `Modo suporte • Carregando dados da clínica (${attempt + 1}/${maxAttempts})...`
+        );
+        await new Promise(resolve => setTimeout(resolve, attempt * 900));
+      }
+    }
+  }
+
+  throw lastError || new Error("Não foi possível carregar os dados da clínica no modo suporte.");
+}
+
+async function maybeInitSupportMode(){
+  const params = new URLSearchParams(location.search);
+  const tokenFromUrl = params.get("support_token");
+  let tokenFromSession = "";
+  try{ tokenFromSession = sessionStorage.getItem(SUPPORT_TOKEN_KEY) || ""; }catch(_){}
+
+  const supportToken = tokenFromUrl || tokenFromSession;
+
+  // Sem token novo nem token lembrado, mantém o contexto leve se existir.
+  if(!supportToken) return getSupportContext();
+
+  // Se ainda há DB válido de suporte na memória/sessionStorage, não precisa revalidar.
+  if(!tokenFromUrl){
+    const ctx = getSupportContext();
+    const cachedDB = getSupportDB();
+    const validation = validateSupportHydration({
+      ...ctx,
+      data: cachedDB || ctx?.data,
+      v2_hydration: ctx?.v2_hydration
+    });
+    const cachedSize = ((cachedDB?.contacts || []).length || 0) + ((cachedDB?.entries || []).length || 0);
+    if(ctx && validation.ok && (cachedSize > 0 || !supportSourceIsV2(ctx, "contacts") && !supportSourceIsV2(ctx, "entries"))){
+      return ctx;
+    }
+  }
+
+  // Link de suporte tem prioridade absoluta sobre qualquer login/cache já aberto nessa aba.
+  if(tokenFromUrl){
+    clearSupportContext();
+    clearSession();
+  }
+
+  resetCloudContext();
+  DB = null;
+  CLOUD_DB_READY = false;
+
+  try{ sessionStorage.setItem(SUPPORT_TOKEN_KEY, supportToken); }catch(_){}
+
+  // Só grava contexto/DB e só libera a interface depois que a Edge confirmar
+  // que a hidratação V2 veio completa. Nunca renderiza clínica zerada por carga parcial.
+  const support = await fetchSupportAccessReady(supportToken, 3);
+
+  setCloudDataSourcesFromRow(support.data_sources || null, support.clinic_id || "");
+  setSupportContext(support);
+  setSupportDB(support.data);
+  if(usesAnyClinicTableV2()) captureV2Snapshots(support.data);
+
+  // Esconde o token da barra, mas mantém no sessionStorage para F5 do suporte.
+  if(tokenFromUrl){
+    history.replaceState({}, "", location.pathname);
+  }
+
+  return support;
+}
+
+
+const ACCESS_STATUS_ENDPOINT = "get-clinic-access-state";
+const RENEWAL_CONTACT_ENDPOINT = "get-renewal-contact";
+const CREATE_CLINIC_USER_ENDPOINT = "create-clinic-user"; // criação e gestão segura por Masters
+const DEFAULT_RENEWAL_MESSAGE = "Olá! O acesso da clínica [CLINICA] ao Cronos expirou e quero regularizar a renovação.";
+const DEFAULT_BLOCKED_FEATURE_MESSAGE = "Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].";
+let CLINIC_ACCESS_STATE = null;
+let CLINIC_RENEWAL_CONTACT = null;
+
+function parseAccessDate(value){
+  if(!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function startOfLocalDay(date){
+  if(!date) return null;
+  const copy = new Date(date);
+  copy.setHours(0,0,0,0);
+  return copy;
+}
+function daysUntilCalendar(endDate){
+  if(!endDate) return null;
+  const today = startOfLocalDay(new Date());
+  const endDay = startOfLocalDay(endDate);
+  return Math.round((endDay.getTime() - today.getTime()) / 86400000);
+}
+function normalizeAccessStatus(value){
+  return String(value || "active").trim().toLowerCase();
+}
+function fillSupportMessageTemplate(template, access, featureLabel=""){
+  const clinicName = String(access?.clinic_name || "").trim() || "Minha clínica";
+  const slug = String(access?.slug || "").trim();
+  const feature = String(featureLabel || "").trim() || "recurso";
+  return String(template || "")
+    .replaceAll("[CLINICA]", clinicName)
+    .replaceAll("{clinica}", clinicName)
+    .replaceAll("{clinic_name}", clinicName)
+    .replaceAll("[RECURSO]", feature)
+    .replaceAll("{recurso}", feature)
+    .replaceAll("{slug}", slug);
+}
+function buildRenewalWhatsappUrl(access, kind="expired", featureLabel=""){
+  const source = { ...(CLINIC_RENEWAL_CONTACT || {}), ...(access || {}) };
+  const phone = String(source?.renewal_phone || source?.whatsapp || "").replace(/\D/g, "");
+  if(!phone) return "";
+  const isFeature = kind === "feature";
+  const template = isFeature
+    ? String(source?.blocked_message || source?.blockedMessage || DEFAULT_BLOCKED_FEATURE_MESSAGE)
+    : String(source?.renewal_message || source?.expired_message || source?.expiredMessage || DEFAULT_RENEWAL_MESSAGE);
+  const message = fillSupportMessageTemplate(template, source, featureLabel);
+  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+async function fetchRenewalContact(accessToken){
+  if(!accessToken) return null;
+  try{
+    const res = await fetch(`${supabaseUrl}/functions/v1/${RENEWAL_CONTACT_ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+        "apikey": supabaseKey
+      },
+      body: JSON.stringify({})
+    });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(json?.error || "Falha ao carregar contato de renovação.");
+    const settings = json?.settings || null;
+    if(!settings) return null;
+    CLINIC_RENEWAL_CONTACT = {
+      support_name: String(settings.support_name || "Cronos Odonto"),
+      renewal_phone: String(settings.whatsapp || ""),
+      renewal_message: String(settings.expired_message || DEFAULT_RENEWAL_MESSAGE),
+      blocked_message: String(settings.blocked_message || DEFAULT_BLOCKED_FEATURE_MESSAGE)
+    };
+    return CLINIC_RENEWAL_CONTACT;
+  }catch(error){
+    console.warn("Contato de renovação não pôde ser carregado:", error);
+    return null;
+  }
+}
+function clearClinicAccessState(){
+  CLINIC_ACCESS_STATE = null;
+  CLINIC_RENEWAL_CONTACT = null;
+}
+async function fetchClinicAccessState(force=false){
+  if(isSupportMode()) return null;
+  const cachedAccess = CLINIC_ACCESS_STATE;
+  if(cachedAccess && !force){
+    return cachedAccess;
+  }
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
+  const sessionResp = await supabaseClient.auth.getSession();
+  const session = sessionResp?.data?.session;
+  if(!session?.access_token) return null;
+
+  try{
+    const res = await fetch(`${supabaseUrl}/functions/v1/${ACCESS_STATUS_ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session.access_token}`,
+        "apikey": supabaseKey
+      },
+      body: JSON.stringify({})
+    });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){
+      throw new Error(json?.error || "Falha ao validar o período de acesso.");
+    }
+    const renewalContact = await fetchRenewalContact(session.access_token);
+    CLINIC_ACCESS_STATE = { ...(json?.access || {}), ...(renewalContact || {}) };
+    return CLINIC_ACCESS_STATE;
+  }catch(error){
+    console.error("Falha ao consultar período de acesso:", error);
+    toast("Aviso", "Não foi possível validar o período de acesso agora.");
+    return null;
+  }
+}
+function evaluateClinicAccessState(access){
+  if(!access) return { mode: "allow", warn: false, daysLeft: null, access: null };
+  const now = new Date();
+  const status = normalizeAccessStatus(access.status);
+  const startsAt = parseAccessDate(access.access_starts_at);
+  const endsAt = parseAccessDate(access.access_ends_at);
+
+  if(status === "blocked" || status === "inactive"){
+    return { mode: "blocked", warn: false, daysLeft: null, access, startsAt, endsAt };
+  }
+  if(startsAt && now < startsAt){
+    return { mode: "scheduled", warn: false, daysLeft: null, access, startsAt, endsAt };
+  }
+  if(endsAt && now > endsAt){
+    return { mode: "expired", warn: false, daysLeft: -1, access, startsAt, endsAt };
+  }
+
+  const daysLeft = endsAt ? daysUntilCalendar(endsAt) : null;
+  if(daysLeft !== null && [3,2,1,0].includes(daysLeft)){
+    return { mode: "allow", warn: true, daysLeft, access, startsAt, endsAt };
+  }
+
+  return { mode: "allow", warn: false, daysLeft, access, startsAt, endsAt };
+}
+function fmtDateTimeLocal(value){
+  if(!value) return "—";
+  const date = value instanceof Date ? value : new Date(value);
+  if(Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("pt-BR", {
+    day:"2-digit", month:"2-digit", year:"numeric",
+    hour:"2-digit", minute:"2-digit"
+  });
+}
+function renderAccessMeta(decision){
+  const rows = [];
+  const access = decision?.access || {};
+  if(access?.clinic_name){
+    rows.push(`<div><strong>Clínica:</strong> ${escapeHTML(String(access.clinic_name))}</div>`);
+  }
+  if(decision?.startsAt){
+    rows.push(`<div><strong>Início:</strong> ${fmtDateTimeLocal(decision.startsAt)}</div>`);
+  }
+  if(decision?.endsAt){
+    rows.push(`<div><strong>Validade:</strong> ${fmtDateTimeLocal(decision.endsAt)}</div>`);
+  }
+  return rows.join("") || `<div>Nenhuma informação adicional disponível.</div>`;
+}
+function hideAccessNotice(){
+  el("accessNoticeModal")?.classList.remove("show");
+}
+function showAccessNotice(decision){
+  if(!decision?.warn) return;
+  const access = decision.access || {};
+  const daysLeft = Number(decision.daysLeft);
+  const title = daysLeft === 0
+    ? "Seu acesso expira hoje"
+    : `Seu acesso expira em ${daysLeft} ${daysLeft === 1 ? "dia" : "dias"}`;
+  const text = daysLeft === 0
+    ? "Renove hoje para evitar o bloqueio do sistema."
+    : "Renove com antecedência para evitar interrupções no uso do Cronos.";
+
+  el("accessNoticeTitle").textContent = title;
+  el("accessNoticeText").textContent = text;
+  el("accessNoticeDays").textContent = daysLeft === 0
+    ? "⏳ Expira hoje"
+    : `⏳ Faltam ${daysLeft} ${daysLeft === 1 ? "dia" : "dias"}`;
+
+  const waUrl = buildRenewalWhatsappUrl(access);
+  const waBtn = el("btnAccessNoticeWhatsapp");
+  if(waBtn){
+    if(waUrl){
+      waBtn.href = waUrl;
+      waBtn.classList.remove("hidden");
+    }else{
+      waBtn.classList.add("hidden");
+      waBtn.removeAttribute("href");
+    }
+  }
+
+  el("accessNoticeModal").classList.add("show");
+}
+function showAccessGate(decision){
+  hideBootSplash();
+  const access = decision?.access || {};
+  const mode = decision?.mode || "blocked";
+
+  el("authView").classList.add("hidden");
+  el("appView").classList.add("hidden");
+  el("accessGateView").classList.remove("hidden");
+  hideAccessNotice();
+
+  const badgeMap = { expired: "⛔", blocked: "🔒", scheduled: "⏳" };
+  const titleMap = {
+    expired: "Seu acesso expirou",
+    blocked: "Seu acesso está bloqueado",
+    scheduled: "Seu acesso ainda não iniciou"
+  };
+  const textMap = {
+    expired: "Para voltar a usar o Cronos, renove seu acesso com nossa equipe e envie o comprovante de pagamento.",
+    blocked: "Entre em contato com nossa equipe para regularizar e reativar seu acesso ao Cronos.",
+    scheduled: "Seu período de acesso ainda não começou. Fale com nossa equipe se precisar antecipar ou confirmar a liberação."
+  };
+
+  el("accessGateBadge").textContent = badgeMap[mode] || "⏳";
+  el("accessGateTitle").textContent = titleMap[mode] || "Acesso indisponível";
+  el("accessGateSubtitle").textContent = access?.clinic_name ? `Clínica: ${access.clinic_name}` : "Verifique o período de acesso da clínica.";
+  el("accessGateText").textContent = textMap[mode] || "Seu acesso está temporariamente indisponível.";
+  el("accessGateMeta").innerHTML = renderAccessMeta(decision);
+
+  const renewBtn = el("btnRenewAccessWhatsapp");
+  const waUrl = buildRenewalWhatsappUrl(access);
+  if(renewBtn){
+    if(waUrl){
+      renewBtn.href = waUrl;
+      renewBtn.classList.remove("hidden");
+    }else{
+      renewBtn.classList.add("hidden");
+      renewBtn.removeAttribute("href");
+    }
+  }
+}
+function hideAccessGate(){
+  el("accessGateView")?.classList.add("hidden");
+}
+async function applyClinicAccessRules(){
+  if(isSupportMode()){
+    hideAccessGate();
+    hideAccessNotice();
+    clearClinicAccessState();
+    return { mode:"allow", warn:false, support:true };
+  }
+  const access = await fetchClinicAccessState(true);
+  const decision = evaluateClinicAccessState(access);
+  if(decision.mode !== "allow"){
+    showAccessGate(decision);
+    return decision;
+  }
+  hideAccessGate();
+  if(decision.warn){
+    showAccessNotice(decision);
+  }else{
+    hideAccessNotice();
+  }
+  return decision;
+}
+
+function resetCloudContext(){
+  CLOUD_DB_READY = false;
+  CLOUD_ROW_ID = null;
+  CLOUD_OWNER_UID = null;
+  CLOUD_OWNER_EMAIL = "";
+  CLOUD_CLINIC_OWNER_UID = null;
+  CLOUD_CLINIC_OWNER_EMAIL = "";
+  CLOUD_ACCESS_KIND = "guest";
+  CLOUD_MEMBER_INFO = null;
+  CLOUD_LOAD_TEMPORARY_FAILURE = false;
+  CLOUD_LAST_LOAD_ERROR = null;
+  CLOUD_CLINIC_ID = "";
+  CLOUD_DATA_SOURCES = {
+    contacts_source: "legacy_json",
+    leads_source: "legacy_json",
+    payments_source: "legacy_json",
+    tasks_source: "legacy_json",
+    patient_files_source: "legacy_json"
+  };
+  __v2Snapshots = { contacts: new Map(), entries: new Map() };
+}
+
+function normalizeDBShape(db){
+  const base = freshDB();
+  const out = (db && typeof db === "object") ? { ...base, ...db } : base;
+  if(!Array.isArray(out.masters)) out.masters = [];
+  if(!Array.isArray(out.users)) out.users = [];
+  if(!Array.isArray(out.contacts)) out.contacts = [];
+  if(!Array.isArray(out.entries)) out.entries = [];
+  if(!Array.isArray(out.tasks)) out.tasks = [];
+  if(!Array.isArray(out.payments)) out.payments = [];
+  if(!Array.isArray(out.activityLog)) out.activityLog = [];
+  if(!out.settings || typeof out.settings !== "object") out.settings = {};
+  if(typeof out.settings.waTemplate !== "string" || !out.settings.waTemplate.trim()){
+    out.settings.waTemplate = base.settings.waTemplate;
+  }
+  if(!out.version) out.version = "cloud_v2";
+  if(!out.createdAt) out.createdAt = new Date().toISOString();
+  return out;
+}
+
+function isClinicSourceV2(kind){
+  const key = kind === "contacts" ? "contacts_source" : "leads_source";
+  return String(CLOUD_DATA_SOURCES?.[key] || "legacy_json") === "tables_v2";
+}
+function usesAnyClinicTableV2(){
+  return isClinicSourceV2("contacts") || isClinicSourceV2("entries");
+}
+function setCloudDataSourcesFromRow(row, clinicId=""){
+  CLOUD_CLINIC_ID = String(clinicId || row?.clinic_id || CLOUD_CLINIC_ID || "").trim();
+  CLOUD_DATA_SOURCES = {
+    contacts_source: String(row?.contacts_source || "legacy_json"),
+    leads_source: String(row?.leads_source || "legacy_json"),
+    payments_source: String(row?.payments_source || "legacy_json"),
+    tasks_source: String(row?.tasks_source || "legacy_json"),
+    patient_files_source: String(row?.patient_files_source || "legacy_json")
+  };
+}
+function v2Fingerprint(item){
+  try{ return JSON.stringify(item || {}); }catch(_){ return String(item?.id || ""); }
+}
+function captureV2Snapshots(db){
+  const normalized = normalizeDBShape(db || freshDB());
+  __v2Snapshots = {
+    contacts: new Map((normalized.contacts || []).filter(x=>x?.id).map(x=>[String(x.id), v2Fingerprint(x)])),
+    entries: new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), v2Fingerprint(x)]))
+  };
+}
+function removeV2CollectionsFromObject(db){
+  const out = normalizeDBShape(db || freshDB());
+  const compact = { ...out };
+  if(isClinicSourceV2("contacts")) delete compact.contacts;
+  if(isClinicSourceV2("entries")) delete compact.entries;
+  return compact;
+}
+function v2Text(value){
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+function v2Date(value){
+  const raw = String(value || "").trim().slice(0,10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+function v2Time(value){
+  const raw = String(value || "").trim();
+  return /^([01]\d|2[0-3]):[0-5]\d/.test(raw) ? raw.slice(0,5) : null;
+}
+function v2Money(value){
+  if(value === null || value === undefined || String(value).trim() === "") return null;
+  try{
+    if(typeof parseMoney === "function"){
+      const parsed = Number(parseMoney(value));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+  }catch(_){}
+  let raw = String(value).replace(/[^\d,.-]/g, "");
+  if(raw.includes(",")) raw = raw.replace(/\./g, "").replace(",", ".");
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function contactToV2Row(contact){
+  return {
+    clinic_id: CLOUD_CLINIC_ID,
+    id: String(contact.id),
+    name: String(contact.name || ""),
+    phone: v2Text(contact.phone),
+    cpf: v2Text(contact.cpf || contact.cpfDigits),
+    birth_date: v2Date(contact.birthDate || contact.nascimento),
+    email: v2Text(contact.email),
+    legacy_payload: contact
+  };
+}
+function leadToV2Row(entry){
+  return {
+    clinic_id: CLOUD_CLINIC_ID,
+    id: String(entry.id),
+    contact_id: v2Text(entry.contactId),
+    status: String(entry.status || ""),
+    origin: String(entry.origin || ""),
+    origin_other: String(entry.originOther || ""),
+    treatment: String(entry.treatment || ""),
+    treatment_other: String(entry.treatmentOther || ""),
+    priority: String(entry.priority || ""),
+    first_contact_at: v2Date(entry.firstContactAt),
+    appointment_date: v2Date(entry.apptDate),
+    appointment_time: v2Time(entry.apptTime),
+    month_key: v2Text(entry.monthKey),
+    city: String(entry.city || ""),
+    budget_value: v2Money(entry.valueBudget ?? entry.valueEstimated),
+    paid_value: v2Money(entry.valuePaid),
+    closed_value: v2Money(entry.valueClosed),
+    notes: String(entry.notes || ""),
+    tags: Array.isArray(entry.tags) ? entry.tags : [],
+    status_log: Array.isArray(entry.statusLog) ? entry.statusLog : [],
+    legacy_payload: entry
+  };
+}
+async function loadCurrentClinicDataSources(){
+  if(isSupportMode()){
+    const support = getSupportContext();
+    setCloudDataSourcesFromRow(support?.data_sources || null, support?.clinic_id || "");
+    return CLOUD_DATA_SOURCES;
+  }
+  const { data, error } = await supabaseClient
+    .from(CLOUD_DATA_SOURCES_TABLE)
+    .select("clinic_id, clinic_name, contacts_source, leads_source, payments_source, tasks_source, patient_files_source")
+    .limit(2);
+  if(error) throw error;
+  const rows = Array.isArray(data) ? data : [];
+  if(rows.length === 1){
+    setCloudDataSourcesFromRow(rows[0], rows[0].clinic_id);
+  }else if(rows.length === 0){
+    setCloudDataSourcesFromRow(null, "");
+  }else{
+    console.warn("Cronos V2: mais de uma fonte acessível no app clínico. Mantendo legacy_json por segurança.", rows);
+    setCloudDataSourcesFromRow(null, "");
+  }
+  return CLOUD_DATA_SOURCES;
+}
+async function fetchAllV2Payloads(tableName){
+  if(!CLOUD_CLINIC_ID) throw new Error("clinic_id não resolvido para leitura V2.");
+
+  const output = [];
+  const pageSize = 1000;
+  const maxParallelPages = 4;
+
+  const pushRows = (rows)=>{
+    (Array.isArray(rows) ? rows : []).forEach(row=>{
+      const payload = row?.legacy_payload && typeof row.legacy_payload === "object"
+        ? { ...row.legacy_payload }
+        : {};
+      payload.id = payload.id || row.id;
+      output.push(payload);
+    });
+  };
+
+  const fetchPage = async (start, withCount=false)=>{
+    const query = supabaseClient
+      .from(tableName)
+      .select("id, legacy_payload", withCount ? { count:"exact" } : undefined)
+      .eq("clinic_id", CLOUD_CLINIC_ID)
+      .range(start, start + pageSize - 1);
+
+    const { data, error, count } = await query;
+    if(error) throw error;
+    return { rows: Array.isArray(data) ? data : [], count: Number.isFinite(count) ? count : null };
+  };
+
+  // V21: antes o Cronos buscava as páginas V2 uma por uma. Em clínica grande
+  // isso fazia o F5 parecer que foi buscar café em outra cidade. Agora a primeira
+  // página vem com contagem total e as demais páginas são baixadas em lotes paralelos.
+  const first = await fetchPage(0, true);
+  pushRows(first.rows);
+
+  if(Number.isFinite(first.count) && first.count > first.rows.length){
+    const starts = [];
+    for(let start = pageSize; start < first.count; start += pageSize){
+      starts.push(start);
+    }
+
+    for(let i = 0; i < starts.length; i += maxParallelPages){
+      const batch = starts.slice(i, i + maxParallelPages);
+      const pages = await Promise.all(batch.map(start => fetchPage(start, false)));
+      pages.forEach(page => pushRows(page.rows));
+    }
+
+    return output;
+  }
+
+  // Fallback: se o Supabase não devolver count por algum motivo, mantém o
+  // comportamento antigo e seguro, sem risco de cortar a base pela metade.
+  if(first.rows.length >= pageSize){
+    for(let start = pageSize; ; start += pageSize){
+      const page = await fetchPage(start, false);
+      pushRows(page.rows);
+      if(page.rows.length < pageSize) break;
+    }
+  }
+
+  return output;
+}
+async function hydrateClinicArraysFromTables(db){
+  const loaded = normalizeDBShape(db || freshDB());
+
+  // V21: contatos e leads não precisam esperar um pelo outro. Baixamos em paralelo
+  // para reduzir o tempo do F5/login sem voltar a mostrar contagem antiga na tela.
+  const jobs = [];
+
+  if(isClinicSourceV2("contacts")){
+    jobs.push(fetchAllV2Payloads(CLOUD_CONTACTS_V2_TABLE).then(rows=>{ loaded.contacts = rows; }));
+  }
+  if(isClinicSourceV2("entries")){
+    jobs.push(fetchAllV2Payloads(CLOUD_LEADS_V2_TABLE).then(rows=>{ loaded.entries = rows; }));
+  }
+
+  if(jobs.length){
+    await Promise.all(jobs);
+  }
+
+  captureV2Snapshots(loaded);
+  return loaded;
+}
+async function deleteV2Ids(tableName, ids){
+  if(isCRCRole(typeof currentActor === "function" ? currentActor() : null)){
+    throw new Error("A CRC não pode excluir contatos ou leads.");
+  }
+  for(let i=0; i<ids.length; i+=200){
+    const slice = ids.slice(i, i+200);
+    const { error } = await supabaseClient
+      .from(tableName)
+      .delete()
+      .eq("clinic_id", CLOUD_CLINIC_ID)
+      .in("id", slice);
+    if(error) throw error;
+  }
+}
+async function upsertV2Rows(tableName, rows){
+  const actor = (typeof currentActor === "function") ? currentActor() : null;
+  if(isCRCRole(actor) && [CLOUD_CONTACTS_V2_TABLE, CLOUD_LEADS_V2_TABLE].includes(tableName)){
+    const rpcName = tableName === CLOUD_CONTACTS_V2_TABLE
+      ? "cronos_v2_crc_upsert_contact"
+      : "cronos_v2_crc_upsert_lead_commercial";
+    for(const row of rows){
+      const payload = row?.legacy_payload && typeof row.legacy_payload === "object" ? row.legacy_payload : {};
+      const { error } = await supabaseClient.rpc(rpcName, {
+        p_clinic_id: CLOUD_CLINIC_ID,
+        p_payload: payload
+      });
+      if(error) throw error;
+    }
+    return;
+  }
+
+  for(let i=0; i<rows.length; i+=200){
+    const { error } = await supabaseClient
+      .from(tableName)
+      .upsert(rows.slice(i, i+200), { onConflict: "clinic_id,id" });
+    if(error) throw error;
+  }
+}
+async function syncManagedCollectionsToV2(db){
+  if(!usesAnyClinicTableV2()) return true;
+  if(!CLOUD_CLINIC_ID) throw new Error("clinic_id não resolvido para salvar tabelas V2.");
+  const normalized = normalizeDBShape(db || freshDB());
+
+  if(isClinicSourceV2("contacts")){
+    const currentMap = new Map((normalized.contacts || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
+    const changed = Array.from(currentMap.entries())
+      .filter(([id, item])=>__v2Snapshots.contacts.get(id) !== v2Fingerprint(item))
+      .map(([, item])=>contactToV2Row(item));
+    const removed = Array.from(__v2Snapshots.contacts.keys()).filter(id=>!currentMap.has(id));
+    if(changed.length) await upsertV2Rows(CLOUD_CONTACTS_V2_TABLE, changed);
+    if(removed.length) await deleteV2Ids(CLOUD_CONTACTS_V2_TABLE, removed);
+  }
+
+  if(isClinicSourceV2("entries")){
+    const currentMap = new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
+    const changed = Array.from(currentMap.entries())
+      .filter(([id, item])=>__v2Snapshots.entries.get(id) !== v2Fingerprint(item))
+      .map(([, item])=>leadToV2Row(item));
+    const removed = Array.from(__v2Snapshots.entries.keys()).filter(id=>!currentMap.has(id));
+    if(changed.length) await upsertV2Rows(CLOUD_LEADS_V2_TABLE, changed);
+    if(removed.length) await deleteV2Ids(CLOUD_LEADS_V2_TABLE, removed);
+  }
+
+  captureV2Snapshots(normalized);
+  return true;
+}
+
+function safeSetLocalDB(db){
+  const normalized = normalizeDBShape(db || freshDB());
+  __localMemoryDB = normalized;
+
+  // Depois que uma clínica grande estoura a cota do localStorage, não adianta tentar
+  // gravar o mesmo pacotão toda vez que a tela renderiza. Mantemos a base em memória
+  // da aba e paramos de bater no localStorage, evitando travas e spam no console.
+  if(__localCacheDisabledForLargeDB){
+    return false;
+  }
+
+  try{
+    // Em tables_v2, contatos/leads são a fonte do banco, não do cache local.
+    // Guardar os arrays gigantes de novo recriaria o problema de quota no navegador.
+    const cacheable = usesAnyClinicTableV2() ? removeV2CollectionsFromObject(normalized) : normalized;
+    localStorage.setItem(DBKEY, JSON.stringify(cacheable));
+    return true;
+  }catch(err){
+    __localCacheDisabledForLargeDB = true;
+    if(!__localCacheQuotaWarned){
+      __localCacheQuotaWarned = true;
+      console.warn("Cronos: base grande demais para cache local. Mantendo em memória da aba.", err);
+    }
+    try{ localStorage.removeItem(DBKEY); }catch(_){}
+    return false;
+  }
+}
+
+function getLegacyLocalDB(){
+  try{
+    const raw = localStorage.getItem(DBKEY);
+    if(raw) return normalizeDBShape(JSON.parse(raw));
+  }catch(_){ }
+  return __localMemoryDB ? normalizeDBShape(__localMemoryDB) : null;
+}
+
+async function getCurrentSupabaseUser(){
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
+  try{
+    const { data, error } = await supabaseClient.auth.getUser();
+    if(error) return null;
+    return data?.user || null;
+  }catch(_){
+    return null;
+  }
+}
+
+function normalizeUsername(value){
+  return String(value || "").trim().toLowerCase();
+}
+
+function usernameToSyntheticEmail(username){
+  const clean = normalizeUsername(username).replace(/[^a-z0-9._-]/g, "");
+  if(!clean) return "";
+  return `${clean}@users.cronos.local`;
+}
+
+function resolveUserLoginEmail(login){
+  const raw = String(login || "").trim().toLowerCase();
+  if(!raw) return "";
+  if(raw.includes("@")) return raw;
+  return usernameToSyntheticEmail(raw);
+}
+
+function ensureMasterRecordByEmail(db, email, fallbackName=""){
+  db = normalizeDBShape(db);
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if(!normalizedEmail) return db;
+
+  let master = (db.masters || []).find(m => (String(m?.email || "").toLowerCase() === normalizedEmail) || m?.id === normalizedEmail);
+  if(!master){
+    master = {
+      id: normalizedEmail,
+      name: fallbackName || normalizedEmail.split("@")[0],
+      email: normalizedEmail,
+      createdAt: new Date().toISOString()
+    };
+    db.masters.unshift(master);
+  }else{
+    master.id = normalizedEmail;
+    master.email = normalizedEmail;
+    if(!master.name) master.name = fallbackName || normalizedEmail.split("@")[0];
+    if(!master.createdAt) master.createdAt = new Date().toISOString();
+  }
+
+  return db;
+}
+
+function getMasterRecordByEmail(db, email){
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  return (db?.masters || []).find(m => String(m?.email || "").toLowerCase() === normalizedEmail || m?.id === normalizedEmail) || null;
+}
+
+function ensureMemberMirror(db, membership){
+  db = normalizeDBShape(db);
+  if(!membership) return db;
+
+  const ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || "").trim().toLowerCase();
+  if(ownerEmail){
+    ensureMasterRecordByEmail(db, ownerEmail);
+  }
+  const masterId = ownerEmail || membership.owner_uid;
+
+  let userRow = (db.users || []).find(u => u?.authUid === membership.auth_uid)
+    || (db.users || []).find(u => masterId && u?.masterId === masterId && membership.username && normalizeUsername(u?.username) === normalizeUsername(membership.username))
+    || (db.users || []).find(u => masterId && u?.masterId === masterId && String(u?.loginEmail || u?.email || "").trim().toLowerCase() === String(membership.email || "").trim().toLowerCase());
+
+  const visibleEmail = String(membership.email || "").endsWith("@users.cronos.local") ? "" : String(membership.email || "");
+
+  if(!userRow){
+    userRow = {
+      id: uid("u"),
+      authUid: membership.auth_uid,
+      masterId,
+      name: membership.name || membership.username || "Usuário",
+      username: membership.username || "",
+      email: visibleEmail,
+      loginEmail: String(membership.email || "").trim().toLowerCase(),
+      role: membership.role || "SECRETARIA",
+      active: membership.active !== false,
+      pendingApproval: membership.pending_approval === true,
+      blockedReason: membership.blocked_reason || null,
+      createdAt: new Date().toISOString()
+    };
+    db.users.push(userRow);
+  }else{
+    userRow.authUid = membership.auth_uid;
+    userRow.masterId = userRow.masterId || masterId;
+    userRow.name = membership.name || userRow.name || membership.username || "Usuário";
+    userRow.username = membership.username || userRow.username || "";
+    userRow.email = visibleEmail || userRow.email || "";
+    userRow.loginEmail = String(membership.email || userRow.loginEmail || userRow.email || "").trim().toLowerCase();
+    userRow.role = membership.role || userRow.role || "SECRETARIA";
+    userRow.active = membership.active !== false;
+    userRow.pendingApproval = membership.pending_approval === true;
+    userRow.blockedReason = membership.blocked_reason || null;
+  }
+
+  return db;
+}
+
+async function getClinicMembershipByAuthUid(authUid){
+  if(typeof supabaseClient === "undefined" || !supabaseClient) return null;
+  if(!authUid) return null;
+
+  const { data, error } = await supabaseClient
+    .from(CLOUD_MEMBERS_TABLE)
+    .select("id, owner_uid, auth_uid, email, username, name, role, active, pending_approval, blocked_reason, created_at, updated_at")
+    .eq("auth_uid", authUid)
+    .maybeSingle();
+
+  if(error && error.code !== "PGRST116"){
+    console.error("Erro ao carregar vínculo do usuário:", error);
+    return null;
+  }
+
+  return data || null;
+}
+
+async function resolveClinicAccessContext(user){
+  if(!user) return null;
+
+  const ownerEmail = String(user.email || "").trim().toLowerCase();
+  const isInternalUser = String(user?.user_metadata?.cronos_kind || "").toLowerCase() === "member"
+    || ownerEmail.endsWith("@users.cronos.local");
+
+  const ownerResp = await supabaseClient
+    .from(CLOUD_TABLE)
+    .select("id, owner_uid, owner_email, clinic_name, data, updated_at")
+    .eq("owner_uid", user.id)
+    .maybeSingle();
+
+  if(ownerResp.error && ownerResp.error.code !== "PGRST116"){
+    throw ownerResp.error;
+  }
+
+  if(ownerResp.data){
+    return {
+      kind: "owner",
+      ownerUid: user.id,
+      ownerEmail: String(ownerResp.data.owner_email || ownerEmail || "").trim().toLowerCase(),
+      row: ownerResp.data,
+      member: null
+    };
+  }
+
+  const membership = await getClinicMembershipByAuthUid(user.id);
+  if(membership){
+    const rowResp = await supabaseClient
+      .from(CLOUD_TABLE)
+      .select("id, owner_uid, owner_email, clinic_name, data, updated_at")
+      .eq("owner_uid", membership.owner_uid)
+      .maybeSingle();
+
+    if(rowResp.error && rowResp.error.code !== "PGRST116"){
+      throw rowResp.error;
+    }
+
+    const memberOwnerEmail = String(rowResp.data?.owner_email || "").trim().toLowerCase();
+
+    if(membership.active === false){
+      return {
+        kind: membership.pending_approval ? "member_pending" : "member_inactive",
+        ownerUid: membership.owner_uid,
+        ownerEmail: memberOwnerEmail,
+        row: rowResp.data || null,
+        member: membership
+      };
+    }
+
+    return {
+      kind: "member",
+      ownerUid: membership.owner_uid,
+      ownerEmail: memberOwnerEmail,
+      row: rowResp.data || null,
+      member: membership
+    };
+  }
+
+  return {
+    kind: isInternalUser ? "member_orphan" : "orphan",
+    ownerUid: isInternalUser ? null : user.id,
+    ownerEmail: isInternalUser ? "" : ownerEmail,
+    row: null,
+    member: null
+  };
+}
+
+async function applyCloudAccessContext(user){
+  const ctx = await resolveClinicAccessContext(user);
+
+  if(!ctx){
+    resetCloudContext();
+    return null;
+  }
+
+  CLOUD_OWNER_UID = user?.id || null;
+  CLOUD_OWNER_EMAIL = String(user?.email || "").trim().toLowerCase();
+  CLOUD_CLINIC_OWNER_UID = ctx.ownerUid || null;
+  CLOUD_CLINIC_OWNER_EMAIL = String(ctx.ownerEmail || "").trim().toLowerCase();
+  CLOUD_ACCESS_KIND = ctx.kind || "guest";
+  CLOUD_MEMBER_INFO = ctx.member || null;
+  CLOUD_ROW_ID = ctx.row?.id || null;
+
+  return ctx;
+}
+
+function buildClinicStatePayload(db, user){
+  const ownerUid = CLOUD_CLINIC_OWNER_UID || user.id;
+  const ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || user.email || "").trim().toLowerCase();
+  const normalized = ensureMasterRecordByEmail(normalizeDBShape(db), ownerEmail);
+  const master = getMasterRecordByEmail(normalized, ownerEmail) || normalized.masters[0] || {};
+  return {
+    owner_uid: ownerUid,
+    owner_email: ownerEmail,
+    clinic_name: master.name || (ownerEmail ? ownerEmail.split("@")[0] : "Clínica"),
+    // Quando a clínica estiver em V2, contacts/entries não voltam para o JSON gigante.
+    data: usesAnyClinicTableV2() ? removeV2CollectionsFromObject(normalized) : normalized
+  };
+}
+
+
+function __cronosItemTime(item){
+  if(!item || typeof item !== "object") return 0;
+
+  const parseTime = (v)=>{
+    if(!v) return 0;
+    const raw = String(v);
+    const t = Date.parse(raw.length === 10 ? raw + "T00:00:00" : raw);
+    return Number.isFinite(t) ? t : 0;
+  };
+
+  // Antes o merge olhava praticamente só o horário do objeto principal.
+  // Quando a alteração era dentro da ficha/parcelamento, o item filho podia estar novo,
+  // mas o lead pai antigo fazia a nuvem vencer e apagar o local. Aqui usamos o maior
+  // horário encontrado na árvore relevante do registro.
+  let latest = 0;
+  const direct = [
+    item.updatedAt, item.lastUpdateAt, item.at, item.createdAt, item.deletedAt,
+    item.lastSeenAt, item.firstSeenAt, item.fichaUpdatedAt, item.financeUpdatedAt,
+    item.lastMergedAt, item.lastSavedAt, item.lastSyncAt
+  ];
+  direct.forEach(v=>{ latest = Math.max(latest, parseTime(v)); });
+
+  const visit = (value, depth=0)=>{
+    if(!value || depth > 4) return;
+    if(Array.isArray(value)){
+      value.forEach(child=>visit(child, depth + 1));
+      return;
+    }
+    if(typeof value !== "object") return;
+    [
+      value.updatedAt, value.lastUpdateAt, value.createdAt, value.deletedAt, value.at,
+      value.fichaUpdatedAt, value.financeUpdatedAt, value.lastSavedAt, value.lastSyncAt
+    ].forEach(v=>{ latest = Math.max(latest, parseTime(v)); });
+
+    // Campos que costumam carregar dados preenchíveis/nested do Cronos.
+    [
+      value.ficha?.plano, value.ficha?.avaliacoes, value.ficha?.odontograma,
+      value.financialPlans, value.installments, value.statusLog, value.payments, value.tasks
+    ].forEach(child=>visit(child, depth + 1));
+  };
+  visit(item, 0);
+
+  return latest;
+}
+function __cronosMergeArrayById(cloudArr, localArr){
+  const out = new Map();
+  (Array.isArray(cloudArr) ? cloudArr : []).forEach(item=>{
+    if(!item || typeof item !== "object") return;
+    const id = String(item.id || item.key || "").trim();
+    if(id) out.set(id, item);
+  });
+  (Array.isArray(localArr) ? localArr : []).forEach(item=>{
+    if(!item || typeof item !== "object") return;
+    const id = String(item.id || item.key || "").trim();
+    if(!id){
+      out.set(`__noid_${Math.random()}_${Date.now()}`, item);
+      return;
+    }
+    const prev = out.get(id);
+    if(!prev){
+      out.set(id, item);
+      return;
+    }
+    const localTime = __cronosItemTime(item);
+    const cloudTime = __cronosItemTime(prev);
+    out.set(id, localTime >= cloudTime ? item : prev);
+  });
+  return Array.from(out.values());
+}
+
+function __cronosNormProcName(name){
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+function __cronosProcedureKey(item){
+  const id = String(item?.id || "").trim();
+  if(id) return `id:${id}`;
+  const name = __cronosNormProcName(item?.nome || item?.name);
+  return name ? `name:${name}` : `tmp:${Math.random()}_${Date.now()}`;
+}
+function __cronosProcedureTime(item){
+  if(!item || typeof item !== "object") return 0;
+  const candidates = [item.deletedAt, item.updatedAt, item.createdAt, item.lastUpdateAt, item.at];
+  for(const v of candidates){
+    if(!v) continue;
+    const t = Date.parse(String(v).length === 10 ? String(v)+"T00:00:00" : String(v));
+    if(Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+function __cronosMergeProcedureCatalog(cloudArr, localArr){
+  const out = new Map();
+  const byName = new Map();
+
+  function add(item, origin){
+    if(!item || typeof item !== "object") return;
+    const copy = { ...item };
+    const key = __cronosProcedureKey(copy);
+    const nameKey = __cronosNormProcName(copy.nome || copy.name);
+    const previousKey = nameKey ? byName.get(nameKey) : null;
+    const finalKey = previousKey || key;
+    const prev = out.get(finalKey);
+
+    if(!prev){
+      out.set(finalKey, copy);
+      if(nameKey) byName.set(nameKey, finalKey);
+      return;
+    }
+
+    const prevTime = __cronosProcedureTime(prev);
+    const nextTime = __cronosProcedureTime(copy);
+    const shouldReplace = nextTime > prevTime || (nextTime === prevTime && origin === "local");
+    const merged = shouldReplace ? { ...prev, ...copy } : { ...copy, ...prev };
+    if(prev.id && copy.id && prev.id !== copy.id){
+      merged.id = shouldReplace ? copy.id : prev.id;
+    }
+    out.set(finalKey, merged);
+    if(nameKey) byName.set(nameKey, finalKey);
+  }
+
+  (Array.isArray(cloudArr) ? cloudArr : []).forEach(item=>add(item, "cloud"));
+  (Array.isArray(localArr) ? localArr : []).forEach(item=>add(item, "local"));
+
+  return Array.from(out.values()).filter(item=>item && typeof item === "object");
+}
+function __cronosMergeSettings(cloudSettings, localSettings){
+  const cloud = (cloudSettings && typeof cloudSettings === "object") ? cloudSettings : {};
+  const local = (localSettings && typeof localSettings === "object") ? localSettings : {};
+  const merged = { ...cloud, ...local };
+  if(Array.isArray(cloud.procedureCatalog) || Array.isArray(local.procedureCatalog)){
+    merged.procedureCatalog = __cronosMergeProcedureCatalog(cloud.procedureCatalog, local.procedureCatalog);
+  }
+  return merged;
+}
+
+function mergeCloudAndLocalDB(cloudDB, localDB){
+  const cloud = normalizeDBShape(cloudDB || freshDB());
+  const local = normalizeDBShape(localDB || freshDB());
+  const merged = normalizeDBShape({ ...cloud, ...local });
+  merged.masters = __cronosMergeArrayById(cloud.masters, local.masters);
+  merged.users = __cronosMergeArrayById(cloud.users, local.users);
+  merged.contacts = __cronosMergeArrayById(cloud.contacts, local.contacts);
+  merged.entries = __cronosMergeArrayById(cloud.entries, local.entries);
+  merged.tasks = __cronosMergeArrayById(cloud.tasks, local.tasks);
+  merged.payments = __cronosMergeArrayById(cloud.payments, local.payments);
+  merged.settings = __cronosMergeSettings(cloud.settings, local.settings);
+  merged.version = local.version || cloud.version || "cloud_v2";
+  merged.createdAt = cloud.createdAt || local.createdAt || new Date().toISOString();
+  merged.lastMergedAt = new Date().toISOString();
+
+  try{ scrubInstallmentTasksForAllMasters(merged); }catch(e){ console.warn("Falha ao higienizar tarefas no merge:", e); }
+
+  return normalizeDBShape(merged);
+}
+
+async function flushCloudSave(dbToSave){
+  const user = await getCurrentSupabaseUser();
+  if(!user) return false;
+
+  const ctx = await applyCloudAccessContext(user);
+  await loadCurrentClinicDataSources();
+  const ownerEmail = String(ctx?.ownerEmail || user.email || "").trim().toLowerCase();
+
+  let normalized = ensureMasterRecordByEmail(normalizeDBShape(dbToSave || DB || freshDB()), ownerEmail);
+  if(ctx?.row?.data){
+    const mergedWithLegacy = mergeCloudAndLocalDB(ctx.row.data, normalized);
+    // Se a fonte é V2, a versão em memória é a autoridade das coleções operacionais;
+    // o JSON legado não pode ressuscitar itens antigos na hora de salvar.
+    if(isClinicSourceV2("contacts")) mergedWithLegacy.contacts = normalized.contacts;
+    if(isClinicSourceV2("entries")) mergedWithLegacy.entries = normalized.entries;
+    normalized = ensureMasterRecordByEmail(mergedWithLegacy, ownerEmail);
+  }
+  if(CLOUD_MEMBER_INFO){
+    normalized = ensureMemberMirror(normalized, CLOUD_MEMBER_INFO);
+  }
+
+  try{ scrubInstallmentTasksForAllMasters(normalized); }catch(e){ console.warn("Falha ao higienizar tarefas antes da nuvem:", e); }
+
+  try{
+    await syncManagedCollectionsToV2(normalized);
+  }catch(error){
+    console.error("Erro ao salvar contatos/leads nas tabelas V2:", error);
+    if(!shouldSuppressCloudFailureToast()){
+      toast("Falha ao salvar leads na nuvem", "A atualização nas tabelas não foi concluída. Tente novamente.");
+    }
+    return false;
+  }
+
+  DB = normalized;
+  safeSetLocalDB(normalized);
+
+  const payload = buildClinicStatePayload(normalized, user);
+
+  let data = null;
+  let error = null;
+
+  if(ctx?.kind === "member"){
+    const resp = await supabaseClient
+      .from(CLOUD_TABLE)
+      .update({
+        owner_email: payload.owner_email,
+        clinic_name: payload.clinic_name,
+        data: payload.data
+      })
+      .eq("owner_uid", payload.owner_uid)
+      .select("id, updated_at")
+      .single();
+    data = resp.data;
+    error = resp.error;
+  }else{
+    const resp = await supabaseClient
+      .from(CLOUD_TABLE)
+      .upsert(payload, { onConflict: "owner_uid" })
+      .select("id, updated_at")
+      .single();
+    data = resp.data;
+    error = resp.error;
+  }
+
+  if(error){
+    console.error("Erro ao salvar no Supabase:", error);
+    if(!shouldSuppressCloudFailureToast()){
+      toast("Falha ao salvar na nuvem", "Os dados operacionais foram tratados, mas o estado geral não foi sincronizado.");
+    }
+    return false;
+  }
+
+  CLOUD_ROW_ID = data?.id || CLOUD_ROW_ID;
+  CLOUD_DB_READY = true;
+  return true;
+}
+
+function scheduleCloudSave(immediate=false){
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return Promise.resolve(false);
+
+  // Nunca deixamos o salvamento genérico atropelar uma baixa/alteração financeira atômica.
+  // Ele espera a confirmação financeira e só depois persiste o estado mais recente.
+  if(__cronosFinancialMutationBusy && __cronosFinancialMutationPromise && !__cronosFinancialMutationCloudGateBypass){
+    return __cronosFinancialMutationPromise.then(()=>scheduleCloudSave(true));
+  }
+  __cloudSaveRevision += 1;
+  const revision = __cloudSaveRevision;
+  if(__cloudSaveTimer){
+    clearTimeout(__cloudSaveTimer);
+    __cloudSaveTimer = null;
+  }
+
+  const run = async ()=>{
+    if(__cloudSaveRunning){
+      __cloudSaveTimer = setTimeout(()=>scheduleCloudSave(true), 450);
+      return __cloudSavePromise || Promise.resolve(true);
+    }
+
+    __cloudSaveRunning = true;
+    const snapshot = normalizeDBShape(JSON.parse(JSON.stringify(DB || freshDB())));
+
+    __cloudSavePromise = flushCloudSave(snapshot).catch(err=>{
+      console.error("Erro na sincronização com a nuvem:", err);
+      return false;
+    }).finally(()=>{
+      __cloudSaveRunning = false;
+      if(revision !== __cloudSaveRevision){
+        scheduleCloudSave(true);
+      }
+    });
+
+    return __cloudSavePromise;
+  };
+
+  if(immediate){
+    return run();
+  }
+
+  __cloudSaveTimer = setTimeout(run, 300);
+  return Promise.resolve(true);
+}
+
+function flushPendingCloudSaveOnExit(){
+  try{
+    if(!DB || typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
+    if(__cloudSaveTimer){
+      clearTimeout(__cloudSaveTimer);
+      __cloudSaveTimer = null;
+      scheduleCloudSave(true);
+    }
+  }catch(_){ }
+}
+try{
+  window.addEventListener('pagehide', flushPendingCloudSaveOnExit);
+  window.addEventListener('beforeunload', flushPendingCloudSaveOnExit);
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'hidden') flushPendingCloudSaveOnExit(); });
+}catch(_){ }
+
+async function ensureCloudDBLoaded(force=false){
+  if(DB && CLOUD_DB_READY && !force) return DB;
+
+  if(isSupportMode()){
+    const support = getSupportContext();
+    if(!support){
+      DB = normalizeDBShape(freshDB());
+      return DB;
+    }
+
+    setCloudDataSourcesFromRow(support.data_sources || null, support.clinic_id || "");
+    let loaded = normalizeDBShape(getSupportDB() || support.data || freshDB());
+    const supportEmail = String(support.owner_email || "").trim().toLowerCase();
+    if(supportEmail){
+      loaded = ensureMasterRecordByEmail(loaded, supportEmail, support.clinic_name || "");
+      const master = getMasterRecordByEmail(loaded, supportEmail) || loaded.masters?.[0];
+      if(master && support.clinic_name){
+        master.name = support.clinic_name;
+      }
+    }
+
+    DB = loaded;
+    if(usesAnyClinicTableV2()) captureV2Snapshots(DB);
+    try{ cronosMarkCloudDBHydrated("support_loaded"); }catch(_){ }
+    setSupportDB(DB);
+    CLOUD_DB_READY = true;
+    CLOUD_ROW_ID = support.clinic_id || null;
+    CLOUD_OWNER_UID = null;
+    CLOUD_OWNER_EMAIL = "";
+    CLOUD_CLINIC_OWNER_UID = support.owner_uid || null;
+    CLOUD_CLINIC_OWNER_EMAIL = String(support.owner_email || "").trim().toLowerCase();
+    CLOUD_ACCESS_KIND = "support";
+    CLOUD_MEMBER_INFO = null;
+    return DB;
+  }
+
+  const user = await getCurrentSupabaseUser();
+  if(!user){
+    resetCloudContext();
+    DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
+    return DB;
+  }
+
+  const dbBeforeCloudAttempt = DB;
+  CLOUD_LOAD_TEMPORARY_FAILURE = false;
+  CLOUD_LAST_LOAD_ERROR = null;
+
+  let ctx = null;
+  try{
+    ctx = await applyCloudAccessContext(user);
+    await loadCurrentClinicDataSources();
+
+    if(ctx?.row?.data){
+      const localBeforePull = normalizeDBShape(getLegacyLocalDB() || freshDB());
+      const cloudBeforePull = normalizeDBShape(ctx.row.data);
+      let loaded = mergeCloudAndLocalDB(cloudBeforePull, localBeforePull);
+      if(usesAnyClinicTableV2()){
+        loaded = await hydrateClinicArraysFromTables(loaded);
+      }
+      loaded = ensureMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "");
+      const cloudClinicName = String(ctx.row.clinic_name || "").trim();
+      if(cloudClinicName){
+        const master = getMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "") || loaded.masters?.[0];
+        if(master) master.name = cloudClinicName;
+      }
+      if(ctx.member){
+        loaded = ensureMemberMirror(loaded, ctx.member);
+      }
+      DB = loaded;
+      CLOUD_DB_READY = true;
+      try{ cronosMarkCloudDBHydrated("ensure_cloud_loaded"); }catch(_){ }
+      safeSetLocalDB(DB);
+
+      // Alterações reais chamam saveDB; não reenviamos a base inteira após o pull.
+      return DB;
+    }
+  }catch(error){
+    CLOUD_LOAD_TEMPORARY_FAILURE = true;
+    CLOUD_LAST_LOAD_ERROR = error;
+    console.error("Erro ao carregar dados da nuvem:", error);
+
+    const localBackup = getLegacyLocalDB();
+    const localSize = localBackup
+      ? ((localBackup.contacts || []).length + (localBackup.entries || []).length + (localBackup.users || []).length + (localBackup.masters || []).length)
+      : 0;
+
+    if(localSize > 0 && !usesAnyClinicTableV2()){
+      DB = normalizeDBShape(localBackup);
+      return DB;
+    }
+
+    // Em V2, não usamos cache local sem contatos/leads como se fosse uma clínica válida.
+    // Se já havia uma base em memória, preservamos a aba; caso contrário, o login tenta novamente.
+    if(dbBeforeCloudAttempt){
+      DB = dbBeforeCloudAttempt;
+      return DB;
+    }
+
+    DB = null;
+    return normalizeDBShape(freshDB());
+  }
+
+  if(ctx?.kind === "member" || ctx?.kind === "member_orphan"){
+    DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
+    DB = ensureMasterRecordByEmail(DB, ctx.ownerEmail || "");
+    DB = ensureMemberMirror(DB, ctx.member);
+    CLOUD_DB_READY = false;
+    safeSetLocalDB(DB);
+    toast("Acesso sem base da clínica", "Peça para o master entrar primeiro para criar a base na nuvem.");
+    return DB;
+  }
+
+  DB = ensureMasterRecordByEmail(normalizeDBShape(getLegacyLocalDB() || freshDB()), ctx?.ownerEmail || user.email || "");
+  safeSetLocalDB(DB);
+
+  const created = await flushCloudSave(DB);
+  CLOUD_DB_READY = !!created;
+  return DB;
+}
+
+function loadDB(){
+  if(DB) return DB;
+  if(isSupportMode()){
+    const support = getSupportContext();
+    DB = normalizeDBShape(getSupportDB() || support?.data || freshDB());
+    if((DB.contacts?.length || 0) + (DB.entries?.length || 0) > 0){
+      setSupportDB(DB);
+    }
+    return DB;
+  }
+  DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
+  return DB;
+}
+function saveDB(db, options={}){
+  const incoming = normalizeDBShape(db);
+
+  if(isSupportMode()){
+    const previous = normalizeDBShape(__supportMemoryDB || DB || getSupportDB() || freshDB());
+    const previousSize = (previous.contacts?.length || 0) + (previous.entries?.length || 0);
+    const incomingSize = (incoming.contacts?.length || 0) + (incoming.entries?.length || 0);
+
+    // Proteção contra o bug em que uma renderização/aba secundária tenta salvar um
+    // freshDB vazio por cima de uma clínica grande no modo suporte.
+    if(previousSize > 100 && incomingSize === 0 && !options.allowEmptySupportSave){
+      DB = previous;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      setSupportDB(DB);
+      try{ updateSidebarPills(); }catch(e){}
+      console.warn("Cronos suporte: tentativa de salvar base vazia ignorada para proteger a clínica carregada.");
+      return Promise.resolve(false);
+    }
+
+    DB = incoming;
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    setSupportDB(DB);
+    try{ updateSidebarPills(); }catch(e){}
+    return Promise.resolve(false);
+  }
+
+  DB = incoming;
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+
+  safeSetLocalDB(DB);
+
+  try{
+    updateSidebarPills();
+  }catch(e){}
+
+  if(options.skipCloud) return Promise.resolve(false);
+  return scheduleCloudSave(!!options.immediate);
+}
+
+function createIsolatedSupabaseClient(){
+  return window.supabase.createClient(supabaseUrl, supabaseKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      storageKey: `cronos-temp-${Date.now()}-${Math.random()}`
+    }
+  });
+}
+
+async function createCloudUserIdentity({ name, username, email, password }){
+  const explicitEmail = String(email || "").trim().toLowerCase();
+  const normalizedUsername = normalizeUsername(username);
+  const loginEmail = normalizedUsername ? usernameToSyntheticEmail(normalizedUsername) : explicitEmail;
+
+  if(!loginEmail){
+    throw new Error("Informe um usuário ou e-mail para o login.");
+  }
+
+  const tempClient = createIsolatedSupabaseClient();
+  const { data, error } = await tempClient.auth.signUp({
+    email: loginEmail,
+    password,
+    options: {
+      data: {
+        display_name: name || "",
+        username: normalizedUsername || "",
+        cronos_kind: "member"
+      }
+    }
+  });
+
+  try{ await tempClient.auth.signOut(); }catch(_){}
+
+  if(error) throw error;
+  if(!data?.user?.id){
+    throw new Error("Não foi possível criar o acesso do usuário.");
+  }
+
+  return {
+    authUid: data.user.id,
+    loginEmail,
+    explicitEmail,
+    username: normalizedUsername
+  };
+}
+
+async function insertClinicMemberRecord({ authUid, loginEmail, username, name, role }){
+  const owner = await getCurrentSupabaseUser();
+  if(!owner) throw new Error("Faça login como master para cadastrar usuários.");
+
+  const payload = {
+    owner_uid: owner.id,
+    auth_uid: authUid,
+    email: String(loginEmail || "").trim().toLowerCase(),
+    username: username || null,
+    name,
+    role,
+    active: true
+  };
+
+  const { error } = await supabaseClient.from(CLOUD_MEMBERS_TABLE).insert(payload);
+  if(error) throw error;
+  return payload;
+}
+
+async function updateClinicMemberRecord(userRow, { name, role }){
+  if(!userRow?.authUid) return;
+  return callClinicUserManagerEdge({
+    action:"update",
+    auth_uid:userRow.authUid,
+    name,
+    role
+  });
+}
+
+async function deactivateClinicMemberRecord(userRow){
+  if(!userRow?.authUid) return;
+  return callClinicUserManagerEdge({
+    action:"deactivate",
+    auth_uid:userRow.authUid
+  });
+}
+
+async function syncCurrentCloudActor(){
+  if(typeof supabaseClient === "undefined"){
+    console.log("Supabase ainda não carregou, tentando novamente...");
+    setTimeout(syncCurrentCloudActor, 500);
+    return null;
+  }
+
+  const user = await getCurrentSupabaseUser();
+  if(isSupportMode()){
+    let db = await ensureCloudDBLoaded(false);
+    const support = getSupportContext();
+    if(!support) return null;
+    const supportEmail = String(support.owner_email || "").trim().toLowerCase();
+    db = ensureMasterRecordByEmail(db, supportEmail, support.clinic_name || "");
+    const master = getMasterRecordByEmail(db, supportEmail) || db.masters[0];
+    if(master && support.clinic_name) master.name = support.clinic_name;
+    DB = db;
+    setSupportDB(DB);
+    return { kind: "support", id: support.owner_uid || supportEmail };
+  }
+
+  if(!user) return null;
+
+  let db = await ensureCloudDBLoaded(false);
+
+  const ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || user.email || "").trim().toLowerCase();
+  db = ensureMasterRecordByEmail(db, ownerEmail);
+
+  if(CLOUD_ACCESS_KIND === "owner"){
+    const master = getMasterRecordByEmail(db, ownerEmail) || db.masters[0];
+    if(master){
+      saveSession({ kind: "master", id: master.id });
+      saveDB(db, { skipCloud:true });
+      return { kind: "master", id: master.id };
+    }
+  }
+
+  if(CLOUD_MEMBER_INFO){
+    db = ensureMemberMirror(db, CLOUD_MEMBER_INFO);
+  } else if(CLOUD_ACCESS_KIND === "member_orphan" || CLOUD_ACCESS_KIND === "member_pending" || CLOUD_ACCESS_KIND === "member_inactive"){
+    return null;
+  }
+
+  let memberRow = (db.users || []).find(u => u?.authUid === user.id)
+    || (db.users || []).find(u => String(u?.loginEmail || u?.email || "").trim().toLowerCase() === String(user.email || "").trim().toLowerCase());
+
+  if(memberRow){
+    memberRow.authUid = user.id;
+    memberRow.loginEmail = memberRow.loginEmail || String(user.email || "").trim().toLowerCase();
+    saveSession({ kind: "user", id: memberRow.id });
+    saveDB(db, { skipCloud:true });
+    return { kind: "user", id: memberRow.id };
+  }
+
+  return null;
+}
+function migrateDBValues(db){
+  let changed = false;
+  (db.entries||[]).forEach(e=>{
+    if(e && e.valueBudget==null && e.valueEstimated!=null){
+      e.valueBudget = e.valueEstimated;
+      changed = true;
+    }
+    if(e && e.valuePaid==null && e.valueClosed!=null){
+      e.valuePaid = e.valueClosed;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function getPrefs(){
+  const db = loadDB();
+  if(!db.settings) db.settings = {};
+  if(typeof db.settings.waTemplate !== "string" || !db.settings.waTemplate.trim()){
+    db.settings.waTemplate = "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊";
+    saveDB(db, { skipCloud:true });
+  }
+  return db.settings;
+}
+
+function applyTemplate(tpl, vars){
+  return String(tpl||"")
+    .replaceAll("{nome}", vars.nome||"")
+    .replaceAll("{tratamento}", vars.tratamento||"")
+    .trim();
+}
+
+function normalizePhoneBR(phone){
+  const digits = String(phone||"").replace(/\D+/g,"");
+  if(!digits) return "";
+  if(digits.startsWith("55")) return digits;
+  return "55"+digits;
+}
+
+function openWhatsAppForEntry(entryId){
+  const db = loadDB();
+  const e = db.entries.find(x=>x.id===entryId);
+  const c = db.contacts.find(x=>x.id===e?.contactId);
+  const phone = normalizePhoneBR(c?.phone||"");
+  if(!phone){
+    toast("Sem telefone válido para WhatsApp.");
+    return;
+  }
+  const treatment = (e?.treatment==="Outros") ? (e?.treatmentOther||"Outros") : (e?.treatment||"");
+  const tpl = getPrefs().waTemplate;
+  const msg = applyTemplate(tpl, { nome: c?.name||"", tratamento: treatment });
+  const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+  window.open(url, "_blank");
+}
+
+function loadSession(){
+  // Sessão de acesso deve sobreviver ao F5, mas não ao fechamento do navegador/aba.
+  // Por isso usamos sessionStorage para o login e limpamos qualquer sessão antiga persistida.
+  try{ localStorage.removeItem(SESSIONKEY); }catch(_){ }
+  let raw = null;
+  try{ raw = sessionStorage.getItem(SESSIONKEY); }catch(_){ raw = null; }
+  if(!raw) return null;
+  try{ return JSON.parse(raw); }catch{ return null; }
+}
+function saveSession(s){
+  try{ sessionStorage.setItem(SESSIONKEY, JSON.stringify(s)); }catch(_){ }
+  try{ localStorage.removeItem(SESSIONKEY); }catch(_){ }
+}
+function clearSession(){
+  try{ sessionStorage.removeItem(SESSIONKEY); }catch(_){ }
+  try{ localStorage.removeItem(SESSIONKEY); }catch(_){ }
+}
+
+async function hashPass(p){
+  try{
+    if (window.crypto?.subtle){
+      const enc = new TextEncoder().encode(p);
+      const buf = await crypto.subtle.digest("SHA-256", enc);
+      return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+    }
+  }catch(e){}
+  let h = 2166136261;
+  for (let i=0;i<p.length;i++){ h ^= p.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return "fnv1a_" + (h>>>0).toString(16);
+}
+
+/* -------- Autenticação -------- */
+function currentActor(){
+  const db = loadDB();
+
+  if(isSupportMode()){
+    const support = getSupportContext();
+    const supportEmail = String(support?.owner_email || support?.master_email || "").trim().toLowerCase();
+    const fallbackName = String(support?.clinic_name || "").trim();
+    let master = getMasterRecordByEmail(db, supportEmail) || db.masters?.[0];
+
+    if(!master){
+      const syntheticId = supportEmail || `support:${String(support?.clinic_id || "clinic")}`;
+      master = {
+        id: syntheticId,
+        name: fallbackName || "Modo suporte",
+        email: supportEmail || "",
+        createdAt: new Date().toISOString()
+      };
+      db.masters.unshift(master);
+      setSupportDB(db);
+      DB = db;
+    }
+
+    if(fallbackName) master.name = fallbackName;
+    if(supportEmail && !master.email) master.email = supportEmail;
+
+    return {
+      kind:"master",
+      id:master.id,
+      masterId:master.id,
+      name:master.name,
+      email:master.email || supportEmail || "",
+      role:"MASTER",
+      isPrimaryMaster:true,
+      isSupport:true,
+      perms: {...PERMS.MASTER, manageMasters:true}
+    };
+  }
+
+  const s = loadSession();
+  if(!s) return null;
+  if(s.kind==="master"){
+    const m = db.masters.find(x=>x.id===s.id);
+    if(!m) return null;
+    return {kind:"master", id:m.id, masterId:m.id, name:m.name, email:m.email, role:"MASTER", isPrimaryMaster:true, isSupport:false, perms: {...PERMS.MASTER, manageMasters:true} };
+  }
+  if(s.kind==="user"){
+    const u = db.users.find(x=>x.id===s.id);
+    if(!u) return null;
+    if(u.pendingApproval === true || u.active === false){
+      window.__CRONOS_ACCESS_BLOCK__ = {
+        title: u.pendingApproval ? "Aguardando liberação" : "Acesso bloqueado",
+        message: String(u.blockedReason || (u.pendingApproval
+          ? "Seu usuário foi criado, mas ainda depende da aprovação do superadmin."
+          : "Esse usuário está inativo e precisa ser liberado pelo superadmin."))
+      };
+      return null;
+    }
+    window.__CRONOS_ACCESS_BLOCK__ = null;
+    return {kind:"user", id:u.id, masterId:u.masterId, name:u.name, email:(u.email || u.loginEmail || ""), username:u.username, role:u.role, isPrimaryMaster:false, isSupport:false, perms: (PERMS[u.role] || PERMS.DENTISTA)};
+  }
+  return null;
+}
+
+
+function roleLabelPt(role){
+  const map = {
+    MASTER: "Master",
+    GERENTE: "Gerente",
+    SECRETARIA: "Secretária",
+    CRC: "CRC",
+    DENTISTA: "Dentista"
+  };
+  return map[String(role || "").toUpperCase()] || String(role || "Usuário");
+}
+
+function setLoginLoading(isLoading, message="Entrando no Cronos..."){
+  window.__CRONOS_LOGIN_BUSY__ = !!isLoading;
+
+  const card = document.querySelector("#authView .authCard");
+  const hint = el("authLoadingHint");
+  const hintText = el("authLoadingText");
+  const btn = el("btnLogin");
+  const btnCreate = el("btnCreateMaster");
+  const authMode = el("authMode");
+  const authLogin = el("authLogin");
+  const authPass = el("authPass");
+  const authLabel = el("authAccessLabel");
+  const authModeWrap = el("authModeWrap");
+  const authLoginWrap = authLogin?.parentElement;
+  const authPassWrap = authPass?.parentElement;
+  const authButtons = btn?.parentElement;
+
+  if(card) card.classList.toggle("loading", !!isLoading);
+
+  if(hint){
+    hint.classList.toggle("hidden", !isLoading);
+  }
+  if(hintText && message){
+    hintText.textContent = message;
+  }
+
+  [authMode, authLogin, authPass, btnCreate].forEach(node=>{
+    if(node) node.disabled = !!isLoading;
+  });
+
+  [authModeWrap, authLoginWrap, authPassWrap, authButtons].forEach(node=>{
+    if(!node) return;
+    node.classList.toggle("hidden", !!isLoading);
+  });
+
+  if(authLabel && !isSupportMode()){
+    authLabel.textContent = isLoading ? "Validando acesso" : "Acesso da Clínica";
+  }
+
+  if(btn){
+    btn.disabled = !!isLoading;
+    btn.classList.toggle("loading", !!isLoading);
+    btn.innerHTML = isLoading
+      ? '<span class="btnSpinner"><span class="spinner" aria-hidden="true"></span></span>Entrando...'
+      : 'Entrar';
+  }
+}
+
+
+function setSupportEntryLoading(isLoading, message="Modo suporte • Validando acesso e carregando a clínica..."){
+  const authLabel = el("authAccessLabel");
+  const supportHint = el("supportEntryHint");
+  const supportText = el("supportEntryText");
+  const authModeWrap = el("authModeWrap");
+  const authMasterWrap = el("authMasterNameWrap");
+  const authLogin = el("authLogin")?.parentElement;
+  const authPass = el("authPass")?.parentElement;
+  const authButtons = el("btnLogin")?.parentElement;
+
+  if(isLoading){
+    setLoginLoading(false);
+  }
+
+  if(authLabel){
+    authLabel.textContent = isLoading ? "Modo suporte" : "Acesso da Clínica";
+  }
+  if(supportHint){
+    supportHint.classList.toggle("hidden", !isLoading);
+  }
+  if(supportText && message){
+    supportText.textContent = message;
+  }
+
+  [authModeWrap, authMasterWrap, authLogin, authPass, authButtons].forEach(node=>{
+    if(!node) return;
+    node.classList.toggle("hidden", !!isLoading);
+  });
+}
+
+function triggerLoginSubmit(){
+  if(window.__CRONOS_LOGIN_BUSY__) return;
+  const btn = el("btnLogin");
+  if(btn) btn.click();
+}
+
+function bindLoginEnterSubmit(){
+  ["authLogin","authPass","authMode"].forEach(id=>{
+    const node = el(id);
+    if(!node || node.dataset.enterBound === "1") return;
+    node.dataset.enterBound = "1";
+    node.addEventListener("keydown", (ev)=>{
+      if(ev.key === "Enter"){
+        ev.preventDefault();
+        triggerLoginSubmit();
+      }
+    });
+  });
+}
+
+function refreshAuthMasters(){
+  const db = loadDB();
+  const sel = el("authMasterSelect");
+  if(!sel) return;
+  sel.innerHTML = db.masters.length
+    ? db.masters.map(m=>`<option value="${m.id}">${escapeHTML(m.name)} (${escapeHTML(m.email)})</option>`).join("")
+    : `<option value="">(Nenhum master cadastrado)</option>`;
+  sel.disabled = (el("authMode").value === "master");
+}
+
+function showAuth(){
+  hideBootSplash();
+  window.__CRONOS_SESSION_CHECKING__ = false;
+  window.__CRONOS_BOOTING__ = false;
+  try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
+  el("authView").classList.remove("hidden");
+  el("appView").classList.add("hidden");
+  hideAccessGate();
+  hideAccessNotice();
+
+  const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
+  const supportPending = supportTokenPresent || (!currentActor() && isSupportMode());
+
+  if(supportPending){
+    setSupportEntryLoading(true, "Modo suporte • Validando acesso e carregando a clínica...");
+  }else{
+    setSupportEntryLoading(false);
+    setLoginLoading(false);
+  }
+
+  const exitBtn = el("btnExitSupport");
+  if(exitBtn) exitBtn.classList.add("hidden");
+  syncThemeButtons();
+  window.__CRONOS_BOOTED = true;
+}
+
+function showApp(actor){
+  hideBootSplash();
+  window.__CRONOS_SESSION_CHECKING__ = false;
+  window.__CRONOS_BOOTING__ = false;
+  window.__CRONOS_ACCESS_BLOCK__ = null;
+  try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
+  setSupportEntryLoading(false);
+  el("authView").classList.add("hidden");
+  el("appView").classList.remove("hidden");
+  hideAccessGate();
+  el("brandName").textContent = "Cronos Odonto";
+  const support = getSupportContext();
+  const clinicLabel = actor?.isSupport
+    ? (support?.clinic_name || actor.name || "Clínica")
+    : (actor.kind==="master" ? actor.name : masterName(actor.masterId));
+  el("brandSub").textContent = actor?.isSupport ? `Clínica: ${clinicLabel} • Modo suporte` : `Clínica: ${clinicLabel}`;
+  el("whoami").textContent = actor?.isSupport
+    ? `Modo suporte ativo • ${support?.owner_email || actor.email || "sem e-mail"}`
+    : `Bem-vindo, ${actor.name} • ${roleLabelPt(actor.role)}`;
+  const exitBtn = el("btnExitSupport");
+  if(exitBtn) exitBtn.classList.toggle("hidden", !actor?.isSupport);
+  syncThemeButtons();
+  applyRoleVisibility(actor);
+
+  // Não bloqueia login/F5 higienizando tarefas automáticas antes da primeira tela.
+  // A rotina continua existindo, mas roda em segundo plano depois do app aparecer.
+  const deferTaskRepair = ()=>{
+    try{
+      const db = loadDB();
+      const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      const stats = syncInstallmentTasks(db, actor) || {};
+      const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      if(before !== after){
+        saveDB(db, { skipCloud:true });
+        if(!window.__CRONOS_TASK_REPAIR_TOASTED__){
+          window.__CRONOS_TASK_REPAIR_TOASTED__ = true;
+          console.info("Cronos: tarefas automáticas ajustadas em segundo plano.", {before, after, stats});
+        }
+      }
+    }catch(e){
+      console.warn("Falha ao higienizar tarefas em segundo plano:", e);
+    }
+  };
+  try{
+    if("requestIdleCallback" in window) requestIdleCallback(deferTaskRepair, { timeout:1800 });
+    else setTimeout(deferTaskRepair, 350);
+  }catch(_){ setTimeout(deferTaskRepair, 350); }
+
+  window.__CRONOS_BOOTED = true;
+}
+
+function syncThemeButtons(){
+  const cur = localStorage.getItem(THEMEKEY) || "dark";
+  applyTheme(cur);
+}
+
+function masterName(masterId){
+  const db = loadDB();
+  const m = db.masters.find(x=>x.id===masterId);
+  return m ? m.name : "—";
+}
+
+/* -------- Filtros principais -------- */
+const FILTERKEY = "cronoscrm_phase1_filters";
+function defaultFilters(){
+  const now = new Date();
+  return {
+    year: String(now.getFullYear()),
+    monthKey: cronosLocalMonthKey(now), // YYYY-MM or "all"
+    search:"",
+    status:"",
+    campaign:"",
+    treatment:"",
+    origin:"",
+    periodFrom:"",
+    periodTo:"",
+    order:"recent"
+  };
+}
+function normalizeFiltersShape(raw={}){
+  const def = defaultFilters();
+  const parsed = raw && typeof raw === "object" ? raw : {};
+  const out = {...def, ...parsed};
+  if(!out.year){
+    const mk = String(out.monthKey||def.monthKey);
+    out.year = mk && mk!=="all" ? mk.slice(0,4) : def.year;
+  }
+  if(!out.periodFrom && (parsed.firstFrom||parsed.apptFrom)) out.periodFrom = parsed.firstFrom || parsed.apptFrom || "";
+  if(!out.periodTo && (parsed.firstTo||parsed.apptTo)) out.periodTo = parsed.firstTo || parsed.apptTo || "";
+  if(!out.order) out.order = "recent";
+  if(!out.monthKey || out.monthKey === "all"){
+    out.monthKey = def.monthKey;
+    out.year = def.year;
+  }
+  return out;
+}
+function loadFilters(){
+  // Filtros são estado temporário da tela. Não persistem em F5, login ou logout.
+  try{ localStorage.removeItem(FILTERKEY); }catch(_){ }
+  return normalizeFiltersShape(window.__CRONOS_FILTERS_CURRENT__ || null);
+}
+function saveFilters(f){
+  window.__CRONOS_FILTERS_CURRENT__ = normalizeFiltersShape(f || {});
+  try{ localStorage.removeItem(FILTERKEY); }catch(_){ }
+}
+function resetFiltersToDefault({ui=false, keepMonth=false} = {}){
+  const base = defaultFilters();
+  if(keepMonth){
+    const current = getUIFilters ? getUIFilters() : {};
+    base.year = current.year || base.year;
+    base.monthKey = current.monthKey || base.monthKey;
+  }
+  window.__CRONOS_FILTERS_CURRENT__ = {...base};
+  window.__KPI_ACTIVE = null;
+  window.__DASH_STATUS_ACTIVE = "";
+  try{ window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null; }catch(_){ }
+  try{ localStorage.removeItem(FILTERKEY); }catch(_){ }
+  try{ currentPage = 1; }catch(_){ }
+  if(ui){
+    try{
+      ensureYearOptions();
+      setUIFilters(base);
+      ensureMonthOptions();
+      setUIFilters(base);
+    }catch(_){
+      try{ setUIFilters(base); }catch(__){ }
+    }
+  }
+  return base;
+}
+window.CRONOS_RESET_FILTERS = resetFiltersToDefault;
+
+function getUIFilters(){
+  return {
+    year: val("fYear", String(new Date().getFullYear())),
+    monthKey: val("fMonth", todayISO().slice(0,7)), // YYYY-MM or "all"
+    search: val("fSearch","").trim(),
+    status: val("fStatus",""),
+    campaign: val("fCampaign",""),
+    treatment: val("fTreatment",""),
+    origin: val("fOrigin",""),
+    periodFrom: val("fPeriodFrom",""),
+    periodTo: val("fPeriodTo",""),
+    order: val("fOrder","recent")
+  };
+}
+function setUIFilters(f){
+  const normalized = normalizeFiltersShape(f || {});
+  setVal("fYear", normalized.year);
+  setVal("fMonth", normalized.monthKey);
+  setVal("fSearch", normalized.search || "");
+  setVal("fStatus", normalized.status || "");
+  setVal("fCampaign", normalized.campaign || "");
+  setVal("fTreatment", normalized.treatment || "");
+  setVal("fOrigin", normalized.origin || "");
+  setVal("fPeriodFrom", normalized.periodFrom || "");
+  setVal("fPeriodTo", normalized.periodTo || "");
+  setVal("fOrder", normalized.order || "recent");
+}
+
+function ensureYearOptions(){
+  const db = loadDB();
+  const actor = currentActor();
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  const ySet = new Set([String(currentYear)]);
+  if(actor){
+    (db.entries||[])
+      .filter(e=>e.masterId===actor.masterId)
+      .forEach(e=>{
+        const mk = String(e.monthKey||"").slice(0,7);
+        if(!mk) return;
+        const y = mk.slice(0,4);
+        if(y) ySet.add(y);
+      });
+  }
+
+  const years = Array.from(ySet).sort((a,b)=>Number(b)-Number(a)); // desc
+  el("fYear").innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
+
+  const f = loadFilters ? loadFilters() : null;
+  const desired = (getUIFilters()?.year) || (f?.year) || String(currentYear);
+  if(el("fYear").value !== desired) el("fYear").value = desired;
+}
+
+function ensureMonthOptions(){
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonthKey = `${currentYear}-${String(now.getMonth()+1).padStart(2,"0")}`;
+
+  const selectedYear = Number(val("fYear", String(currentYear))) || currentYear;
+
+  const months = [];
+  months.push({ value: "all", label: "Todos" });
+
+  for(let m=1; m<=12; m++){
+    const mk = `${selectedYear}-${String(m).padStart(2,"0")}`;
+    months.push({ value: mk, label: monthLabel(mk) });
+  }
+
+  el("fMonth").innerHTML = months.map(o=>`<option value="${o.value}">${o.label}</option>`).join("");
+
+  const f = loadFilters ? loadFilters() : {};
+  const desiredMk = (getUIFilters()?.monthKey) || f.monthKey || currentMonthKey;
+
+  let finalMk = desiredMk;
+  if(finalMk !== "all"){
+    const y = String(finalMk).slice(0,4);
+    if(Number(y)!==selectedYear){
+      finalMk = (selectedYear===currentYear) ? currentMonthKey : "all";
+    }
+  }
+
+  if(el("fMonth").value !== finalMk) el("fMonth").value = finalMk;
+}
+
+
+function fillSelectOptions(){
+  el("fStatus").innerHTML = `<option value="">Todos</option>` + STATUS_LIST.map(s=>`<option value="${s}">${s}</option>`).join("");
+  el("fOrigin").innerHTML = `<option value="">Todos</option>` + ORIGINS.map(o=>`<option value="${o}">${o}</option>`).join("");
+  el("fTreatment").innerHTML = `<option value="">Todos</option>` + TREATMENTS.map(t=>`<option value="${t}">${t}</option>`).join("");
+}
+
+/* -------- Acesso aos dados -------- */
+function filteredEntries(){
+  const db = loadDB();
+  const actor = currentActor();
+  if(!actor) return [];
+
+  const f = getUIFilters();
+
+  const rawSearch = String(el("fSearch")?.value ?? f.search ?? "").trim();
+  const filterCacheKey = JSON.stringify({
+    masterId: actor.masterId || "",
+    filters: f || {},
+    search: rawSearch,
+    entriesLength: Array.isArray(db.entries) ? db.entries.length : 0,
+    contactsLength: Array.isArray(db.contacts) ? db.contacts.length : 0,
+    version: window.__CRONOS_DATA_VERSION__ || 0
+  });
+  const cached = window.__CRONOS_FILTERED_ENTRIES_CACHE__;
+  if(cached && cached.db === db && cached.key === filterCacheKey && Array.isArray(cached.rows)){
+    return cached.rows;
+  }
+
+  function normText(v){
+    return String(v ?? "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  const search = normText(rawSearch);
+  const searchDigits = String(rawSearch || "").replace(/\D/g, "");
+  const hasGlobalLeadSearch = !!search || !!searchDigits;
+
+  const periodFrom = parseISO(f.periodFrom);
+  const periodTo = parseISO(f.periodTo);
+
+  function inRangeISO(d, a, b){
+    if(!d) return false;
+    const dt = parseISO(d);
+    if(a && dt < a) return false;
+    if(b && dt > b) return false;
+    return true;
+  }
+
+  function entryRefDate(e){
+    return e.firstContactAt || e.apptDate || e.createdAt || e.updatedAt || (e.monthKey ? (String(e.monthKey).slice(0,7) + "-01") : "");
+  }
+
+  const contactsById = getContactsByIdMap(db);
+
+  let rows = (db.entries || [])
+    .filter(e=>e.masterId === actor.masterId);
+
+  if(hasGlobalLeadSearch){
+    rows = rows.filter(e=>{
+      const c = contactsById.get(String(e.contactId || "")) || {};
+      const hayText = normText([
+        c.name, c.phone, c.cpf,
+        e.name, e.lead, e.nome, e.phone, e.telefone,
+        e.city, e.notes, e.originOther, e.treatmentOther,
+        e.status, e.origin, e.treatment,
+        e.monthKey, monthLabel(String(e.monthKey || "").slice(0,7) || ""),
+        ...(Array.isArray(e.tags) ? e.tags : [])
+      ].filter(Boolean).join(" "));
+
+      const hayDigits = [
+        c.phone, c.cpf,
+        e.phone, e.telefone, e.contato
+      ].filter(Boolean).join(" ").replace(/\D/g, "");
+
+      const textOk = search ? hayText.includes(search) : false;
+      const digitsOk = searchDigits ? hayDigits.includes(searchDigits) : false;
+      return textOk || digitsOk;
+    });
+  }else{
+    rows = rows.filter(e=>{
+      if(f.monthKey && f.monthKey !== "all"){
+        return e.monthKey === f.monthKey;
+      }
+      const y = String(e.monthKey || "").slice(0,4);
+      if(f.year && y !== String(f.year)) return false;
+      return true;
+    });
+  }
+
+  if(f.periodFrom || f.periodTo){
+    rows = rows.filter(e=>inRangeISO(entryRefDate(e), periodFrom, periodTo));
+  }
+
+  rows = rows
+    .filter(e=> !f.status || e.status===f.status)
+    .filter(e=>{
+      if(!f.campaign) return true;
+      const inCampaign = Array.isArray(e?.tags) && e.tags.includes("Campanha");
+      return f.campaign === "yes" ? inCampaign : !inCampaign;
+    })
+    .filter(e=> !f.treatment || e.treatment===f.treatment)
+    .filter(e=> !f.origin || e.origin===f.origin);
+
+  try{
+    const order = f.order || "recent";
+    const nameOf = (e)=> (contactsById.get(String(e.contactId||""))?.name || "").toLowerCase();
+    const dateOf = (e)=> parseISO(entryRefDate(e)) || new Date(0);
+
+    if(order==="recent") rows.sort((a,b)=> dateOf(b) - dateOf(a));
+    else if(order==="old") rows.sort((a,b)=> dateOf(a) - dateOf(b));
+    else if(order==="az") rows.sort((a,b)=> nameOf(a).localeCompare(nameOf(b)));
+    else if(order==="za") rows.sort((a,b)=> nameOf(b).localeCompare(nameOf(a)));
+  }catch(_){}
+
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = { db, key: filterCacheKey, rows };
+  return rows;
+}
+
+function getContact(contactId){
+  const db = loadDB();
+  return db.contacts.find(c=>c.id===contactId) || null;
+}
+
+/* -------- Renderização da interface -------- */
+function updateSidebarPills(){
+  const db = loadDB();
+  const actor = currentActor();
+  if(!actor) return;
+  const allMonth = filteredEntries();
+  const total = allMonth.length;
+  const hotCount = allMonth.filter(e=>e.tags?.includes("Prioridade: Quente")).length;
+  const usersCount = db.users.filter(u=>u.masterId===actor.masterId).length + 1; // master
+  el("pillTotal").textContent = String(total);
+  el("pillHot").textContent = `${hotCount} hot`;
+  el("pillUsers").textContent = String(usersCount);
+
+const currentMonth = todayISO().slice(0,7);
+const currentMonthTasks = (db.tasks||[]).filter(t=>t.masterId===actor.masterId && t.done!==true && String(t.dueDate||"").slice(0,7)===currentMonth);
+const tasksOpen = currentMonthTasks.length;
+const overdue = currentMonthTasks.filter(t=>t.dueDate && (new Date(t.dueDate+"T00:00:00") < new Date(todayISO()+"T00:00:00"))).length;
+const pillK = el("pillKanban"); if(pillK) pillK.textContent = String(total);
+const pillT = el("pillTasks"); if(pillT) pillT.textContent = overdue ? `${overdue} ⚠️` : String(tasksOpen);
+
+}
+
+
+const STATUS_UI_LABELS = {
+  "Conversando":"Em conversa",
+  "Agendado":"Agendados",
+  "Compareceu":"Compareceram",
+  "Fechou":"Fechados",
+  "Remarcou":"Remarcados",
+  "Faltou":"Faltaram",
+  "Desmarcou":"Desmarcados",
+  "Sem resposta":"Sem resposta",
+  "Msg não entregue":"Mensagens não entregues",
+  "Mensagem não entregue":"Mensagens não entregues",
+  "Número incorreto":"Números incorretos",
+  "Achou caro":"Acharam caro",
+  "Não tem interesse":"Sem interesse",
+  "Mora longe":"Moram longe",
+  "Mora em outra cidade":"Moram em outra cidade",
+  "Fechou em outro lugar":"Fecharam em outro lugar",
+  "Concluído":"Concluídos"
+};
+
+function dashStatusLabel(status){
+  return STATUS_UI_LABELS[String(status||"").trim()] || String(status||"—");
+}
+function getDashStatusFilter(){
+  return String(window.__DASH_STATUS_ACTIVE || "");
+}
+function setDashStatusFilter(status){
+  const next = String(status||"");
+  window.__DASH_STATUS_ACTIVE = (getDashStatusFilter()===next) ? "" : next;
+  renderDashboard();
+}
+
+
+function cronosIsDeletedLike(obj){
+  if(!obj || typeof obj !== "object") return false;
+  if(obj.deletedAt || obj.removedAt || obj.archivedAt || obj.canceledAt || obj.cancelledAt) return true;
+  if(obj.deleted === true || obj.removed === true || obj.archived === true || obj.canceled === true || obj.cancelled === true || obj.isDeleted === true) return true;
+  const st = String(obj.status || obj.situacao || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .trim().toLowerCase();
+  return ["excluido", "excluida", "deletado", "deletada", "removido", "removida", "cancelado", "cancelada", "canceled", "cancelled"].includes(st);
+}
+function cronosTombstoneIdSet(value){
+  if(!value) return new Set();
+  if(value instanceof Set) return new Set([...value].map(String));
+  if(Array.isArray(value)) return new Set(value.map(x=>String(typeof x === "object" ? (x?.id || x?.paymentId || x?.planId || x?.key || "") : x)).filter(Boolean));
+  if(typeof value === "object") return new Set(Object.keys(value).filter(k=>value[k]));
+  return new Set(String(value).split(/[;,|\s]+/).map(x=>x.trim()).filter(Boolean));
+}
+function cronosLegacyInstallmentTombstoneKey(pay, number){
+  return String(pay?.id || pay?.installmentId || pay?.paymentId || pay?.number || number || "");
+}
+function cronosActiveFichaPlanItems(entry){
+  const items = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
+  return items.filter(item=>!cronosIsDeletedLike(item));
+}
+function cronosActiveFinancialPlans(entry){
+  const deletedPlanIds = cronosTombstoneIdSet(entry?.deletedFinancialPlanIds || entry?.financialPlansDeleted || entry?.removedFinancialPlanIds);
+  return (Array.isArray(entry?.financialPlans) ? entry.financialPlans : []).filter(plan=>{
+    const id = String(plan?.id || "");
+    if(id && deletedPlanIds.has(id)) return false;
+    return !cronosIsDeletedLike(plan);
+  });
+}
+function cronosActiveFinancialPayments(plan){
+  const deletedPaymentIds = cronosTombstoneIdSet(plan?.deletedPaymentIds || plan?.paymentsDeleted || plan?.removedPaymentIds);
+  return (Array.isArray(plan?.payments) ? plan.payments : []).filter(pay=>{
+    const id = String(pay?.id || pay?.paymentId || pay?.installmentId || "");
+    if(id && deletedPaymentIds.has(id)) return false;
+    return !cronosIsDeletedLike(pay);
+  });
+}
+function cronosActiveLegacyInstallments(entry){
+  if(!entry || entry.deletedLegacyInstallmentPlanAt) return [];
+  const deletedLegacy = cronosTombstoneIdSet(entry.deletedLegacyInstallments || entry.deletedInstallments || entry.removedInstallments);
+  return (Array.isArray(entry.installments) ? entry.installments : []).filter((pay, idx)=>{
+    if(cronosIsDeletedLike(pay)) return false;
+    const key = cronosLegacyInstallmentTombstoneKey(pay, pay?.number || idx+1);
+    if(key && deletedLegacy.has(key)) return false;
+    return true;
+  });
+}
+function cronosFichaItemBudgetValue(item){
+  if(!item || cronosIsDeletedLike(item)) return 0;
+  const closedKeys = [
+    "valorFechado", "valorOrcamento", "valorOrçado", "valorPaciente",
+    "valorCobrado", "valorFinal", "precoFechado", "preçoFechado",
+    "priceClosed", "closedValue", "budgetValue", "orcamento", "valor"
+  ];
+  for(const key of closedKeys){
+    if(Object.prototype.hasOwnProperty.call(item, key)){
+      const n = parseMoney(item?.[key]);
+      if(n > 0) return n;
+    }
+  }
+  const genericKeys = ["value", "amount", "total"];
+  for(const key of genericKeys){
+    if(Object.prototype.hasOwnProperty.call(item, key)){
+      const n = parseMoney(item?.[key]);
+      if(n > 0) return n;
+    }
+  }
+  return parseMoney(item?.valorBase ?? item?.valorTabela ?? item?.tabela ?? 0);
+}
+function cronosFichaBudgetTotal(entry){
+  return cronosActiveFichaPlanItems(entry).reduce((sum,item)=> sum + cronosFichaItemBudgetValue(item), 0);
+}
+function cronosPlanBudgetTotal(entry, opts={}){
+  const fichaHasBudget = opts.fichaHasBudget === true;
+  return cronosActiveFinancialPlans(entry).reduce((sum,plan)=>{
+    if(fichaHasBudget && typeof legacyPlanShouldBeSkippedAsAdapter === "function" && legacyPlanShouldBeSkippedAsAdapter(entry, plan)) return sum;
+    const payments = cronosActiveFinancialPayments(plan);
+    const scheduled = payments.reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+    const paid = payments.filter(p=> typeof financialPaymentPaid === "function" ? financialPaymentPaid(p) : (!!p?.paidAt || !!p?.cashDate || p?.paid === true || String(p?.status||"").toUpperCase()==="PAGA"))
+      .reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+    const declared = parseMoney(plan?.amount ?? plan?.total ?? plan?.valor ?? plan?.value ?? 0);
+    return sum + Math.max(declared, scheduled, paid);
+  }, 0);
+}
+function cronosDashboardHasLeadScopedFilter(filters={}){
+  return !!(
+    String(filters?.search || "").trim() ||
+    String(filters?.status || "").trim() ||
+    String(filters?.campaign || "").trim() ||
+    String(filters?.treatment || "").trim() ||
+    String(filters?.origin || "").trim() ||
+    String(window.__DASH_STATUS_ACTIVE || "").trim() ||
+    String(window.__KPI_ACTIVE || "").trim()
+  );
+}
+function cronosFilterReceivedEventsByRows(events, rows){
+  const rowList = Array.isArray(rows) ? rows : [];
+  if(!rowList.length) return [];
+  const rowIds = new Set(rowList.map(e=>String(e?.id || "")).filter(Boolean));
+  const contactIds = new Set(rowList.map(e=>String(e?.contactId || "")).filter(Boolean));
+  return (events || []).filter(ev=>{
+    const eid = String(ev?.entryId || ev?.raw?.entryId || "").trim();
+    const cid = String(ev?.contactId || ev?.raw?.contactId || "").trim();
+    if(eid && rowIds.has(eid)) return true;
+    if(cid && contactIds.has(cid)) return true;
+    return false;
+  });
+}
+function cronosOfficialReceivedEventsForRange(db, actor, fromISO, toISO){
+  const events = (typeof buildCronosReceivedEvents === "function")
+    ? buildCronosReceivedEvents(db, actor, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true })
+    : getReceivedEventsForPeriod(db, actor, fromISO, toISO, { includeLegacyDueFallback:false, includeUndatedLegacyByEntryMonth:true });
+  const from = pickISOFlexible(fromISO || "");
+  const to = pickISOFlexible(toISO || "");
+  return (events || []).filter(ev=>{
+    const iso = pickISOFlexible(ev?.iso || ev?.date || "");
+    if(!iso) return false;
+    if(from && iso < from) return false;
+    if(to && iso > to) return false;
+    return true;
+  });
+}
+
+function getEntryBudgetValue(e){
+  if(!e) return 0;
+
+  // Regra oficial: ficha ativa > planos/recebimentos ativos > legado.
+  // Valor de tabela só entra como último recurso quando o item não tem valor de orçamento/fechado.
+  try{
+    const fichaTotal = cronosFichaBudgetTotal(e);
+    if(fichaTotal > 0) return fichaTotal;
+  }catch(_){ }
+
+  try{
+    const planTotal = cronosPlanBudgetTotal(e);
+    if(planTotal > 0) return planTotal;
+  }catch(_){ }
+
+  try{
+    if(!e?.deletedLegacyInstallmentPlanAt){
+      const inst = cronosActiveLegacyInstallments(e);
+      const legacyInstallTotal = inst.reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+      const declaredLegacy = parseMoney(e?.installPlan?.amount ?? e?.installPlan?.total ?? 0);
+      const total = Math.max(legacyInstallTotal, declaredLegacy);
+      if(total > 0) return total;
+    }
+  }catch(_){ }
+
+  const budget = Math.max(
+    parseMoney(e.valueBudget ?? 0),
+    parseMoney(e.budget ?? 0),
+    parseMoney(e.orcamento ?? 0),
+    parseMoney(e.valorOrcamento ?? 0)
+  );
+  if(budget > 0) return budget;
+  return parseMoney(e.valueEstimated ?? 0);
+}
+function getEntryPaidValue(e){
+  if(!e) return 0;
+  try{
+    if(typeof cronosEntryFinancialSummary === "function"){
+      return parseMoney(cronosEntryFinancialSummary(e, loadDB())?.paid ?? 0);
+    }
+  }catch(_){ }
+  try{
+    const plans = cronosActiveFinancialPlans(e);
+    const planPaid = plans.reduce((sum,p)=>{
+      return sum + cronosActiveFinancialPayments(p)
+        .filter(pay=>financialPaymentPaid ? financialPaymentPaid(pay) : (!!pay.paidAt || !!pay.cashDate || pay.status === "PAGA" || pay.paid === true))
+        .reduce((s,pay)=>s + parseMoney(pay.amount || pay.value || pay.valor || 0), 0);
+    }, 0);
+    if(planPaid > 0) return planPaid;
+  }catch(_){ }
+  return Math.max(
+    parseMoney(e.valuePaid ?? 0),
+    parseMoney(e.valorPago ?? 0),
+    parseMoney(e.valorRecebido ?? 0),
+    parseMoney(e.totalRecebido ?? 0),
+    parseMoney(e.paidValue ?? 0),
+    parseMoney(e.receivedValue ?? 0),
+    parseMoney(e.amountPaid ?? 0),
+    parseMoney(e.paidAmount ?? 0),
+    parseMoney(e.totalPaid ?? 0),
+    parseMoney(e.received ?? 0),
+    parseMoney(e.pago ?? 0)
+  );
+}
+
+function cronosEntryFinancialSummary(entry, db=null){
+  if(!entry) return {budget:0, paid:0, open:0, source:"empty"};
+  const max0 = n => Math.max(0, Number(n || 0));
+  const paidLike = p => {
+    if(!p || (typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(p))) return false;
+    const st = String(p?.status || "").trim().toUpperCase();
+    return !!(p?.paidAt || p?.cashDate || p?.paidDate || p?.paymentDate || p?.paid === true || st === "PAGA" || st === "PAGO");
+  };
+
+  let fichaTotal = 0;
+  try{ fichaTotal = cronosFichaBudgetTotal(entry); }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler ficha", e); }
+
+  let planTotal = 0;
+  let planPaid = 0;
+  let hasFinancialPlans = false;
+  const validFinancialPlanIds = new Set();
+  const validFinancialPaymentKeys = new Set();
+  try{
+    const plans = cronosActiveFinancialPlans(entry);
+    hasFinancialPlans = plans.length > 0;
+    plans.forEach(plan=>{
+      const planId = String(plan?.id || "");
+      if(planId) validFinancialPlanIds.add(planId);
+      const payments = cronosActiveFinancialPayments(plan);
+      payments.forEach(pay=>{
+        const payId = String(pay?.id || "");
+        if(planId && payId) validFinancialPaymentKeys.add(`${planId}::${payId}`);
+      });
+      const scheduled = payments.reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+      const paid = payments.filter(paidLike).reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+      const declaredTotal = parseMoney(plan?.amount ?? plan?.total ?? plan?.valor ?? plan?.value ?? 0);
+      const shouldSkipAdapter = fichaTotal > 0 && typeof legacyPlanShouldBeSkippedAsAdapter === "function" && legacyPlanShouldBeSkippedAsAdapter(entry, plan);
+      if(!shouldSkipAdapter) planTotal += Math.max(declaredTotal, scheduled, paid);
+      planPaid += paid;
+    });
+  }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler recebimentos", e); }
+
+  let dbPaid = 0;
+  try{
+    if(db && Array.isArray(db.payments)){
+      const eid = String(entry.id || "");
+      db.payments.forEach(p=>{
+        if(String(p?.entryId || "") !== eid) return;
+        if(!paidLike(p)) return;
+        const planId = String(p?.financialPlanId || p?.planId || "");
+        const payId = String(p?.financialPaymentId || p?.paymentId || p?.installmentId || "");
+        if(planId && validFinancialPlanIds.has(planId)) return; // já contado no plano ativo
+        if(planId && payId && validFinancialPaymentKeys.has(`${planId}::${payId}`)) return;
+        dbPaid += (typeof cronosPaymentAmount === "function") ? parseMoney(cronosPaymentAmount(p)) : parseMoney(p?.value ?? p?.amount ?? p?.valor ?? 0);
+      });
+    }
+  }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler caixa", e); }
+
+  let legacyInstallTotal = 0;
+  let legacyInstallPaid = 0;
+  try{
+    const migrated = !!(entry.installPlan && entry.installPlan.migratedToFinancialPlanId);
+    if(entry.installPlan && !migrated && !entry.deletedLegacyInstallmentPlanAt){
+      const inst = cronosActiveLegacyInstallments(entry);
+      const instTotal = inst.reduce((s,p)=>s + parseMoney(p.amount ?? p.value ?? p.valor ?? 0), 0);
+      const instPaid = inst.filter(paidLike).reduce((s,p)=>s + parseMoney(p.amount ?? p.value ?? p.valor ?? 0), 0);
+      legacyInstallTotal = Math.max(parseMoney(entry.installPlan.amount ?? entry.installPlan.total ?? 0), instTotal, instPaid);
+      legacyInstallPaid = instPaid;
+    }
+  }catch(e){ console.warn("Resumo financeiro do lead: falha ao ler parcelamento legado", e); }
+
+  const legacyBudget = Math.max(
+    parseMoney(entry.valueBudget ?? 0),
+    parseMoney(entry.valueEstimated ?? 0),
+    parseMoney(entry.budget ?? 0),
+    parseMoney(entry.orcamento ?? 0),
+    parseMoney(entry.valorOrcamento ?? 0)
+  );
+  const explicitLegacyPaid = Math.max(
+    parseMoney(entry.valorPago ?? 0),
+    parseMoney(entry.valorRecebido ?? 0),
+    parseMoney(entry.totalRecebido ?? 0),
+    parseMoney(entry.paidValue ?? 0),
+    parseMoney(entry.receivedValue ?? 0),
+    parseMoney(entry.amountPaid ?? 0),
+    parseMoney(entry.paidAmount ?? 0),
+    parseMoney(entry.totalPaid ?? 0),
+    parseMoney(entry.received ?? 0),
+    parseMoney(entry.pago ?? 0),
+    // valuePaid fica fora quando há ficha nova: em alguns leads ele representa valor realizado, não dinheiro pago.
+    fichaTotal > 0 ? 0 : parseMoney(entry.valuePaid ?? 0)
+  );
+  const legacyClosedFallback = parseMoney(entry.valueClosed ?? entry.valueClosedGross ?? 0);
+
+  let budget = 0;
+  if(fichaTotal > 0) budget = fichaTotal;
+  else if(planTotal > 0) budget = planTotal;
+  else if(legacyInstallTotal > 0) budget = legacyInstallTotal;
+  else budget = legacyBudget;
+  budget = max0(budget);
+
+  let paid = 0;
+  if(fichaTotal > 0){
+    paid = Math.max(planPaid, dbPaid, legacyInstallPaid, explicitLegacyPaid);
+  }else if(hasFinancialPlans){
+    paid = Math.max(planPaid, dbPaid) + legacyInstallPaid;
+  }else{
+    paid = Math.max(planPaid, dbPaid, legacyInstallPaid, explicitLegacyPaid);
+  }
+  if(paid <= 0 && legacyClosedFallback > 0 && fichaTotal <= 0 && planTotal <= 0 && legacyInstallTotal <= 0){
+    paid = legacyClosedFallback;
+  }
+  paid = max0(paid);
+  const open = max0((budget || 0) - (paid || 0));
+  const source = fichaTotal > 0 ? "ficha" : (planTotal > 0 ? "recebimentos" : (legacyInstallTotal > 0 ? "parcelamento" : "legado"));
+  return {budget, paid, open, source, planTotal, planPaid, dbPaid, fichaTotal, legacyBudget, legacyInstallTotal, legacyInstallPaid};
+}
+window.cronosEntryFinancialSummary = cronosEntryFinancialSummary;
+
+
+function getEntryCashPaidValue(e){
+  if(!e) return 0;
+
+  const paidCandidates = [
+    e.totalRecebido,
+    e.valuePaid,
+    e.paidValue,
+    e.valorPago,
+    e.valorRecebido,
+    e.receivedValue,
+    e.amountPaid,
+    e.paidAmount,
+    e.totalPaid,
+    e.receivedAmount
+  ];
+  for(const v of paidCandidates){
+    const n = parseMoney(v);
+    if(n > 0) return n;
+  }
+  return 0;
+}
+
+function getEntryStrictUndatedLegacyPaidValue(e){
+  if(!e) return 0;
+
+  const paidCandidates = [
+    e.totalRecebido,
+    e.paidValue,
+    e.valorPago,
+    e.valorRecebido,
+    e.receivedValue,
+    e.received,
+    e.amountPaid,
+    e.paidAmount,
+    e.totalPaid,
+    e.receivedAmount
+  ];
+  for(const v of paidCandidates){
+    const n = parseMoney(v);
+    if(n > 0) return n;
+  }
+  return 0;
+}
+function getEntryHistoricalValuePaidOnly(e){
+  if(!e) return 0;
+  const paidCandidates = [
+    e.valuePaid,
+    e.valorPago,
+    e.valorRecebido,
+    e.totalRecebido,
+    e.paidValue,
+    e.receivedValue,
+    e.amountPaid,
+    e.paidAmount,
+    e.totalPaid,
+    e.receivedAmount
+  ];
+  for(const v of paidCandidates){
+    const n = parseMoney(v);
+    if(n > 0) return n;
+  }
+  return 0;
+}
+
+function entryHasLegacyOriginalPaidValue(e){
+  return getEntryCashPaidValue(e) > 0 ||
+    parseMoney(e?.valuePaidGross) > 0 ||
+    parseMoney(e?.valorPagoBruto) > 0 ||
+    parseMoney(e?.valueClosedGross) > 0;
+}
+function getEntryUnsafeGrossPaidValue(e){
+  return Math.max(
+    parseMoney(e?.valuePaidGross),
+    parseMoney(e?.valorPagoBruto),
+    parseMoney(e?.valueClosedGross)
+  );
+}
+function isAutoMigratedLegacyPlan(plan){
+  const source = String(plan?.source || "").toLowerCase();
+  const title = String(plan?.title || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return !!(
+    plan?.legacyInstallPlan === true ||
+    source === "legacyinstallments" ||
+    source === "legacyinstallment" ||
+    source === "legacyentry" ||
+    title.includes("parcelamento legado")
+  );
+}
+function legacyPlanShouldBeSkippedAsAdapter(entry, plan){
+  if(!isAutoMigratedLegacyPlan(plan)) return false;
+  const hasOriginalInstallments = Array.isArray(entry?.installments) && entry.installments.length > 0;
+  const hasOriginalPaid = entryHasLegacyOriginalPaidValue(entry);
+  const hasLegacyInstallPlan = !!entry?.installPlan;
+  return hasOriginalInstallments || hasOriginalPaid || hasLegacyInstallPlan;
+}
+function pickISOFlexible(raw){
+  if(raw instanceof Date) return cronosLocalISODate(raw);
+  if(typeof raw === "number"){
+    const d = new Date(raw);
+    return isNaN(d) ? "" : cronosLocalISODate(d);
+  }
+  if(typeof raw === "string"){
+    const s = raw.trim();
+    if(!s) return "";
+    if(/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(s)) return s.slice(0,10);
+    const mm = s.match(/^([0-3]?\d)\/([0-1]?\d)\/([12]\d{3})(?:\s+.*)?$/);
+    if(mm){
+      const dd = String(mm[1]).padStart(2,'0');
+      const mo = String(mm[2]).padStart(2,'0');
+      const yyyy = mm[3];
+      return `${yyyy}-${mo}-${dd}`;
+    }
+    const d = new Date(s);
+    if(!isNaN(d)) return cronosLocalISODate(d);
+  }
+  return "";
+}
+function getDashboardEntryDate(e){
+  return pickISOFlexible(
+    e?.apptDate ||
+    e?.firstContactAt ||
+    e?.firstContact ||
+    e?.createdAt ||
+    e?.createdISO ||
+    e?.lastUpdateAt ||
+    e?.updatedAt ||
+    e?.appointmentAt ||
+    e?.agendamentoAt ||
+    e?.date ||
+    (e?.monthKey ? `${String(e.monthKey).slice(0,7)}-01` : "")
+  );
+}
+function dashboardDateInRange(iso, fromISO, toISO){
+  if(!iso) return false;
+  if(fromISO && iso < fromISO) return false;
+  if(toISO && iso > toISO) return false;
+  return true;
+}
+function getDashboardPaymentsForRows(db, actor, rows){
+  const ids = new Set((rows||[]).map(e=>String(e?.id||"")).filter(Boolean));
+  const contactIds = new Set((rows||[]).map(e=>String(e?.contactId||"")).filter(Boolean));
+  return (db?.payments||[])
+    .filter(p=>!actor || !p.masterId || p.masterId===actor.masterId)
+    .filter(p=>{
+      const entryId = String(p?.entryId||"");
+      const contactId = String(p?.contactId||"");
+      if(ids.size){
+        if(entryId && ids.has(entryId)) return true;
+        if(!entryId && contactId && contactIds.has(contactId)) return true;
+        return false;
+      }
+      return true;
+    })
+    .map(p=>({ ...p, __iso: pickISOFlexible(p?.date || p?.at || p?.paidAt || "") }))
+    .filter(p=>p.__iso);
+}
+function buildDashboardRevenueData(rows, db, actor, filters){
+  const todayKey = todayISO();
+  const currentMonthKey = todayKey.slice(0,7);
+  const currentYear = todayKey.slice(0,4);
+  const monthNamesShort = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+  const fromISO = String(filters?.periodFrom||"").trim();
+  const toISO = String(filters?.periodTo||"").trim();
+  const rowsSafe = Array.isArray(rows) ? rows : [];
+
+  const cacheKey = JSON.stringify({
+    masterId: actor?.masterId || actor?.clinicId || "",
+    monthKey: filters?.monthKey || "",
+    year: filters?.year || currentYear,
+    fromISO,
+    toISO,
+    rowsLength: rowsSafe.length,
+    entriesLength: Array.isArray(db?.entries) ? db.entries.length : 0,
+    contactsLength: Array.isArray(db?.contacts) ? db.contacts.length : 0,
+    paymentsLength: Array.isArray(db?.payments) ? db.payments.length : 0,
+    version: window.__CRONOS_DATA_VERSION__ || 0,
+    calcVersion: 'v37-finance-unificado'
+  });
+  const cache = window.__CRONOS_DASH_REVENUE_CACHE__;
+  if(cache && cache.rows === rowsSafe && cache.db === db && cache.key === cacheKey && (Date.now() - cache.ts) < 1500){
+    return cache.data;
+  }
+
+  const entries = Array.isArray(db?.entries) ? db.entries : [];
+  const contacts = Array.isArray(db?.contacts) ? db.contacts : [];
+  const entryById = new Map(entries.map(e=>[String(e?.id||""), e]));
+  const entryByContact = new Map();
+  entries.forEach(e=>{
+    const cid = String(e?.contactId || "");
+    if(cid && !entryByContact.has(cid)) entryByContact.set(cid, e);
+  });
+  const contactById = (typeof getContactsByIdMap === "function") ? getContactsByIdMap(db) : new Map(contacts.map(c=>[String(c?.id||""), c]));
+
+  const entryKey = (obj)=>{
+    const entryId = String(obj?.entryId || obj?.id || "").trim();
+    if(entryId) return `entry:${entryId}`;
+    const contactId = String(obj?.contactId || "").trim();
+    if(contactId) return `contact:${contactId}`;
+    return "";
+  };
+
+  const findEntryFrom = (obj)=>{
+    const entryId = String(obj?.entryId || obj?.id || "").trim();
+    if(entryId && entryById.has(entryId)) return entryById.get(entryId);
+    const contactId = String(obj?.contactId || "").trim();
+    if(contactId && entryByContact.has(contactId)) return entryByContact.get(contactId);
+    return null;
+  };
+
+  const contactNameFrom = (obj)=>{
+    const entry = findEntryFrom(obj);
+    const contactId = String(obj?.contactId || entry?.contactId || "").trim();
+    const contact = contactId ? contactById.get(contactId) : null;
+    return contact?.name || obj?.contactName || obj?.name || entry?.name || "Sem paciente vinculado";
+  };
+
+  const detailItem = (kind, value, obj, iso, desc)=>({
+    kind,
+    value: Number(value||0),
+    iso: iso || "",
+    patient: contactNameFrom(obj),
+    desc: String(desc || obj?.desc || obj?.description || "").trim(),
+    method: String(obj?.method || obj?.payMethod || "").trim(),
+    entryId: String(obj?.entryId || obj?.id || "").trim(),
+    contactId: String(obj?.contactId || "").trim(),
+    source: String(obj?.source || "").trim()
+  });
+
+  function finish(data){
+    window.__CRONOS_DASH_REVENUE_CACHE__ = { rows: rowsSafe, db, key: cacheKey, ts: Date.now(), data };
+    return data;
+  }
+
+  function addGrossToSeries(monthKey, series, details, monthRows){
+    const daysMode = series.length > 12;
+    (monthRows||[]).forEach(e=>{
+      const budget = getEntryBudgetValue(e);
+      if(!budget) return;
+      const iso = getDashboardEntryDate(e);
+      if(!iso || iso.slice(0,7)!==monthKey) return;
+      if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
+      if(daysMode){
+        const day = Number(iso.slice(8,10));
+        if(day>=1 && day<=series.length){
+          series[day-1] += budget;
+          details[day-1].push(detailItem("gross", budget, e, iso, "Orçamento/plano do lead"));
+        }
+      }else{
+        const idx = Number(monthKey.slice(5,7)) - 1;
+        if(idx>=0 && idx<12){
+          series[idx] += budget;
+          details[idx].push(detailItem("gross", budget, e, iso, "Orçamento/plano do lead"));
+        }
+      }
+    });
+  }
+
+  if(filters?.monthKey && filters.monthKey !== "all"){
+    const monthKey = filters.monthKey;
+    const [y,m] = String(monthKey).split("-").map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const labels = Array.from({length: daysInMonth}, (_,i)=>String(i+1).padStart(2,"0"));
+    const grossSeries = Array.from({length: daysInMonth}, ()=>0);
+    const receivedSeries = Array.from({length: daysInMonth}, ()=>0);
+    const grossDetails = Array.from({length: daysInMonth}, ()=>[]);
+    const receivedDetails = Array.from({length: daysInMonth}, ()=>[]);
+    const monthStartISO = `${monthKey}-01`;
+    const monthEndISO = `${monthKey}-${String(daysInMonth).padStart(2,"0")}`;
+    const effectiveFromISO = fromISO && fromISO > monthStartISO ? fromISO : monthStartISO;
+    const effectiveToISO = toISO && toISO < monthEndISO ? toISO : monthEndISO;
+    const monthRowsSafe = rowsSafe.filter(e=>String(e?.monthKey||"")===monthKey);
+    addGrossToSeries(monthKey, grossSeries, grossDetails, monthRowsSafe);
+
+    let monthPayments = cronosOfficialReceivedEventsForRange(db, actor, effectiveFromISO, effectiveToISO);
+    if(monthKey === currentMonthKey) monthPayments = monthPayments.filter(p=>p.iso <= todayISO);
+    if(cronosDashboardHasLeadScopedFilter(filters)) monthPayments = cronosFilterReceivedEventsByRows(monthPayments, rowsSafe);
+
+    monthPayments.forEach(p=>{
+      const val = Number(p.value || p.amount || 0);
+      const iso = p.iso || p.__iso || "";
+      const day = Number(String(iso).slice(8,10));
+      if(day>=1 && day<=daysInMonth){
+        receivedSeries[day-1] += val;
+        receivedDetails[day-1].push(detailItem("received", val, p, iso, p.desc || "Lançamento no caixa/recebimentos"));
+      }
+    });
+
+    return finish({
+      mode: "daily",
+      axisLabelPrefix: "Dia",
+      labels,
+      grossSeries,
+      receivedSeries,
+      grossDetails,
+      receivedDetails,
+      totalReceived: receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
+      titleText: "Receita (R$) por dia",
+      hintText: "(bruto/orçado por dia • recebido por dia • clique no ponto para ver a origem)"
+    });
+  }
+
+  const selectedYear = String(filters?.year || currentYear);
+  const labels = monthNamesShort.slice();
+  const grossSeries = Array.from({length: 12}, ()=>0);
+  const receivedSeries = Array.from({length: 12}, ()=>0);
+  const grossDetails = Array.from({length: 12}, ()=>[]);
+  const receivedDetails = Array.from({length: 12}, ()=>[]);
+  const rowsByMonth = new Map();
+
+  rowsSafe.forEach(e=>{
+    const mk = String(e?.monthKey||"").slice(0,7);
+    if(!/^\d{4}-\d{2}$/.test(mk) || !mk.startsWith(`${selectedYear}-`)) return;
+    if(!rowsByMonth.has(mk)) rowsByMonth.set(mk, []);
+    rowsByMonth.get(mk).push(e);
+  });
+
+  rowsByMonth.forEach((monthRows, monthKey)=>{
+    addGrossToSeries(monthKey, grossSeries, grossDetails, monthRows);
+  });
+
+  const yearStartISO = `${selectedYear}-01-01`;
+  const yearEndISO = `${selectedYear}-12-31`;
+  const effectiveYearFromISO = fromISO && fromISO > yearStartISO ? fromISO : yearStartISO;
+  const effectiveYearToISO = toISO && toISO < yearEndISO ? toISO : yearEndISO;
+  let yearPayments = cronosOfficialReceivedEventsForRange(db, actor, effectiveYearFromISO, effectiveYearToISO);
+  if(cronosDashboardHasLeadScopedFilter(filters)) yearPayments = cronosFilterReceivedEventsByRows(yearPayments, rowsSafe);
+
+  yearPayments.forEach(p=>{
+    const iso = p.iso || p.__iso || "";
+    const idx = Number(String(iso).slice(5,7)) - 1;
+    if(idx<0 || idx>11) return;
+    const val = Number(p.value || p.amount || 0);
+    receivedSeries[idx] += val;
+    receivedDetails[idx].push(detailItem("received", val, p, iso, p.desc || "Lançamento no caixa/recebimentos"));
+  });
+
+  return finish({
+    mode: "monthly",
+    axisLabelPrefix: "Mês",
+    labels,
+    grossSeries,
+    receivedSeries,
+    grossDetails,
+    receivedDetails,
+    totalReceived: receivedSeries.reduce((sum,v)=>sum + (Number(v)||0), 0),
+    titleText: "Receita (R$) por mês",
+    hintText: "(bruto/orçado por mês • recebido por mês • clique no ponto para ver a origem)"
+  });
+}
+function renderDashboard(){
+  const rows = filteredEntries();
+  const dashKpiActive = String(window.__KPI_ACTIVE || "");
+  const rowsForDashboardDetail = (typeof __dashboardRowsByKpi === "function") ? __dashboardRowsByKpi(dashKpiActive, rows) : rows;
+  const byStatus = new Map();
+  const byStatusTotalValue = new Map(); // soma do valor orçado/fechado por status
+  const byStatusValue = new Map(); // soma R$ em aberto por status
+  let totalBudget = 0;
+  let totalOpen = 0;
+  let positive = 0, dq = 0, appt = 0;
+
+  const actor = currentActor();
+  const db = loadDB();
+  const uiFilters = getUIFilters();
+  const dashRevenue = buildDashboardRevenueData(rows, db, actor, uiFilters);
+  const leadScopedFinancialFilter = cronosDashboardHasLeadScopedFilter(uiFilters);
+  let totalPaid = dashRevenue.totalReceived;
+
+  const isRescueEntry = (e)=> Array.isArray(e?.tags) && e.tags.includes("Resgatado");
+  const totalBase = rows.length || 0;
+
+  rows.forEach(e=>{
+    if(isRescueEntry(e)) return;
+    const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+    const budget = parseMoney(summary?.budget ?? getEntryBudgetValue(e));
+    totalBudget += (budget||0);
+  });
+
+  if(leadScopedFinancialFilter){
+    totalPaid = rows.reduce((sum,e)=>{
+      if(isRescueEntry(e)) return sum;
+      const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+      return sum + parseMoney(summary?.paid ?? getEntryPaidValue(e) ?? 0);
+    }, 0);
+  }
+
+  // Sem filtro de lead, R$ Recebido vem do caixa oficial do período (mesma fonte da Performance).
+  // Com filtro de paciente/status, acompanha os leads filtrados.
+  totalOpen = Math.max(0, (totalBudget || 0) - (totalPaid || 0));
+
+  rowsForDashboardDetail.forEach(e=>{
+    const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+
+    // Resumo por Status:
+    // Total precisa ser sempre baseado no Valor do orçamento do lead, não no valor de tabela/plano.
+    // Aberto precisa ser Valor do orçamento - valor pago reconhecido.
+    const budget = isRescueEntry(e) ? 0 : parseMoney(summary?.budget ?? getEntryBudgetValue(e) ?? 0);
+    const paid = isRescueEntry(e) ? 0 : parseMoney(summary?.paid ?? getEntryPaidValue(e) ?? 0);
+    const open = Math.max(0, (budget || 0) - (paid || 0));
+
+    byStatus.set(e.status, (byStatus.get(e.status)||0) + 1);
+    byStatusTotalValue.set(e.status, (byStatusTotalValue.get(e.status)||0) + (budget||0));
+    byStatusValue.set(e.status, (byStatusValue.get(e.status)||0) + (open||0));
+  });
+
+  rows.forEach(e=>{
+    if(POSITIVE.has(e.status)) positive++;
+    if(DISQUALIFIED.has(e.status)) dq++;
+    if(e && (e.status==='Agendado' || e.status==='Remarcou')) appt++;
+  });
+
+  const pctBaseNum = (n)=> totalBase ? `${((Number(n||0)/totalBase)*100).toFixed(1).replace('.',',')}%` : '0%';
+  const pctBudgetNum = (n)=> totalBudget ? `${((Number(n||0)/totalBudget)*100).toFixed(1).replace('.',',')}%` : '0%';
+
+  el("kpiTotal").textContent = totalBase;
+  el("kpiPositive").textContent = positive;
+  el("kpiDQ").textContent = dq;
+  el("kpiAppt").textContent = appt;
+
+  const kpiTotalPct = el('kpiTotalPct');
+  if(kpiTotalPct) kpiTotalPct.textContent = '100%';
+  const kpiPositivePct = el('kpiPositivePct');
+  if(kpiPositivePct) kpiPositivePct.textContent = pctBaseNum(positive);
+  const kpiDQPct = el('kpiDQPct');
+  if(kpiDQPct) kpiDQPct.textContent = pctBaseNum(dq);
+  const kpiApptPct = el('kpiApptPct');
+  if(kpiApptPct) kpiApptPct.textContent = pctBaseNum(appt);
+
+  try{
+    const budgetCount = rows.reduce((acc,e)=>{
+      const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+      const b = isRescueEntry(e) ? 0 : parseMoney(summary?.budget ?? getEntryBudgetValue(e));
+      return acc + ((b && b>0) ? 1 : 0);
+    }, 0);
+    const avg = budgetCount ? (totalBudget / budgetCount) : 0;
+    const kpiAvg = el("kpiBudgetAvg");
+    if(kpiAvg) kpiAvg.textContent = moneyBR(avg);
+  }catch(_){ }
+
+  const kpiBudget = el("kpiBudgetTotal");
+  if(kpiBudget) kpiBudget.textContent = moneyBR(totalBudget);
+  const kpiClosed = el("kpiClosedValue");
+  if(kpiClosed) kpiClosed.textContent = moneyBR(totalPaid);
+  const kpiOpen = el("kpiOpenValue");
+  if(kpiOpen) kpiOpen.textContent = moneyBR(totalOpen);
+  const kpiReceivedPct = el('kpiReceivedPct');
+  if(kpiReceivedPct) kpiReceivedPct.textContent = pctBudgetNum(totalPaid);
+  const kpiOpenPct = el('kpiOpenPct');
+  if(kpiOpenPct) kpiOpenPct.textContent = pctBudgetNum(totalOpen);
+
+  const grid = el("dashByStatusGrid");
+  const ordered = STATUS_LIST.map(s=>[s, byStatus.get(s)||0]).filter(([_,n])=>n>0);
+  let dashStatusActive = getDashStatusFilter();
+  if(dashStatusActive && !ordered.some(([s])=>s===dashStatusActive)){
+    window.__DASH_STATUS_ACTIVE = "";
+    dashStatusActive = "";
+  }
+
+  grid.innerHTML = `
+    <div class="sgHead">Status ${cronosExplainInfo("Status atual do lead no funil. Esse bloco não representa, sozinho, o caixa recebido no mês.", "Explicar Status")}</div>
+    <div class="sgHead center">Leads</div>
+    <div class="sgHead right">Orçado / Em aberto ${cronosExplainInfo("Orçado: soma do valor orçado dos leads naquele status. Aberto: orçamento menos valores pagos vinculados a esses leads. Pode ser diferente do R$ Recebido, porque o recebido vem das baixas/pagamentos do período selecionado.", "Explicar Financeiro por status")}</div>
+  `;
+  if(!ordered.length){
+    const a=document.createElement("div"); a.className="muted"; a.style.gridColumn="1 / -1"; a.style.padding="12px";
+    a.textContent="Sem leads no filtro atual.";
+    grid.appendChild(a);
+  } else {
+    ordered.forEach(([s,n])=>{
+      const active = dashStatusActive===s;
+      const activeStyle = active ? "background:rgba(96,165,250,.14); box-shadow:inset 0 0 0 1px rgba(96,165,250,.35);" : "";
+      const row = document.createElement("div"); row.className="sgRow";
+      const c1=document.createElement("div");
+      c1.textContent = dashStatusLabel(s);
+      c1.style.cursor = "pointer";
+      c1.style.fontWeight = active ? "800" : "600";
+      c1.style.transition = "all .15s ease";
+      c1.style.cssText += activeStyle;
+      c1.dataset.dashStatus = s;
+      c1.title = "Clique para filtrar os leads abaixo por este status";
+
+      const c2=document.createElement("div");
+      c2.className="center nowrap";
+      c2.innerHTML="<b>"+String(n)+"</b>";
+      c2.style.cursor = "pointer";
+      c2.style.transition = "all .15s ease";
+      c2.style.cssText += activeStyle;
+      c2.dataset.dashStatus = s;
+      c2.title = "Clique para filtrar os leads abaixo por este status";
+
+      const c3=document.createElement("div");
+      c3.className="right";
+      const statusTotalValue = byStatusTotalValue.get(s) || 0;
+      const statusOpenValue = byStatusValue.get(s) || 0;
+      c3.innerHTML = `
+        <div style="line-height:1.25; display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
+          <div style="white-space:nowrap;"><span class="muted" style="font-size:11px">Orçado:</span> <b style="font-size:14px">${moneyBR(statusTotalValue)}</b></div>
+          <div style="white-space:nowrap;"><span class="muted" style="font-size:11px">Aberto:</span> <b style="font-size:14px">${moneyBR(statusOpenValue)}</b></div>
+        </div>
+      `;
+      c3.style.cursor = "pointer";
+      c3.style.transition = "all .15s ease";
+      c3.style.cssText += activeStyle;
+      c3.dataset.dashStatus = s;
+      c3.title = "Clique para filtrar os leads abaixo por este status";
+
+      row.appendChild(c1); row.appendChild(c2); row.appendChild(c3);
+      grid.appendChild(row);
+    });
+
+    const hint = document.createElement("div");
+    hint.style.gridColumn = "1 / -1";
+    hint.style.padding = "10px 12px";
+    hint.style.display = "flex";
+    hint.style.justifyContent = "space-between";
+    hint.style.alignItems = "center";
+    hint.style.gap = "10px";
+    hint.innerHTML = `
+      <div class="muted" style="font-size:12px">
+        ${dashKpiActive && dashKpiActive !== "total" ? `Indicador ativo: <b>${escapeHTML(__kpiTitle(dashKpiActive))}</b>. Clique em Total para limpar.` : "Clique em um status para filtrar os leads abaixo."}
+      </div>
+      ${dashStatusActive ? `<button type="button" id="btnDashStatusClear" class="miniBtn">Mostrar todos</button>` : `<div class="muted" style="font-size:12px">Filtro atual: Todos</div>`}
+    `;
+    grid.appendChild(hint);
+  }
+  grid.querySelectorAll("[data-dash-status]").forEach(node=>{
+    node.onclick = ()=> setDashStatusFilter(node.dataset.dashStatus || "");
+    node.onkeydown = (ev)=>{
+      if(ev.key==="Enter" || ev.key===" "){
+        ev.preventDefault();
+        setDashStatusFilter(node.dataset.dashStatus || "");
+      }
+    };
+    node.tabIndex = 0;
+    node.setAttribute("role","button");
+  });
+  const btnDashStatusClear = el("btnDashStatusClear");
+  if(btnDashStatusClear){
+    btnDashStatusClear.onclick = ()=>{
+      window.__DASH_STATUS_ACTIVE = "";
+      renderDashboard();
+    };
+  }
+  try{ grid.dataset.rendered="1"; }catch(_){ }
+
+
+
+
+ const dashStatusActivePreview = getDashStatusFilter();
+const sortedRows = rowsForDashboardDetail
+  .slice()
+  .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""));
+
+const previewSource = dashStatusActivePreview
+  ? sortedRows.filter(e=>String(e.status||"")===dashStatusActivePreview)
+  : sortedRows;
+
+const totalPrev = previewSource.length;
+const previewLimit = window.DASH_PREVIEW_LIMIT || 10;
+const prev = previewSource.slice(0, previewLimit);
+
+const box = el("dashPreview");
+const dashContactsById = (typeof getContactsByIdMap === "function") ? getContactsByIdMap(db) : new Map((db.contacts||[]).map(c=>[String(c.id), c]));
+if(!prev.length){
+  box.innerHTML = `<div class="muted">Nenhum lead encontrado${dashStatusActivePreview ? ` para <b>${escapeHTML(dashStatusLabel(dashStatusActivePreview))}</b>` : ""}.</div>`;
+} else {
+  box.innerHTML =
+    prev.map(e=>{
+      const c = dashContactsById.get(String(e.contactId || ""));
+      const tagRes = e.tags?.includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : "";
+      const entryId = escapeHTML(String(e.id || ""));
+      const svgFicha = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>`;
+      const svgEdit  = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
+      const btnEdit = `<button type="button" class="iconBtn cronos-action-edit" title="Abrir / editar lead" onclick="openLeadEntry('${entryId}')">${svgEdit}</button>`;
+      const btnFicha = `<button type="button" class="iconBtn btnFicha cronos-action-ficha" data-ficha-entry="${entryId}" title="Ficha" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')">${svgFicha}</button>`;
+      return `
+        <div class="card" style="padding:10px; margin-bottom:10px">
+          <div style="display:flex; justify-content:space-between; gap:10px">
+            <div>
+              <div style="font-weight:800">${escapeHTML(c?.name||"—")}</div>
+              <div class="muted" style="font-size:12px; margin-top:2px">
+                ${escapeHTML((()=>{ const phone = c?.phone || "—"; const st = String(e.status || "").trim(); return st ? `${phone} • ${st}` : phone; })())}
+              </div>
+            </div>
+            <div class="leadActionsRow" style="gap:6px; align-items:flex-start; justify-content:flex-end">
+              ${tagRes}
+              ${cronosAuditInfoButton(db, e, c)}
+              ${btnEdit}
+              ${btnFicha}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("")
+    +
+    `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px">
+        <div class="muted" style="font-size:12px">
+          Mostrando ${prev.length} de ${totalPrev} leads${dashStatusActivePreview ? ` • Status: ${escapeHTML(dashStatusLabel(dashStatusActivePreview))}` : ""}
+        </div>
+        ${
+          totalPrev > previewLimit
+            ? `<button id="btnDashPreviewMore" class="miniBtn">Ver mais</button>`
+            : `<div class="muted" style="font-size:12px">Todos os leads exibidos</div>`
+        }
+      </div>
+    `;
+
+  const btnMore = el("btnDashPreviewMore");
+  if(btnMore){
+    btnMore.onclick = () => {
+      window.DASH_PREVIEW_LIMIT = (window.DASH_PREVIEW_LIMIT || 10) + 10;
+      renderAll();
+    };
+  }
+}
+
+try{ __bindKpiClicks(); }catch(_){}
+
+requestAnimationFrame(()=>renderDashboardCharts(rows));
+}
+function statusDotClass(status){
+  const s = (status||"").trim();
+  const map = {
+    "Conversando":"st-yellow",
+    "Agendado":"st-blue",
+    "Compareceu":"st-green",
+    "Fechou":"st-purple",
+    "Remarcou":"st-orange",
+    "Faltou":"st-red",
+    "Desmarcou":"st-red",
+    "Sem resposta":"st-gray",
+    "Msg não entregue":"st-gray",
+    "Número incorreto":"st-gray",
+    "Achou caro":"st-red",
+    "Não tem interesse":"st-red",
+    "Fechou em outro lugar":"st-red",
+    "Concluído":"st-green"
+  };
+  return map[s] || "st-gray";
+}
+function chipStatus(e){
+  const st = e.status||"—";
+  const cls = statusDotClass(st);
+  return `<span class="chip"><span class="dot ${cls}"></span>${escapeHTML(st)}</span>`;
+}
+function chipOrigin(e){
+  const v = e.origin==="Outros" ? (e.originOther||"Outros") : e.origin;
+  return `<span class="chip">${escapeHTML(v||"—")}</span>`;
+}
+function chipTreatment(e){
+  const v = e.treatment==="Outros" ? (e.treatmentOther||"Outros") : e.treatment;
+  return `<span class="chip">${escapeHTML(v||"—")}</span>`;
+}
+
+window.DASH_PREVIEW_LIMIT = 10;
+
+/* -------- Dashboard charts (Canvas, sem biblioteca) -------- */
+function renderDashboardCharts(rows){
+  const line = el("chartRevenueLine");
+  const bar = el("chartStatusBars");
+  if(!line || !bar) return;
+
+  const actor = currentActor();
+  const db = loadDB();
+  const revenueData = buildDashboardRevenueData(rows, db, actor, getUIFilters());
+
+  const by = new Map();
+  rows.forEach(e=> by.set(e.status||"—", (by.get(e.status||"—")||0)+1));
+  const statusPairs = Array.from(by.entries()).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const barLabels = statusPairs.map(([s])=>s);
+  const barValues = statusPairs.map(([_,n])=>n);
+
+  const __doDrawDashCharts = () => {
+    drawMultiLineChart(line, revenueData.labels, [
+      { name:"Recebido", values: revenueData.receivedSeries, details: revenueData.receivedDetails, color:"rgba(46,229,157,0.9)", fill:true },
+      { name:"Bruto/Orçado", values: revenueData.grossSeries, details: revenueData.grossDetails, color:"rgba(255,90,90,0.9)", dash:[6,6], fill:false }
+    ], { yPrefix: "", showPoints: false, showMaxLabel: false, axisLabelPrefix: revenueData.axisLabelPrefix || "Dia" });
+
+    const valueEl = document.getElementById("lineChartValue");
+    if(valueEl) valueEl.textContent = moneyBR(revenueData.totalReceived);
+
+    const titleEl = document.getElementById("lineChartTitleText");
+    if(titleEl) titleEl.textContent = revenueData.titleText;
+
+    const hintEl = document.getElementById("lineChartHint");
+    if(hintEl) hintEl.textContent = revenueData.hintText;
+
+    drawBarChart(bar, barLabels, barValues);
+  };
+
+  requestAnimationFrame(() => {
+    __doDrawDashCharts();
+    setTimeout(__doDrawDashCharts, 120);
+  });
+}
+function clearCanvas(canvas){
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  let w = rect.width;
+  let h = rect.height;
+
+  if(w < 50) w = (canvas.parentElement?.getBoundingClientRect().width) || 600;
+  if(h < 50) h = 180;
+
+  canvas.width = Math.max(1, Math.floor(w * dpr));
+  canvas.height = Math.max(1, Math.floor(h * dpr));
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  return {ctx, w, h};
+}
+
+function drawLineChart(canvas, labels, values, opt={}){
+  const {ctx,w,h} = clearCanvas(canvas);
+const css = getComputedStyle(document.documentElement);
+const textColor = css.getPropertyValue('--text').trim();
+const mutedColor = css.getPropertyValue('--muted').trim();
+  const pad = 28;
+  const top = 64;// reserva p/ legenda (mais espaço p/ não sobrepor)
+  const maxV = Math.max(1, ...values);
+  const minV = 0;
+
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = mutedColor;
+  ctx.beginPath();
+  ctx.moveTo(pad, top);
+  ctx.lineTo(pad, h-pad);
+  ctx.lineTo(w-10, h-pad);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(30,120,255,0.9)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  values.forEach((v,i)=>{
+    const x = pad + (i*(w-pad-10))/Math.max(1, values.length-1);
+    const y = (h-pad) - ((v-minV)*(h-pad-top))/Math.max(1, (maxV-minV));
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = textColor || "1f2937";
+  ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  const step = Math.ceil(labels.length/8);
+  for(let i=0;i<labels.length;i+=step){
+    const x = pad + (i*(w-pad-10))/Math.max(1, labels.length-1);
+    ctx.fillText(labels[i], x-8, h-10);
+  }
+  ctx.fillText((opt.yPrefix||"")+moneyBR(maxV).replace(/R\$\s*/,""), 10, 18);
+}
+
+function drawMultiLineChart(canvas, labels, series, opt={}){
+  if(!canvas) return;
+
+  const css = getComputedStyle(document.documentElement);
+  const isLight = document.documentElement.classList.contains("light");
+  const textColor = css.getPropertyValue('--text').trim() || (isLight ? "#0f172a" : "#e8eef7");
+  const mutedColor = css.getPropertyValue('--muted').trim() || (isLight ? "#334155" : "#aab4c3");
+  const gridColor = isLight ? "rgba(15,23,42,0.12)" : "rgba(255,255,255,0.18)";
+  const axisColor = isLight ? "rgba(15,23,42,0.20)" : "rgba(255,255,255,0.28)";
+  const labelColor = isLight ? "rgba(15,23,42,0.78)" : "rgba(232,238,246,0.88)";
+  const legendTextColor = isLight ? "rgba(15,23,42,0.90)" : "rgba(232,238,246,0.96)";
+
+  const w0 = canvas.clientWidth || canvas.width || 0;
+  const h0 = canvas.clientHeight || canvas.height || 0;
+  if(w0===0 || h0===0) return;
+
+  const {ctx,w,h} = clearCanvas(canvas);
+
+  const padL = 34;
+  const padR = 18;
+  const padB = 30;
+  const topBase = 64; // legenda + respiro
+
+  const all = (series||[]).flatMap(s=>s.values||[]).filter(v=>typeof v==="number" && !isNaN(v));
+  let minV = Math.min(...(all.length?all:[0]));
+  let maxV = Math.max(...(all.length?all:[1]));
+  if(!isFinite(minV)) minV = 0;
+  if(!isFinite(maxV)) maxV = 1;
+  if(maxV === minV) maxV = minV + 1;
+
+  const range = Math.max(1, maxV - minV);
+  const padRange = range * 0.12; // 12% de folga
+  minV = Math.max(0, minV - padRange);
+  maxV = maxV + padRange;
+
+  const plotLeft = padL;
+  const plotRight = w - padR;
+  const plotTop = topBase;
+  const plotBottom = h - padB;
+
+  const X = (i,n) => plotLeft + (i*(plotRight-plotLeft))/Math.max(1, n-1);
+  const Y = (v)   => plotBottom - ((v-minV)*(plotBottom-plotTop))/Math.max(1e-9, (maxV-minV));
+
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = gridColor;
+  const gridLines = 4;
+  for(let g=0; g<=gridLines; g++){
+    const yy = plotTop + (g*(plotBottom-plotTop))/gridLines;
+    ctx.beginPath();
+    ctx.moveTo(plotLeft, yy);
+    ctx.lineTo(plotRight, yy);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = axisColor;
+  ctx.beginPath();
+  ctx.moveTo(plotLeft, plotTop);
+  ctx.lineTo(plotLeft, plotBottom);
+  ctx.lineTo(plotRight, plotBottom);
+  ctx.stroke();
+  ctx.restore();
+
+  function drawSmoothPath(values){
+    const n = values.length;
+    if(n===0) return;
+    const pts = values.map((v,i)=>({x:X(i,n), y:Y(v)}));
+    if(n<3){
+      ctx.beginPath();
+      pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
+      return pts;
+    }
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for(let i=0;i<n-1;i++){
+      const p0 = pts[i-1] || pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i+1];
+      const p3 = pts[i+2] || p2;
+
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+    return pts;
+  }
+
+  (series||[]).forEach((s, si)=>{
+    const values = (s.values||[]).map(v=>Number(v)||0);
+    if(values.length===0) return;
+
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.strokeStyle = s.color || "rgba(30,120,255,0.9)";
+    if(Array.isArray(s.dash)) ctx.setLineDash(s.dash); else ctx.setLineDash([]);
+
+    const pts = drawSmoothPath(values);
+
+    ctx.shadowColor = "rgba(0,0,0,0.25)";
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 2;
+    ctx.stroke();
+
+    if(s.fill){
+      ctx.setLineDash([]);
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.18;
+      const grad = ctx.createLinearGradient(0, plotTop, 0, plotBottom);
+      grad.addColorStop(0, (s.color||"rgba(46,229,157,0.9)").replace("0.9","0.22"));
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = grad;
+      ctx.lineTo(pts[pts.length-1].x, plotBottom);
+      ctx.lineTo(pts[0].x, plotBottom);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.strokeStyle = s.color || "rgba(46,229,157,0.9)";
+    ctx.lineWidth = 2;
+    if(opt.showPoints){
+    pts.forEach((p,i)=>{
+      const isLast = (i===pts.length-1);
+      const r = isLast ? 6 : 4;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
+ctx.restore();
+  });
+
+  ctx.save();
+  ctx.fillStyle = labelColor;
+  ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  const step = Math.ceil(labels.length/7);
+  for(let i=0;i<labels.length;i+=step){
+    const x = X(i, labels.length);
+    ctx.fillText(labels[i], x-10, h-10);
+  }
+
+  if(opt.showMaxLabel !== false){
+    ctx.fillStyle = labelColor;
+    ctx.fillText((opt.yPrefix||"")+moneyBR(maxV).replace(/R\$\s*/,""), 10, 18);
+  }
+  ctx.restore();
+  ctx.save();
+  let x = plotLeft, y = 22;
+  const maxX = plotRight;
+  series.forEach(s=>{
+    const name = s.name||"";
+    ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    const need = 18 + ctx.measureText(name).width + 18;
+    if(x + need > maxX){ x = plotLeft; y += 18; }
+    ctx.fillStyle = s.color || "rgba(30,120,255,0.9)";
+    ctx.fillRect(x, y, 12, 3);
+    if(Array.isArray(s.dash)){
+      ctx.save();
+      ctx.strokeStyle = s.color || "rgba(30,120,255,0.9)";
+      ctx.setLineDash(s.dash);
+      ctx.beginPath();
+      ctx.moveTo(x, y+6);
+      ctx.lineTo(x+12, y+6);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = legendTextColor;
+    ctx.fillText(name, x+16, y+7);
+    x += need;
+  });
+  ctx.restore();
+
+  try{
+    canvas.__chartData = {
+      type:"multiLine",
+      labels: labels,
+      series: (series||[]).map(s=>({
+        name:s.name,
+        values:(s.values||[]),
+        details:(Array.isArray(s.details) ? s.details : []),
+        color:(s.color||"rgba(30,120,255,0.9)"),
+        dash:(Array.isArray(s.dash)?s.dash:null)
+      })),
+      pad: plotLeft, top: plotTop, w: w, h: h,
+      yPrefix: (opt.yPrefix||"R$ "),
+      axisLabelPrefix: (opt.axisLabelPrefix||"Dia"),
+      plotLeft, plotRight, plotTop, plotBottom,
+      minV, maxV
+    };
+    __bindChartHoverOnce(canvas);
+    return maxV;
+  }catch(_){}
+  return 0;
+}
+
+function drawBarChart(canvas, labels, values){
+  if(!canvas) return;
+  const w0 = canvas.clientWidth || canvas.width || 0;
+  const h0 = canvas.clientHeight || canvas.height || 0;
+  if(w0===0 || h0===0) return;
+
+  const isLight = document.documentElement.classList.contains("light");
+  const labelColor = isLight ? "rgba(15,23,42,0.82)" : "rgba(232,238,246,0.92)";
+  const axisColor = isLight ? "rgba(15,23,42,0.18)" : "rgba(255,255,255,0.26)";
+
+  const {ctx,w,h} = clearCanvas(canvas);
+  const pad = 28;
+  const top = 56;// mais área útil p/ barras
+  const maxV = Math.max(1, ...values);
+  const n = values.length || 1;
+  const barW = (w - pad - 10) / n;
+  const rects = [];
+
+  ctx.strokeStyle = axisColor;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, top);
+  ctx.lineTo(pad, h-pad);
+  ctx.lineTo(w-10, h-pad);
+  ctx.stroke();
+
+  for(let i=0;i<n;i++){
+    const v = values[i]||0;
+    const bh = ((v)* (h-pad-top)) / maxV;
+    const x = pad + i*barW + 6;
+    const y = (h-pad) - bh;
+    ctx.fillStyle = "rgba(30,120,255,0.7)";
+    ctx.fillRect(x, y, Math.max(6, barW-12), bh);
+    rects.push({x:x, y:y, w:Math.max(6, barW-12), h:bh, label:labels[i]||"", value:values[i]||0});
+    ctx.fillStyle = labelColor;
+    ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    const lab = (labels[i]||"").slice(0,12);
+    ctx.fillText(lab, x, h-10);
+  }
+
+  try{
+    canvas.__chartData = { type:"bar", rects: rects };
+    __bindChartHoverOnce(canvas);
+  }catch(_){}
+
+}
+
+let currentPage = 1;
+const leadsPerPage = 50;
+
+
+function renderLeadsPagination(totalLeads, totalPages){
+  const wrap = document.getElementById('leadsPagination');
+  if(!wrap) return;
+  if(!totalLeads){
+    wrap.innerHTML = `<span class="muted">Mostrando 0 de 0 leads</span>`;
+    return;
+  }
+
+  const startItem = ((currentPage - 1) * leadsPerPage) + 1;
+  const endItem = Math.min(totalLeads, currentPage * leadsPerPage);
+
+  const pages = [];
+  const addPage = (p) => {
+    if(p >= 1 && p <= totalPages && !pages.includes(p)) pages.push(p);
+  };
+
+  addPage(1);
+  for(let p = currentPage - 2; p <= currentPage + 2; p++) addPage(p);
+  addPage(totalPages);
+  pages.sort((a,b)=>a-b);
+
+  const parts = [];
+  for(let i=0; i<pages.length; i++){
+    const p = pages[i];
+    const prev = pages[i-1];
+    if(i>0 && p - prev > 1){
+      parts.push(`<span class="muted">…</span>`);
+    }
+    parts.push(
+      p === currentPage
+        ? `<button class="btn primary" type="button" data-page="${p}" aria-current="page">${p}</button>`
+        : `<button class="btn ghost" type="button" data-page="${p}">${p}</button>`
+    );
+  }
+
+  wrap.innerHTML = `
+    <div class="muted" style="margin-right:auto">Mostrando ${startItem}-${endItem} de ${totalLeads} leads</div>
+    <button class="btn ghost" type="button" data-page="prev" ${currentPage <= 1 ? 'disabled' : ''}>← Anterior</button>
+    ${parts.join('')}
+    <button class="btn ghost" type="button" data-page="next" ${currentPage >= totalPages ? 'disabled' : ''}>Próxima →</button>
+  `;
+
+  wrap.querySelectorAll('button[data-page]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const token = btn.dataset.page;
+      if(token === 'prev' && currentPage > 1){
+        currentPage--;
+      }else if(token === 'next' && currentPage < totalPages){
+        currentPage++;
+      }else if(/^\d+$/.test(token)){
+        currentPage = Number(token);
+      }else{
+        return;
+      }
+      renderLeadsTable(filteredEntries());
+    });
+  });
+}
+
+
+function cronosDisplayManualField(primary, manual){
+  const p = String(primary || "").trim();
+  const m = String(manual || "").trim();
+  const n = p.normalize ? p.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : p.toLowerCase();
+  if(m && (!p || n === "outros" || n === "outro")) return m;
+  return p || m || "";
+}
+
+function renderLeadsTable(list){
+  const cardsWrap = document.getElementById('leadsCards');
+  const tbody = document.getElementById('leadsTbody'); // fallback antigo (se existir)
+  const db = loadDB();
+  const _contactsById = getContactsByIdMap(db);
+  const _getContact = (cid)=> _contactsById.get(String(cid||''));
+
+  const target = cardsWrap || tbody;
+  if(!target) return;
+
+  const fullList = Array.isArray(list) ? list : [];
+
+  const totalLeads = fullList.length;
+  const totalPages = Math.max(1, Math.ceil(totalLeads / leadsPerPage));
+
+  if (currentPage > totalPages) currentPage = 1;
+  if (currentPage < 1) currentPage = 1;
+
+  const start = (currentPage - 1) * leadsPerPage;
+  const end = start + leadsPerPage;
+
+  list = fullList.slice(start, end);
+
+  const cardsHtml = (list||[]).map((e)=>{
+    const c = e?.contactId ? _getContact(e.contactId) : null;
+
+    const name = escapeHTML(c?.name || e.name || e.lead || e.nome || '—');
+
+    const phoneRaw = String(c?.phone || e.phone || e.contato || e.telefone || '').trim();
+    const phoneDigits = phoneRaw.replace(/\D/g,'');
+    const phonePretty = phoneDigits ? phoneDigits : '—';
+
+    const prioridadeRaw = (e.priority || e.prioridade || e.temperature || e.temperatura || e.temp || e.pri || '').toString().trim();
+    let prioridade = prioridadeRaw;
+    const priNorm = String(prioridadeRaw).trim().toLowerCase();
+    if (priNorm === '2' || priNorm === 'hot' || priNorm === 'quente' || priNorm === 'q') prioridade = 'Quente';
+    else if (priNorm === '1' || priNorm === 'warm' || priNorm === 'morno' || priNorm === 'm') prioridade = 'Morno';
+    else if (priNorm === '0' || priNorm === 'cold' || priNorm === 'frio' || priNorm === 'f') prioridade = 'Frio';
+
+    const tagsArr = ([]
+      .concat(Array.isArray(e.tags) ? e.tags : (Array.isArray(e.tag) ? e.tag : (e.tag ? [e.tag] : [])))
+      .concat(Array.isArray(c?.tags) ? c.tags : (Array.isArray(c?.tag) ? c.tag : (c?.tag ? [c.tag] : [])))
+      .map(String));
+    if (!prioridade && tagsArr.length) {
+      const tagPref = tagsArr.find(t => /^\s*prioridade\s*:/i.test(String(t || '')));
+      if (tagPref) prioridade = String(tagPref).split(':').slice(1).join(':').trim();
+    }
+
+    const priClass = (() => {
+      const p = (prioridade||'').toLowerCase();
+      if (p.includes('quente')) return 'hot';
+      if (p.includes('morno')) return 'warm';
+      if (p.includes('frio')) return 'cold';
+      return 'neutral';
+    })();
+
+    const priBadge = prioridade ? `<span class="badge ${priClass}">${escapeHTML(prioridade)}</span>` : '';
+
+    const tratamentoRaw = (e.treatment || e.tratamento || e.procedimento || e.trat || c?.treatment || c?.tratamento || '') || '';
+    const tratamentoManual = (e.treatmentOther || e.tratamentoOutro || e.treatment_other || c?.treatmentOther || c?.tratamentoOutro || '') || '';
+    const origemRaw = (e.source || e.origem || e.origin || c?.source || c?.origem || c?.origin || '') || '';
+    const origemManual = (e.originOther || e.origemOutro || e.origin_other || c?.originOther || c?.origemOutro || '') || '';
+    const tratamento = escapeHTML(cronosDisplayManualField(tratamentoRaw, tratamentoManual)) || '—';
+    const origem = escapeHTML(cronosDisplayManualField(origemRaw, origemManual)) || '—';
+
+    const apptDate = (e.apptDate || e.agendamentoData || e.appointmentDate || c?.apptDate || c?.agendamentoData || c?.appointmentDate || '').toString().trim();
+    const apptTime = (e.apptTime || e.agendamentoHora || e.appointmentTime || c?.apptTime || c?.agendamentoHora || c?.appointmentTime || '').toString().trim();
+    const apptText = (apptDate || apptTime) ? `${escapeHTML(apptDate)}${apptTime ? ' ' + escapeHTML(apptTime) : ''}` : '—';
+
+    const financeSummary = (typeof cronosEntryFinancialSummary === "function")
+      ? cronosEntryFinancialSummary(e, db)
+      : { budget:0, paid:0, open:0 };
+    const budgetVal = parseMoney(financeSummary.budget);
+    const paidVal   = parseMoney(financeSummary.paid);
+    const openVal   = parseMoney(financeSummary.open);
+
+    const statusPill = String(e.status || "").trim() ? chipStatus(e) : "";
+
+    const id = e.id ?? e._id ?? '';
+    const idAttr = escapeHTML(String(id));
+
+
+    const svgFicha = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>`;
+    const svgEdit  = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
+    const svgOk    = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="4" width="16" height="16" rx="4"></rect><path d="m8.5 12.5 2.4 2.4 4.8-5"></path></svg>`;
+    const svgTrash = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 14h10l1-14"></path><path d="M9 7V4h6v3"></path></svg>`;
+    const svgWhats = `<svg class="cronos-whatsapp-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.34 4.96L2 22l5.25-1.38a9.86 9.86 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.18 8.18 0 0 1-1.25-4.38c0-4.55 3.7-8.25 8.25-8.25a8.25 8.25 0 0 1 8.25 8.25c0 4.55-3.7 8.24-8.26 8.24Zm4.52-6.18c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.57.13-.17.25-.65.81-.8.98-.15.17-.3.19-.55.06-.25-.12-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.3.37-.45.12-.15.17-.25.25-.42.08-.17.04-.32-.02-.45-.06-.12-.57-1.37-.78-1.88-.21-.5-.42-.43-.57-.44h-.49c-.17 0-.45.06-.68.32-.23.25-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.12.17 1.79 2.73 4.34 3.83.61.26 1.08.42 1.45.54.61.19 1.16.16 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg>`;
+
+    const btnFicha = `<button type="button" class="iconBtn btnFicha cronos-action-ficha" data-ficha-entry="${idAttr}" title="Ficha" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${idAttr}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${idAttr}')">${svgFicha}</button>`;
+    const btnEdit  = `<button class="iconBtn cronos-action-edit" title="Abrir" onclick="openLeadEntry('${idAttr}')">${svgEdit}</button>`;
+    const btnOk    = `<button class="iconBtn cronos-action-ok" title="Marcar OK" onclick="markOK('${idAttr}')">${svgOk}</button>`;
+    const btnMsg   = `<button class="iconBtn cronos-whatsapp-icon-only" title="WhatsApp" onclick="openWhats('${idAttr}')">${svgWhats}</button>`;
+    const btnDel   = `<button class="iconBtn danger cronos-action-delete" title="Excluir" onclick="deleteLead('${idAttr}')">${svgTrash}</button>`;
+
+    return `
+      <div class="leadCard">
+        <div class="leadCardTop">
+          <div class="leadTitle">
+            <div class="leadNameRow">
+              <div class="name">${name}</div>
+              ${priBadge}
+            </div>
+            <div class="leadMeta">
+              <span>${escapeHTML(phonePretty)}</span>
+              ${statusPill ? `<span>•</span><span>${statusPill}</span>` : ""}
+            </div>
+          </div>
+
+          <div class="leadActionsRow">
+            ${btnFicha}${btnEdit}${btnOk}${btnMsg}${btnDel}
+          </div>
+        </div>
+
+        <div class="leadGrid">
+          <div class="kv"><div class="k">Tratamento</div><div class="v">${tratamento}</div></div>
+          <div class="kv"><div class="k">Agendamento</div><div class="v">${apptText}</div></div>
+          <div class="kv"><div class="k">Origem</div><div class="v">${origem}</div></div>
+          <div class="kv"><div class="k">Valores</div><div class="v">Pago: ${moneyBR(paidVal)}<br>Em aberto: ${moneyBR(Math.max(0, openVal))}</div></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  if(cardsWrap){
+    cardsWrap.innerHTML = cardsHtml || `<div class="muted">Nenhum lead encontrado.</div>`;
+  }else{
+    tbody.innerHTML = cardsHtml || `<tr><td colspan="6" class="emptyCell">Nenhum lead encontrado.</td></tr>`;
+  }
+
+  renderLeadsPagination(totalLeads, totalPages);
+}
+
+
+
+
+function openChangeMyPassword(){
+  const actor = currentActor();
+  if(!actor) return toast("Sessão não encontrada");
+  openModal({
+    title: "Alterar minha senha",
+    sub: "Essa alteração vale para o acesso logado agora.",
+    bodyHTML: `
+      <div class="twoCol">
+        <div>
+          <label>Nova senha</label>
+          <input id="myPass1" type="password" placeholder="Digite a nova senha"/>
+        </div>
+        <div>
+          <label>Confirmar senha</label>
+          <input id="myPass2" type="password" placeholder="Repita a nova senha"/>
+        </div>
+      </div>
+      <div class="muted" style="font-size:12px; margin-top:10px">Use pelo menos 6 caracteres para não dar palco pro caos.</div>
+    `,
+    footHTML: `
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn ok" id="btnSaveMyPassword">Salvar nova senha</button>
+    `,
+    onMount: ()=>{
+      el("btnSaveMyPassword").addEventListener("click", async ()=>{
+        const pass1 = val("myPass1").trim();
+        const pass2 = val("myPass2").trim();
+        if(!pass1 || pass1.length < 6) return toast("Senha fraca", "Usa pelo menos 6 caracteres.");
+        if(pass1 !== pass2) return toast("As senhas não batem");
+
+        try{
+          if(typeof supabaseClient !== "undefined" && supabaseClient?.auth?.updateUser){
+            const { error } = await supabaseClient.auth.updateUser({ password: pass1 });
+            if(error) throw error;
+          }else{
+            const db = loadDB();
+            const s = loadSession();
+            if(s?.kind === "user"){
+              const userRow = (db.users||[]).find(u=>u.id===s.id);
+              if(!userRow) throw new Error("Usuário local não encontrado.");
+              userRow.passHash = await hashPass(pass1);
+              saveDB(db, { immediate:true });
+            }else{
+              throw new Error("Sessão cloud não disponível para atualizar a senha.");
+            }
+          }
+
+          closeModal();
+          toast("Senha atualizada ✅", "A nova senha já vale para o seu próximo login.");
+        }catch(err){
+          console.error("Falha ao alterar a própria senha:", err);
+          toast("Falha ao alterar senha", String(err?.message || "Tente novamente."));
+        }
+      });
+    }
+  });
+}
+
+function renderSettings(){
+  const actor = currentActor();
+  if(!actor) return;
+  if(!canAccessView("settings", actor)) return;
+  const prefs = getPrefs();
+  const ta = el("waTemplate");
+  if(ta) ta.value = prefs.waTemplate || "";
+  const taCharge = el("waChargeTemplate");
+  if(taCharge) taCharge.value = (prefs && prefs.waChargeTemplate) ? String(prefs.waChargeTemplate) : "";
+  const db = loadDB();
+  const master = db.masters.find(m=>m.id===actor?.masterId);
+  const clinicInput = el("clinicDisplayName");
+  const clinicHint = el("clinicDisplayNameHint");
+  const ownerEmailInput = el("clinicOwnerEmail");
+  if(clinicInput){
+    clinicInput.value = master?.name || "";
+    const canEditClinicName = !!(actor && actor.kind === "master");
+    clinicInput.disabled = !canEditClinicName;
+    if(clinicHint){
+      clinicHint.textContent = canEditClinicName
+        ? "Esse nome aparece no topo, relatórios e identificação principal da clínica."
+        : "Só o master principal pode alterar o nome exibido da clínica.";
+    }
+    const btnClinic = el("btnSaveClinicIdentity");
+    if(btnClinic){
+      btnClinic.disabled = !canEditClinicName;
+      btnClinic.title = canEditClinicName ? "" : "Só o master principal pode alterar a identidade da clínica.";
+    }
+  }
+  if(ownerEmailInput){
+    ownerEmailInput.value = master?.email || actor?.email || "";
+  }
+}
+
+function renderUsers(){
+  const actor = currentActor();
+  const tbody = el("usersTbody");
+  if(!actor){
+    if(tbody) tbody.innerHTML = "";
+    return;
+  }
+  if(!canAccessView("users", actor)) return;
+  const db = loadDB();
+  const master = db.masters.find(m=>m.id===actor.masterId);
+  const users = db.users.filter(u=>u.masterId===actor.masterId);
+
+  const rows = [
+    {
+      kind:"MASTER",
+      name: master?.name || "Master",
+      login: master?.email || "—",
+      role: "MASTER",
+      master: master?.name || "—",
+      createdAt: master?.createdAt || "",
+      active: true,
+      pendingApproval: false,
+      blockedReason: null
+    },
+    ...users.map(u=>({
+      kind:"USER",
+      id: u.id,
+      name: u.name,
+      login: u.username ? `${u.username} / ${u.email||""}` : (u.email||""),
+      role: u.role,
+      master: master?.name || "—",
+      createdAt: u.createdAt,
+      active: u.active !== false,
+      pendingApproval: u.pendingApproval === true,
+      blockedReason: u.blockedReason || null
+    }))
+  ];
+
+  tbody.innerHTML = rows.map(r=>{
+    const canManage = !!actor?.perms?.manageUsers;
+    const isPending = r.kind === "USER" && r.pendingApproval === true;
+    const isInactive = r.kind === "USER" && !isPending && r.active === false;
+    const rowClass = isPending ? "userRowPending" : (isInactive ? "userRowInactive" : "");
+    const statusChip = isPending
+      ? `<span class="chip chipWarn">Aguardando aprovação</span>${r.blockedReason ? `<div class="muted" style="margin-top:6px">${escapeHTML(r.blockedReason)}</div>` : ``}`
+      : (isInactive
+          ? `<span class="chip chipDanger">Bloqueado</span>${r.blockedReason ? `<div class="muted" style="margin-top:6px">${escapeHTML(r.blockedReason)}</div>` : ``}`
+          : `<span class="chip"><span class="dot ${r.role==="MASTER"?"ok":"warm"}"></span>${r.role}</span>`);
+    return `
+      <tr class="${rowClass}">
+        <td><b>${escapeHTML(r.name)}</b></td>
+        <td class="mono">${escapeHTML(r.login)}</td>
+        <td>${statusChip}</td>
+        <td>${escapeHTML(r.master)}</td>
+        <td class="nowrap">${r.createdAt ? new Date(r.createdAt).toLocaleString("pt-BR") : "—"}</td>
+        <td class="nowrap">
+          ${r.kind==="USER" && canManage ? ( (r.role==="MASTER" && !actor.perms.manageMasters) ? `<span class="muted">—</span>` : `
+            <button class="miniBtn" onclick="openUserEdit('${r.id}')">✏️</button>
+            <button class="miniBtn danger" onclick="deleteUser('${r.id}')">🗑️</button>
+          ` ) : `<span class="muted">—</span>`}
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+/* -------- Navigation -------- */
+const CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS = 4000;
+window.__CRONOS_LAST_CLOUD_PULL_AT__ = window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0;
+window.__CRONOS_PENDING_CLOUD_PULL__ = window.__CRONOS_PENDING_CLOUD_PULL__ || null;
+window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ || null;
+
+async function refreshCloudDataNow({ force=false, reason="" } = {}){
+  const now = Date.now();
+  if(window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ && !force){
+    return window.__CRONOS_CLOUD_PULL_IN_FLIGHT__;
+  }
+  if(!force && DB && (now - (window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0) < CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS)){
+    return DB;
+  }
+  const run = (async ()=>{
+    try{
+      // Antes de puxar a nuvem, tenta enviar mudanças locais pendentes.
+      // Isso evita que procedimentos recém-lançados na ficha sejam apagados por um refresh
+      // quando ainda estavam só no navegador.
+      if(DB && typeof supabaseClient !== "undefined" && supabaseClient?.auth){
+        try{ await scheduleCloudSave(true); }catch(err){ console.warn("Não foi possível enviar alterações locais antes do refresh:", err); }
+      }
+      await ensureCloudDBLoaded(true);
+      await syncCurrentCloudActor();
+      window.__CRONOS_LAST_CLOUD_PULL_AT__ = Date.now();
+      return DB;
+    }finally{
+      window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = null;
+    }
+  })();
+  window.__CRONOS_CLOUD_PULL_IN_FLIGHT__ = run;
+  return run;
+}
+
+function scheduleCloudRefresh(reason="", { force=false, delay=120 } = {}){
+  if(window.__CRONOS_PENDING_CLOUD_PULL__){
+    clearTimeout(window.__CRONOS_PENDING_CLOUD_PULL__);
+    window.__CRONOS_PENDING_CLOUD_PULL__ = null;
+  }
+  window.__CRONOS_PENDING_CLOUD_PULL__ = setTimeout(()=>{
+    window.__CRONOS_PENDING_CLOUD_PULL__ = null;
+    refreshCloudDataNow({ force, reason }).catch(err=>console.error("Falha no refresh cloud:", err));
+  }, Math.max(0, Number(delay)||0));
+}
+
+function setLoadingButtonState(btn, isLoading){
+  if(!btn) return;
+  const label = btn.dataset.label || btn.textContent.trim() || "Atualizar";
+  if(isLoading){
+    btn.disabled = true;
+    btn.classList.add("loading");
+    btn.innerHTML = `<span class="btnSpinner"><span class="spinner"></span></span>${escapeHTML(label)}`;
+    return;
+  }
+  btn.disabled = false;
+  btn.classList.remove("loading");
+  btn.innerHTML = escapeHTML(label);
+}
+
+async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
+  try{
+    setLoadingButtonState(btn, true);
+    await refreshCloudDataNow({ force:true, reason: installmentsOnly ? "installments_button" : "manual_button" });
+    if(installmentsOnly){
+      renderInstallmentsView();
+      cronosRefreshSidebarCountersNow({ reason:"manual_installments_refresh", repeat:true });
+    }else{
+      renderAll();
+      cronosRefreshSidebarCountersNow({ reason:"manual_refresh", repeat:true });
+    }
+    toast("Atualizado", "Dados verificados na nuvem.");
+  }catch(error){
+    console.error("Falha ao atualizar manualmente:", error);
+    toast("Falha ao atualizar", "Não foi possível buscar os dados agora.");
+  }finally{
+    setLoadingButtonState(btn, false);
+  }
+}
+
+function closeAuxiliaryViews(){
+  ["view-todayCronos", "view-creditSimulator", "view-performance"].forEach(id=>{
+    const node = el(id);
+    if(node){
+      node.classList.add("hidden");
+      node.style.display = "none";
+    }
+  });
+  ["navHojeCronos", "navCreditoSimulator", "navPerformance"].forEach(id=>{
+    const btn = el(id);
+    if(btn) btn.classList.remove("active");
+  });
+  qsa('[data-today-hidden="1"], [data-credito-hidden="1"]').forEach(node=>{
+    delete node.dataset.todayHidden;
+    delete node.dataset.creditoHidden;
+  });
+}
+
+
+
+function getContactsByIdMap(db){
+  const contacts = Array.isArray(db?.contacts) ? db.contacts : [];
+  const cache = window.__CRONOS_CONTACTS_BY_ID_CACHE__;
+  if(cache && cache.source === contacts && cache.length === contacts.length){
+    return cache.map;
+  }
+  const map = new Map(contacts.map(c=>[String(c.id), c]));
+  window.__CRONOS_CONTACTS_BY_ID_CACHE__ = { source: contacts, length: contacts.length, map };
+  return map;
+}
+
+function getCurrentMainView(){
+  try{
+    const active = document.querySelector('.nav button.active[data-view]')?.dataset?.view;
+    if(active) return active;
+    const visible = APP_VIEWS.find(v=>{
+      const node = el(`view-${v}`);
+      return node && !node.classList.contains('hidden') && node.style.display !== 'none';
+    });
+    if(visible) return visible;
+  }catch(_){ }
+  return 'dashboard';
+}
+
+function showLeadsLoadingHint(){
+  const wrap = document.getElementById('leadsCards');
+  if(wrap && !String(wrap.innerHTML || '').trim()){
+    wrap.innerHTML = `<div class="muted" style="padding:14px">Carregando leads...</div>`;
+  }
+}
+
+function scheduleLeadsRender(){
+  window.__CRONOS_LEADS_RENDER_TOKEN__ = (window.__CRONOS_LEADS_RENDER_TOKEN__ || 0) + 1;
+  const token = window.__CRONOS_LEADS_RENDER_TOKEN__;
+  showLeadsLoadingHint();
+
+  const run = ()=>{
+    if(token !== window.__CRONOS_LEADS_RENDER_TOKEN__) return;
+    try{
+      const rows = filteredEntries();
+      if(token !== window.__CRONOS_LEADS_RENDER_TOKEN__) return;
+      renderLeadsTable(rows);
+    }catch(err){
+      console.error('Leads: falha ao renderizar', err);
+      const wrap = document.getElementById('leadsCards');
+      if(wrap) wrap.innerHTML = `<div class="muted" style="padding:14px">Não foi possível carregar os leads agora.</div>`;
+    }
+  };
+
+  if(typeof requestAnimationFrame === 'function'){
+    requestAnimationFrame(()=>setTimeout(run, 0));
+  }else{
+    setTimeout(run, 0);
+  }
+}
+
+function scheduleSidebarPillsUpdate(){
+  window.__CRONOS_PILLS_UPDATE_TOKEN__ = (window.__CRONOS_PILLS_UPDATE_TOKEN__ || 0) + 1;
+  const token = window.__CRONOS_PILLS_UPDATE_TOKEN__;
+  const run = ()=>{
+    if(token !== window.__CRONOS_PILLS_UPDATE_TOKEN__) return;
+    try{ updateSidebarPills(); }catch(_){ }
+  };
+  if(typeof requestIdleCallback === "function"){
+    requestIdleCallback(run, {timeout:600});
+  }else{
+    setTimeout(run, 80);
+  }
+}
+
+function showInstallmentsLoadingHint(){
+  const list = document.getElementById("instList");
+  if(list && !String(list.innerHTML || "").trim()){
+    list.innerHTML = `<div class="muted" style="padding:14px">Carregando recebimentos...</div>`;
+  }
+}
+
+function scheduleInstallmentsRender(){
+  window.__CRONOS_INSTALLMENTS_RENDER_TOKEN__ = (window.__CRONOS_INSTALLMENTS_RENDER_TOKEN__ || 0) + 1;
+  const token = window.__CRONOS_INSTALLMENTS_RENDER_TOKEN__;
+  showInstallmentsLoadingHint();
+
+  const run = ()=>{
+    if(token !== window.__CRONOS_INSTALLMENTS_RENDER_TOKEN__) return;
+    try{ renderInstallmentsView(); }
+    catch(err){
+      console.error('Recebimentos: falha ao renderizar', err);
+      const list = document.getElementById('instList');
+      if(list) list.innerHTML = `<div class="muted" style="padding:14px">Não foi possível carregar os recebimentos agora.</div>`;
+    }
+  };
+
+  if(typeof requestAnimationFrame === 'function'){
+    requestAnimationFrame(()=>setTimeout(run, 0));
+  }else{
+    setTimeout(run, 0);
+  }
+}
+
+function renderActiveViewOnly(view){
+  scheduleSidebarPillsUpdate();
+
+  if(view === "dashboard"){
+    try{ renderDashboard(); }catch(_){ }
+    return;
+  }
+  if(view === "leads"){
+    scheduleLeadsRender();
+    return;
+  }
+  if(view === "kanban"){
+    try{ renderKanban(); }catch(_){ }
+    return;
+  }
+  if(view === "tasks"){
+    try{ renderTasks(); }catch(_){ }
+    return;
+  }
+  if(view === "installments"){
+    scheduleInstallmentsRender();
+    return;
+  }
+  if(view === "users"){
+    try{ renderUsers(); }catch(_){ }
+    return;
+  }
+  if(view === "settings"){
+    try{ renderSettings(); }catch(_){ }
+    return;
+  }
+
+  try{ renderAll(); }catch(_){ }
+}
+
+
+function clearCronosNavInlineVisuals(btn){
+  if(!btn) return;
+  try{
+    btn.style.color = "";
+    btn.style.webkitTextFillColor = "";
+    btn.style.filter = "";
+  }catch(_){ }
+  try{
+    btn.querySelectorAll("span, span *, svg, .pill, .todayNavBadge, .credNavIcon").forEach(node=>{
+      try{
+        node.style.color = "";
+        node.style.webkitTextFillColor = "";
+        if(!String(node.getAttribute("style") || "").trim()) node.removeAttribute("style");
+      }catch(_){ }
+    });
+  }catch(_){ }
+}
+
+function setCronosNavActiveVisual(btn, isActive){
+  if(!btn) return;
+  try{ btn.classList.toggle("active", !!isActive); }catch(_){ }
+  clearCronosNavInlineVisuals(btn);
+  if(isActive){
+    try{
+      btn.style.color = "#fff";
+      btn.style.webkitTextFillColor = "#fff";
+      btn.querySelectorAll("span, span *, svg, .pill, .todayNavBadge, .credNavIcon").forEach(node=>{
+        try{
+          node.style.color = "#fff";
+          node.style.webkitTextFillColor = "#fff";
+        }catch(_){ }
+      });
+    }catch(_){ }
+  }
+}
+
+function syncCronosNavActive(matchFn){
+  const matcher = typeof matchFn === "function" ? matchFn : ()=>false;
+  try{
+    qsa(".sidebar .nav button, .nav button").forEach(btn=>{
+      let active = false;
+      try{ active = !!matcher(btn); }catch(_){ active = false; }
+      setCronosNavActiveVisual(btn, active);
+    });
+  }catch(_){ }
+}
+
+try{
+  window.CRONOS_SET_NAV_ACTIVE_VISUAL = setCronosNavActiveVisual;
+  window.CRONOS_SYNC_NAV_ACTIVE = syncCronosNavActive;
+  window.CRONOS_CLEAR_NAV_INLINE_VISUALS = clearCronosNavInlineVisuals;
+}catch(_){ }
+
+function applyActiveViewShell(targetView){
+  if(!targetView || !APP_VIEWS.includes(targetView)) return;
+
+  try{ document.body.classList.add("cronos-route-changing"); }catch(_){ }
+  syncCronosNavActive(b=>b.dataset.view === targetView);
+
+  APP_VIEWS.forEach(v=>{
+    const node = el(`view-${v}`);
+    if(node){
+      node.classList.toggle("hidden", v!==targetView);
+      node.style.display = "";
+    }
+  });
+
+  const sticky = el("stickyFilters");
+  if(sticky){
+    const viewsWithGlobalFilters = new Set(["dashboard","leads","kanban"]);
+    sticky.classList.toggle("hidden", !viewsWithGlobalFilters.has(targetView));
+    sticky.style.display = "";
+  }
+  try{
+    requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove("cronos-route-changing")));
+  }catch(_){ try{ document.body.classList.remove("cronos-route-changing"); }catch(__){} }
+}
+
+function scheduleActiveViewRender(targetView){
+  window.__CRONOS_ACTIVE_VIEW_RENDER_TOKEN__ = (window.__CRONOS_ACTIVE_VIEW_RENDER_TOKEN__ || 0) + 1;
+  const token = window.__CRONOS_ACTIVE_VIEW_RENDER_TOKEN__;
+
+  const run = ()=>{
+    if(token !== window.__CRONOS_ACTIVE_VIEW_RENDER_TOKEN__) return;
+    try{ renderActiveViewOnly(targetView); }catch(err){ console.error("Falha ao renderizar aba", targetView, err); }
+  };
+
+  if(typeof requestAnimationFrame === "function"){
+    requestAnimationFrame(()=>setTimeout(run, 0));
+  }else{
+    setTimeout(run, 0);
+  }
+}
+
+function setActiveView(view){
+  if(!view || !APP_VIEWS.includes(view)){
+    if(view === "todayCronos" && window.CRONOS_TODAY && typeof window.CRONOS_TODAY.show === "function"){
+      window.CRONOS_TODAY.show();
+    }else if((view === "creditSimulator" || view === "simulador") && window.CRONOS_CREDITO && typeof window.CRONOS_CREDITO.show === "function"){
+      window.CRONOS_CREDITO.show();
+    }
+    return;
+  }
+
+  closeAuxiliaryViews();
+
+  const actor = currentActor();
+  let targetView = view;
+
+  if(actor && !canAccessView(targetView, actor)){
+    const fallback = firstAllowedView(actor);
+    if(view !== fallback){
+      toast("Acesso restrito", `Seu nível ${actor.role} não pode abrir ${view}.`);
+    }
+    targetView = fallback;
+  }
+
+  applyRoleVisibility(actor);
+  applyActiveViewShell(targetView);
+  scheduleActiveViewRender(targetView);
+}
+
+/* -------- Modal helpers -------- */
+function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWidth=null, width=null, modalClass=""}){
+  el("modalTitle").textContent = title;
+  el("modalSub").textContent = sub;
+  el("modalBody").innerHTML = bodyHTML;
+  el("modalFoot").innerHTML = footHTML;
+
+  // O modal real do Cronos é #modalBg > .modal.
+  // Antes a largura tentava mirar em .modalInner, que não existe nesse modal principal;
+  // por isso Ficha/Recebimentos pediam tela larga, mas continuavam presos em ~980px.
+  const __modalRoot = document.querySelector('#modalBg > .modal');
+  if(__modalRoot){
+    __modalRoot.className = 'modal';
+    if(modalClass) __modalRoot.classList.add(modalClass);
+    __modalRoot.style.maxWidth = maxWidth || '';
+    __modalRoot.style.width = width || '';
+  }
+
+  el("modalBg").classList.add("show");
+  el("modalBg").setAttribute("aria-hidden","false");
+  try{
+    const __isFichaModal = /(^|\s)modalFichaWide(\s|$)/.test(String(modalClass || ""));
+    document.documentElement.classList.toggle("cronos-ficha-open", __isFichaModal);
+    document.body.classList.toggle("cronos-ficha-open", __isFichaModal);
+    document.documentElement.classList.remove("cronos-ficha-scrolling");
+    document.body.classList.remove("cronos-ficha-scrolling");
+  }catch(_){ }
+  if(typeof onMount==="function") onMount();
+}
+function closeModal(){
+  el("modalBg").classList.remove("show");
+  el("modalBg").setAttribute("aria-hidden","true");
+  const __modalRoot = document.querySelector('#modalBg > .modal');
+  if(__modalRoot){
+    __modalRoot.className = 'modal';
+    __modalRoot.style.maxWidth = '';
+    __modalRoot.style.width = '';
+  }
+  try{
+    document.documentElement.classList.remove("cronos-ficha-open", "cronos-ficha-scrolling");
+    document.body.classList.remove("cronos-ficha-open", "cronos-ficha-scrolling");
+  }catch(_){ }
+}
+el("modalClose").addEventListener("click", closeModal);
+el("modalBg").addEventListener("click", (e)=>{ if(e.target===el("modalBg")) closeModal(); });
+
+/* Cronos — sinaliza rolagem da Ficha sem interferir no turbo das telas principais. */
+(function(){
+  if(window.__CRONOS_FICHA_SCROLL_MARKER_BOUND__) return;
+  window.__CRONOS_FICHA_SCROLL_MARKER_BOUND__ = true;
+  let __fichaScrollTimer = null;
+  function fichaOpen(){
+    return !!(document.body && document.body.classList.contains('cronos-ficha-open'));
+  }
+  function targetIsFicha(target){
+    try{
+      if(!target) return false;
+      if(target === document || target === document.documentElement || target === document.body) return fichaOpen();
+      if(target.id === 'modalBody') return true;
+      return !!(target.closest && target.closest('.modalFichaWide, #fichaApp, .fichaTableWrap'));
+    }catch(_){ return false; }
+  }
+  function markFichaScrolling(ev){
+    if(!fichaOpen() || !targetIsFicha(ev && ev.target)) return;
+    try{
+      document.documentElement.classList.add('cronos-ficha-scrolling');
+      document.body.classList.add('cronos-ficha-scrolling');
+      clearTimeout(__fichaScrollTimer);
+      __fichaScrollTimer = setTimeout(function(){
+        try{
+          document.documentElement.classList.remove('cronos-ficha-scrolling');
+          document.body.classList.remove('cronos-ficha-scrolling');
+        }catch(_){ }
+      }, 180);
+    }catch(_){ }
+  }
+  document.addEventListener('scroll', markFichaScrolling, {capture:true, passive:true});
+  document.addEventListener('wheel', markFichaScrolling, {capture:true, passive:true});
+  document.addEventListener('touchmove', markFichaScrolling, {capture:true, passive:true});
+})();
+
+
+/* -------- Lead create/edit -------- */
+function leadEntryFormHTML(entry, contact, mode, suggestHTML){
+  const e = entry || {};
+  const c = contact || {};
+  const isNew = mode==="new";
+  const actor = currentActor();
+  const ro = !actor.perms.edit;
+
+  function opt(list, cur){
+    const current = String(cur || "");
+    const blank = `<option ${!current ? "selected" : ""} value="">Selecione</option>`;
+    return blank + list.map(v=>`<option ${current===v?"selected":""} value="${escapeHTML(v)}">${escapeHTML(v)}</option>`).join("");
+  }
+
+
+  const __toArr = (v)=> Array.isArray(v) ? v : (v ? [v] : []);
+  const __uniq = (arr)=> Array.from(new Set((arr||[]).map(x=>String(x||"").trim()).filter(Boolean)));
+  const __manualTagsForUI = __uniq([]
+    .concat(__toArr(e.tags))
+    .concat(__toArr(e.tag))
+    .concat(__toArr(c.tags))
+    .concat(__toArr(c.tag))
+    .filter(t=>!String(t||"").startsWith("Prioridade:"))
+    .filter(t=>String(t||"")!=="Campanha")
+  );
+
+  return `
+    <div class="twoCol">
+      <div class="suggest">
+        <label>Nome *</label>
+        <input id="lf_name" ${ro?"disabled":""} value="${escapeHTML(c.name||"")}" placeholder="Ex: Jorge" autocomplete="off"/>
+        <div class="suggestBox" id="leadSuggest">${suggestHTML||""}</div>
+        <div class="help muted" style="font-size:12px">Se já existir, clique na sugestão pra carregar.</div>
+      </div>
+
+      <div class="suggest">
+        <label>Telefone/WhatsApp *</label>
+        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Ex: (98) 99999-0000" inputmode="numeric" autocomplete="off"/>
+      </div>
+
+      <div>
+        <label>CPF</label>
+        <input id="lf_cpf" ${ro?"disabled":""} value="${escapeHTML(formatCPF(c.cpf||""))}" placeholder="Ex: 123.456.789-00" inputmode="numeric" autocomplete="off"/>
+      </div>
+
+      <div>
+        <label>Data de nascimento</label>
+        <input id="lf_birth" type="date" ${ro?"disabled":""} value="${escapeHTML(c.birthDate||"")}"/>
+      </div>
+
+      <div>
+        <label>Data do 1º contato (mês)</label>
+        <input id="lf_first" type="date" ${ro?"disabled":""} value="${escapeHTML(e.firstContactAt || "")}"/>
+      </div>
+
+      <div>
+        <label>Mês/Ano</label>
+        <input id="lf_month" type="month" ${ro?"disabled":""} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : todayISO().slice(0,7)))}" class="mono"/>
+        <div class="help muted" style="font-size:12px">Agora é editável. Use para corrigir leads salvos no mês errado.</div>
+      </div>
+
+      <div>
+        <label>Status</label>
+        <select id="lf_status" ${ro?"disabled":""}>${opt(STATUS_LIST, e.status || "")}</select>
+      </div>
+
+      
+      
+
+      <div>
+        <label>Origem</label>
+        <select id="lf_origin" ${ro?"disabled":""}>${opt(ORIGINS, e.origin || "")}</select>
+      </div>
+
+      <div id="originOtherWrap" class="${(e.origin==="Outros")?"":"hidden"}">
+        <label>Qual origem?</label>
+        <input id="lf_originOther" ${ro?"disabled":""} placeholder="Descreva a origem" value="${escapeHTML(e.originOther||"")}"/>
+      </div>
+
+      <div>
+        <label>Tratamento</label>
+        <select id="lf_treatment" ${ro?"disabled":""}>${opt(TREATMENTS, e.treatment || "")}</select>
+      </div>
+
+      <div id="treatOtherWrap" class="${(e.treatment==="Outros")?"":"hidden"}">
+        <label>Qual tratamento?</label>
+        <input id="lf_treatOther" ${ro?"disabled":""} placeholder="Descreva o tratamento" value="${escapeHTML(e.treatmentOther||"")}"/>
+      </div>
+
+
+<div>
+        <label>Agendamento (data)</label>
+        <input id="lf_apptDate" type="date" ${ro?"disabled":""} value="${escapeHTML(e.apptDate||"")}"/>
+      </div>
+
+      <div>
+        <label>Agendamento (hora)</label>
+        <input id="lf_apptTime" type="time" ${ro?"disabled":""} value="${escapeHTML(e.apptTime||"")}"/>
+      </div>
+
+      <div>
+        <label>Tentativas de ligação</label>
+        <select id="lf_calls" ${ro?"disabled":""}>
+          ${["","1","2","3","Mais","Mensagem enviada"].map(v=>`<option value="${v}" ${(String(e.callAttempts||"")===v)?"selected":""}>${v||"—"}</option>`).join("")}
+        </select>
+      </div>
+
+      <div>
+        <label>Resultado da ligação</label>
+        <select id="lf_callResult" ${ro?"disabled":""}>
+          ${["","Atendeu na 1ª","Atendeu na 2ª","Atendeu na 3ª","Não atendeu","Respondeu mensagem"].map(v=>`<option value="${v}" ${(String(e.callResult||"")===v)?"selected":""}>${v||"—"}</option>`).join("")}
+        </select>
+      </div>
+
+      <div class="twoCol" style="grid-column:1/-1">
+        <div>
+          <label>Tag manual</label>
+          <input id="lf_tag" ${ro?"disabled":""} placeholder="Ex: ticket alto, retorno, resgate..." />
+          <div class="help muted" style="font-size:12px">Enter adiciona tag.</div>
+          <div id="lf_tag_list" class="tagList">${(__manualTagsForUI||[]).map(t=>`<span class="tagPill">${escapeHTML(t)}</span>`).join("")}</div>
+        </div>
+        <div>
+          <label>Prioridade</label>
+          <select id="lf_priority" ${ro?"disabled":""}>
+            <option value="" ${!(e.tags||[]).some(t=>String(t||"").startsWith("Prioridade: "))?"selected":""}>Selecione</option>
+            ${["Frio","Morno","Quente"].map(v=>`<option value="${v}" ${(e.tags||[]).includes("Prioridade: "+v)?"selected":""}>${v}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+
+      <div style="grid-column:1/-1">
+        <label style="display:flex; align-items:center; gap:10px; color:var(--text); margin-bottom:0">
+          <input id="lf_campaign" type="checkbox" ${ro?"disabled":""} ${((e.tags||[]).includes("Campanha"))?"checked":""} style="width:auto; flex:0 0 auto"/>
+          <span style="font-size:13px; font-weight:700">Lead em campanha</span>
+        </label>
+      </div>
+
+      <div style="grid-column:1/-1">
+        <label>Observações</label>
+        <textarea id="lf_notes" ${ro?"disabled":""} placeholder="Contexto, objeções, próximo passo...">${escapeHTML(e.notes||"")}</textarea>
+      </div>
+
+      <div style="grid-column:1/-1">
+        <div class="muted" style="font-size:12px; display:flex; gap:10px; flex-wrap:wrap">
+          <span class="tagPill">1º contato global: <b>${c.firstSeenAt ? fmtBR(c.firstSeenAt.slice(0,10)) : "—"}</b></span>
+          <span class="tagPill">Últ. atualização (mês): <b>${e.lastUpdateAt ? fmtBR(e.lastUpdateAt.slice(0,10)) : "—"}</b></span>
+          ${e.id ? `<span class="tagPill" style="display:inline-flex;align-items:center;gap:6px">Histórico ${cronosAuditInfoButton(loadDB(), e, c)}</span>` : ``}
+          ${(e.tags||[]).includes("Resgatado") ? `<span class="tagPill">♻️ Resgatado</span>` : ``}
+        </div>
+      </div>
+
+      <div style="grid-column:1/-1">
+        <div class="muted" style="font-size:12px">Histórico (meses):</div>
+        <div id="lf_history" class="muted" style="font-size:12px; margin-top:6px"></div>
+      </div>
+    </div>
+  `;
+}
+
+function buildSuggestList(actor, typedName, typedPhone){
+  const db = loadDB();
+  const phoneN = normPhone(typedPhone);
+  const nameN = (typedName||"").trim().toLowerCase();
+  if(!phoneN && nameN.length < 2) return "";
+  const contacts = db.contacts
+    .filter(c=>c.masterId===actor.masterId)
+    .filter(c=>{
+      const byPhone = phoneN ? c.phone.includes(phoneN) : false;
+      const byName = nameN ? (c.name||"").toLowerCase().includes(nameN) : false;
+      return byPhone || byName;
+    })
+    .slice(0,10);
+
+  if(!contacts.length) return "";
+  return contacts.map(c=>{
+    const entries = db.entries.filter(e=>e.contactId===c.id).sort((a,b)=>b.monthKey.localeCompare(a.monthKey));
+    const last = entries[0];
+    const lastTxt = last ? `${monthLabel(last.monthKey)} • ${last.status}` : "—";
+    return `
+      <div class="suggestItem" data-contact="${c.id}">
+        <b>${escapeHTML(c.name)} • ${escapeHTML(c.phone)}</b>
+        <small>${escapeHTML(lastTxt)}</small>
+      </div>
+    `;
+  }).join("");
+}
+
+function openNewLead(){
+  const actor = currentActor();
+  if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
+  if(!actor.perms.edit || !canAccessView("leads", actor)) return toast("Sem permissão", "Seu nível não pode criar leads.");
+  let monthKey = val("fMonth", todayISO().slice(0,7));
+  if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
+  const entry = { monthKey, firstContactAt: todayISO(), status:"", origin:"", treatment:"", tags:[] };
+  const contact = { name:"", phone:"", cpf:"", birthDate:"", firstSeenAt:"", lastSeenAt:"" };
+
+  openModal({
+    title: "Novo Lead",
+    sub: "Se já existir, selecione a sugestão. Se existir e já tiver neste mês, ele abre pra editar.",
+    bodyHTML: leadEntryFormHTML(entry, contact, "new", ""),
+    footHTML: `
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn ok" id="btnSaveLead">Salvar</button>
+    `,
+    onMount: ()=>{
+      wireLeadModal(actor, null, true);
+      qs("#lf_name").focus();
+    }
+  });
+}
+
+function openLeadEntry(entryId){
+  const actor = currentActor();
+  if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
+  const db = loadDB();
+  const entry = db.entries.find(e=>e.id===entryId);
+  if(!entry) return toast("Lead não encontrado");
+  const contact = db.contacts.find(c=>c.id===entry.contactId);
+
+  openModal({
+    title: "Editar Lead",
+    sub: "Atualize o que precisar. Histórico fica salvo.",
+    bodyHTML: leadEntryFormHTML(entry, contact, "edit", ""),
+    footHTML: `
+      <button class="btn" onclick="closeModal()">Fechar</button>
+      ${actor.perms.edit ? `<button class="btn ok" id="btnSaveLead">Salvar</button>` : ``}
+    `,
+    onMount: ()=>{
+      wireLeadModal(actor, entryId, false);
+      fillHistory(contact.id);
+    }
+  });
+}
+
+
+
+function printLeadEntry(entryId){
+  // Usa a mesma impressão da ficha principal de Leads, evitando divergência no Funil.
+  try{
+    if(typeof window.printFicha === "function") return window.printFicha(entryId);
+  }catch(err){
+    console.warn("printLeadEntry: falha ao delegar para printFicha; usando fallback antigo.", err);
+  }
+  const actor = currentActor();
+  const db = loadDB();
+  const e = (db.entries || []).find(x=>String(x.id)===String(entryId));
+  if(!e) return toast("Lead não encontrado");
+  const c = (db.contacts || []).find(x=>String(x.id)===String(e.contactId)) || {};
+
+  try{
+    if(typeof ensureFicha === "function") ensureFicha(e);
+    else if(typeof ensureFichaForRecebimentos === "function") ensureFichaForRecebimentos(e);
+    if(typeof syncFichaFinancialLinks === "function") syncFichaFinancialLinks(e);
+  }catch(err){ console.warn("Falha ao preparar ficha para impressão:", err); }
+
+  const ficha = e.ficha && typeof e.ficha === "object" ? e.ficha : { plano:[], odontograma:{}, avaliacoes:[] };
+  const plano = (typeof cronosActiveFichaPlanItems === "function") ? cronosActiveFichaPlanItems(e).slice() : (Array.isArray(ficha.plano) ? ficha.plano.filter(item=>!(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(item))) : []);
+  const avaliacoes = Array.isArray(ficha.avaliacoes) ? ficha.avaliacoes.slice() : [];
+  const byEval = new Map(avaliacoes.map(av=>[String(av.id || "eval_1"), av]));
+  const getEval = (item)=>{
+    const id = String(item?.avaliacaoId || "eval_1");
+    return byEval.get(id) || { id, label:item?.avaliacaoLabel || "Avaliação", date:item?.avaliacaoData || e.firstContactAt || todayISO() };
+  };
+  const getFinanceLabel = (item)=>{
+    try{
+      if(typeof getFichaItemFinancialStatus === "function") return getFichaItemFinancialStatus(e, item)?.label || "—";
+    }catch(_){ }
+    if(item?.pago) return "Pago";
+    if(item?.financialPlanId || item?.recebimentoId) return "Recebimento criado";
+    return "Sem recebimento";
+  };
+  const getClinicalLabel = (item)=>{
+    try{ if(typeof isFichaItemClinicallyDone === "function" && isFichaItemClinicallyDone(e, item)) return "Realizado"; }catch(_){ }
+    return item?.feito ? "Realizado" : "Pendente";
+  };
+  const num = (v)=>{
+    try{ return typeof parseMoney === "function" ? parseMoney(v) : Number(v || 0); }catch(_){ return Number(v || 0) || 0; }
+  };
+  const m = (v)=> moneyBR(Number(v || 0));
+  const h = (v)=> escapeHTML(String(v ?? ""));
+  const dateBR = (v)=> v ? fmtBR(String(v).slice(0,10)) : "—";
+
+  let totals;
+  try{
+    totals = typeof calcFichaTotals === "function" ? calcFichaTotals(plano, e) : null;
+  }catch(_){ totals = null; }
+  if(!totals){
+    const totalBase = plano.reduce((s,x)=>s + num(x.valorBase || x.valor || 0), 0);
+    const totalFechado = plano.reduce((s,x)=>s + num(x.valorFechado || x.valor || x.valorBase || 0), 0);
+    const totalFeito = plano.filter(x=>x.feito).reduce((s,x)=>s + num(x.valorFechado || x.valorBase || 0), 0);
+    totals = { totalBase, totalFechado, totalDesconto:totalBase-totalFechado, totalPago:0, totalFeito, emAberto:totalFechado, descontoPct: totalBase ? ((totalBase-totalFechado)/totalBase)*100 : 0 };
+  }
+
+  const financialPlans = (typeof cronosActiveFinancialPlans === "function") ? cronosActiveFinancialPlans(e) : (Array.isArray(e.financialPlans) ? e.financialPlans : []);
+  const planRows = financialPlans.map((plan, idx)=>{
+    let ft = null;
+    try{ ft = typeof financialPlanTotals === "function" ? financialPlanTotals(plan) : null; }catch(_){ ft = null; }
+    const pays = (typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (Array.isArray(plan.payments) ? plan.payments : []);
+    return { plan, idx, totals:ft || { total:num(plan.amount || plan.total || 0), paid:0, open:num(plan.amount || plan.total || 0) }, pays };
+  });
+
+  const logo = (typeof getSmallLogoDataURI === "function" ? getSmallLogoDataURI() : "") || "";
+  const clinicName = h(typeof getClinicDisplayName === "function" ? getClinicDisplayName(db, actor) : "Clínica");
+  const title = `Ficha do Paciente • ${h(c?.name || e?.name || "")}`;
+  const procedureRows = plano.length ? plano.map((item, idx)=>{
+    const av = getEval(item);
+    const base = num(item.valorBase || 0);
+    const fechado = num(item.valorFechado || item.valor || item.value || 0);
+    const desconto = Math.max(0, base - fechado);
+    const descontoPct = base ? (desconto/base)*100 : 0;
+    return `
+      <tr>
+        <td class="mono">${idx+1}</td>
+        <td><b>${h(av.label || item.avaliacaoLabel || "Avaliação")}</b><br><span class="muted">${dateBR(av.date || item.avaliacaoData || "")}</span></td>
+        <td>${h(item.procedimento || item.nome || "—")}</td>
+        <td class="mono">${h(item.dente || "—")}</td>
+        <td>${h(item.face || "—")}</td>
+        <td class="money">${m(base)}</td>
+        <td class="money"><b>${m(fechado)}</b></td>
+        <td class="money">${m(desconto)}<br><span class="muted">${descontoPct.toFixed(2)}%</span></td>
+        <td>${h(getClinicalLabel(item))}</td>
+        <td>${h(getFinanceLabel(item))}</td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="10" class="empty">Nenhum procedimento registrado na ficha deste paciente.</td></tr>`;
+
+  const receivingRows = planRows.length ? planRows.map(({plan, totals:pt, pays}, idx)=>`
+    <div class="planCard">
+      <div class="planHead">
+        <div><b>${h(plan.title || `Recebimento ${idx+1}`)}</b><div class="muted">${h(plan.type || plan.source || "")}</div></div>
+        <div class="money"><b>${m(pt.total || plan.amount || 0)}</b></div>
+      </div>
+      <div class="planTotals">
+        <span>Pago: <b>${m(pt.paid || 0)}</b></span>
+        <span>Em aberto: <b>${m(pt.open || 0)}</b></span>
+        <span>Parcelas: <b>${pays.length || "—"}</b></span>
+      </div>
+      ${pays.length ? `<table class="miniTable"><thead><tr><th>#</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Baixa</th></tr></thead><tbody>${pays.map((pay, pidx)=>`
+        <tr>
+          <td class="mono">${pay.number || pidx+1}</td>
+          <td class="mono">${dateBR(pay.dueDate || pay.date || "")}</td>
+          <td class="money">${m(num(pay.amount || pay.value || pay.valor || 0))}</td>
+          <td>${h(pay.status || (pay.paid ? "PAGA" : "PENDENTE"))}</td>
+          <td class="mono">${dateBR(pay.cashDate || pay.paidAt || "")}</td>
+        </tr>`).join("")}</tbody></table>` : `<div class="muted small">Sem parcelas detalhadas.</div>`}
+    </div>`).join("") : `<div class="empty">Nenhum recebimento vinculado à ficha.</div>`;
+
+  const htmlDoc = `
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${title}</title>
+<style>
+  :root{--ink:#111827;--muted:#64748b;--line:#e5e7eb;--soft:#f8fafc;--brand:#2563eb;}
+  *{box-sizing:border-box}
+  body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:26px; color:var(--ink); background:#fff;}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:16px;}
+  .brand{display:flex;align-items:center;gap:12px;min-width:0}.brand img{width:auto;height:46px;max-width:132px;object-fit:contain}.brandTitle{font-size:19px;font-weight:900;line-height:1.05}.sub{font-size:12px;color:var(--muted);margin-top:4px}.stamp{font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
+  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:12px;margin:14px 0}.card{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}.card.soft{background:var(--soft)}.label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.055em;font-weight:800}.val{font-size:14px;margin-top:5px}.muted{color:var(--muted)}.small{font-size:12px}.mono{font-variant-numeric:tabular-nums}.money{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 16px}.summary .box{border:1px solid var(--line);border-radius:14px;padding:10px;background:var(--soft)}.summary .num{font-size:18px;font-weight:900;margin-top:4px}.summary .numMark{display:inline-block;border-radius:999px;padding:4px 10px;background:#eef4ff;box-shadow:inset 0 0 0 1px #bfd4ff}.summary .numMark.discount{background:#ecfdf3;box-shadow:inset 0 0 0 1px #bbf7d0}.ok{color:#15803d}.warn{color:#b45309}.bad{color:#b91c1c}
+  h2{font-size:15px;margin:18px 0 8px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid var(--line);padding:8px 7px;font-size:11.5px;text-align:left;vertical-align:top}th{background:var(--soft);color:#334155;text-transform:uppercase;letter-spacing:.04em;font-size:10px}.empty{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px;background:var(--soft)}.planCard{border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px;break-inside:avoid}.planHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.planTotals{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 4px;color:var(--muted);font-size:12px}.miniTable{margin-top:8px}.notes{white-space:pre-wrap;line-height:1.45}.footer{margin-top:18px;border-top:1px solid var(--line);padding-top:10px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:12px}
+  @media print{body{margin:14mm}.card,.box,.planCard{break-inside:avoid}.noPrint{display:none!important}}
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="brand">
+      ${logo ? `<img src="${logo}" alt="Cronos"/>` : ``}
+      <div><div class="brandTitle">${clinicName}</div><div class="sub">Ficha do paciente • Plano de tratamento e valores</div></div>
+    </div>
+    <div class="stamp">Gerado em ${new Date().toLocaleString("pt-BR")}<br>Cronos Odonto</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Paciente</div>
+      <div class="val"><b>${h(c?.name || e?.name || "—")}</b></div>
+      <div class="val muted">Telefone: ${h(c?.phone || e?.phone || "—")}</div>
+      <div class="val muted">CPF: ${h((typeof formatCPF === "function" ? formatCPF(c?.cpf || "") : (c?.cpf || "")) || "—")}</div>
+      <div class="val muted">Nascimento: ${h((typeof birthWithAgeLabel === "function" ? birthWithAgeLabel(c?.birthDate || "") : (c?.birthDate || "")) || "—")}</div>
+    </div>
+    <div class="card soft">
+      <div class="label">Resumo comercial</div>
+      <div class="val">Status: <b>${h(e.status || "—")}</b></div>
+      <div class="val muted">Tratamento: ${h(cronosDisplayManualField(e.treatment, e.treatmentOther) || "—")}</div>
+      <div class="val muted">Origem: ${h(cronosDisplayManualField(e.origin, e.originOther) || "—")}</div>
+      <div class="val muted">Agendamento: ${e.apptDate ? `${h(fmtBR(e.apptDate))} ${h(e.apptTime || "")}`.trim() : "—"}</div>
+    </div>
+  </div>
+
+  <div class="summary">
+    <div class="box"><div class="label">Valor de tabela</div><div class="num">${m(totals.totalBase || 0)}</div></div>
+    <div class="box"><div class="label">Valor do orçamento</div><div class="num"><span class="numMark">${m(totals.totalFechado || 0)}</span></div></div>
+    <div class="box"><div class="label">Desconto</div><div class="num warn"><span class="numMark discount">${m(totals.totalDesconto || 0)}</span></div><div class="small muted"><span class="numMark discount">${Number(totals.descontoPct || 0).toFixed(2)}%</span></div></div>
+    <div class="box"><div class="label">Total realizado</div><div class="num ok">${m(totals.totalFeito || 0)}</div></div>
+    <div class="box"><div class="label">Total pago</div><div class="num ok">${m(totals.totalPago || 0)}</div></div>
+    <div class="box"><div class="label">Em aberto</div><div class="num bad">${m(totals.emAberto || 0)}</div></div>
+  </div>
+
+  <h2>Procedimentos da ficha</h2>
+  <table>
+    <thead><tr><th>#</th><th>Avaliação</th><th>Procedimento</th><th>Dente</th><th>Face</th><th class="money">Valor base</th><th class="money">Valor fechado</th><th class="money">Desconto</th><th>Clínico</th><th>Financeiro</th></tr></thead>
+    <tbody>${procedureRows}</tbody>
+  </table>
+
+  <h2>Recebimentos / parcelamentos vinculados</h2>
+  ${receivingRows}
+
+  <h2>Observações da ficha</h2>
+  <div class="card notes">${h(ficha.observacoes || e.notes || "—")}</div>
+
+  <div class="footer"><span>Documento de apoio interno/comercial. Confirme condições finais com a clínica.</span><span>${h(c?.name || e?.name || "Paciente")}</span></div>
+<script>window.onload=()=>{ setTimeout(()=>window.print(), 250); };<\/script>
+</body>
+</html>`;
+
+  const w = window.open("", "_blank");
+  if(!w) return toast("Popup bloqueado", "Permita popups para imprimir.");
+  w.document.open();
+  w.document.write(htmlDoc);
+  w.document.close();
+}
+
+function fillHistory(contactId){
+  const db = loadDB();
+  const entries = db.entries.filter(e=>e.contactId===contactId).sort((a,b)=>b.monthKey.localeCompare(a.monthKey));
+  const box = qs("#lf_history");
+  if(!box) return;
+  box.innerHTML = entries.map(e=>{
+    const s = `${monthLabel(e.monthKey)} • ${e.status} • 1º ${fmtBR(e.firstContactAt)}`;
+    return `<span class="tagPill">${escapeHTML(s)}</span>`;
+  }).join(" ");
+}
+
+function wireLeadModal(actor, editingEntryId, isNew){
+  const db = loadDB();
+  const suggestBox = el("leadSuggest");
+
+  const originSel = el("lf_origin");
+  const treatSel = el("lf_treatment");
+  const toggleOrigin = ()=> el("originOtherWrap").classList.toggle("hidden", originSel.value!=="Outros");
+  const toggleTreat = ()=> el("treatOtherWrap").classList.toggle("hidden", treatSel.value!=="Outros");
+  originSel?.addEventListener("change", toggleOrigin);
+  treatSel?.addEventListener("change", toggleTreat);
+
+  const budgetInp = el("lf_value_budget");
+  const paidInp = el("lf_value_paid");
+  const openEl = el("lf_open_value");
+  const updateOpen = ()=>{
+    if(!openEl) return;
+    const b = (budgetInp && budgetInp.value!=="") ? Number(budgetInp.value) : null;
+    const p = (paidInp && paidInp.value!=="") ? Number(paidInp.value) : null;
+    if(b==null && p==null){ openEl.textContent = "—"; return; }
+    const open = Math.max(0, (b||0) - (p||0));
+    openEl.textContent = moneyBR(open);
+  };
+  budgetInp?.addEventListener("input", updateOpen);
+  paidInp?.addEventListener("input", updateOpen);
+  updateOpen();
+
+
+  const pmSel = el("lf_pay_method");
+  const entryAmt = el("lf_entry_amount");
+  const instAmt = el("lf_inst_amount");
+  const instN = el("lf_inst_n");
+  const instEach = el("lf_inst_each");
+  const instFirst = el("lf_inst_firstdue");
+
+  const fillPlan = ()=>{
+    try{
+      const db2 = loadDB();
+      let curEntry = null;
+      if(editingEntryId) curEntry = db2.entries.find(e=>e.id===editingEntryId);
+      if(curEntry && curEntry.installPlan){
+        pmSel && (pmSel.value = curEntry.installPlan.payMethod||"");
+        entryAmt && (entryAmt.value = curEntry.installPlan.entryAmount!=null ? curEntry.installPlan.entryAmount : "");
+        instAmt && (instAmt.value = curEntry.installPlan.amount!=null ? curEntry.installPlan.amount : "");
+        instN && (instN.value = curEntry.installPlan.n!=null ? curEntry.installPlan.n : "");
+        instFirst && (instFirst.value = curEntry.installPlan.firstDue||"");
+      }
+    }catch(e){}
+  };
+
+  const calcEach = ()=>{
+    if(!instEach) return;
+    const a = instAmt && instAmt.value!=="" ? Number(instAmt.value) : 0;
+    const n = instN && instN.value!=="" ? Math.max(1, parseInt(instN.value,10)) : 0;
+    if(a>0 && n>0) instEach.textContent = moneyBR(a/n);
+    else instEach.textContent = "—";
+  };
+  instAmt?.addEventListener("input", calcEach);
+  instN?.addEventListener("input", calcEach);
+  calcEach();
+  fillPlan();
+
+
+  const nameInp = el("lf_name");
+  const phoneInp = el("lf_phone");
+  const cpfInp = el("lf_cpf");
+  const monthInp = el("lf_month");
+  const firstInp = el("lf_first");
+
+  const applyMaskedValue = (input, formatter)=>{
+    if(!input) return;
+    const raw = input.value || "";
+    const start = input.selectionStart ?? raw.length;
+    const digitsBefore = raw.slice(0, start).replace(/\D/g, "").length;
+    const formatted = formatter(raw);
+    input.value = formatted;
+    let seen = 0;
+    let pos = formatted.length;
+    if(digitsBefore <= 0){
+      pos = 0;
+    }else{
+      for(let i=0; i<formatted.length; i++){
+        if(/\d/.test(formatted[i])) seen++;
+        if(seen >= digitsBefore){ pos = i + 1; break; }
+      }
+    }
+    requestAnimationFrame(()=>{
+      try{ input.setSelectionRange(pos, pos); }catch(_){}
+    });
+  };
+
+  phoneInp?.addEventListener("input", ()=> applyMaskedValue(phoneInp, formatPhoneBR));
+  cpfInp?.addEventListener("input", ()=> applyMaskedValue(cpfInp, formatCPFInput));
+
+  if(firstInp && monthInp){
+    firstInp.addEventListener("change", ()=>{
+      const mk = monthKeyFromDate(firstInp.value);
+      if(mk && (!monthInp.value || isNew)) monthInp.value = mk;
+    });
+  }
+
+  const showSuggest = ()=>{
+    const html = buildSuggestList(actor, nameInp.value, phoneInp.value);
+    if(!html){ suggestBox.classList.remove("show"); suggestBox.innerHTML=""; return; }
+    suggestBox.innerHTML = html;
+    suggestBox.classList.add("show");
+    qsa(".suggestItem", suggestBox).forEach(it=>{
+      it.addEventListener("click", ()=>{
+        const cid = it.getAttribute("data-contact");
+        loadExistingContactIntoModal(cid, actor, isNew);
+      });
+    });
+  };
+  nameInp?.addEventListener("input", ()=>{ showSuggest(); });
+  phoneInp?.addEventListener("input", ()=>{ showSuggest(); });
+
+  [nameInp, phoneInp].forEach(inp=>{
+    inp?.addEventListener("blur", ()=>setTimeout(()=>suggestBox.classList.remove("show"), 180));
+    inp?.addEventListener("focus", ()=>showSuggest());
+  });
+
+  const tagInp = el("lf_tag");
+  const tagListEl = el("lf_tag_list");
+
+  const __uniqTags = (arr)=> Array.from(new Set((arr||[]).map(x=>String(x||"").trim()).filter(Boolean)));
+
+  const __renderTagList = ()=>{
+    if(!tagListEl) return;
+    const cur = __uniqTags(JSON.parse(tagInp?.dataset.tags||"[]"));
+    if(cur.length===0){
+      tagListEl.innerHTML = "";
+      return;
+    }
+    tagListEl.innerHTML = cur.map((t,i)=>`<span class="tagPill" data-i="${i}">${escapeHTML(t)}<button type="button" class="tagRemove" data-i="${i}" aria-label="Remover tag">×</button></span>`).join("");
+  };
+
+  if(tagListEl){
+    tagListEl.addEventListener("click", (e)=>{
+      const btn = e.target?.closest?.(".tagRemove");
+      if(!btn) return;
+      e.preventDefault();
+      const i = parseInt(btn.dataset.i, 10);
+      let cur = [];
+      try{ cur = __uniqTags(JSON.parse(tagInp?.dataset.tags||"[]")); }catch(_){ cur = []; }
+      if(Number.isNaN(i) || i<0 || i>=cur.length) return;
+      cur.splice(i,1);
+      if(tagInp) tagInp.dataset.tags = JSON.stringify(cur);
+      __renderTagList();
+    });
+  }
+
+
+
+  try{
+    const db3 = loadDB();
+    let ent = null;
+    let cont = null;
+    if(editingEntryId){
+      ent = db3.entries.find(x=>x.id===editingEntryId) || null;
+      cont = ent ? db3.contacts.find(cc=>cc.id===ent.contactId) : null;
+    }
+    const saved = ([])
+      .concat(Array.isArray(ent?.tags)?ent.tags:(ent?.tags?[ent.tags]:[]))
+      .concat(Array.isArray(ent?.tag)?ent.tag:(ent?.tag?[ent.tag]:[]))
+.map(x=>String(x||"").trim())
+      .filter(Boolean)
+      .filter(t=>!t.startsWith("Prioridade:"))
+      .filter(t=>t!=="Campanha");
+    if(tagInp){
+      tagInp.dataset.tags = JSON.stringify(__uniqTags(saved));
+    }
+  }catch(_){}
+  __renderTagList();
+
+  tagInp?.addEventListener("keydown", (e)=>{
+    if(e.key==="Enter"){
+      e.preventDefault();
+      const v = (tagInp.value||"").trim();
+      if(!v) return;
+      tagInp.value="";
+      const cur = __uniqTags(JSON.parse(tagInp.dataset.tags||"[]").concat([v]));
+      tagInp.dataset.tags = JSON.stringify(cur);
+      __renderTagList();
+      toast("Tag adicionada", v);
+    }
+  });
+
+  const btn = el("btnSaveLead");
+  btn?.addEventListener("click", async ()=>{
+    if(!actor.perms.edit) return toast("Sem permissão", "Seu nível não permite editar.");
+
+    const name = val("lf_name").trim();
+    const phone = normPhone(val("lf_phone"));
+    if(!name || !phone) return toast("Nome e telefone são obrigatórios");
+
+    let monthKey = (val("lf_month","") || val("fMonth", todayISO().slice(0,7))).trim();
+    if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
+    if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
+
+    const now = new Date().toISOString();
+
+    const selectedId = String(el("lf_name")?.dataset.contactId || el("lf_phone")?.dataset.contactId || "").trim();
+    const contactDraft = {
+      id: null,
+      masterId: actor.masterId,
+      name,
+      phone,
+      cpf: String(val("lf_cpf") || "").replace(/\D/g, ""),
+      birthDate: val("lf_birth") || "",
+      firstSeenAt: val("lf_first") || todayISO(),
+      lastSeenAt: val("lf_first") || todayISO()
+    };
+
+    let existingIndex = -1;
+    let shouldSplitSharedContact = false;
+    const editingEntryRef = editingEntryId ? db.entries.find(e=>String(e.id)===String(editingEntryId)) : null;
+
+    if(editingEntryRef?.contactId){
+      existingIndex = db.contacts.findIndex(c=>String(c.id)===String(editingEntryRef.contactId));
+    }else if(selectedId){
+      existingIndex = db.contacts.findIndex(c=>String(c.id)===String(selectedId) && c.masterId===actor.masterId);
+    }
+
+    const samePhoneContacts = db.contacts.filter(c=>
+      c.masterId === actor.masterId &&
+      String(c.phone || "") === String(phone || "")
+    );
+
+    if(isNew && !selectedId && samePhoneContacts.length){
+      const names = samePhoneContacts.map(c=>c.name).filter(Boolean).slice(0,3).join(", ");
+      const continuar = confirm(
+        "Já existe contato com esse mesmo telefone.\n\n" +
+        (names ? "Contato(s): " + names + "\n\n" : "") +
+        "OK = cadastrar como OUTRO paciente usando o mesmo número.\n" +
+        "Cancelar = voltar e escolher uma sugestão existente."
+      );
+      if(!continuar) return;
+      existingIndex = -1;
+    }
+
+    if(editingEntryRef && existingIndex >= 0){
+      const oldContact = db.contacts[existingIndex];
+      const linkedCount = db.entries.filter(e=>String(e.contactId)===String(oldContact.id)).length;
+      const personalChanged =
+        String(oldContact.name || "") !== String(contactDraft.name || "") ||
+        String(oldContact.phone || "") !== String(contactDraft.phone || "") ||
+        String(oldContact.cpf || "") !== String(contactDraft.cpf || "") ||
+        String(oldContact.birthDate || "") !== String(contactDraft.birthDate || "");
+
+      if(linkedCount > 1 && personalChanged){
+        shouldSplitSharedContact = confirm(
+          "Este contato está vinculado a " + linkedCount + " leads.\n\n" +
+          "OK = separar ESTE lead como outro paciente, mantendo o mesmo telefone.\n" +
+          "Cancelar = atualizar o contato compartilhado em todos os leads vinculados."
+        );
+        if(shouldSplitSharedContact){
+          existingIndex = -1;
+        }
+      }
+    }
+
+    let contact;
+    const contactBeforeAudit = existingIndex >= 0 ? JSON.parse(JSON.stringify(db.contacts[existingIndex] || {})) : null;
+    if(existingIndex >= 0){
+      db.contacts[existingIndex].name = contactDraft.name;
+      db.contacts[existingIndex].phone = contactDraft.phone;
+      db.contacts[existingIndex].cpf = contactDraft.cpf;
+      db.contacts[existingIndex].birthDate = contactDraft.birthDate;
+      db.contacts[existingIndex].lastSeenAt = contactDraft.lastSeenAt;
+      db.contacts[existingIndex].updatedAt = now;
+      db.contacts[existingIndex].lastUpdateAt = now;
+      if(!db.contacts[existingIndex].firstSeenAt) db.contacts[existingIndex].firstSeenAt = contactDraft.firstSeenAt;
+      contact = db.contacts[existingIndex];
+    }else{
+      contact = {
+        ...contactDraft,
+        id: (crypto.randomUUID ? crypto.randomUUID() : uid("c")),
+        createdAt: now,
+        updatedAt: now,
+        lastUpdateAt: now
+      };
+      db.contacts.push(contact);
+      cronosAuditAction(db, { action:"contact_created", entityType:"contact", entityId:contact.id, contactId:contact.id, details:`Paciente: ${contact.name}`, after:{ name:contact.name, phone:contact.phone } });
+    }
+    if(existingIndex >= 0 && contactBeforeAudit){
+      const contactChanged = ["name","phone","cpf","birthDate"].some(k=>String(contactBeforeAudit[k] || "") !== String(contact?.[k] || ""));
+      if(contactChanged){
+        cronosAuditAction(db, { action:"contact_updated", entityType:"contact", entityId:contact.id, contactId:contact.id, details:`Paciente: ${contact.name}`, before:{ name:contactBeforeAudit.name, phone:contactBeforeAudit.phone }, after:{ name:contact.name, phone:contact.phone } });
+      }
+    }
+
+    const status = val("lf_status");
+    const origin = val("lf_origin");
+    const originOther = origin==="Outros" ? val("lf_originOther").trim() : "";
+    const treatment = val("lf_treatment");
+    const treatmentOther = treatment==="Outros" ? val("lf_treatOther").trim() : "";
+    const city = val("lf_city").trim();
+    const firstContactAt = val("lf_first") || todayISO();
+    const apptDate = val("lf_apptDate") || "";
+    const apptTime = val("lf_apptTime") || "";
+    const callAttempts = val("lf_calls") || "";
+    const callResult = val("lf_callResult") || "";
+    const notes = val("lf_notes").trim();
+    const hasLegacyFinancialFields = !!(el("lf_value_budget") || el("lf_value_paid") || el("lf_payment_date") || el("lf_pay_method"));
+    const hasLegacyBudgetField = !!el("lf_value_budget");
+    const hasLegacyPaidField = !!el("lf_value_paid");
+    const payMethod = hasLegacyFinancialFields ? val("lf_pay_method","").trim() : "";
+
+    const valueBudgetRaw = hasLegacyBudgetField ? el("lf_value_budget")?.value : "";
+    const valueBudget = hasLegacyBudgetField ? parseBRNum(valueBudgetRaw) : null;
+    const valuePaidRaw = hasLegacyPaidField ? el("lf_value_paid")?.value : "";
+    const valuePaid = hasLegacyPaidField ? parseBRNum(valuePaidRaw) : null;
+    const paymentDate = hasLegacyFinancialFields ? (val("lf_payment_date") || "") : "";
+    const campaign = !!el("lf_campaign")?.checked;
+
+    let manualTags = [];
+    try{ manualTags = JSON.parse((tagInp?.dataset.tags)||"[]") || []; }catch(_){ manualTags = []; }
+    const pendingTag = (tagInp?.value||"").trim();
+    if(pendingTag){
+      manualTags = Array.from(new Set([...(manualTags||[]), pendingTag]));
+      if(tagInp){ tagInp.value=""; tagInp.dataset.tags = JSON.stringify(manualTags); }
+    }
+    const prio = val("lf_priority");
+    let tags = [];
+    if(prio) tags.push("Prioridade: " + prio);
+    tags.push(...manualTags);
+
+    const realToday = todayISO();
+    const rescueDate = paymentDate || realToday;
+    const rescueMonthKey = String(rescueDate).slice(0,7);
+    const hadBefore = db.entries.some(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey !== rescueMonthKey);
+    const existingThisMonth = db.entries.find(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey === monthKey);
+
+    if(isNew && existingThisMonth){
+      saveDB(db);
+      toast("Esse lead já existe neste mês", "Abrindo pra editar.");
+      closeModal();
+      openLeadEntry(existingThisMonth.id);
+      return;
+    }
+
+    let entry;
+    if(editingEntryId){
+      entry = db.entries.find(e=>e.id===editingEntryId);
+      if(!entry) return toast("Erro", "Entrada não encontrada");
+      entry.contactId = contact.id;
+    }else{
+      entry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey, statusLog: [], tags: [], createdAt: now, createdBy: cronosActorLabel(actor) };
+      db.entries.push(entry);
+    }
+
+    const entryBeforeAudit = editingEntryId ? JSON.parse(JSON.stringify(entry || {})) : null;
+
+    const originalMonthKey = String(entry.monthKey || monthKey || "");
+    const originalStatus = String(entry.status || "");
+    const originalPaidBase = (entry.valuePaidGross!=null && !isNaN(Number(entry.valuePaidGross)))
+      ? Number(entry.valuePaidGross)
+      : getEntryPaidValue(entry);
+    const originalPaidShown = getEntryPaidValue(entry);
+    const isCrossMonthFinancialEdit = !!editingEntryId && originalMonthKey && originalMonthKey !== rescueMonthKey;
+    const paidNow = (hasLegacyPaidField && valuePaid!=null && !isNaN(Number(valuePaid))) ? Number(valuePaid) : originalPaidBase;
+    const paidDelta = hasLegacyPaidField ? Math.max(0, Number((paidNow - originalPaidBase).toFixed(2))) : 0;
+    const hasExplicitLegacyPaymentDate = !!paymentDate;
+    const shouldRegisterRescue = hasLegacyPaidField && hasExplicitLegacyPaymentDate && isCrossMonthFinancialEdit && status === "Fechou" && paidDelta > 0;
+    const shouldRegisterDirectPayment = hasLegacyPaidField && hasExplicitLegacyPaymentDate && !shouldRegisterRescue && status === "Fechou" && paidDelta > 0;
+
+    const fromStatus = shouldRegisterRescue ? originalStatus : (entry.status || "");
+    const toStatus = shouldRegisterRescue ? originalStatus : status;
+
+    if(editingEntryId && originalMonthKey && originalMonthKey !== monthKey){
+      const duplicateMonthEntry = db.entries.find(e=>
+        e.masterId===actor.masterId &&
+        e.contactId===contact.id &&
+        e.monthKey===monthKey &&
+        String(e.id)!==String(editingEntryId)
+      );
+      if(duplicateMonthEntry){
+        const okMove = confirm(
+          "Já existe outro registro deste paciente em " + monthLabel(monthKey) + ".\n\n" +
+          "OK = salvar mesmo assim nesse mês.\n" +
+          "Cancelar = voltar e escolher outro mês."
+        );
+        if(!okMove) return;
+      }
+    }
+
+    entry.monthKey = monthKey;
+    entry.firstContactAt = firstContactAt;
+    entry.lastUpdateAt = now;
+    entry.updatedAt = now;
+    entry.updatedBy = cronosActorLabel(actor);
+    entry.status = shouldRegisterRescue ? originalStatus : status;
+    entry.origin = origin;
+    entry.originOther = originOther;
+    entry.treatment = treatment;
+    entry.treatmentOther = treatmentOther;
+    entry.city = city;
+    entry.notes = notes;
+    if(hasLegacyBudgetField){
+      entry.valueBudget = valueBudget;
+      entry.valueEstimated = valueBudget;
+    }
+    entry.apptDate = apptDate;
+    entry.apptTime = apptTime;
+    entry.callAttempts = callAttempts;
+    entry.callResult = callResult;
+
+    if(shouldRegisterRescue){
+      entry.valuePaid = (originalPaidShown || null);
+      entry.valueClosed = (originalStatus === "Fechou") ? (originalPaidShown || null) : null;
+      entry.valuePaidGross = paidNow;
+      entry.valueClosedGross = paidNow;
+      entry.lastPaymentDate = rescueDate;
+    }else if(hasLegacyPaidField){
+      entry.valuePaid = valuePaid;
+      entry.valueClosed = (status==="Fechou") ? valuePaid : null;
+      entry.valuePaidGross = valuePaid;
+      entry.valueClosedGross = (status==="Fechou") ? valuePaid : null;
+      if(shouldRegisterDirectPayment || (paidNow>0 && hasExplicitLegacyPaymentDate)) entry.lastPaymentDate = rescueDate;
+    }
+
+    const preserved = (entry.tags||[]).filter(t=>String(t)==="Resgatado");
+    entry.tags = Array.from(new Set([...preserved, ...tags, ...(campaign ? ["Campanha"] : [])]));
+    if(!editingEntryId && hadBefore){
+      entry.tags = Array.from(new Set([...(entry.tags||[]), "Resgatado"]));
+    }
+
+    if(fromStatus !== toStatus){
+      entry.statusLog = entry.statusLog || [];
+      entry.statusLog.push({ at: now, from: fromStatus, to: toStatus, by: actor.name });
+    }
+
+    if(shouldRegisterRescue){
+      let rescueEntry = db.entries.find(e=>
+        e.masterId===actor.masterId &&
+        e.contactId===contact.id &&
+        e.monthKey===rescueMonthKey &&
+        Array.isArray(e.tags) && e.tags.includes("Resgatado")
+      );
+
+      const rescuePrevPaid = rescueEntry ? getEntryPaidValue(rescueEntry) : 0;
+      const rescuePrevStatus = rescueEntry ? String(rescueEntry.status || "") : "";
+      if(!rescueEntry){
+        rescueEntry = { id: uid("e"), masterId: actor.masterId, contactId: contact.id, monthKey: rescueMonthKey, statusLog: [], tags: [], createdAt: now, createdBy: cronosActorLabel(actor) };
+        db.entries.push(rescueEntry);
+        cronosAuditAction(db, { action:"lead_created", entityType:"entry", entityId:rescueEntry.id, entryId:rescueEntry.id, contactId:contact.id, details:`Lead resgatado em ${monthLabel(rescueMonthKey)}`, after:{ status } });
+      }
+
+      rescueEntry.firstContactAt = rescueEntry.firstContactAt || rescueDate;
+      rescueEntry.lastUpdateAt = now;
+      rescueEntry.updatedAt = now;
+      rescueEntry.updatedBy = cronosActorLabel(actor);
+      rescueEntry.status = status;
+      rescueEntry.origin = origin;
+      rescueEntry.originOther = originOther;
+      rescueEntry.treatment = treatment;
+      rescueEntry.treatmentOther = treatmentOther;
+      rescueEntry.city = city;
+      rescueEntry.notes = notes;
+      rescueEntry.valueBudget = rescueEntry.valueBudget ?? valueBudget ?? null;
+      rescueEntry.valueEstimated = rescueEntry.valueBudget;
+      rescueEntry.valuePaid = Number((rescuePrevPaid + paidDelta).toFixed(2));
+      rescueEntry.valueClosed = (status==="Fechou") ? rescueEntry.valuePaid : null;
+      rescueEntry.valuePaidGross = rescueEntry.valuePaid;
+      rescueEntry.valueClosedGross = rescueEntry.valueClosed;
+      rescueEntry.lastPaymentDate = rescueDate;
+      rescueEntry.apptDate = rescueDate;
+      rescueEntry.apptTime = rescueEntry.apptTime || now.slice(11,16);
+      rescueEntry.callAttempts = callAttempts;
+      rescueEntry.callResult = callResult;
+      rescueEntry.tags = Array.from(new Set([...(rescueEntry.tags||[]), ...tags, "Resgatado", ...(campaign ? ["Campanha"] : [])]));
+
+      if(rescuePrevStatus !== status || !rescuePrevStatus){
+        rescueEntry.statusLog = rescueEntry.statusLog || [];
+        rescueEntry.statusLog.push({ at: now, from: rescuePrevStatus, to: status, by: actor.name });
+      }
+
+      db.payments = db.payments || [];
+      db.payments.push({
+        id: uid("p"),
+        masterId: actor.masterId,
+        entryId: rescueEntry.id,
+        contactId: contact.id,
+        at: now,
+        date: rescueDate,
+        paidAt: rescueDate,
+        cashDate: rescueDate,
+        status: "PAGA",
+        value: paidDelta,
+        method: payMethod || "",
+        desc: "Resgate / pagamento manual",
+        source: "leadManualConfirmed",
+        createdBy: cronosActorLabel(actor),
+        updatedBy: cronosActorLabel(actor)
+      });
+      cronosAuditAction(db, { action:"payment_paid", entityType:"entry", entityId:rescueEntry.id, entryId:rescueEntry.id, contactId:contact.id, value:paidDelta, details:`Pagamento manual/resgate • ${moneyBR(paidDelta)} • caixa ${fmtBR(rescueDate)}` });
+    }
+
+    if(shouldRegisterDirectPayment){
+      db.payments = db.payments || [];
+      db.payments.push({
+        id: uid("p"),
+        masterId: actor.masterId,
+        entryId: entry.id,
+        contactId: contact.id,
+        at: now,
+        date: rescueDate,
+        paidAt: rescueDate,
+        cashDate: rescueDate,
+        status: "PAGA",
+        value: paidDelta,
+        method: payMethod || "",
+        desc: "Pagamento manual",
+        source: "leadManualConfirmed",
+        createdBy: cronosActorLabel(actor),
+        updatedBy: cronosActorLabel(actor)
+      });
+      cronosAuditAction(db, { action:"payment_paid", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:contact.id, value:paidDelta, details:`Pagamento manual • ${moneyBR(paidDelta)} • caixa ${fmtBR(rescueDate)}` });
+    }
+
+    /* ===== Parcelamento antigo removido do cadastro do lead =====
+       Novo fluxo fica em: Recebimentos > + Novo recebimento.
+       Mantemos entry.installPlan existente intacto para não quebrar histórico legado. */
+    if(el("lf_inst_amount") || el("lf_inst_n") || el("lf_entry_amount")){
+      const entryAmtRaw = el("lf_entry_amount")?.value;
+      const entryAmount = parseBRNum(entryAmtRaw) || 0;
+      const instAmtRaw = el("lf_inst_amount")?.value;
+      const instAmount = parseBRNum(instAmtRaw) || 0;
+      const instNRaw = el("lf_inst_n")?.value;
+      const instN = (instNRaw!==undefined && instNRaw!==null && instNRaw!=="") ? parseInt(instNRaw,10) : 0;
+      const firstDue = val("lf_inst_firstdue","").trim();
+
+      if(entryAmount>0 && (valuePaid==null || isNaN(valuePaid))){
+        entry.valuePaid = entryAmount;
+        entry.valueClosed = (status==="Fechou") ? entry.valuePaid : null;
+      }
+
+      if(instAmount>0 && instN>0){
+        entry.installPlan = { amount: instAmount, n: instN, firstDue: firstDue, payMethod: payMethod, entryAmount: entryAmount, each: Number((instAmount/instN).toFixed(2)) };
+        buildInstallments(entry);
+      }
+    }
+
+    if(!editingEntryId){
+      cronosAuditAction(db, { action:"lead_created", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:contact.id, details:`${name} • ${monthLabel(monthKey)}`, after:{ status:entry.status, monthKey:entry.monthKey, budget:entry.valueBudget ?? null } });
+    }else{
+      const changes = [];
+      if(entryBeforeAudit){
+        if(String(entryBeforeAudit.status || "") !== String(entry.status || "")) changes.push(`status ${entryBeforeAudit.status || "—"} → ${entry.status || "—"}`);
+        if(String(entryBeforeAudit.monthKey || "") !== String(entry.monthKey || "")) changes.push(`mês ${monthLabel(entryBeforeAudit.monthKey || "")} → ${monthLabel(entry.monthKey || "")}`);
+        if(String(entryBeforeAudit.apptDate || "") !== String(entry.apptDate || "") || String(entryBeforeAudit.apptTime || "") !== String(entry.apptTime || "")) changes.push("agendamento alterado");
+        if(Number(entryBeforeAudit.valueBudget || 0) !== Number(entry.valueBudget || 0)) changes.push(`orçamento ${moneyBR(entryBeforeAudit.valueBudget || 0)} → ${moneyBR(entry.valueBudget || 0)}`);
+      }
+      cronosAuditAction(db, { action:"lead_updated", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:contact.id, details:changes.length ? changes.join(" • ") : `Lead atualizado: ${name}`, before:entryBeforeAudit ? {status:entryBeforeAudit.status, monthKey:entryBeforeAudit.monthKey, budget:entryBeforeAudit.valueBudget} : null, after:{status:entry.status, monthKey:entry.monthKey, budget:entry.valueBudget} });
+    }
+
+    const cloudPromise = saveDB(db, { immediate:true });
+    closeModal();
+    ensureMonthOptions(); // in case new month
+    const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
+    toast("Lead salvo ✅", `${name} • ${savedMonthLabel} • sincronizando na nuvem...`);
+    renderAll();
+
+    Promise.resolve(cloudPromise).then((cloudOk)=>{
+      if(cloudOk){
+        toast("Salvo na nuvem ✅", `${name} • ${savedMonthLabel}`);
+        try{ renderAll(); }catch(_){}
+      }else{
+        toast("Lead salvo neste navegador", `${name} • ${savedMonthLabel} • a nuvem não confirmou agora`);
+      }
+    }).catch((err)=>{
+      console.error("Falha ao confirmar lead na nuvem:", err);
+      toast("Lead salvo neste navegador", `${name} • ${savedMonthLabel} • a nuvem não confirmou agora`);
+    });
+  });
+}
+
+function loadExistingContactIntoModal(contactId, actor, isNew){
+  const db = loadDB();
+  const c = db.contacts.find(x=>x.id===contactId);
+  if(!c) return;
+
+  let monthKey = (val("lf_month","") || val("fMonth", todayISO().slice(0,7))).trim();
+  if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
+  const entries = (db.entries||[])
+    .filter(e=>e.masterId===actor.masterId && e.contactId===c.id)
+    .sort((a,b)=>{
+      const da = String(a.lastUpdateAt || a.firstContactAt || a.monthKey || "");
+      const dbb = String(b.lastUpdateAt || b.firstContactAt || b.monthKey || "");
+      return dbb.localeCompare(da);
+    });
+
+  const existing = entries.find(e=>e.monthKey===monthKey);
+  const latest = entries[0] || null;
+
+  const targetEntry = existing || latest;
+  if(targetEntry){
+    closeModal();
+    openLeadEntry(targetEntry.id);
+    return;
+  }
+
+  const setIf = (id, value)=>{
+    const node = el(id);
+    if(!node) return;
+    node.value = value == null ? "" : String(value);
+  };
+
+  setIf("lf_name", c.name || latest?.name || "");
+  setIf("lf_phone", formatPhoneBR(c.phone || ""));
+  setIf("lf_cpf", formatCPF(c.cpf || ""));
+  setIf("lf_birth", c.birthDate || "");
+  if(el("lf_name")) el("lf_name").dataset.contactId = String(c.id || "");
+  if(el("lf_phone")) el("lf_phone").dataset.contactId = String(c.id || "");
+
+  if(latest){
+    setIf("lf_first", latest.firstContactAt || c.firstSeenAt || todayISO());
+    setIf("lf_month", latest.monthKey || monthKey || "");
+    setIf("lf_status", latest.status || "");
+    setIf("lf_origin", latest.origin || "");
+    setIf("lf_originOther", latest.originOther || "");
+    setIf("lf_treatment", latest.treatment || "");
+    setIf("lf_treatOther", latest.treatmentOther || "");
+    setIf("lf_apptDate", latest.apptDate || "");
+    setIf("lf_apptTime", latest.apptTime || "");
+    setIf("lf_calls", latest.callAttempts || "");
+    setIf("lf_callResult", latest.callResult || "");
+    setIf("lf_notes", latest.notes || "");
+
+    const tags = Array.isArray(latest.tags) ? latest.tags : [];
+    const prioTag = tags.find(t=>String(t||"").startsWith("Prioridade: ")) || "";
+    const prio = prioTag ? prioTag.replace(/^Prioridade:\s*/, "") : "";
+    setIf("lf_priority", prio);
+
+    const manualTags = tags
+      .map(t=>String(t||"").trim())
+      .filter(Boolean)
+      .filter(t=>!t.startsWith("Prioridade:"))
+      .filter(t=>t!=="Campanha");
+
+    const tagInp = el("lf_tag");
+    const tagListEl = el("lf_tag_list");
+    if(tagInp) tagInp.dataset.tags = JSON.stringify(Array.from(new Set(manualTags)));
+    const campaignChk = el("lf_campaign");
+    if(campaignChk) campaignChk.checked = tags.includes("Campanha");
+    if(tagListEl){
+      const uniq = Array.from(new Set(manualTags));
+      tagListEl.innerHTML = uniq.map((t,i)=>`<span class="tagPill" data-i="${i}">${escapeHTML(t)}<button type="button" class="tagRemove" data-i="${i}" aria-label="Remover tag">×</button></span>`).join("");
+    }
+  }else{
+    setIf("lf_first", c.firstSeenAt || todayISO());
+    const campaignChk = el("lf_campaign");
+    if(campaignChk) campaignChk.checked = false;
+  }
+
+  ["lf_origin","lf_treatment"].forEach(id=>el(id)?.dispatchEvent(new Event("change", { bubbles:true })));
+
+  fillHistory(c.id);
+  document.querySelectorAll(".suggestBox.show").forEach(box=>box.classList.remove("show"));
+  toast("Cadastro carregado", latest ? "Dados anteriores preenchidos automaticamente." : "Contato existente carregado para novo registro.");
+}
+
+/* -------- Delete -------- */
+
+function toggleLeadDone(entryId){
+  const db = loadDB();
+  const e = db.entries.find(x=>x.id===entryId);
+  if(!e) return;
+  if(e.status==="Concluído"){
+    e.status = e._prevStatus || "Conversando";
+    delete e._prevStatus;
+  }else{
+    e._prevStatus = e.status || "Conversando";
+    e.status = "Concluído";
+  }
+  e.lastUpdateAt = new Date().toISOString();
+  saveDB(db);
+  renderAll();
+}
+
+
+/* ===== Ações rápidas (aba Leads em cards) =====
+   ✅ markOK: marca como "Fechou"
+   💬 openWhats: abre WhatsApp do lead (template simples)
+   🗑️ deleteLead: wrapper para deleteEntry
+*/
+function markOK(entryId){
+  try{
+    const actor = currentActor();
+    if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
+    if(!actor.perms.edit) return toast("Sem permissão", "Seu nível não permite editar.");
+    const db = loadDB();
+    const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
+    if(!entry) return toast("Erro", "Lead não encontrado.");
+
+    const fromStatus = String(entry.status||"");
+    let toStatus = "Concluído";
+
+    if(fromStatus === "Concluído"){
+      const back = entry._prevStatus || entry.prevStatus || "";
+      if(back && back !== "Concluído"){
+        toStatus = back;
+      }else{
+        toStatus = "Sem resposta";
+      }
+      entry._prevStatus = null;
+      entry.prevStatus = null;
+    }else{
+      entry._prevStatus = fromStatus;
+      entry.prevStatus = fromStatus;
+      toStatus = "Concluído";
+    }
+
+    entry.status = toStatus;
+    entry.lastUpdateAt = new Date().toISOString();
+
+    const vp = parseMoney(entry.valuePaid);
+    entry.valueClosed = vp || null;
+
+    entry.updatedBy = cronosActorLabel(actor);
+    entry.statusLog = entry.statusLog || [];
+    if(fromStatus !== toStatus){
+      entry.statusLog.push({ at: entry.lastUpdateAt, from: fromStatus, to: toStatus, by: actor.name });
+      cronosAuditAction(db, { action:"status_changed", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, details:`${fromStatus || "—"} → ${toStatus || "—"}`, before:{status:fromStatus}, after:{status:toStatus} });
+    }
+
+    saveDB(db);
+    toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
+    renderAll();
+  }catch(e){
+    console.error(e);
+    toast("Erro", "Não foi possível marcar OK.");
+  }
+}
+
+
+function openWhats(entryId){
+  try{
+    const actor = currentActor();
+    if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
+    const db = loadDB();
+    const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
+    if(!entry) return toast("Erro", "Lead não encontrado.");
+    const contact = (db.contacts||[]).find(c=>c.id===entry.contactId) || {};
+    const phone = String(contact.phone||entry.phone||"").replace(/\D/g,'');
+    if(!phone) return toast("Sem telefone", "Esse lead não tem telefone.");
+    const tpl = (db.settings && db.settings.waTemplate) ? String(db.settings.waTemplate) : "Oi {nome}! Vi seu interesse. Posso te ajudar?";
+    const msg = tpl
+      .replaceAll("{nome}", String(contact.name||entry.name||""))
+      .replaceAll("{tratamento}", String(entry.treatment==="Outros" ? (entry.treatmentOther||"") : (entry.treatment||"")));
+    const url = `https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`;
+    window.open(url, "_blank");
+  }catch(e){
+    console.error(e);
+    toast("Erro", "Não foi possível abrir o WhatsApp.");
+  }
+}
+
+function deleteLead(entryId){
+  return deleteEntry(entryId);
+}
+
+function deleteEntry(entryId){
+  const actor = currentActor();
+  if(!actor.perms.delete) return toast("Sem permissão", "Seu nível não permite excluir.");
+  const db = loadDB();
+  const e = db.entries.find(x=>x.id===entryId);
+  if(!e) return;
+  const c = db.contacts.find(x=>x.id===e.contactId);
+  if(!confirm(`Excluir lead do mês ${monthLabel(e.monthKey)}? (${c?.name||"—"})`)) return;
+  db.entries = db.entries.filter(x=>x.id!==entryId);
+  saveDB(db);
+  toast("Excluído", "Entrada removida.");
+  renderAll();
+}
+
+/* -------- Users CRUD -------- */
+function userFormHTML(user){
+  const u = user || {name:"", username:"", email:"", role:"SECRETARIA"};
+  const isCloudUser = !!u.authUid;
+  const visibleEmail = (u.email && !String(u.email).endsWith("@users.cronos.local")) ? u.email : "";
+  return `
+    <div class="twoCol">
+      <div>
+        <label>Nome</label>
+        <input id="uf_name" value="${escapeHTML(u.name||"")}" placeholder="Ex: Ana"/>
+      </div>
+      <div>
+        <label>Nível</label>
+        <select id="uf_role">
+          ${( (currentActor()?.perms?.manageMasters) ? ROLES : ROLES.filter(r=>r!=="MASTER") ).map(r=>`<option value="${r}" ${u.role===r?"selected":""}>${r}</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <label>Usuário / login</label>
+        <input id="uf_username" value="${escapeHTML(u.username||"")}" placeholder="Ex: secretaria1" ${isCloudUser ? "disabled" : ""}/>
+      </div>
+      <div>
+        <label>E-mail (opcional)</label>
+        <input id="uf_email" value="${escapeHTML(visibleEmail||"")}" placeholder="email@clinica.com" ${isCloudUser ? "disabled" : ""}/>
+      </div>
+      <div style="grid-column:1/-1">
+        <label>Senha</label>
+        <input id="uf_pass" type="password" placeholder="${isCloudUser ? "senha não editável aqui" : "defina uma senha"}" ${isCloudUser ? "disabled" : ""}/>
+      </div>
+      <div class="muted" style="font-size:12px; grid-column:1/-1">
+        ${
+          isCloudUser
+            ? 'Este acesso já existe na nuvem. Aqui você pode alterar <b>nome</b> e <b>nível</b>. Login e senha de outro usuário cloud exigem uma rota administrativa segura.'
+            : 'Se preencher <b>usuário</b>, ele vira o login principal. O <b>e-mail</b> fica como contato. Se deixar o usuário vazio, o login será pelo e-mail.'
+        }
+      </div>
+    </div>
+  `;
+}
+
+
+async function callClinicUserManagerEdge(payload={}){
+  const sessionResp = await supabaseClient.auth.getSession();
+  const session = sessionResp?.data?.session;
+  if(!session?.access_token){
+    throw new Error("Sessão expirada. Faça login novamente.");
+  }
+
+  const res = await fetch(`${supabaseUrl}/functions/v1/${CREATE_CLINIC_USER_ENDPOINT}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${session.access_token}`,
+      "apikey": supabaseKey
+    },
+    body: JSON.stringify(payload || {})
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if(!res.ok){
+    throw new Error(json?.error || "Não foi possível gerenciar o usuário.");
+  }
+  return json || {};
+}
+
+async function createClinicUserViaEdge({ name, username, email, password, role }){
+  return callClinicUserManagerEdge({ action:"create", name, username, email, password, role });
+}
+
+function openNewUser(){
+  const actor = currentActor();
+  if(!actor.perms.manageUsers) return toast("Sem permissão", "Somente Master pode gerenciar usuários.");
+  openModal({
+    title: "Novo usuário",
+    sub: "Usuário interno vinculado ao Master.",
+    bodyHTML: userFormHTML(null),
+    footHTML: `
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn ok" id="btnSaveUser">Salvar</button>
+    `,
+    onMount: ()=>{
+      el("btnSaveUser").addEventListener("click", async ()=>{
+        const db = loadDB();
+        const name = val("uf_name").trim();
+        const role = val("uf_role");
+        if(role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode criar outros masters.");
+
+        const username = normalizeUsername(val("uf_username"));
+        const email = val("uf_email").trim().toLowerCase();
+        const pass = val("uf_pass");
+        if(!name) return toast("Nome obrigatório");
+        if(!email && !username) return toast("Informe um usuário ou e-mail");
+        if(!pass) return toast("Senha obrigatória");
+
+        if(username && db.users.some(u=>u.masterId===actor.masterId && normalizeUsername(u.username)===username)) return toast("Usuário já existe");
+        if(email && db.users.some(u=>u.masterId===actor.masterId && String(u.email||"").toLowerCase()===email)) return toast("E-mail já existe");
+
+        try{
+          const result = await createClinicUserViaEdge({
+            name,
+            username,
+            email,
+            password: pass,
+            role
+          });
+
+          const authUid = result?.user?.auth_uid || result?.auth_uid || null;
+          const loginEmail = result?.user?.login_email || (username ? usernameToSyntheticEmail(username) : email);
+          const explicitEmail = result?.user?.email || email || "";
+          const pendingApproval = result?.pending_approval === true;
+
+          db.users.push({
+            id: uid("u"),
+            authUid,
+            masterId: actor.masterId,
+            name,
+            username: username || "",
+            email: explicitEmail || "",
+            loginEmail: loginEmail || "",
+            role,
+            active: !pendingApproval,
+            pendingApproval,
+            blockedReason: result?.blocked_reason || null,
+            createdAt: new Date().toISOString()
+          });
+
+          saveDB(db, { immediate:true });
+          closeModal();
+
+          if(pendingApproval){
+            toast("Usuário enviado para aprovação ⏳", `${name} foi criado, mas ficará bloqueado até liberação do superadmin.`);
+          }else{
+            toast("Usuário criado ✅", `${name} já pode entrar no sistema.`);
+          }
+          renderAll();
+        }catch(err){
+          console.error("Erro ao criar usuário cloud:", err);
+          const msg = String(err?.message || err?.error_description || "Não foi possível criar o usuário.");
+          toast("Falha ao criar usuário", msg);
+        }
+      });
+    }
+  });
+}
+
+function openUserEdit(userId){
+  const actor = currentActor();
+  if(!actor.perms.manageUsers) return toast("Sem permissão");
+  const db = loadDB();
+  const u = db.users.find(x=>x.id===userId);
+  if(!u) return toast("Usuário não encontrado");
+  openModal({
+    title: "Editar usuário",
+    sub: u.authUid ? "Nome e nível podem ser alterados aqui. Credenciais cloud de terceiros precisam de rota administrativa." : "Altere nível e login. (Senha opcional)",
+    bodyHTML: userFormHTML(u),
+    footHTML: `
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn ok" id="btnSaveUser">Salvar</button>
+    `,
+    onMount: ()=>{
+      if(!u.authUid){
+        el("uf_pass").placeholder = "deixe vazio para manter";
+      }
+      el("btnSaveUser").addEventListener("click", async ()=>{
+        const name = val("uf_name").trim();
+        const role = val("uf_role");
+        if(role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode promover para MASTER.");
+        if(!name) return toast("Nome obrigatório");
+
+        if(u.authUid){
+          try{
+            u.name = name;
+            u.role = role;
+            await updateClinicMemberRecord(u, { name, role });
+            saveDB(db, { immediate:true });
+            closeModal();
+            toast("Usuário atualizado ✅");
+            renderAll();
+          }catch(err){
+            console.error("Erro ao atualizar usuário cloud:", err);
+            toast("Falha ao atualizar usuário", String(err?.message || "Tente novamente."));
+          }
+          return;
+        }
+
+        const username = normalizeUsername(val("uf_username"));
+        const email = val("uf_email").trim().toLowerCase();
+        const pass = val("uf_pass");
+        if(!email && !username) return toast("Informe e-mail ou usuário");
+
+        if(username && db.users.some(x=>x.masterId===actor.masterId && normalizeUsername(x.username)===username && x.id!==u.id)) return toast("Usuário já existe");
+        if(email && db.users.some(x=>x.masterId===actor.masterId && String(x.email||"").toLowerCase()===email && x.id!==u.id)) return toast("E-mail já existe");
+
+        u.name = name;
+        u.role = role;
+        u.username = username;
+        u.email = email;
+        if(pass){
+          u.passHash = await hashPass(pass);
+        }
+        saveDB(db, { immediate:true });
+        closeModal();
+        toast("Usuário atualizado ✅");
+        renderAll();
+      });
+    }
+  });
+}
+
+async function deleteUser(userId){
+  const actor = currentActor();
+  if(!actor.perms.manageUsers) return toast("Sem permissão");
+  const db = loadDB();
+  const u = db.users.find(x=>x.id===userId);
+  if(!u) return;
+  if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode remover outros masters.");
+  if(!confirm(`Excluir usuário ${u.name}?`)) return;
+
+  try{
+    if(u.authUid){
+      await deactivateClinicMemberRecord(u);
+    }
+    db.users = db.users.filter(x=>x.id!==userId);
+    saveDB(db, { immediate:true });
+    toast("Usuário excluído");
+    renderAll();
+  }catch(err){
+    console.error("Erro ao remover usuário:", err);
+    toast("Falha ao excluir usuário", String(err?.message || "Tente novamente."));
+  }
+}
+
+/* -------- CSV Export -------- */
+function exportCSV(){
+  const actor = currentActor();
+  if(!actor) return;
+  const f = getUIFilters();
+  const db = loadDB();
+  const rows = filteredEntries();
+
+  const headers = ["Nome","Número","Status","Origem","Tratamento","Primeiro contato","Agendamento data","Agendamento hora","Tentativas","Resultado ligação","Cidade","Mês","Orçamento (R$)","Pago (R$)","Em aberto (R$)"];
+  const lines = [headers.join(",")];
+
+  rows.forEach(e=>{
+    const c = db.contacts.find(x=>x.id===e.contactId);
+    const origin = e.origin==="Outros" ? (e.originOther||"Outros") : e.origin;
+    const treat = e.treatment==="Outros" ? (e.treatmentOther||"Outros") : e.treatment;
+    const arr = [
+      csvSafe(c?.name||""),
+      csvSafe(c?.phone||""),
+      csvSafe(e.status||""),
+      csvSafe(origin||""),
+      csvSafe(treat||""),
+      csvSafe(e.firstContactAt||""),
+      csvSafe(e.apptDate||""),
+      csvSafe(e.apptTime||""),
+      csvSafe(e.callAttempts||""),
+      csvSafe(e.callResult||""),
+      csvSafe(e.city||""),
+      csvSafe(monthLabel(e.monthKey)),
+      csvSafe(((e.valueBudget!=null)?Number(e.valueBudget):((e.valueEstimated!=null)?Number(e.valueEstimated):""))),
+      csvSafe(((e.valuePaid!=null)?Number(e.valuePaid):((e.valueClosed!=null)?Number(e.valueClosed):""))),
+      csvSafe((()=>{ const b=(e.valueBudget!=null)?Number(e.valueBudget):((e.valueEstimated!=null)?Number(e.valueEstimated):0); const p=(e.valuePaid!=null)?Number(e.valuePaid):((e.valueClosed!=null)?Number(e.valueClosed):0); const o=Math.max(0,(b||0)-(p||0)); return o?o:""; })())
+    ];
+    lines.push(arr.join(","));
+  });
+
+  const title = `Leads do mês de ${monthLabel(f.monthKey)}`;
+  const blob = new Blob([lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${title.replaceAll(" ","_")}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+  toast("CSV exportado ✅", title);
+
+}
+
+function exportPDFFiltered(){
+  const actor = currentActor();
+  if(!actor) return;
+  const f = getUIFilters();
+  const db = loadDB();
+  const rows = filteredEntries();
+
+  const title = `Relatório • ${monthLabel(f.monthKey)}`;
+  const logo = getSmallLogoDataURI ? getSmallLogoDataURI() : "";
+  const master = db.masters.find(m=>m.id===actor.masterId);
+
+  const tableRows = rows.map(e=>{
+    const c = db.contacts.find(x=>x.id===e.contactId);
+    const origin = e.origin==="Outros" ? (e.originOther||"Outros") : e.origin;
+    const treat = e.treatment==="Outros" ? (e.treatmentOther||"Outros") : e.treatment;
+    const budget = (e.valueBudget!=null && !isNaN(Number(e.valueBudget))) ? Number(e.valueBudget) : ((e.valueEstimated!=null && !isNaN(Number(e.valueEstimated))) ? Number(e.valueEstimated) : 0);
+    const paid = (e.valuePaid!=null && !isNaN(Number(e.valuePaid))) ? Number(e.valuePaid) : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
+    const open = Math.max(0, (budget||0)-(paid||0));
+    const appt = e.apptDate ? `${fmtBR(e.apptDate)} ${e.apptTime||""}`.trim() : "—";
+    return `
+      <tr>
+        <td><b>${escapeHTML(c?.name||"—")}</b><div class="muted">${escapeHTML(c?.phone||"—")}</div></td>
+        <td>${escapeHTML(e.status||"—")}</td>
+        <td>${escapeHTML(origin||"—")}</td>
+        <td>${escapeHTML(treat||"—")}</td>
+        <td class="mono">${escapeHTML(appt)}</td>
+        <td class="mono">${budget?moneyBR(budget):"—"}</td>
+        <td class="mono">${paid?moneyBR(paid):"—"}</td>
+        <td class="mono">${open?moneyBR(open):"—"}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const totalPaid = rows.reduce((acc,e)=>{
+    const v = (e.valuePaid!=null && !isNaN(Number(e.valuePaid))) ? Number(e.valuePaid) : ((e.valueClosed!=null && !isNaN(Number(e.valueClosed))) ? Number(e.valueClosed) : 0);
+    return acc + (v||0);
+  },0);
+
+  const htmlDoc = `
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${escapeHTML(title)}</title>
+<style>
+  body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; color:#111;}
+  .head{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; border-bottom:1px solid #ddd; padding-bottom:12px;}
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand img{width:34px; height:34px;}
+  h1{font-size:18px; margin:0;}
+  .sub{font-size:12px; color:#555; margin-top:2px;}
+  .muted{color:#666;}
+  table{width:100%; border-collapse:collapse; margin-top:12px;}
+  th,td{border-bottom:1px solid #eee; text-align:left; padding:8px 6px; font-size:12px; vertical-align:top;}
+  th{color:#444;}
+  .mono{font-variant-numeric: tabular-nums;}
+  .footer{margin-top:10px; font-size:12px; color:#444;}
+  @media print{ body{margin: 14mm;} }
+
+/* ===== Access guard / renewal ===== */
+.accessGateCard{
+  width:min(560px, 100%);
+  border:1px solid var(--line);
+  border-radius:26px;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 42%), var(--panel);
+  box-shadow: var(--shadow);
+  padding:20px 18px;
+}
+.accessGateHeader{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:12px;
+}
+.accessGateBadge{
+  width:44px;
+  height:44px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  font-size:20px;
+  background: rgba(255,255,255,.05);
+  border:1px solid var(--line);
+}
+.accessGateTitle{
+  margin:0;
+  font-size:26px;
+  line-height:1.02;
+  letter-spacing:-.02em;
+}
+.accessGateText{
+  margin:10px 0 0;
+  color:var(--muted);
+  line-height:1.5;
+}
+.accessGateMeta{
+  margin-top:14px;
+  padding:12px 14px;
+  border-radius:16px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  color:var(--text);
+  display:grid;
+  gap:8px;
+}
+.accessGateActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top:16px;
+}
+.accessGateActions .btn{
+  flex:1 1 220px;
+  justify-content:center;
+}
+.accessNotice{
+  width:min(560px, 100%);
+  border:1px solid var(--line);
+  border-radius:22px;
+  background: var(--panel2);
+  box-shadow: 0 20px 60px rgba(17,24,39,.15);
+  padding:18px 16px;
+}
+.accessNoticeHead{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+.accessNoticeHead h3{
+  margin:0;
+  font-size:20px;
+}
+.accessNoticeText{
+  color:var(--muted);
+  line-height:1.5;
+  margin:0 0 14px;
+}
+.accessNoticeActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  justify-content:flex-end;
+}
+.accessNoticeDays{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.04);
+  color:var(--text);
+  font-size:12px;
+  font-weight:700;
+}
+
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="brand">
+      ${logo?`<img src="${logo}" alt="Cronos"/>`:``}
+      <div>
+        <h1>${escapeHTML(master?.name||"Clínica")} — Relatório</h1>
+        <div class="sub">${escapeHTML(monthLabel(f.monthKey))} • Gerado em ${new Date().toLocaleString("pt-BR")}</div>
+      </div>
+    </div>
+    <div class="mono"><b>Total recebido:</b> ${moneyBR(totalPaid)}</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Paciente</th>
+        <th>Status</th>
+        <th>Origem</th>
+        <th>Tratamento</th>
+        <th>Agendamento</th>
+        <th class="mono">Orçamento</th>
+        <th class="mono">Pago</th>
+        <th class="mono">Em aberto</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tableRows || `<tr><td colspan="8" class="muted">Sem leads no filtro atual.</td></tr>`}
+    </tbody>
+  </table>
+
+  <div class="footer muted">Dica: ao imprimir, selecione “Salvar como PDF”.</div>
+
+<script>window.onload=()=>{ setTimeout(()=>window.print(), 250); };<\/script>
+
+<div id="chartTooltip" aria-hidden="true"></div>
+
+<div id="kpiModal" class="modal hidden" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modalInner" style="max-width:720px">
+    <div class="modalHeader">
+      <div>
+        <div class="muted" style="font-size:12px">KPIs</div>
+        <div id="kpiModalTitle" style="font-size:18px; font-weight:800">Detalhes</div>
+      </div>
+      <button class="btn" id="kpiModalClose">Fechar</button>
+    </div>
+    <div class="modalBody" style="padding-top:10px">
+      <div class="muted" id="kpiModalSub" style="margin-bottom:10px"></div>
+      <div id="kpiModalList" class="stack" style="gap:10px"></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>`;
+
+  const w = window.open("", "_blank");
+  if(!w) return toast("Popup bloqueado", "Permita popups pra gerar PDF.");
+  w.document.open();
+  w.document.write(htmlDoc);
+  w.document.close();
+  toast("PDF pronto ✅", title);
+}
+
+function csvSafe(s){
+  const v = String(s??"").replaceAll('"','""');
+  return `"${v}"`;
+}
+
+/* -------- Backup / Import -------- */
+function exportJSON(){
+  const actor = currentActor();
+  if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode exportar backup.");
+  const db = loadDB();
+  const blob = new Blob([JSON.stringify(db,null,2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `cronoscrm_backup_${todayISO()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+  toast("Backup exportado ✅");
+}
+function importJSON(file){
+  const actor = currentActor();
+  if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode importar backup.");
+  const r = new FileReader();
+  r.onload = async ()=>{
+    try{
+      const data = JSON.parse(r.result);
+      if(!data || typeof data!=="object") throw new Error("invalid");
+      if(!Array.isArray(data.masters) || !Array.isArray(data.entries)) throw new Error("invalid");
+      saveDB(normalizeDBShape(data), { immediate:true });
+      toast("Backup importado ✅", "Se a sessão estiver ativa, já sobe para a nuvem.");
+      await boot();
+    }catch(e){
+      toast("Falha ao importar", "Arquivo inválido.");
+    }
+  };
+  r.readAsText(file);
+}
+async function wipeAll(){
+  const actor = currentActor();
+  if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode zerar a base.");
+  if(!confirm("Zerar TUDO? (usuários, leads, masters)")) return;
+  const fresh = freshDB();
+  try{
+    const user = await getCurrentSupabaseUser();
+    if(user) ensureMasterRecord(fresh, user);
+  }catch(_){}
+  saveDB(fresh, { immediate:true });
+  localStorage.removeItem(FILTERKEY);
+  clearSession();
+  toast("Zerado 🧨");
+  setTimeout(()=>location.reload(), 250);
+}
+
+/* -------- Render all -------- */
+
+/* -------- Kanban -------- */
+const KANBAN_EMPTY_STATUS = "__sem_status__";
+const KANBAN_RENDER_LIMIT = 200;
+const KANBAN_COLUMNS = [
+  {title:"Conversando", status:"Conversando"},
+  {title:"Agendado", status:"Agendado"},
+  {title:"Compareceu", status:"Compareceu"},
+  {title:"Fechou", status:"Fechou"},
+  {title:"Sem resposta", status:"Sem resposta"},
+];
+
+
+function kanbanPotentialValue(entry, db){
+  if(!entry) return 0;
+  try{
+    if(Array.isArray(entry?.tags) && entry.tags.includes("Resgatado")) return 0;
+  }catch(_){ }
+
+  try{
+    const directBudget = (typeof getEntryBudgetValue === "function") ? parseMoney(getEntryBudgetValue(entry)) : 0;
+    if(directBudget > 0) return directBudget;
+  }catch(_){ }
+
+  try{
+    if(typeof cronosEntryFinancialSummary === "function"){
+      const summary = cronosEntryFinancialSummary(entry, db);
+      const budget = parseMoney(summary?.budget ?? 0);
+      if(budget > 0) return budget;
+    }
+  }catch(_){ }
+
+  const direct = Math.max(
+    parseMoney(entry.valueBudget ?? 0),
+    parseMoney(entry.valorOrcamento ?? 0),
+    parseMoney(entry.orcamento ?? 0),
+    parseMoney(entry.budget ?? 0),
+    parseMoney(entry.valueEstimated ?? 0),
+    parseMoney(entry.valorEstimado ?? 0),
+    parseMoney(entry.proposalValue ?? 0),
+    parseMoney(entry.budgetValue ?? 0)
+  );
+
+  let ficha = 0;
+  try{
+    const items = (typeof cronosActiveFichaPlanItems === "function") ? cronosActiveFichaPlanItems(entry) : (Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : []);
+    ficha = items.reduce((sum,item)=>sum + ((typeof cronosFichaItemBudgetValue === "function") ? cronosFichaItemBudgetValue(item) : parseMoney(item?.valorFechado ?? item?.valorBase ?? item?.valor ?? item?.value ?? item?.amount ?? 0)), 0);
+  }catch(_){ }
+
+  let financial = 0;
+  try{
+    const plans = Array.isArray(entry?.financialPlans) ? entry.financialPlans : [];
+    financial = plans.reduce((sum,plan)=>{
+      const payments = Array.isArray(plan?.payments) ? plan.payments : [];
+      const scheduled = payments.reduce((s,p)=>s + parseMoney(p?.amount ?? p?.value ?? p?.valor ?? 0), 0);
+      const declared = parseMoney(plan?.amount ?? plan?.total ?? plan?.valor ?? plan?.value ?? 0);
+      return sum + Math.max(declared, scheduled);
+    }, 0);
+  }catch(_){ }
+
+  return Math.max(0, direct, ficha, financial);
+}
+
+function renderKanban(){
+  const actor = currentActor();
+if(!actor) return;
+
+const db = loadDB();
+const board = el("kanbanBoard");
+if(!board) return;
+
+const contactsById = (typeof getContactsByIdMap === "function") ? getContactsByIdMap(db) : new Map((db.contacts||[]).map(c=>[String(c.id), c]));
+const rows = filteredEntries().slice(); // respects filters + month
+
+function currentStatus(entry){
+  const log = Array.isArray(entry.statusLog) ? entry.statusLog : [];
+  const last = log.length ? String(log[log.length - 1]?.to || "").trim() : "";
+  const direct = String(entry.status || "").trim();
+  return last || direct || "";
+}
+
+  const groups = new Map(KANBAN_COLUMNS.map(c=>[c.status, []]));
+  rows.forEach(e=>{
+    const s = currentStatus(e);
+    if(!s || !groups.has(s)) return;
+    groups.get(s).push(e);
+  });
+
+  board.innerHTML = KANBAN_COLUMNS.map(col=>{
+    const list = groups.get(col.status) || [];
+
+const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
+const sortedList = list
+  .slice()
+  .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""));
+const visibleList = sortedList.slice(0, KANBAN_RENDER_LIMIT);
+const hiddenCount = Math.max(0, sortedList.length - visibleList.length);
+
+    return `
+      <div class="kanCol" data-kan-status="${escapeHTML(col.status)}">
+        <div class="kanHead">
+          <b>${escapeHTML(col.title)}</b>
+          <span class="pill">${list.length}</span>
+<span class="pill" style="margin-left:6px" title="Valor orçado/fechado dos leads desta coluna">${moneyBR(total)}</span>
+        </div>
+        <div class="kanList" data-dropzone="${escapeHTML(col.status)}">
+          ${list.length ? visibleList
+            .map(e=>{
+              const c = contactsById.get(String(e.contactId || ""));
+              const finSummary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+              const paid = parseMoney(finSummary?.paid ?? e.valuePaid ?? 0);
+              const budget = parseMoney(finSummary?.budget ?? e.valueBudget ?? 0);
+              const open = parseMoney(finSummary?.open ?? Math.max(0, budget - paid));
+              const apptDateRaw = (e.apptDate || e.agendamentoData || e.appointmentDate || "").toString().trim();
+              const apptTimeRaw = (e.apptTime || e.agendamentoHora || e.appointmentTime || "").toString().trim();
+              const apptLabel = `${apptDateRaw ? fmtBR(apptDateRaw) : ""}${apptTimeRaw ? ` às ${apptTimeRaw}` : ""}`.trim() || "—";
+              const showApptOnCard = ["Agendado","Remarcou"].includes(col.status) || !!apptDateRaw;
+              const extraInfo = [e.treatment, e.origin].map(x=>String(x || "").trim()).filter(Boolean).join(" • ");
+              return `
+                <div class="kanCard" draggable="true" data-entry="${e.id}">
+                  <div style="display:flex; justify-content:space-between; gap:10px">
+                    <div>
+                      <div style="font-weight:900">${escapeHTML(c?.name||"—")}</div>
+                      <div class="muted" style="font-size:12px; margin-top:2px">${escapeHTML(c?.phone||"—")}</div>
+                      ${extraInfo ? `<div class="muted" style="font-size:12px; margin-top:6px">${escapeHTML(extraInfo)}</div>` : ""}
+                      ${showApptOnCard ? `<div class="muted mono" style="font-size:12px; margin-top:6px">Agendamento: <b>${escapeHTML(apptLabel)}</b></div>` : ""}
+                      ${(budget||paid)?`<div class="muted mono" style="font-size:12px; margin-top:6px">Pago: <b>${moneyBR(paid)}</b> • Em aberto: <b>${moneyBR(open)}</b></div>`:""}
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
+                      <button class="miniBtn" onclick="openLeadEntry('${e.id}')">Abrir</button>
+                      <button class="miniBtn" onclick="printLeadEntry('${e.id}')">🖨️</button>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join("")
+            + (hiddenCount ? `<div class="muted" style="font-size:12px; padding:10px 6px; line-height:1.35">Mostrando ${visibleList.length} de ${list.length}. Use busca/filtros para refinar sem travar o navegador.</div>` : "")
+          : `<div class="muted" style="font-size:13px">—</div>`}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  window.__KANBAN_DRAG_ID = null;
+
+  qsa(".kanCard", board).forEach(card=>{
+    const id = card.dataset.entry;
+
+    card.addEventListener("dragstart", (ev)=>{
+      window.__KANBAN_DRAG_ID = id;
+      try{
+        if(ev.dataTransfer){
+          ev.dataTransfer.effectAllowed = "move";
+          ev.dataTransfer.setData("text/plain", id);
+        }
+      }catch(e){}
+      setTimeout(()=>card.classList.add("kanDragging"), 0);
+    });
+
+    card.addEventListener("dragend", ()=>{
+      card.classList.remove("kanDragging");
+      window.__KANBAN_DRAG_ID = null;
+      qsa(".kanDropHint", board).forEach(x=>x.classList.remove("kanDropHint"));
+    });
+
+    card.addEventListener("pointerdown", (ev)=>{
+      if(ev.pointerType === "mouse") return;
+      const t = ev.target;
+      if(t && (t.tagName === "BUTTON" || t.closest("button"))) return;
+      window.__KANBAN_DRAG_ID = id;
+      qsa(".kanCard", board).forEach(c=>c.classList.remove("kanSelected"));
+      card.classList.add("kanSelected");
+      toast("Toque na coluna para mover");
+    });
+  });
+
+  function kanbanMoveTo(status){
+    const entryId = window.__KANBAN_DRAG_ID;
+    window.__KANBAN_DRAG_ID = null;
+    qsa(".kanCard", board).forEach(c=>c.classList.remove("kanSelected"));
+    if(entryId && status){
+  quickUpdateStatus(entryId, status === KANBAN_EMPTY_STATUS ? "" : status);
+
+  setTimeout(() => {
+    renderKanban();
+  }, 50);
+}
+  }
+
+  qsa("[data-dropzone], .kanCol", board).forEach(zone=>{
+    const status = zone.dataset.dropzone || zone.dataset.kanStatus;
+
+    zone.addEventListener("dragover", (ev)=>{
+      ev.preventDefault();
+      zone.classList.add("kanDropHint");
+    });
+
+    zone.addEventListener("dragleave", ()=>zone.classList.remove("kanDropHint"));
+
+    zone.addEventListener("drop", (ev)=>{
+      ev.preventDefault();
+      zone.classList.remove("kanDropHint");
+
+      let entryId = null;
+      try{
+        entryId = ev.dataTransfer && ev.dataTransfer.getData("text/plain");
+      }catch(e){}
+
+      if(entryId) window.__KANBAN_DRAG_ID = entryId;
+      kanbanMoveTo(status);
+    });
+
+    zone.addEventListener("click", ()=>{
+      if(window.__KANBAN_DRAG_ID) kanbanMoveTo(status);
+    });
+  });
+
+
+  function quickUpdateStatus(entryId, newStatus){
+  const actor = currentActor();
+  if(!actor?.perms?.edit) return toast("Sem permissão para editar");
+  const db = loadDB();
+  const e = db.entries.find(x=>x.id===entryId);
+  if(!e) return;
+  const old = e.status;
+  if(old===newStatus) return;
+  e.status = newStatus;
+  e.lastUpdateAt = new Date().toISOString();
+  e.updatedAt = e.lastUpdateAt;
+  e.updatedBy = cronosActorLabel(actor);
+  e.statusLog = e.statusLog || [];
+  e.statusLog.push({at: e.lastUpdateAt, from: old, to: newStatus, by: actor.name});
+  cronosAuditAction(db, { action:"status_changed", entityType:"entry", entityId:e.id, entryId:e.id, contactId:e.contactId, details:`Funil: ${old || "—"} → ${newStatus || "—"}`, before:{status:old}, after:{status:newStatus} });
+  saveDB(db);
+  renderAll();
+}
+
+}
+
+/* -------- Tasks -------- */
+const TASK_ACTIONS = ["Ligar","WhatsApp","Enviar orçamento","Confirmar agendamento","Follow-up","Outros"];
+
+function taskStatusLabel(t){
+  const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
+  const today = new Date(todayISO()+"T00:00:00");
+  const overdue = due && due < today && !t.done;
+ if(overdue) return `<span class="chip"><span class="dot hot"></span>Atrasado</span>`;
+if(t.done) return `<span class="chip"><span class="dot ok"></span>Feito</span>`;
+return `<span class="chip"><span class="dot warm"></span>Pendente</span>`;
+}
+
+function renderTasks(){
+  const actor = currentActor();
+  if(!actor) return;
+  const db = loadDB();
+  syncInstallmentTasks(db, actor);
+  saveDB(db, { skipCloud:true });
+  try{ cronosUpdateTasksSidebarPill({ repair:false }); }catch(_){ }
+
+  const tbody = el("tasksTbody");
+  if(!tbody) return;
+
+  const monthEl = el("taskMonth");
+  const searchEl = el("taskSearch");
+  const filterEl = el("taskFilter");
+
+  // Filtro de tarefas
+  // "Todos" respeita o mês selecionado.
+  // "Pendentes e em atraso" ignora o mês e mostra todas as tarefas abertas.
+
+  if(monthEl && !monthEl.value){
+    monthEl.value = todayISO().slice(0,7);
+  }
+
+  [monthEl, searchEl, filterEl].forEach(ctrl => {
+    if(ctrl && !ctrl.dataset.bound){
+      ctrl.addEventListener(
+        ctrl.tagName === "INPUT" && ctrl.type === "text" ? "input" : "change",
+        () => renderTasks()
+      );
+      ctrl.dataset.bound = "1";
+    }
+  });
+
+  const taskMonth = monthEl?.value || "";
+  const taskSearch = (searchEl?.value || "").trim().toLowerCase();
+  const taskFilter = filterEl?.value || "Todos";
+
+  function normTaskFilter(v){
+    return String(v || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/_/g, " ")
+      .trim();
+  }
+
+  const taskFilterNorm = normTaskFilter(taskFilter);
+  const filterTextNorm = normTaskFilter(filterEl?.selectedOptions?.[0]?.textContent || "");
+
+  const isTodosFilter = taskFilter === "Todos" || taskFilterNorm === "todos" || filterTextNorm === "todos";
+  const isAllOpenFilter =
+    taskFilter === "PendentesEAtraso" ||
+    taskFilterNorm === "pendentes e atraso" ||
+    taskFilterNorm === "pendentes e em atraso" ||
+    filterTextNorm === "pendentes e atraso" ||
+    filterTextNorm === "pendentes e em atraso" ||
+    taskFilterNorm.includes("pendentes") && taskFilterNorm.includes("atraso") ||
+    filterTextNorm.includes("pendentes") && filterTextNorm.includes("atraso") ||
+    taskFilterNorm.includes("abert") ||
+    filterTextNorm.includes("abert");
+
+  const isLateFilter = !isAllOpenFilter && (
+    taskFilter === "Atrasado" ||
+    taskFilterNorm.includes("atrasad") ||
+    filterTextNorm.includes("atrasad")
+  );
+
+  const isPendingFilter = !isAllOpenFilter && (
+    taskFilter === "Pendente" ||
+    taskFilterNorm === "pendente" ||
+    taskFilterNorm === "pendentes" ||
+    filterTextNorm === "pendente" ||
+    filterTextNorm === "pendentes"
+  );
+
+  const isDoneFilter = (
+    taskFilter === "Feito" ||
+    taskFilterNorm.includes("feito") ||
+    filterTextNorm.includes("feito")
+  );
+
+  const allStatusMode = isTodosFilter;
+  const allOpenMode = isAllOpenFilter;
+
+  const today = new Date(todayISO()+"T00:00:00");
+
+  const tasks = (db.tasks||[])
+    .filter(t => !t.masterId || t.masterId === actor.masterId)
+    .filter(t => {
+      // Visão mensal: Todos, Atrasado, Pendente e Feito respeitam o mês selecionado.
+      // Visão operacional: Pendentes e em atraso mostra todas as tarefas abertas.
+      if(allOpenMode) return t.done !== true;
+      return String(t.dueDate || "").slice(0,7) === taskMonth;
+    })
+    .filter(t => {
+      const e = db.entries.find(x => x.id === t.entryId);
+      const c = e ? db.contacts.find(x => x.id === e.contactId) : null;
+      const hay = `${c?.name || ""} ${c?.phone || ""}`.toLowerCase();
+      return !taskSearch || hay.includes(taskSearch);
+    })
+    .filter(t => {
+      const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
+      const overdue = due && due < today && !t.done;
+      const pending = !t.done && !overdue;
+
+      if(isAllOpenFilter) return t.done !== true;
+      if(isLateFilter) return !!overdue;
+      if(isPendingFilter) return !!pending;
+      if(isDoneFilter) return !!t.done;
+      return true;
+    })
+    .sort((a,b)=> {
+      const aDue = String(a.dueDate||"9999-12-31");
+      const bDue = String(b.dueDate||"9999-12-31");
+
+      if(allStatusMode || allOpenMode){
+        const aDate = a.dueDate ? new Date(a.dueDate+"T00:00:00") : null;
+        const bDate = b.dueDate ? new Date(b.dueDate+"T00:00:00") : null;
+
+        const rank = (t, d)=>{
+          const overdue = d && d < today && t.done !== true;
+          if(overdue) return 0;
+          if(t.done === true) return allStatusMode ? 2 : 1;
+          return 1;
+        };
+
+        const ar = rank(a, aDate);
+        const br = rank(b, bDate);
+        if(ar !== br) return ar - br;
+      }
+
+      return aDue.localeCompare(bDue);
+    });
+
+  if(!tasks.length){
+    tbody.innerHTML = `<tr><td colspan="6" class="muted">Nenhuma tarefa encontrada para este filtro.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = tasks.map(t=>{
+  const e = db.entries.find(x=>x.id===t.entryId);
+  const c = e ? db.contacts.find(x=>x.id===e.contactId) : null;
+  const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
+  const overdue = due && due < today && !t.done;
+  const cls = t.done ? "taskOk" : (overdue ? "taskBad" : "");  const svgEdit = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
+  const svgOk = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg>`;
+  const svgReopen = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10V4h6"></path><path d="M3.05 4.91A10 10 0 1 1 6 17.3"></path></svg>`;
+  return `
+    <tr class="${cls}">
+      <td class="nowrap">${taskStatusLabel(t)}</td>
+      <td><b>${escapeHTML(t.title||"—")}</b><div class="muted" style="font-size:12px">${escapeHTML(t.action||"")}</div></td>
+      <td>${escapeHTML(c?.name||"—")}<div class="muted" style="font-size:12px">${escapeHTML(c?.phone||"")}</div></td>
+      <td class="nowrap">${t.dueDate?fmtBR(t.dueDate):"—"}</td>
+      <td>${escapeHTML(t.notes||"")}</td>
+      <td>
+        <div class="taskActionsCell">
+          <div class="taskActionsRow leadActionsRow">
+            <button class="iconBtn cronos-action-edit" onclick="openTaskEdit('${t.id}')" title="Editar tarefa">${svgEdit}</button>
+            <button class="iconBtn ${t.done ? '' : 'cronos-action-ok'}" onclick="toggleTaskDone('${t.id}')" title="${t.done?'Reabrir':'Concluir'}">${t.done ? svgReopen : svgOk}</button>
+          </div>
+          ${e?`<button class="btn primary taskOpenLead" onclick="openLeadEntry('${e.id}')">Abrir lead</button>`:""}
+        </div>
+      </td>
+    </tr>
+  `;
+}).join("");
+}
+
+function openNewTask(){
+  const actor = currentActor();
+  if(!actor) return;
+  if(!actor.perms.edit || !canAccessView("tasks", actor)) return toast("Sem permissão", "Seu nível não pode criar tarefas.");
+  const db = loadDB();
+  const masterId = String(actor.masterId || "");
+
+  const entries = (db.entries || [])
+    .filter(e=>!masterId || String(e.masterId || "") === masterId)
+    .sort((a,b)=>String(b.lastUpdateAt || b.apptDate || b.firstContactAt || b.monthKey || "").localeCompare(String(a.lastUpdateAt || a.apptDate || a.firstContactAt || a.monthKey || "")));
+
+  openModal({
+    title:"Nova tarefa",
+    sub:"Crie um follow-up buscando qualquer lead cadastrado, independente do mês filtrado.",
+    bodyHTML: `
+      <div class="twoCol">
+        <div style="position:relative">
+          <label>Lead *</label>
+          <input id="tf_entry_search" type="text" autocomplete="off" placeholder="Digite nome ou telefone do paciente"/>
+          <input id="tf_entry" type="hidden"/>
+          <div id="taskLeadSuggest" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:4000;max-height:290px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--panel2);box-shadow:0 18px 40px rgba(0,0,0,.26);padding:6px;backdrop-filter:none"></div>
+        </div>
+        <div>
+          <label>Vencimento *</label>
+          <input id="tf_due" type="date" value=""/>
+        </div>
+        <div style="grid-column:1/-1">
+          <label>Tarefa *</label>
+          <input id="tf_title" placeholder="Ex: Ligar e passar valor do orçamento"/>
+        </div>
+        <div>
+          <label>Ação *</label>
+          <select id="tf_action"><option value="">Selecione a ação...</option>${TASK_ACTIONS.map(a=>`<option value="${a}">${a}</option>`).join("")}</select>
+          <div id="tf_action_other_wrap" style="display:none;margin-top:8px">
+            <label>Qual ação? *</label>
+            <input id="tf_action_other" placeholder="Ex: Enviar contrato, chamar no Instagram..."/>
+          </div>
+        </div>
+        <div style="grid-column:1/-1">
+          <label>Obs</label>
+          <textarea id="tf_notes" placeholder="Contexto, detalhes, objeções..."></textarea>
+        </div>
+      </div>
+    `,
+    footHTML: `
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn ok" id="btnSaveTask">Salvar</button>
+    `,
+    onMount: ()=>{
+      const searchEl = el("tf_entry_search");
+      const hiddenEl = el("tf_entry");
+      const suggestEl = el("taskLeadSuggest");
+      const actionEl = el("tf_action");
+      const actionOtherWrap = el("tf_action_other_wrap");
+      const actionOtherEl = el("tf_action_other");
+      const normalize = (s)=> String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      const leadOptions = entries.map(e=>{
+        const c = db.contacts.find(x=>String(x.id)===String(e.contactId));
+        const monthTxt = e.monthKey ? (typeof monthLabel === "function" ? monthLabel(e.monthKey) : e.monthKey) : "";
+        const statusTxt = e.status || "";
+        const name = c?.name || "—";
+        const phone = c?.phone || "";
+        const label = `${name} • ${phone}${monthTxt ? ` • ${monthTxt}` : ""}${statusTxt ? ` • ${statusTxt}` : ""}`;
+        return { id:String(e.id), name, phone, monthTxt, statusTxt, label, search:normalize(`${name} ${phone} ${monthTxt} ${statusTxt}`) };
+      });
+
+      const syncOtherAction = ()=>{
+        const isOther = String(actionEl?.value || "") === "Outros";
+        if(actionOtherWrap) actionOtherWrap.style.display = isOther ? "block" : "none";
+        if(!isOther && actionOtherEl) actionOtherEl.value = "";
+      };
+      actionEl?.addEventListener("change", syncOtherAction);
+      syncOtherAction();
+
+      const hideSuggestions = ()=>{
+        if(suggestEl) suggestEl.style.display = "none";
+      };
+      const chooseLead = (item)=>{
+        hiddenEl.value = item.id;
+        searchEl.value = item.label;
+        hideSuggestions();
+      };
+      const renderSuggestions = ()=>{
+        hiddenEl.value = "";
+        const q = normalize(searchEl.value.trim());
+        if(!q || q.length < 2){
+          suggestEl.innerHTML = "";
+          hideSuggestions();
+          return;
+        }
+        const matches = leadOptions.filter(item=>item.search.includes(q)).slice(0, 25);
+        if(!matches.length){
+          suggestEl.innerHTML = `<div class="muted" style="padding:10px 12px;font-size:13px;background:transparent">Nenhum lead encontrado.</div>`;
+          suggestEl.style.display = "block";
+          return;
+        }
+        suggestEl.innerHTML = matches.map((item,idx)=>`
+          <button type="button" data-task-lead-idx="${idx}" style="display:block;width:100%;border:0;background:transparent;color:var(--text);text-align:left;padding:9px 11px;border-radius:10px;cursor:pointer;font-weight:500;line-height:1.25">
+            <span style="display:block;font-size:14px;font-weight:700;white-space:normal;word-break:break-word">${escapeHTML(item.name)}</span>
+            <span class="muted" style="display:block;font-size:12px;font-weight:500;margin-top:3px;white-space:normal;word-break:break-word">${escapeHTML([item.phone, item.monthTxt, item.statusTxt].filter(Boolean).join(" • "))}</span>
+          </button>
+        `).join("");
+        suggestEl.querySelectorAll("[data-task-lead-idx]").forEach(btn=>{
+          btn.addEventListener("mouseenter", ()=>{ btn.style.background = "rgba(124,92,255,.12)"; });
+          btn.addEventListener("mouseleave", ()=>{ btn.style.background = "transparent"; });
+          btn.addEventListener("mousedown", (ev)=>{
+            ev.preventDefault();
+            chooseLead(matches[Number(btn.dataset.taskLeadIdx || 0)]);
+          });
+          btn.addEventListener("click", (ev)=>{
+            ev.preventDefault();
+            chooseLead(matches[Number(btn.dataset.taskLeadIdx || 0)]);
+          });
+        });
+        suggestEl.style.display = "block";
+      };
+
+      searchEl?.addEventListener("input", renderSuggestions);
+      searchEl?.addEventListener("focus", ()=>{
+        if(searchEl.value.trim().length >= 2) renderSuggestions();
+      });
+      searchEl?.addEventListener("blur", ()=>setTimeout(hideSuggestions, 180));
+
+      const btn = el("btnSaveTask");
+      btn.addEventListener("click", ()=>{
+        let entryId = val("tf_entry");
+        const typed = String(val("tf_entry_search") || "").trim();
+        if(!entryId && typed){
+          const exact = leadOptions.find(item=>item.label === typed);
+          if(exact) entryId = exact.id;
+        }
+        const dueDate = val("tf_due");
+        const title = val("tf_title").trim();
+        let action = val("tf_action");
+        const notes = val("tf_notes").trim();
+        if(!entryId) return toast("Selecione um lead", "Digite pelo menos 2 caracteres e escolha o paciente na lista.");
+        if(!dueDate) return toast("Informe o vencimento", "A tarefa precisa de uma data definida.");
+        if(!title) return toast("Informe a tarefa");
+        if(!action) return toast("Selecione a ação", "Escolha o tipo de ação da tarefa.");
+        if(action === "Outros"){
+          const customAction = String(val("tf_action_other") || "").trim();
+          if(!customAction) return toast("Informe a ação", "Digite qual ação será feita em 'Outros'.");
+          action = customAction;
+        }
+
+        const t = {id: uid("task"), masterId: actor.masterId, entryId, dueDate, title, action, notes, done:false, createdAt:new Date().toISOString()};
+        db.tasks = db.tasks || [];
+        db.tasks.push(t);
+        saveDB(db, { immediate:true });
+        closeModal();
+        toast("Tarefa criada");
+        renderAll();
+      });
+    }
+  });
+}
+
+function openTaskEdit(taskId){
+  const actor = currentActor();
+  const db = loadDB();
+  const t = (db.tasks||[]).find(x=>x.id===taskId);
+  if(!t) return toast("Tarefa não encontrada");
+  const entry = db.entries.find(e=>e.id===t.entryId);
+  const c = entry ? db.contacts.find(x=>x.id===entry.contactId) : null;
+  const currentAction = String(t.action || "");
+  const isKnownAction = TASK_ACTIONS.includes(currentAction);
+  const selectedAction = isKnownAction ? currentAction : (currentAction ? "Outros" : "");
+  const customAction = (!isKnownAction && currentAction) ? currentAction : "";
+
+  openModal({
+    title:"Editar tarefa",
+    sub:`Lead: ${c?.name||"—"}`,
+    bodyHTML: `
+      <div class="twoCol">
+        <div>
+          <label>Vencimento *</label>
+          <input id="tf_due" type="date" value="${escapeHTML(t.dueDate||"")}"/>
+        </div>
+        <div>
+          <label>Status</label>
+          <select id="tf_done">
+            <option value="0" ${t.done?"":"selected"}>Pendente</option>
+            <option value="1" ${t.done?"selected":""}>Feito</option>
+          </select>
+        </div>
+        <div style="grid-column:1/-1">
+          <label>Tarefa *</label>
+          <input id="tf_title" value="${escapeHTML(t.title||"")}"/>
+        </div>
+        <div>
+          <label>Ação *</label>
+          <select id="tf_action"><option value="">Selecione a ação...</option>${TASK_ACTIONS.map(a=>`<option value="${a}" ${(selectedAction===a)?"selected":""}>${a}</option>`).join("")}</select>
+          <div id="tf_action_other_wrap" style="display:${selectedAction === "Outros" ? "block" : "none"};margin-top:8px">
+            <label>Qual ação? *</label>
+            <input id="tf_action_other" value="${escapeHTML(customAction)}" placeholder="Ex: Enviar contrato, chamar no Instagram..."/>
+          </div>
+        </div>
+        <div style="grid-column:1/-1">
+          <label>Obs</label>
+          <textarea id="tf_notes">${escapeHTML(t.notes||"")}</textarea>
+        </div>
+      </div>
+    `,
+    footHTML: `
+      <button class="btn" onclick="closeModal()">Fechar</button>
+      <button class="btn ok" id="btnSaveTask">Salvar</button>
+    `,
+    onMount: ()=>{
+      const actionEl = el("tf_action");
+      const actionOtherWrap = el("tf_action_other_wrap");
+      const actionOtherEl = el("tf_action_other");
+      const syncOtherAction = ()=>{
+        const isOther = String(actionEl?.value || "") === "Outros";
+        if(actionOtherWrap) actionOtherWrap.style.display = isOther ? "block" : "none";
+        if(!isOther && actionOtherEl) actionOtherEl.value = "";
+      };
+      actionEl?.addEventListener("change", syncOtherAction);
+      syncOtherAction();
+
+      el("btnSaveTask").addEventListener("click", ()=>{
+        const dueDate = val("tf_due");
+        const title = val("tf_title").trim();
+        let action = val("tf_action");
+        if(!dueDate) return toast("Informe o vencimento", "A tarefa precisa de uma data definida.");
+        if(!title) return toast("Informe a tarefa");
+        if(!action) return toast("Selecione a ação", "Escolha o tipo de ação da tarefa.");
+        if(action === "Outros"){
+          const customAction = String(val("tf_action_other") || "").trim();
+          if(!customAction) return toast("Informe a ação", "Digite qual ação será feita em 'Outros'.");
+          action = customAction;
+        }
+        t.dueDate = dueDate;
+        t.done = el("tf_done").value ==="1";
+        t.title = title;
+        t.action = action;
+        t.notes = val("tf_notes").trim();
+        saveDB(db);
+        closeModal();
+        toast("Tarefa atualizada");
+        renderAll();
+      });
+    }
+  });
+}
+
+function toggleTaskDone(taskId){
+  const db = loadDB();
+  const t = (db.tasks||[]).find(x=>x.id===taskId);
+  if(!t) return;
+
+  if (t.key && t.key.startsWith("INST:")) {
+    return toast("Aviso", "Essa tarefa é automática e vinculada ao recebimento.");
+  }
+  t.done = !t.done;
+  saveDB(db);
+  toast(t.done ? "Tarefa marcada como feita" : "Tarefa reaberta");
+ if (typeof renderTasks === "function") renderTasks();
+  if (typeof updateSidebarPills === "function") updateSidebarPills();
+}
+function markTaskDone(taskId){ return toggleTaskDone(taskId); }
+function deleteTask(taskId){
+  return toast("Exclusão bloqueada", "As tarefas não podem mais ser apagadas. Use editar, concluir ou reabrir.");
+}
+
+function renderAll(){
+ setTimeout(() => {
+  updateSidebarPills();
+  renderInstallmentsView();
+}, 100);
+  renderDashboard();
+  renderLeadsTable(filteredEntries());
+renderKanban();
+  renderTasks();
+  renderUsers();
+  renderSettings();
+}
+
+/* -------- Boot & bindings -------- */
+function bindNav(){
+  if(window.__navBound) return;
+  window.__navBound = true;
+
+  qsa(".nav button").forEach(b=>{
+    b.addEventListener("pointerdown", ()=>{
+      const view = b.dataset.view;
+      if(!view || !APP_VIEWS.includes(view)) return;
+      try{
+        if(typeof isFeatureHidden === "function" && isFeatureHidden(view)) return;
+        if(typeof isFeatureLocked === "function" && isFeatureLocked(view)) return;
+      }catch(_){ }
+      applyActiveViewShell(view);
+    }, {capture:true});
+    b.addEventListener("click", (ev)=>{
+      try{ ev.preventDefault(); }catch(_){ }
+      setActiveView(b.dataset.view);
+    });
+  });
+
+const bKan = el("btnNewLeadKanban"); if(bKan) bKan.addEventListener("click", openNewLead);
+const bTask = el("btnNewTask"); if(bTask) bTask.addEventListener("click", openNewTask);
+
+  const instMonth = el("instMonth");
+  const instSearch = el("instSearch");
+  const instFilter = el("instFilter");
+  const instRefresh = el("btnInstRefresh");
+  const instNew = el("btnNewFinancialInstallment");
+  if(instMonth) instMonth.addEventListener("change", renderInstallmentsView);
+  if(instSearch) instSearch.addEventListener("input", debounce(renderInstallmentsView, 150));
+  if(instFilter) instFilter.addEventListener("change", renderInstallmentsView);
+  if(instRefresh) instRefresh.addEventListener("click", ()=>runManualCloudRefresh(instRefresh, { installmentsOnly:true }));
+  if(instNew) instNew.addEventListener("click", ()=>openNewFinancialInstallment());
+  setTimeout(() => {
+  relabelInstallmentsToRecebimentos();
+  renderInstallmentsView();
+  updateSidebarPills();
+}, 50);
+
+}
+function bindActions(){
+  el("btnLogout").onclick = ()=>{
+    cronosInstantLogout();
+  };
+  const btnGateLogout = el("btnGateLogout");
+  if(btnGateLogout) btnGateLogout.onclick = ()=>{
+    cronosInstantLogout();
+  };
+  const btnCloseAccessNotice = el("btnCloseAccessNotice");
+  if(btnCloseAccessNotice) btnCloseAccessNotice.onclick = hideAccessNotice;
+  const btnAccessNoticeContinue = el("btnAccessNoticeContinue");
+  if(btnAccessNoticeContinue) btnAccessNoticeContinue.onclick = hideAccessNotice;
+  const btnExitSupport = el("btnExitSupport");
+  if(btnExitSupport) btnExitSupport.onclick = ()=>{
+    toast("Modo suporte encerrado");
+    cronosInstantLogout({ supportRedirect:true });
+  };
+  const btnRefreshNow = el("btnRefreshNow");
+  if(btnRefreshNow) btnRefreshNow.onclick = ()=>runManualCloudRefresh(btnRefreshNow);
+  el("btnNewLeadSide").onclick = openNewLead;
+  el("btnNewLeadTop").onclick = openNewLead;
+  el("btnNewLeadList").onclick = openNewLead;
+
+  el("themeToggle").onclick = toggleTheme;
+  el("themeToggleAuth").onclick = toggleTheme;
+
+  const passToggle = el("authPassToggle");
+  const passInput = el("authPass");
+  if(passToggle && passInput){
+    const eyeOpen = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>';
+    const eyeOff = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10.58 10.58A2 2 0 0012 16a2 2 0 001.42-.58" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.88 5.09A10.94 10.94 0 0112 5c6.5 0 10.5 7 10.5 7a21.76 21.76 0 01-4.13 4.77" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.61 6.61C3.73 8.55 1.5 12 1.5 12A21.78 21.78 0 006.27 16.87" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const syncPassIcon = ()=>{
+      const hidden = passInput.type === 'password';
+      passToggle.innerHTML = hidden ? eyeOpen : eyeOff;
+      passToggle.setAttribute('aria-label', hidden ? 'Mostrar senha' : 'Ocultar senha');
+      passToggle.setAttribute('title', hidden ? 'Mostrar senha' : 'Ocultar senha');
+    };
+    syncPassIcon();
+    passToggle.addEventListener('click', ()=>{
+      passInput.type = passInput.type === 'password' ? 'text' : 'password';
+      syncPassIcon();
+      try{ passInput.focus({preventScroll:true}); }catch(_){ passInput.focus(); }
+      const end = String(passInput.value || '').length;
+      try{ passInput.setSelectionRange(end, end); }catch(_){ }
+    });
+  }
+
+  el("btnClearFilters").onclick = ()=>{
+    const f = loadFilters();
+    f.search=""; f.status=""; f.campaign=""; f.treatment=""; f.origin=""; f.periodFrom=""; f.periodTo=""; f.order="recent";
+    saveFilters(f);
+    setUIFilters(f);
+    currentPage = 1;
+    renderAll();
+  };
+
+  const btnExportCSV = el("btnExportCSV");
+  if(btnExportCSV) btnExportCSV.onclick = exportCSV;
+  const btnExportPDF = el("btnExportPDF");
+  if(btnExportPDF) btnExportPDF.onclick = exportPDFFiltered;
+  const btnChangeMyPassword = el("btnChangeMyPassword");
+  if(btnChangeMyPassword) btnChangeMyPassword.onclick = openChangeMyPassword;
+  const btnMyPasswordSide = el("btnMyPasswordSide");
+  if(btnMyPasswordSide) btnMyPasswordSide.onclick = openChangeMyPassword;
+
+  ["fYear","fMonth","fSearch","fStatus","fCampaign","fTreatment","fOrigin","fPeriodFrom","fPeriodTo","fOrder"].forEach(id=>{
+    el(id).addEventListener("input", ()=>{
+      const f = getUIFilters();
+      if(id === "fSearch" && String(f.search || "").trim()){
+        window.__KPI_ACTIVE = null;
+      }
+      saveFilters(f);
+      currentPage = 1;
+      renderAll();
+    });
+    el(id).addEventListener("change", ()=>{
+      const f = getUIFilters();
+      if(id === "fSearch" && String(f.search || "").trim()){
+        window.__KPI_ACTIVE = null;
+      }
+      saveFilters(f);
+      if(id==="fYear"){
+        ensureMonthOptions();
+      }
+      saveFilters(getUIFilters());
+      currentPage = 1;
+      renderAll();
+    });
+  });
+
+  el("btnNewUser").onclick = openNewUser;
+
+  const btnBackup = el("btnBackup");
+  if(btnBackup) btnBackup.onclick = exportJSON;
+  const fileImport = el("fileImport");
+  if(fileImport) fileImport.addEventListener("change", (e)=>{
+    const f = e.target.files?.[0]; if(f) importJSON(f);
+    e.target.value="";
+  });
+  const dbInitPrefs = loadDB();
+  if(el("waTemplate")) el("waTemplate").value = (dbInitPrefs.settings && dbInitPrefs.settings.waTemplate) ? String(dbInitPrefs.settings.waTemplate) : "";
+  if(el("waChargeTemplate")) el("waChargeTemplate").value = (dbInitPrefs.settings && dbInitPrefs.settings.waChargeTemplate) ? String(dbInitPrefs.settings.waChargeTemplate) : "";
+  const btnClinicIdentity = el("btnSaveClinicIdentity");
+  if(btnClinicIdentity) btnClinicIdentity.onclick = ()=>{
+    const actor = currentActor();
+    if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode alterar configurações.");
+    if(!(actor && actor.kind === "master")) return toast("Sem permissão", "Só o master principal pode alterar a identidade da clínica.");
+    const db = loadDB();
+    const master = db.masters.find(m=>m.id===actor.masterId);
+    const clinicDisplayName = String(val("clinicDisplayName") || "").trim();
+    if(!clinicDisplayName) return toast("Nome da clínica", "Digite um nome para a clínica antes de salvar.");
+    if(master){
+      master.name = clinicDisplayName;
+      saveDB(db);
+      try{
+        const actorNow = currentActor();
+        if(actorNow) showApp(actorNow);
+        renderUsers();
+      }catch(_){}
+      const hint = el("clinicIdentitySavedHint");
+      if(hint){ hint.textContent = "Identidade salva."; setTimeout(()=>hint.textContent="", 2200); }
+      toast("Identidade da clínica salva.");
+    }
+  };
+
+  const btnPrefs = el("btnSavePrefs");
+  if(btnPrefs) btnPrefs.onclick = ()=>{
+    const actor = currentActor();
+    if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode alterar configurações.");
+    const db = loadDB();
+    if(!db.settings) db.settings = {};
+    db.settings.waTemplate = (val("waTemplate")||"").trim();
+
+    saveDB(db);
+    try{
+      const actorNow = currentActor();
+      if(actorNow) showApp(actorNow);
+      renderUsers();
+    }catch(_){}
+    const hint = el("prefsSavedHint");
+    if(hint){ hint.textContent = "Mensagem salva."; setTimeout(()=>hint.textContent="", 2000); }
+    toast("Preferência de mensagem salva.");
+  };
+
+  const taCharge = el("waChargeTemplate");
+  const hintCharge = el("chargeTplSaved");
+  const btnSaveCharge = el("btnSaveChargeTpl");
+  const btnResetCharge = el("btnResetChargeTpl");
+  try{
+    const db0 = loadDB();
+    if(taCharge){
+      taCharge.value = (db0.settings && db0.settings.waChargeTemplate) ? String(db0.settings.waChargeTemplate) : "";
+    }
+  }catch(e){}
+  if(btnSaveCharge) btnSaveCharge.onclick = ()=>{
+    const db = loadDB();
+    if(!db.settings) db.settings = {};
+    db.settings.waChargeTemplate = (val("waChargeTemplate")||"").trim();
+    saveDB(db);
+    if(hintCharge){ hintCharge.textContent = "Salvo."; setTimeout(()=>hintCharge.textContent="", 2000); }
+    toast("Cobrança salva.");
+  };
+  if(btnResetCharge) btnResetCharge.onclick = ()=>{
+    const db = loadDB();
+    if(!db.settings) db.settings = {};
+    db.settings.waChargeTemplate = "";
+    saveDB(db);
+    if(taCharge) taCharge.value = "";
+    if(hintCharge){ hintCharge.textContent = "Padrão restaurado."; setTimeout(()=>hintCharge.textContent="", 2000); }
+    toast("Padrão restaurado.");
+  };
+}
+
+function bindAuth(){ 
+  el("authMode").addEventListener("change", ()=>{
+    const mode = val("authMode");
+    const sel = el("authMasterSelect");
+    const wrap = el("authMasterNameWrap");
+    if(mode==="master"){
+      if(sel) sel.disabled = true;
+      if(wrap) wrap.classList.remove("hidden");
+      el("authLogin").placeholder = "E-mail do Master";
+    }else{
+      if(sel) sel.disabled = true;
+      if(wrap) wrap.classList.add("hidden");
+      el("authLogin").placeholder = "Usuário ou e-mail do usuário";
+    }
+  });
+
+  el("btnLogin").addEventListener("click", async ()=>{
+    if(window.__SUPABASE_CLOUD_LOGIN__) return;
+  });
+}
+function renderAll(){
+  const activeView = (typeof getCurrentMainView === "function") ? getCurrentMainView() : "dashboard";
+
+  setTimeout(() => {
+    try{ updateSidebarPills(); }catch(_){ }
+    try{
+      if(activeView === "installments") renderInstallmentsView();
+    }catch(_){ }
+  }, 100);
+
+  if(activeView && typeof renderActiveViewOnly === "function"){
+    try{ renderActiveViewOnly(activeView); }catch(_){ }
+    return;
+  }
+
+  try{ renderDashboard(); }catch(_){ }
+  try{ scheduleLeadsRender(); }catch(_){ }
+  try{ renderKanban(); }catch(_){ }
+  try{ renderTasks(); }catch(_){ }
+  try{ renderUsers(); }catch(_){ }
+  try{ renderSettings(); }catch(_){ }
+}
+  async function syncMasterUser(){
+  return syncCurrentCloudActor();
+}
+
+async function boot(){
+  window.__CRONOS_BOOTING__ = true;
+  window.__CRONOS_SESSION_CHECKING__ = true;
+  const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
+
+  if(supportTokenPresent || isSupportMode()){
+    setSupportEntryLoading(true, "Modo suporte • Validando acesso e carregando a clínica...");
+  }
+
+  try{
+    await maybeInitSupportMode();
+  }catch(error){
+    console.error("Falha ao iniciar suporte:", error);
+
+    if(supportTokenPresent){
+      clearSupportContext();
+      resetCloudContext();
+      DB = null;
+      CLOUD_DB_READY = false;
+      setSupportEntryLoading(false);
+      hideBootSplash();
+      showAuth();
+      toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
+      return;
+    }
+
+    const supportCtx = getSupportContext();
+
+    if(!supportCtx){
+      clearSupportContext();
+      toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
+    }
+  }
+
+  await ensureCloudDBLoaded();
+  await syncCurrentCloudActor();
+
+  fillSelectOptions();
+
+  const f = resetFiltersToDefault({ ui:false });
+  ensureYearOptions();
+  setUIFilters(f);
+  ensureMonthOptions();
+  setUIFilters(f);
+
+  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db, { skipCloud:true }); }catch(e){}
+
+  saveFilters(getUIFilters());
+
+  const actor = currentActor();
+
+  if(!actor){
+    if((supportTokenPresent || isSupportMode()) && (window.__SUPPORT_BOOT_RETRIES__ || 0) < 6){
+      window.__SUPPORT_BOOT_RETRIES__ = (window.__SUPPORT_BOOT_RETRIES__ || 0) + 1;
+      setTimeout(()=>boot(), 180);
+      return;
+    }
+
+    window.__SUPPORT_BOOT_RETRIES__ = 0;
+    showAuth();
+    const authSelect = el("authMasterSelect");
+    if (authSelect) authSelect.parentElement.classList.add("hidden");
+    el("authMode").value = "master";
+    if(window.__CRONOS_ACCESS_BLOCK__?.title){
+      toast(window.__CRONOS_ACCESS_BLOCK__.title, window.__CRONOS_ACCESS_BLOCK__.message || "");
+    }
+    return;
+  }
+
+  window.__SUPPORT_BOOT_RETRIES__ = 0;
+
+  const accessDecision = await applyClinicAccessRules();
+  if(accessDecision?.mode && accessDecision.mode !== "allow"){
+    return;
+  }
+
+  showApp(actor);
+  applyRoleVisibility(actor);
+
+  bindNav();
+  setActiveView(firstAllowedView(actor));
+}
+
+/* One-time bindings */
+(function init(){
+  applyTheme(localStorage.getItem(THEMEKEY) || "dark");
+
+  bindActions();
+  bindAuth();
+  bindLoginEnterSubmit();
+
+  try{
+    const auth = document.getElementById("authView");
+    const app = document.getElementById("appView");
+    if(auth) auth.classList.add("hidden");
+    if(app) app.classList.add("hidden");
+    showBootSplash("Sincronizando seu ambiente...");
+  }catch(_){ }
+})();
+
+function setupLeadsTopScrollbar(){
+  return; // desativado (sem scroll horizontal)
+  const card = document.querySelector('.leadsTableWrap');
+  if(!card) return;
+  const wrap = card.querySelector('.tableWrap');
+  const top = card.querySelector('.hscrollTop');
+  const inner = card.querySelector('.hscrollTopInner');
+  if(!wrap || !top || !inner) return;
+
+  const table = wrap.querySelector('table');
+  const width = table ? table.scrollWidth : wrap.scrollWidth;
+  inner.style.width = Math.max(width, wrap.clientWidth) + 'px';
+
+  if(!top.dataset.bound){
+    top.dataset.bound = '1';
+    top.addEventListener('scroll', ()=>{ if(wrap.scrollLeft !== top.scrollLeft) wrap.scrollLeft = top.scrollLeft; }, {passive:true});
+    wrap.addEventListener('scroll', ()=>{ if(top.scrollLeft !== wrap.scrollLeft) top.scrollLeft = wrap.scrollLeft; }, {passive:true});
+  }
+  top.scrollLeft = wrap.scrollLeft;
+}
+
+
+(function(){
+  function setupTopScroll(){
+    const leadsView = document.getElementById('view-leads');
+    if(!leadsView) return;
+    const wrap = leadsView.querySelector('.tableWrap');
+    const top = document.getElementById('leadsTopScroll');
+    if(!wrap || !top) return;
+
+    const inner = top.querySelector('.inner');
+    const table = wrap.querySelector('table');
+    if(!inner || !table) return;
+
+    function refresh(){
+      inner.style.width = table.scrollWidth + "px";
+      top.scrollLeft = wrap.scrollLeft;
+    }
+    let lock=false;
+    top.addEventListener('scroll', ()=>{ if(lock) return; lock=true; wrap.scrollLeft = top.scrollLeft; lock=false; });
+    wrap.addEventListener('scroll', ()=>{ if(lock) return; lock=true; top.scrollLeft = wrap.scrollLeft; lock=false; });
+
+    window.addEventListener('resize', refresh);
+    const mo = new MutationObserver(()=>refresh());
+    mo.observe(wrap, {childList:true, subtree:true});
+    refresh();
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTopScroll);
+  else setupTopScroll();
+})();
+
+
+/* =========================
+   Tooltips (Canvas charts)
+========================= */
+function __ensureChartTooltip(){
+  let tip = document.getElementById("chartTooltip");
+  if(!tip){
+    tip = document.createElement("div");
+    tip.id = "chartTooltip";
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+function __hideChartTooltip(){
+  const tip = document.getElementById("chartTooltip");
+  if(tip) tip.style.display = "none";
+}
+function __showChartTooltip(html, clientX, clientY){
+  const tip = __ensureChartTooltip();
+  tip.innerHTML = html;
+  tip.style.left = clientX + "px";
+  tip.style.top = clientY + "px";
+  tip.style.display = "block";
+}
+function __bindChartHoverOnce(canvas){
+  if(!canvas || canvas.__ttBound) return;
+  canvas.__ttBound = true;
+
+  const rel = (ev)=>{
+    const r = canvas.getBoundingClientRect();
+    return {x: ev.clientX - r.left, y: ev.clientY - r.top, r};
+  };
+
+  const pointIndexFromEvent = (ev, data)=>{
+    const {x, y} = rel(ev);
+    const {labels, pad, top, w, h} = data;
+    const innerW = (w - pad - 10);
+    if(x < pad || x > pad + innerW || y < top-10 || y > h-6) return -1;
+    return Math.max(0, Math.min(labels.length-1, Math.round(((x - pad) / innerW) * Math.max(1, labels.length-1))));
+  };
+
+  canvas.addEventListener("mouseleave", ()=>__hideChartTooltip(), {passive:true});
+  canvas.addEventListener("mousemove", (ev)=>{
+    const data = canvas.__chartData;
+    if(!data){ __hideChartTooltip(); return; }
+    const {x, y} = rel(ev);
+
+    if(data.type === "multiLine"){
+      const {labels, series, pad, top, w, h} = data;
+      const innerW = (w - pad - 10);
+      if(x < pad || x > pad + innerW || y < top-6 || y > h-8){ __hideChartTooltip(); return; }
+      const idx = Math.max(0, Math.min(labels.length-1, Math.round(((x - pad) / innerW) * Math.max(1, labels.length-1))));
+      const labelPrefix = String(data.axisLabelPrefix || "Dia");
+      const title = labels[idx] ? `${labelPrefix} ${labels[idx]}` : `Ponto ${idx+1}`;
+      let body = `<div class="ttTitle">${title}</div>`;
+      series.forEach(s=>{
+        const v = (s.values && s.values[idx]!=null) ? s.values[idx] : 0;
+        const rawPrefix = String(data.yPrefix || "");
+        const val = rawPrefix.trim().replace(/\s+/g,"") === "R$" ? moneyBR(v) : (rawPrefix + moneyBR(v));
+        body += `<div class="ttRow"><span style="display:flex; gap:8px; align-items:flex-start"><span class="ttDot" style="background:${s.color||'rgba(30,120,255,0.9)'}"></span><span>${escapeHTML(s.name||'')}</span></span><b>${val}</b></div>`;
+        const details = Array.isArray(s.details?.[idx]) ? s.details[idx] : [];
+        if((Number(v)||0) > 0 && details.length){
+          body += `<div class="ttSources">`;
+          details.slice(0,3).forEach(d=>{
+            body += `<div class="ttSourceLine">• ${escapeHTML(d.patient || 'Sem paciente')} <b>${moneyBR(d.value||0)}</b></div>`;
+          });
+          if(details.length > 3) body += `<div class="ttSourceMore">+ ${details.length-3} lançamento(s)</div>`;
+          body += `</div>`;
+        }
+      });
+      body += `<div class="ttHint">Clique para ver a origem completa</div>`;
+      __showChartTooltip(body, ev.clientX, ev.clientY);
+      return;
+    }
+
+    if(data.type === "bar"){
+      const hit = (data.rects||[]).find(rc => x>=rc.x && x<=rc.x+rc.w && y>=rc.y && y<=rc.y+rc.h);
+      if(!hit){ __hideChartTooltip(); return; }
+      const title = escapeHTML(hit.label||"");
+      const body = `<div class="ttTitle">${title}</div><div class="ttRow"><span>Qtd</span><b>${hit.value||0}</b></div>`;
+      __showChartTooltip(body, ev.clientX, ev.clientY);
+      return;
+    }
+  }, {passive:true});
+
+  canvas.addEventListener("click", (ev)=>{
+    const data = canvas.__chartData;
+    if(!data || data.type !== "multiLine") return;
+    const idx = pointIndexFromEvent(ev, data);
+    if(idx < 0) return;
+    __openChartPointDetails(data, idx);
+  });
+}
+
+function __openChartPointDetails(data, idx){
+  try{
+    const labelPrefix = String(data?.axisLabelPrefix || "Dia");
+    const label = data?.labels?.[idx] ? `${labelPrefix} ${data.labels[idx]}` : `Ponto ${idx+1}`;
+    const rows = [];
+    (data?.series||[]).forEach(s=>{
+      const details = Array.isArray(s.details?.[idx]) ? s.details[idx] : [];
+      details.forEach(d=>{
+        rows.push({
+          serie: s.name || "",
+          patient: d.patient || "Sem paciente vinculado",
+          value: Number(d.value||0),
+          desc: d.desc || "—",
+          method: d.method || "—",
+          date: d.iso || ""
+        });
+      });
+    });
+
+    const total = rows.reduce((sum,r)=>sum + (Number(r.value)||0), 0);
+
+    if(!rows.length){
+      const bodyHTML = `<div class="muted">Nenhum lançamento identificado para este ponto. Se aparece valor e não aparece origem, é sinal de dado legado incompleto.</div>`;
+      if(typeof openModal === "function"){
+        openModal({
+          title: `Origem do gráfico — ${label}`,
+          sub: "Auditoria rápida da receita/orçamento.",
+          bodyHTML,
+          footHTML: `<button class="btn" onclick="closeModal()">Fechar</button>`,
+          maxWidth: "920px"
+        });
+      }else{
+        toast("Origem do gráfico", "Nenhum lançamento identificado.");
+      }
+      return;
+    }
+
+    const pageSize = 12;
+    let page = 1;
+    const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+
+    const renderPage = ()=>{
+      const host = document.getElementById("chartPointDetailsHost");
+      if(!host) return;
+      page = Math.max(1, Math.min(totalPages, page));
+      const start = (page-1) * pageSize;
+      const slice = rows.slice(start, start + pageSize);
+      host.innerHTML = `
+        <div class="muted" style="margin-bottom:10px">Esses são os lançamentos que formam este ponto do gráfico.</div>
+        <div class="tableWrap"><table class="table"><thead><tr><th>Tipo</th><th>Paciente</th><th>Origem</th><th>Data</th><th class="right">Valor</th></tr></thead><tbody>
+          ${slice.map(r=>{
+            const methodLine = r.method && r.method !== "—" ? `<div class="muted" style="font-size:11px">${escapeHTML(r.method)}</div>` : "";
+            return `<tr><td>${escapeHTML(r.serie)}</td><td><b>${escapeHTML(r.patient)}</b></td><td>${escapeHTML(r.desc)}${methodLine}</td><td>${escapeHTML(r.date ? fmtBR(r.date) : "—")}</td><td class="right mono">${moneyBR(r.value)}</td></tr>`;
+          }).join("") }
+        </tbody></table></div>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; margin-top:10px">
+          <span class="muted">Mostrando ${start+1}–${Math.min(rows.length, start + pageSize)} de ${rows.length} lançamento(s)</span>
+          <b>Total do ponto: ${moneyBR(total)}</b>
+        </div>
+      `;
+      const pageLabel = document.getElementById("chartOriginPageLabel");
+      const prev = document.getElementById("chartOriginPrev");
+      const next = document.getElementById("chartOriginNext");
+      if(pageLabel) pageLabel.textContent = `Página ${page} de ${totalPages}`;
+      if(prev) prev.disabled = page <= 1;
+      if(next) next.disabled = page >= totalPages;
+    };
+
+    if(typeof openModal === "function"){
+      const needsPagination = rows.length > pageSize;
+      openModal({
+        title: `Origem do gráfico — ${label}`,
+        sub: "Auditoria rápida da receita/orçamento.",
+        bodyHTML: `<div id="chartPointDetailsHost"></div>`,
+        footHTML: `
+          <div style="display:flex; gap:8px; align-items:center; justify-content:space-between; width:100%; flex-wrap:wrap">
+            <div style="display:${needsPagination ? "flex" : "none"}; gap:8px; align-items:center">
+              <button class="btn small" id="chartOriginPrev" type="button">Anterior</button>
+              <span class="muted" id="chartOriginPageLabel">Página 1 de ${totalPages}</span>
+              <button class="btn small" id="chartOriginNext" type="button">Próxima</button>
+            </div>
+            <button class="btn" onclick="closeModal()">Fechar</button>
+          </div>
+        `,
+        maxWidth: "980px",
+        onMount: ()=>{
+          renderPage();
+          const prev = document.getElementById("chartOriginPrev");
+          const next = document.getElementById("chartOriginNext");
+          if(prev) prev.onclick = ()=>{ page -= 1; renderPage(); };
+          if(next) next.onclick = ()=>{ page += 1; renderPage(); };
+        }
+      });
+    }else{
+      toast("Origem do gráfico", rows.length ? `${rows.length} lançamento(s) • ${moneyBR(total)}` : "Nenhum lançamento identificado.");
+    }
+  }catch(err){
+    console.warn("Falha ao abrir origem do gráfico", err);
+    toast("Não consegui abrir a origem", "Tente passar o mouse no ponto ou recarregar a tela.");
+  }
+}
+
+
+/* helper */
+function escapeHTML(str){
+  return String(str??"").replace(/[&<>"']/g, (m)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+}
+
+/* =========================
+   KPI click → modal (lista de leads)
+========================= */
+const KPI_RULES = {
+  positive: new Set(["Agendado","Compareceu","Fechou","Remarcou","Conversando"]),
+  disqualified: new Set(["Número incorreto","Achou caro","Não tem interesse","Mora longe","Fechou em outro lugar","Mensagem não entregue"])
+};
+function __kpiBucket(key, rows){
+  const list = (rows||[]).slice();
+  if(key==="total") return list;
+  if(key==="pos") return list.filter(e => KPI_RULES.positive.has((e.status||"").trim()));
+  if(key==="bad") return list.filter(e => KPI_RULES.disqualified.has((e.status||"").trim()));
+  if(key==="sched") return list.filter(e => ["Agendado","Remarcou"].includes((e.status||"").trim()));
+  if(key==="budget"||key==="received"||key==="open") return list;
+  return list;
+}
+function __kpiTitle(key){
+  return ({
+    total:"Total (no filtro atual)",
+    pos:"Resultado positivo",
+    bad:"Desqualificados",
+    sched:"Agendados/Remarcou",
+    budget:"Valor orçado (leads no filtro)",
+    received:"R$ recebido (leads no filtro)",
+    open:"Em aberto (leads no filtro)"
+  })[key] || "Detalhes";
+}
+
+
+function __updateKpiActiveUI(){
+  try{
+    document.querySelectorAll(".kpi[data-kpi]").forEach(k=>{
+      const key = k.getAttribute("data-kpi");
+      const active = window.__KPI_ACTIVE && window.__KPI_ACTIVE===key && key!=="total";
+      k.classList.toggle("kpiActive", !!active);
+      k.setAttribute("aria-pressed", active ? "true" : "false");
+      k.style.cursor = "pointer";
+    });
+  }catch(_){}
+}
+
+function __dashboardRowsByKpi(key, rows){
+  rows = Array.isArray(rows) ? rows : [];
+  if(!key || key === "total") return rows;
+  try{ return __kpiBucket(key, rows); }catch(_){ return rows; }
+}
+
+function __applyKpiClick(key, opts={}){
+  key = String(key || "");
+  if(!key) return;
+
+  const now = Date.now();
+  const sig = `${key}|${now}`;
+  if(window.__KPI_CLICK_LOCK && (now - window.__KPI_CLICK_LOCK_AT) < 160) return;
+  window.__KPI_CLICK_LOCK = sig;
+  window.__KPI_CLICK_LOCK_AT = now;
+  setTimeout(()=>{ window.__KPI_CLICK_LOCK = ""; }, 180);
+
+  if(key === "total"){
+    window.__KPI_ACTIVE = null;
+    window.__DASH_STATUS_ACTIVE = "";
+  }else{
+    window.__KPI_ACTIVE = (window.__KPI_ACTIVE === key) ? null : key;
+    window.__DASH_STATUS_ACTIVE = "";
+  }
+
+  window.DASH_PREVIEW_LIMIT = 10;
+  __updateKpiActiveUI();
+
+  try{ renderDashboard(); }catch(_){ try{ renderAll(); }catch(__){} }
+}
+
+function __bindKpiClicks(){
+  try{
+    document.querySelectorAll(".kpi[data-kpi]").forEach(k=>{
+      k.style.cursor = "pointer";
+      k.tabIndex = 0;
+      k.setAttribute("role","button");
+      k.setAttribute("aria-label", k.getAttribute("aria-label") || "Filtrar Dashboard por este indicador");
+    });
+
+    const closeBtn = document.getElementById("kpiModalClose");
+    if(closeBtn && !closeBtn.__bound){
+      closeBtn.__bound = true;
+      closeBtn.addEventListener("click", ()=>closeModal("kpiModal"));
+    }
+    __updateKpiActiveUI();
+  }catch(_){}
+}
+
+(function(){
+  if(window.__CRONOS_KPI_CLICK_V1032_BOUND) return;
+  window.__CRONOS_KPI_CLICK_V1032_BOUND = true;
+
+  const handler = (ev)=>{
+    const kpiEl = ev.target && ev.target.closest ? ev.target.closest(".kpi[data-kpi]") : null;
+    if(!kpiEl) return;
+    if(ev.target.closest("button, a, input, select, textarea")) return;
+
+    try{
+      ev.preventDefault?.();
+      ev.stopPropagation?.();
+      ev.stopImmediatePropagation?.();
+    }catch(_){}
+
+    const key = kpiEl.getAttribute("data-kpi");
+    __applyKpiClick(key);
+  };
+
+  document.addEventListener("pointerdown", handler, true);
+  document.addEventListener("keydown", (ev)=>{
+    const kpiEl = ev.target && ev.target.closest ? ev.target.closest(".kpi[data-kpi]") : null;
+    if(!kpiEl) return;
+    if(ev.key !== "Enter" && ev.key !== " ") return;
+    try{ ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation?.(); }catch(_){}
+    __applyKpiClick(kpiEl.getAttribute("data-kpi"));
+  }, true);
+})();
+
+
+
+const supabaseUrl = "https://nsqpslierpulanxvsxaw.supabase.co";
+const supabaseKey = "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ";
+
+const CRONOS_MAIN_AUTH_STORAGE_KEY = "cronos-main-auth";
+
+(function cronosUseBrowserSessionForAuth(){
+  // Mantém o login ao atualizar a página (F5), mas evita reabrir o Cronos logado
+  // depois de fechar o navegador/computador.
+  try{
+    const legacyAuth = localStorage.getItem(CRONOS_MAIN_AUTH_STORAGE_KEY);
+    if(legacyAuth && !sessionStorage.getItem(CRONOS_MAIN_AUTH_STORAGE_KEY)){
+      sessionStorage.setItem(CRONOS_MAIN_AUTH_STORAGE_KEY, legacyAuth);
+    }
+    localStorage.removeItem(CRONOS_MAIN_AUTH_STORAGE_KEY);
+  }catch(_){ }
+})();
+
+const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    storage: window.sessionStorage,
+    storageKey: CRONOS_MAIN_AUTH_STORAGE_KEY,
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: false
+  }
+});
+window.__SUPABASE_CLOUD_LOGIN__ = true;
+window.__SUPABASE_MASTER_LOGIN__ = false;
+window.__CRONOS_LOGIN_BUSY__ = false;
+window.__CRONOS_EXPLICIT_LOGIN__ = false;
+window.__CRONOS_ACCESS_BLOCK__ = null;
+
+async function ensureCloudDBForLoginWithRetry(maxAttempts=3){
+  for(let attempt = 1; attempt <= maxAttempts; attempt++){
+    await ensureCloudDBLoaded(true);
+
+    if(!CLOUD_LOAD_TEMPORARY_FAILURE){
+      return true;
+    }
+
+    if(attempt < maxAttempts){
+      const nextAttempt = attempt + 1;
+      setLoginLoading(true, `Nuvem ocupada. Tentando novamente (${nextAttempt}/${maxAttempts})...`);
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+
+  return false;
+}
+
+
+/* =========================
+   V19 — F5 honesto: rápido, mas sem mostrar contagem antiga
+   ========================= */
+function cronosSafeSessionUser(session){
+  return session && session.user ? session.user : null;
+}
+
+function cronosHasUsableLocalCache(db){
+  if(!db || typeof db !== "object") return false;
+  return ((db.contacts || []).length + (db.entries || []).length + (db.masters || []).length + (db.users || []).length) > 0;
+}
+
+function cronosActorMatchesSupabaseSession(actor, session){
+  const user = cronosSafeSessionUser(session);
+  if(!actor || !user) return false;
+
+  const sessionEmail = String(user.email || "").trim().toLowerCase();
+  const sessionUid = String(user.id || "").trim();
+
+  if(actor.kind === "master"){
+    const actorEmail = String(actor.email || "").trim().toLowerCase();
+    // Master sem e-mail local é suspeito; melhor cair no fluxo completo da nuvem.
+    if(!actorEmail || !sessionEmail) return false;
+    return actorEmail === sessionEmail;
+  }
+
+  if(actor.kind === "user"){
+    const db = loadDB();
+    const row = (db.users || []).find(u => String(u.id) === String(actor.id));
+    if(!row) return false;
+
+    const authUid = String(row.authUid || "").trim();
+    if(authUid && sessionUid) return authUid === sessionUid;
+
+    const loginEmail = String(row.loginEmail || row.email || actor.email || "").trim().toLowerCase();
+    return !!loginEmail && !!sessionEmail && loginEmail === sessionEmail;
+  }
+
+  return false;
+}
+
+function cronosGetCurrentVisibleView(){
+  try{
+    const activeBtn = document.querySelector('.nav button.active');
+    const view = activeBtn?.dataset?.view || "";
+    if(view && APP_VIEWS.includes(view)) return view;
+  }catch(_){ }
+  return "";
+}
+
+function cronosBootFromLocalCacheAfterF5(session){
+  try{
+    if(isSupportMode()) return false;
+
+    const local = getLegacyLocalDB();
+    if(!cronosHasUsableLocalCache(local)) return false;
+
+    DB = normalizeDBShape(local);
+    const actor = currentActor();
+    if(!cronosActorMatchesSupabaseSession(actor, session)){
+      DB = null;
+      return false;
+    }
+
+    try{ cancelPendingCloudSync(); }catch(_){ }
+    try{ setSupportEntryLoading(false); }catch(_){ }
+    try{ setLoginLoading(false); }catch(_){ }
+
+    try{ fillSelectOptions(); }catch(e){ console.warn("Cronos F5 rápido: falha em fillSelectOptions", e); }
+
+    try{
+      const f = resetFiltersToDefault({ ui:false });
+      ensureYearOptions();
+      setUIFilters(f);
+      ensureMonthOptions();
+      setUIFilters(f);
+      saveFilters(getUIFilters());
+    }catch(e){ console.warn("Cronos F5 rápido: falha ao preparar filtros", e); }
+
+    try{
+      const db = loadDB();
+      if(migrateDBValues(db)) saveDB(db, { skipCloud:true });
+    }catch(e){ console.warn("Cronos F5 rápido: falha na migração leve", e); }
+
+    showApp(actor);
+    applyRoleVisibility(actor);
+    bindNav();
+
+    const target = cronosGetCurrentVisibleView() || firstAllowedView(actor);
+    setActiveView(target);
+
+    // V19: mantém a tela de carregamento por cima até a sincronização real da nuvem
+    // terminar. O app fica preparado por baixo, mas não mostra contagens antigas.
+    try{ document.body?.classList.add("cronos-fast-resume-pending"); }catch(_){ }
+    try{ showBootSplash("Atualizando dados da clínica..."); }catch(_){ }
+
+    window.__CRONOS_FAST_RESUME_ACTIVE__ = true;
+    window.__CRONOS_FAST_RESUME_AT__ = Date.now();
+    return true;
+  }catch(error){
+    console.warn("Cronos F5 rápido indisponível; usando boot completo.", error);
+    return false;
+  }
+}
+
+
+/* =========================
+   V23 — pós-sincronização: contadores laterais só liberam atualizados
+   ========================= */
+function cronosMarkCloudDBHydrated(reason=""){
+  try{
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    window.__CRONOS_CONTACTS_BY_ID_CACHE__ = null;
+    window.__CRONOS_LAST_HYDRATION_REASON__ = reason || "cloud_hydrated";
+  }catch(_){ }
+}
+
+function cronosUpdateInstallmentsSidebarPill(){
+  try{
+    const db = loadDB();
+    const actor = currentActor();
+    if(!db || !actor) return;
+    const mm = document.getElementById("instMonth");
+    const mk = (mm && mm.value) ? mm.value : todayISO().slice(0,7);
+    if(typeof installmentsKPIs === "function"){
+      const k = installmentsKPIs(db, actor, mk);
+      const pill = document.getElementById("pillInst");
+      if(pill) pill.textContent = String(k?.lateN || 0);
+    }
+  }catch(e){ console.warn("Cronos V23: falha ao atualizar contador de recebimentos", e); }
+}
+
+function cronosUpdateTodaySidebarBadge(){
+  try{
+    if(window.CRONOS_TODAY && typeof window.CRONOS_TODAY.invalidateTodayCache === "function"){
+      window.CRONOS_TODAY.invalidateTodayCache();
+    }
+    if(window.CRONOS_TODAY && typeof window.CRONOS_TODAY.updateNavCount === "function"){
+      window.CRONOS_TODAY.updateNavCount();
+    }
+    if(window.CRONOS_TODAY && typeof window.CRONOS_TODAY.syncNavBadgeStyle === "function"){
+      window.CRONOS_TODAY.syncNavBadgeStyle();
+    }
+  }catch(e){ console.warn("Cronos V23: falha ao atualizar Hoje no Cronos", e); }
+}
+
+
+function cronosUpdateTasksSidebarPill({ repair=true } = {}){
+  try{
+    const db = loadDB();
+    const actor = currentActor();
+    if(!db || !actor) return;
+
+    if(repair && typeof syncInstallmentTasks === "function"){
+      const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      try{ syncInstallmentTasks(db, actor); }catch(e){ console.warn("Cronos V24: falha ao sincronizar tarefas automáticas", e); }
+      const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      if(before !== after){
+        try{ saveDB(db, { skipCloud:true }); }catch(_){ }
+      }
+    }
+
+    const currentMonth = todayISO().slice(0,7);
+    const today = new Date(todayISO()+"T00:00:00");
+    const currentMonthTasks = (db.tasks||[]).filter(t => {
+      if(t.done === true) return false;
+      if(t.masterId && t.masterId !== actor.masterId) return false;
+      return String(t.dueDate||"").slice(0,7) === currentMonth;
+    });
+    const overdue = currentMonthTasks.filter(t => {
+      if(!t.dueDate) return false;
+      return new Date(String(t.dueDate)+"T00:00:00") < today;
+    }).length;
+
+    const pill = document.getElementById("pillTasks");
+    if(pill) pill.textContent = overdue ? `${overdue} ⚠️` : String(currentMonthTasks.length);
+  }catch(e){ console.warn("Cronos V24: falha ao atualizar contador de tarefas", e); }
+}
+
+function cronosRefreshSidebarCountersNow({ reason="", repeat=true } = {}){
+  const run = ()=>{
+    try{ window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null; }catch(_){ }
+    try{ updateSidebarPills(); }catch(e){ console.warn("Cronos V23: falha ao atualizar contadores laterais", e); }
+    cronosUpdateTasksSidebarPill({ repair:true });
+    cronosUpdateInstallmentsSidebarPill();
+    cronosUpdateTodaySidebarBadge();
+  };
+
+  run();
+
+  // Algumas badges são criadas por módulos externos depois do shell principal.
+  // Repetimos em poucos frames para evitar abrir a tela com 0/1 até o usuário clicar.
+  if(repeat){
+    [60, 180, 420].forEach(ms=>setTimeout(run, ms));
+  }
+
+  try{ window.__CRONOS_LAST_COUNTER_REFRESH_REASON__ = reason || "v23"; }catch(_){ }
+}
+
+function cronosRefreshCloudAfterFastResume(){
+  if(window.__CRONOS_FAST_RESUME_REFRESHING__) return;
+  window.__CRONOS_FAST_RESUME_REFRESHING__ = true;
+
+  // V19: o app pode preparar a tela com cache local, mas a tela de carregamento
+  // precisa continuar cobrindo tudo até a nuvem terminar de baixar e a view ativa
+  // ser renderizada novamente. Assim o usuário não vê contagens antigas piscando.
+  try{ showBootSplash("Atualizando dados da clínica..."); }catch(_){ }
+
+  setTimeout(async ()=>{
+    let refreshed = false;
+    try{
+      await ensureCloudDBLoaded(true);
+      cronosMarkCloudDBHydrated("fast_resume_pull");
+      const actorInfo = await syncCurrentCloudActor();
+      const actor = currentActor();
+
+      if(!actorInfo || !actor){
+        if(window.__CRONOS_ACCESS_BLOCK__?.title){
+          toast(window.__CRONOS_ACCESS_BLOCK__.title, window.__CRONOS_ACCESS_BLOCK__.message || "");
+          showAuth();
+        }
+        return;
+      }
+
+      try{ fillSelectOptions(); }catch(_){ }
+      try{ applyRoleVisibility(actor); }catch(_){ }
+      try{ if(typeof window.__refreshFeatureAccess === "function") await window.__refreshFeatureAccess(true, actor); }catch(_){ }
+
+      const active = cronosGetCurrentVisibleView() || firstAllowedView(actor);
+      try{ renderActiveViewOnly(active); }catch(_){ try{ renderAll(); }catch(__){} }
+      cronosRefreshSidebarCountersNow({ reason:"fast_resume_after_cloud", repeat:true });
+
+      window.__CRONOS_FAST_RESUME_REFRESHED_AT__ = Date.now();
+      refreshed = true;
+    }catch(error){
+      console.warn("Cronos: atualização após F5 falhou.", error);
+      // Se a nuvem falhar, libera o cache local com aviso leve. Melhor do que travar o usuário.
+      try{ toast("Nuvem demorou", "Abri com os dados locais. Atualize de novo em alguns segundos se as contagens parecerem antigas."); }catch(_){ }
+    }finally{
+      window.__CRONOS_FAST_RESUME_REFRESHING__ = false;
+      try{ hideBootSplash(); }catch(_){ }
+      if(refreshed){
+        try{ document.body?.classList.remove("cronos-fast-resume-pending"); }catch(_){ }
+      }
+    }
+  }, 80);
+}
+
+function cronosClearSupabaseAuthStorageFast(){
+  try{ localStorage.removeItem(CRONOS_MAIN_AUTH_STORAGE_KEY); }catch(_){ }
+  try{ sessionStorage.removeItem(CRONOS_MAIN_AUTH_STORAGE_KEY); }catch(_){ }
+}
+
+function cronosSignOutSupabaseInBackground(){
+  try{
+    if(typeof supabaseClient !== "undefined" && supabaseClient?.auth){
+      const p = supabaseClient.auth.signOut({ scope:"local" });
+      if(p && typeof p.catch === "function") p.catch(err => console.warn("Logout Supabase em segundo plano falhou:", err));
+    }
+  }catch(error){
+    console.warn("Logout Supabase em segundo plano falhou:", error);
+  }
+}
+
+function cronosInstantLogout({ supportRedirect=false }={}){
+  try{ cancelPendingCloudSync(); }catch(_){ }
+  try{ suppressCloudFailureToasts(6000); }catch(_){ }
+  try{ cronosClearSupabaseAuthStorageFast(); }catch(_){ }
+
+  DB = null;
+  resetCloudContext();
+  clearSupportContext();
+  clearClinicAccessState();
+  clearSession();
+  try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
+
+  setTimeout(cronosSignOutSupabaseInBackground, 0);
+
+  if(supportRedirect){
+    window.location.href = "/superadmin/";
+    return;
+  }
+
+  toast("Saiu");
+  showAuth();
+}
+
+async function finalizeCloudLogin(){
+  try{
+    const explicitLogin = !!window.__CRONOS_EXPLICIT_LOGIN__;
+    cancelPendingCloudSync();
+    suppressCloudFailureToasts(12000);
+    setSupportEntryLoading(false);
+
+    document.getElementById("appView").classList.add("hidden");
+
+    if(explicitLogin){
+      hideBootSplash();
+      document.getElementById("authView").classList.remove("hidden");
+      setLoginLoading(true, "Validando acesso e carregando seu ambiente...");
+    }else{
+      document.getElementById("authView").classList.add("hidden");
+      setLoginLoading(false);
+      showBootSplash("Sincronizando seu ambiente...");
+    }
+
+    const cloudLoaded = await ensureCloudDBForLoginWithRetry(3);
+
+    if(!cloudLoaded){
+      setLoginLoading(false);
+      hideBootSplash();
+      document.getElementById("appView").classList.add("hidden");
+      document.getElementById("authView").classList.remove("hidden");
+      toast(
+        "Nuvem temporariamente lenta",
+        "Seu login foi autenticado, mas os dados da clínica não responderam agora. Aguarde alguns segundos e tente novamente."
+      );
+      return;
+    }
+
+    const actorInfo = await syncCurrentCloudActor();
+    if(!actorInfo){
+      let title = "Acesso sem vínculo";
+      let message = "Esse login autenticou, mas não está ligado a nenhuma clínica.";
+
+      if(CLOUD_ACCESS_KIND === "member_pending"){
+        title = "Aguardando liberação";
+        message = String(CLOUD_MEMBER_INFO?.blocked_reason || "Seu acesso foi criado, mas ainda depende da liberação do superadmin.");
+      }else if(CLOUD_ACCESS_KIND === "member_inactive"){
+        title = "Acesso bloqueado";
+        message = String(CLOUD_MEMBER_INFO?.blocked_reason || "Esse usuário está inativo e precisa ser liberado pelo superadmin.");
+      }
+
+      toast(title, message);
+      cancelPendingCloudSync();
+      suppressCloudFailureToasts(4000);
+      try{ await supabaseClient.auth.signOut(); }catch(_){}
+      clearClinicAccessState();
+      clearSession();
+      showAuth();
+      return;
+    }
+  }catch(err){
+    console.error("Erro ao preparar dados da nuvem:", err);
+    setLoginLoading(false);
+    toast("Falha ao abrir o sistema", "A autenticação ocorreu, mas a clínica não carregou direito.");
+    return;
+  }
+
+  await boot();
+  try{ cronosRefreshSidebarCountersNow({ reason:"login_after_boot", repeat:true }); }catch(_){ }
+
+  const actor = currentActor();
+  if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
+    setTimeout(()=>{
+      toast(`Bem-vindo, ${actor.name} 👋`, actor.kind === "master"
+        ? "Sua clínica já está pronta para uso."
+        : `${roleLabelPt(actor.role)} conectado com sucesso.`);
+    }, 220);
+  }
+  window.__CRONOS_EXPLICIT_LOGIN__ = false;
+}
+
+document.getElementById("btnLogin").addEventListener("click", async () => {
+  if(window.__CRONOS_LOGIN_BUSY__) return;
+
+  cancelPendingCloudSync();
+  suppressCloudFailureToasts(12000);
+
+  const mode = String(document.getElementById("authMode")?.value || "master");
+  const rawLogin = String(document.getElementById("authLogin").value || "").trim();
+  const password = document.getElementById("authPass").value;
+
+  if (!rawLogin || !password) {
+    toast("Preencha login e senha");
+    return;
+  }
+
+  const email = mode === "user"
+    ? resolveUserLoginEmail(rawLogin)
+    : String(rawLogin || "").trim().toLowerCase();
+
+  if(!email){
+    toast("Login inválido");
+    return;
+  }
+
+  setLoginLoading(true, "Conectando e validando seu acesso...");
+  window.__CRONOS_EXPLICIT_LOGIN__ = true;
+
+  try{
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      toast("Login ou senha inválidos", "Confere os dados e tenta de novo.");
+      return;
+    }
+
+    await finalizeCloudLogin();
+  }catch(err){
+    console.error("Falha no login:", err);
+    toast("Falha ao entrar", "O sistema demorou mais do que devia. Tenta de novo.");
+  }finally{
+    setLoginLoading(false);
+    window.__CRONOS_EXPLICIT_LOGIN__ = false;
+  }
+});
+
+async function verificarSessao() {
+  window.__CRONOS_SESSION_CHECKING__ = true;
+  window.__CRONOS_BOOTING__ = true;
+
+  try{
+    const auth = document.getElementById("authView");
+    const app = document.getElementById("appView");
+    if(app) app.classList.add("hidden");
+    if(auth) auth.classList.add("hidden");
+    showBootSplash("Sincronizando seu ambiente...");
+    setSupportEntryLoading(false);
+    setLoginLoading(false);
+  }catch(_){}
+
+  const hasSupportToken = new URLSearchParams(location.search).has("support_token");
+
+  if (hasSupportToken || isSupportMode()) {
+    await boot();
+    return;
+  }
+
+  const { data } = await supabaseClient.auth.getSession();
+
+  if (data.session) {
+    window.__CRONOS_EXPLICIT_LOGIN__ = false;
+
+    // Em F5, abre primeiro com o cache local da própria sessão e sincroniza a nuvem em segundo plano.
+    // Isso tira aquele carregamento longo de 8–10s sem voltar a mostrar dados de outra clínica.
+    if(cronosBootFromLocalCacheAfterF5(data.session)){
+      cronosRefreshCloudAfterFastResume();
+      return;
+    }
+
+    await finalizeCloudLogin();
+    return;
+  }
+
+  clearSession();
+  try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
+  resetCloudContext();
+  DB = null;
+  showAuth();
+}
+
+if(document.readyState === "loading"){
+  document.addEventListener("DOMContentLoaded", verificarSessao, { once:true });
+}else{
+  setTimeout(verificarSessao, 0);
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const btnKanban = document.querySelector('[data-view="kanban"]');
+
+  if (btnKanban) {
+    btnKanban.addEventListener("click", () => {
+      setTimeout(() => {
+        try {
+          renderKanban();
+        } catch (e) {
+          console.error("Erro ao renderizar kanban:", e);
+        }
+      }, 150);
+    });
+  }
+});
+
+  setTimeout(() => {
+    renderTasks();
+    renderUsers();
+  }, 200);
+
+(function(){
+  const FEATURE_ACCESS_ENDPOINT = 'get-clinic-feature-access';
+  const SUPABASE_FN_BASE = 'https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/';
+  const FEATURE_CACHE_PREFIX = 'cronos_feature_access_cache::';
+  const SUPPORT_SPLASH_MIN_MS = 900;
+
+  const featureStateMap = new Map();
+  let lastResolvedContextKey = null;
+  let overlayMounted = false;
+
+  const VIEW_TO_FEATURE = {
+    dashboard: 'dashboard',
+    leads: 'leads',
+    kanban: 'kanban',
+    tasks: 'tasks',
+    installments: 'installments',
+    users: 'users',
+    settings: 'settings',
+    todayCronos: 'todayCronos',
+    creditSimulator: 'creditSimulator',
+    simulador: 'creditSimulator',
+    performance: 'performance'
+  };
+
+  const MODULE_LABELS = {
+    dashboard: 'Dashboard',
+    todayCronos: 'Hoje no Cronos',
+    performance: 'Performance',
+    leads: 'Leads',
+    kanban: 'Funil',
+    tasks: 'Tarefas',
+    installments: 'Recebimentos',
+    creditSimulator: 'Simulador de Crédito',
+    riskAnalysis: 'Análise de Risco',
+    flows: 'Fluxos Assistidos',
+    users: 'Usuários',
+    settings: 'Configurações'
+  };
+
+  const VIEW_LABELS = { ...MODULE_LABELS };
+
+  const AUX_MODULE_BUTTONS = [
+    { module:'todayCronos', selector:'#navHojeCronos' },
+    { module:'creditSimulator', selector:'#navCreditoSimulator' },
+    { module:'performance', selector:'#navPerformance' }
+  ];
+
+  const SUB_FEATURES_WITHOUT_ROLE_GATE = new Set(['riskAnalysis','flows']);
+
+  function normalizeFeatureKey(value){
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function featureKeyFor(value){
+    const raw = String(value || '').trim();
+    if(!raw) return '';
+    return VIEW_TO_FEATURE[raw] || raw;
+  }
+
+  function getFeatureStateByKey(featureKey){
+    const key = normalizeFeatureKey(featureKeyFor(featureKey));
+    if(!key) return { visibility_mode:'enabled', enabled:true };
+    return featureStateMap.get(key) || { visibility_mode:'enabled', enabled:true };
+  }
+
+  function getFeatureState(view){
+    return getFeatureStateByKey(view);
+  }
+
+  function isFeatureHidden(view){
+    const state = getFeatureState(view);
+    return String(state.visibility_mode || '').toLowerCase() === 'hidden';
+  }
+
+  function isFeatureLocked(view){
+    const state = getFeatureState(view);
+    const visibility = String(state.visibility_mode || '').toLowerCase();
+    if(visibility === 'hidden') return false;
+    if(visibility === 'locked') return true;
+    return state.enabled === false;
+  }
+
+  function roleAllowsModule(moduleKey, actorOverride){
+    const key = String(moduleKey || '').trim();
+    if(!key) return true;
+    if(SUB_FEATURES_WITHOUT_ROLE_GATE.has(key)) return true;
+    try{
+      if(typeof window.__CRONOS_ROLE_CAN_ACCESS_MODULE === 'function') return window.__CRONOS_ROLE_CAN_ACCESS_MODULE(key, actorOverride);
+    }catch(_err){}
+    try{
+      if(typeof canAccessModule === 'function') return canAccessModule(key, actorOverride || (typeof currentActor === 'function' ? currentActor() : null));
+    }catch(_err){}
+    return true;
+  }
+
+  function canSeeModule(moduleKey, actorOverride){
+    return roleAllowsModule(moduleKey, actorOverride) && !isFeatureHidden(moduleKey);
+  }
+
+  function canOpenModule(moduleKey, actorOverride){
+    return canSeeModule(moduleKey, actorOverride) && !isFeatureLocked(moduleKey);
+  }
+
+  function showPlanToast(){
+    try{
+      if(typeof toast === 'function'){
+        toast('Módulo indisponível', 'Este módulo não está disponível para esta clínica.');
+        return;
+      }
+    }catch(_err){}
+  }
+
+  function ensureOverlay(){
+    if(overlayMounted && document.getElementById('featureBlockedOverlay')) return document.getElementById('featureBlockedOverlay');
+    const main = document.querySelector('.main');
+    if(!main) return null;
+    let overlay = document.getElementById('featureBlockedOverlay');
+    if(!overlay){
+      overlay = document.createElement('section');
+      overlay.id = 'featureBlockedOverlay';
+      overlay.innerHTML = `
+        <div class="featureBlockedCard">
+          <div class="featureBlockedEyebrow">Bloqueado no momento</div>
+          <h2 class="featureBlockedTitle">Módulo indisponível</h2>
+          <p class="featureBlockedText">Este módulo não está disponível para esta clínica.</p>
+          <p class="featureBlockedText">Para liberar este recurso, entre em contato com o suporte.</p>
+          <a class="btn ok hidden" id="btnFeatureBlockedWhatsapp" href="#" target="_blank" rel="noopener noreferrer" style="margin-top:14px">Falar com suporte no WhatsApp</a>
+        </div>
+      `;
+      main.appendChild(overlay);
+    }
+    overlayMounted = true;
+    return overlay;
+  }
+
+  function getAppViewsList(){
+    try{
+      if(typeof APP_VIEWS !== 'undefined' && Array.isArray(APP_VIEWS)) return APP_VIEWS;
+    }catch(_err){}
+    if(Array.isArray(window.APP_VIEWS)) return window.APP_VIEWS;
+    return ['dashboard','leads','kanban','tasks','installments','users','settings'];
+  }
+
+  function hideAllNativeViews(){
+    getAppViewsList().forEach(v => {
+      const node = document.getElementById(`view-${v}`);
+      if(node) node.classList.add('hidden');
+    });
+    ['view-todayCronos','view-creditSimulator','view-performance'].forEach(id => {
+      const node = document.getElementById(id);
+      if(node){
+        node.classList.add('hidden');
+        node.style.display = 'none';
+      }
+    });
+  }
+
+  function positionBlockedOverlay(){
+    const overlay = document.getElementById('featureBlockedOverlay');
+    const main = document.querySelector('.main');
+    if(!overlay || !main) return;
+
+    if(window.innerWidth <= 980){
+      overlay.style.inset = '16px';
+      overlay.style.left = '';
+      overlay.style.top = '';
+      overlay.style.width = '';
+      overlay.style.height = '';
+      return;
+    }
+
+    const rect = main.getBoundingClientRect();
+    overlay.style.top = Math.max(16, rect.top + 12) + 'px';
+    overlay.style.left = Math.max(16, rect.left + 12) + 'px';
+    overlay.style.width = Math.max(320, rect.width - 24) + 'px';
+    overlay.style.height = Math.max(240, rect.height - 24) + 'px';
+    overlay.style.right = 'auto';
+    overlay.style.bottom = 'auto';
+    overlay.style.inset = 'auto';
+  }
+
+  function showBlockedOverlay(view){
+    const overlay = ensureOverlay();
+    if(!overlay) return;
+    const label = MODULE_LABELS[view] || VIEW_LABELS[view] || 'Módulo';
+    const title = overlay.querySelector('.featureBlockedTitle');
+    const texts = overlay.querySelectorAll('.featureBlockedText');
+    if(title) title.textContent = `${label} indisponível`;
+    if(texts[0]) texts[0].textContent = `O módulo ${label} não está disponível para esta clínica.`;
+    if(texts[1]) texts[1].textContent = 'Para liberar este recurso, entre em contato com o suporte.';
+    const featureWhats = overlay.querySelector('#btnFeatureBlockedWhatsapp');
+    if(featureWhats){
+      const whatsappUrl = buildRenewalWhatsappUrl(CLINIC_ACCESS_STATE || {}, 'feature', label);
+      if(whatsappUrl){
+        featureWhats.href = whatsappUrl;
+        featureWhats.classList.remove('hidden');
+      }else{
+        featureWhats.classList.add('hidden');
+        featureWhats.removeAttribute('href');
+      }
+    }
+
+    hideAllNativeViews();
+    const sticky = document.getElementById('stickyFilters');
+    if(sticky) sticky.classList.add('hidden');
+
+    const main = document.querySelector('.main');
+    if(main) main.style.overflow = 'hidden';
+    document.documentElement.classList.add('feature-lock-active');
+    document.body.classList.add('feature-lock-active');
+
+    document.querySelectorAll('.nav button').forEach(btn => {
+      const btnView = btn.dataset ? btn.dataset.view : '';
+      const btnModule = auxModuleFromButton(btn);
+      btn.classList.toggle('active', btnView === view || btnModule === view);
+    });
+
+    overlay.classList.add('show');
+    positionBlockedOverlay();
+  }
+
+  function hideBlockedOverlay(){
+    const overlay = document.getElementById('featureBlockedOverlay');
+    if(overlay) overlay.classList.remove('show');
+    const main = document.querySelector('.main');
+    if(main) main.style.overflow = '';
+    document.documentElement.classList.remove('feature-lock-active');
+    document.body.classList.remove('feature-lock-active');
+  }
+
+  function getFirstVisibleAndEnabledView(){
+    const buttons = Array.from(document.querySelectorAll('.nav button[data-view]'));
+    for(const btn of buttons){
+      const view = btn.getAttribute('data-view');
+      if(!view) continue;
+      if(btn.classList.contains('hidden')) continue;
+      if(isFeatureHidden(view)) continue;
+      if(isFeatureLocked(view)) continue;
+      return view;
+    }
+    return null;
+  }
+
+  function auxModuleFromButton(btn){
+    if(!btn) return '';
+    if(btn.id === 'navHojeCronos') return 'todayCronos';
+    if(btn.id === 'navCreditoSimulator') return 'creditSimulator';
+    if(btn.id === 'navPerformance') return 'performance';
+    return btn.getAttribute && btn.getAttribute('data-cronos-feature-module') || '';
+  }
+
+  function applyLockTag(btn, locked){
+    if(!btn) return;
+    let tag = btn.querySelector('.featureLockTag');
+    if(locked){
+      if(!tag){
+        tag = document.createElement('span');
+        tag.className = 'featureLockTag';
+        tag.textContent = 'Bloq.';
+        btn.appendChild(tag);
+      }
+    }else if(tag){
+      tag.remove();
+    }
+  }
+
+  function applyAuxFeatureStatesToMenu(){
+    AUX_MODULE_BUTTONS.forEach(meta => {
+      document.querySelectorAll(meta.selector).forEach(btn => {
+        const roleAllowed = roleAllowsModule(meta.module);
+        const hiddenByFeature = isFeatureHidden(meta.module);
+        const lockedByFeature = isFeatureLocked(meta.module);
+        btn.classList.toggle('hidden', !roleAllowed || hiddenByFeature);
+        btn.classList.toggle('feature-hidden', roleAllowed && hiddenByFeature);
+        btn.classList.toggle('feature-locked', roleAllowed && !hiddenByFeature && lockedByFeature);
+        applyLockTag(btn, roleAllowed && !hiddenByFeature && lockedByFeature);
+      });
+    });
+  }
+
+  function applyFeatureStatesToMenu(){
+    try{
+      const buttons = Array.from(document.querySelectorAll('.nav button[data-view]'));
+      buttons.forEach(btn => {
+        const view = btn.getAttribute('data-view');
+        if(!view) return;
+
+        const hiddenByRole = btn.classList.contains('hidden');
+        const hiddenByFeature = isFeatureHidden(view);
+        const lockedByFeature = isFeatureLocked(view);
+
+        btn.classList.toggle('feature-hidden', !hiddenByRole && hiddenByFeature);
+        btn.classList.toggle('feature-locked', !hiddenByRole && !hiddenByFeature && lockedByFeature);
+
+        applyLockTag(btn, !hiddenByRole && !hiddenByFeature && lockedByFeature);
+      });
+      applyAuxFeatureStatesToMenu();
+    }catch(err){
+      console.error('Falha ao aplicar botões de feature:', err);
+    }
+  }
+
+  function syncCurrentViewState(){
+    const activeBtn = document.querySelector('.nav button.active');
+    const activeView = activeBtn ? (activeBtn.dataset && activeBtn.dataset.view || auxModuleFromButton(activeBtn)) : null;
+    if(activeView && isFeatureLocked(activeView)){
+      showBlockedOverlay(activeView);
+      return;
+    }
+    hideBlockedOverlay();
+  }
+
+  function wrapSetActiveView(){
+    if(typeof window.setActiveView !== 'function' || window.__featureSetActiveWrapped) return;
+    const originalSetActiveView = window.setActiveView;
+
+    window.setActiveView = function(view){
+      if(isFeatureHidden(view)){
+        const fallback = getFirstVisibleAndEnabledView();
+        if(fallback && fallback !== view){
+          return originalSetActiveView.call(this, fallback);
+        }
+        hideAllNativeViews();
+        hideBlockedOverlay();
+        return;
+      }
+
+      if(isFeatureLocked(view)){
+        showPlanToast();
+        showBlockedOverlay(view);
+        return;
+      }
+
+      hideBlockedOverlay();
+      return originalSetActiveView.apply(this, arguments);
+    };
+
+    window.__featureSetActiveWrapped = true;
+  }
+
+  function resolveOwnerContext(actorOverride){
+    const actor = actorOverride || ((typeof currentActor === 'function') ? currentActor() : null);
+    const support = (typeof getSupportContext === 'function') ? getSupportContext() : null;
+
+    const ownerUid =
+      (typeof CLOUD_CLINIC_OWNER_UID !== 'undefined' && CLOUD_CLINIC_OWNER_UID) ||
+      (typeof CLOUD_OWNER_UID !== 'undefined' && CLOUD_OWNER_UID) ||
+      (support && support.owner_uid) ||
+      (actor && actor.kind === 'support' && actor.id ? actor.id : null) ||
+      null;
+
+    const ownerEmail =
+      (typeof CLOUD_CLINIC_OWNER_EMAIL !== 'undefined' && CLOUD_CLINIC_OWNER_EMAIL) ||
+      (typeof CLOUD_OWNER_EMAIL !== 'undefined' && CLOUD_OWNER_EMAIL) ||
+      (support && (support.owner_email || support.master_email)) ||
+      ((actor && actor.kind === 'master') ? actor.email : null) ||
+      ((actor && actor.kind === 'support' && actor.email) ? actor.email : null) ||
+      null;
+
+    return {
+      owner_uid: ownerUid || null,
+      owner_email: ownerEmail || null
+    };
+  }
+
+  function getContextCacheKey(ctx){
+    if(!ctx || (!ctx.owner_uid && !ctx.owner_email)) return null;
+    return FEATURE_CACHE_PREFIX + (ctx.owner_uid || ctx.owner_email || 'default');
+  }
+
+  function applyFeaturePayload(items){
+    featureStateMap.clear();
+    (Array.isArray(items) ? items : []).forEach(item => {
+      const key = normalizeFeatureKey(item && item.feature_key);
+      if(!key) return;
+      featureStateMap.set(key, {
+        enabled: item && item.enabled !== false,
+        visibility_mode: normalizeFeatureKey(item && item.visibility_mode || 'enabled') || 'enabled'
+      });
+    });
+  }
+
+  function readFeatureCache(ctx){
+    try{
+      const key = getContextCacheKey(ctx);
+      if(!key) return false;
+      const raw = localStorage.getItem(key);
+      if(!raw) return false;
+      const parsed = JSON.parse(raw);
+      if(!Array.isArray(parsed && parsed.features)) return false;
+      applyFeaturePayload(parsed.features);
+      lastResolvedContextKey = JSON.stringify(ctx);
+      return true;
+    }catch(err){
+      console.warn('Falha ao ler cache de módulos:', err);
+      return false;
+    }
+  }
+
+  function writeFeatureCache(ctx, features){
+    try{
+      const key = getContextCacheKey(ctx);
+      if(!key) return;
+      localStorage.setItem(key, JSON.stringify({
+        saved_at: Date.now(),
+        features: Array.isArray(features) ? features : []
+      }));
+    }catch(err){
+      console.warn('Falha ao gravar cache de módulos:', err);
+    }
+  }
+
+  async function fetchFeatureAccess(force, actorOverride){
+    try{
+      const ctx = resolveOwnerContext(actorOverride);
+      if(!ctx.owner_uid && !ctx.owner_email){
+        console.warn('Feature access: contexto da clínica ainda não resolvido.');
+        return false;
+      }
+
+      const ctxKey = JSON.stringify(ctx);
+
+      if(!force && !featureStateMap.size){
+        readFeatureCache(ctx);
+      }
+
+      if(!force && lastResolvedContextKey === ctxKey && featureStateMap.size){
+        return true;
+      }
+
+      let authToken =
+        localStorage.getItem('cronos_token') ||
+        localStorage.getItem('authToken') ||
+        '';
+
+      try{
+        if(typeof supabaseClient !== 'undefined' && supabaseClient?.auth){
+          const sessionResp = await supabaseClient.auth.getSession();
+          authToken = sessionResp?.data?.session?.access_token || authToken || '';
+        }
+      }catch(_sessionErr){}
+
+      const headers = { 'Content-Type':'application/json' };
+      try{ if(typeof supabaseKey !== 'undefined' && supabaseKey) headers['apikey'] = supabaseKey; }catch(_keyErr){}
+      if(authToken){
+        headers['Authorization'] = 'Bearer ' + authToken;
+      }
+
+      const res = await fetch(SUPABASE_FN_BASE + FEATURE_ACCESS_ENDPOINT, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          owner_uid: ctx.owner_uid,
+          owner_email: ctx.owner_email
+        })
+      });
+
+      if(!res.ok){
+        throw new Error('feature access unavailable');
+      }
+
+      const data = await res.json().catch(() => ({}));
+      const features = Array.isArray(data && data.features) ? data.features : [];
+      applyFeaturePayload(features);
+      writeFeatureCache(ctx, features);
+      lastResolvedContextKey = ctxKey;
+      return true;
+    }catch(err){
+      console.warn('Feature access em modo seguro:', err && err.message || err);
+      return false;
+    }
+  }
+
+  async function refreshFeatureAccess(force, actorOverride){
+    wrapSetActiveView();
+    const ctx = resolveOwnerContext(actorOverride);
+    if(featureStateMap.size === 0){
+      readFeatureCache(ctx);
+    }
+    applyFeatureStatesToMenu();
+    syncCurrentViewState();
+    await fetchFeatureAccess(!!force, actorOverride);
+    applyFeatureStatesToMenu();
+    syncCurrentViewState();
+  }
+
+  function wrapSetSupportEntryLoading(){
+    if(typeof window.setSupportEntryLoading !== 'function' || window.__supportEntryWrapped) return;
+    const original = window.setSupportEntryLoading;
+    window.setSupportEntryLoading = function(isLoading, message){
+      if(isLoading){
+        window.__supportEntryStartedAt = Date.now();
+      }else{
+        window.__supportEntryStartedAt = 0;
+      }
+      return original.apply(this, arguments);
+    };
+    window.__supportEntryWrapped = true;
+  }
+
+  function wrapShowApp(){
+    if(typeof window.showApp !== 'function' || window.__featureShowAppWrapped) return;
+    const originalShowApp = window.showApp;
+
+    window.showApp = function(actor){
+      const ctx = resolveOwnerContext(actor);
+      readFeatureCache(ctx);
+
+      const supportMode = !!(actor && actor.isSupport);
+      const authVisible = !!(document.getElementById('authView') && !document.getElementById('authView').classList.contains('hidden'));
+      const elapsed = Date.now() - Number(window.__supportEntryStartedAt || 0);
+      const waitMs = (supportMode && authVisible) ? Math.max(0, SUPPORT_SPLASH_MIN_MS - elapsed) : 0;
+
+      const run = () => {
+        originalShowApp.apply(this, arguments);
+        applyFeatureStatesToMenu();
+        syncCurrentViewState();
+        setTimeout(() => { refreshFeatureAccess(true, actor); }, 40);
+        setTimeout(() => { refreshFeatureAccess(true, actor); }, 900);
+      };
+
+      if(waitMs > 0){
+        setTimeout(run, waitMs);
+        return;
+      }
+
+      return run();
+    };
+
+    window.__featureShowAppWrapped = true;
+  }
+
+  function wrapBoot(){
+    if(typeof window.boot !== 'function' || window.__featureBootWrapped) return;
+    const originalBoot = window.boot;
+    window.boot = async function(){
+      const supportPending = new URLSearchParams(location.search).has('support_token') ||
+        (typeof isSupportMode === 'function' && isSupportMode());
+
+      if(supportPending && !window.__supportEntryStartedAt){
+        window.__supportEntryStartedAt = Date.now();
+      }
+
+      const result = await originalBoot.apply(this, arguments);
+      setTimeout(() => { refreshFeatureAccess(true); }, 300);
+      setTimeout(() => { refreshFeatureAccess(true); }, 1200);
+      return result;
+    };
+    window.__featureBootWrapped = true;
+  }
+
+  function handleAuxFeatureGateEvent(ev){
+    const btn = ev.target && ev.target.closest ? ev.target.closest('#navHojeCronos,#navCreditoSimulator,#navPerformance') : null;
+    if(!btn) return;
+    const moduleKey = auxModuleFromButton(btn);
+    if(!moduleKey) return;
+
+    if(!canSeeModule(moduleKey)){
+      try{ ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation?.(); }catch(_err){}
+      applyFeatureStatesToMenu();
+      return false;
+    }
+
+    if(isFeatureLocked(moduleKey)){
+      try{ ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation?.(); }catch(_err){}
+      showPlanToast();
+      showBlockedOverlay(moduleKey);
+      return false;
+    }
+  }
+
+  function installAuxFeatureGate(){
+    if(window.__cronosAuxFeatureGateInstalled) return;
+    window.__cronosAuxFeatureGateInstalled = true;
+    document.addEventListener('pointerdown', handleAuxFeatureGateEvent, true);
+    document.addEventListener('click', handleAuxFeatureGateEvent, true);
+    document.addEventListener('keydown', (ev) => {
+      if(ev.key !== 'Enter' && ev.key !== ' ') return;
+      handleAuxFeatureGateEvent(ev);
+    }, true);
+  }
+
+  function exposeFeatureAccessHelpers(){
+    if(!window.__CRONOS_ROLE_CAN_ACCESS_MODULE && typeof window.CRONOS_CAN_ACCESS_MODULE === 'function'){
+      window.__CRONOS_ROLE_CAN_ACCESS_MODULE = window.CRONOS_CAN_ACCESS_MODULE;
+    }
+    window.CRONOS_FEATURE_STATE = getFeatureStateByKey;
+    window.CRONOS_IS_FEATURE_HIDDEN = isFeatureHidden;
+    window.CRONOS_IS_FEATURE_LOCKED = isFeatureLocked;
+    window.CRONOS_CAN_SEE_MODULE = canSeeModule;
+    window.CRONOS_CAN_OPEN_MODULE = canOpenModule;
+    window.CRONOS_SHOW_FEATURE_BLOCKED = showBlockedOverlay;
+    window.CRONOS_CAN_ACCESS_MODULE = function(moduleKey, actorOverride){
+      return canSeeModule(moduleKey, actorOverride);
+    };
+  }
+
+  function install(){
+    exposeFeatureAccessHelpers();
+    ensureOverlay();
+    installAuxFeatureGate();
+    wrapSetSupportEntryLoading();
+    wrapShowApp();
+    wrapBoot();
+    wrapSetActiveView();
+    refreshFeatureAccess(false);
+    window.addEventListener('focus', () => refreshFeatureAccess(true));
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible') refreshFeatureAccess(true);
+    });
+  }
+
+  window.__refreshFeatureAccess = refreshFeatureAccess;
+  window.addEventListener('resize', positionBlockedOverlay);
+  window.addEventListener('scroll', positionBlockedOverlay, true);
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', install, { once:true });
+  }else{
+    install();
+  }
+})();
+
+/* Ficha do lead e procedimentos */
+(function(){
+  try{
+    const FACE_OPTIONS = [
+      {value:'', label:'Sem face'},
+      {value:'V', label:'Vestibular'},
+      {value:'L/P', label:'Lingual/Palatina'},
+      {value:'M', label:'Mesial'},
+      {value:'D', label:'Distal'},
+      {value:'O', label:'Oclusal'},
+      {value:'C', label:'Cervical'},
+      {value:'I', label:'Incisal'}
+    ];
+
+    const TOOTH_ROWS = {
+      supDir: ['18','17','16','15','14','13','12','11'],
+      supEsq: ['21','22','23','24','25','26','27','28'],
+      infDir: ['48','47','46','45','44','43','42','41'],
+      infEsq: ['31','32','33','34','35','36','37','38']
+    };
+    const ALL_TEETH = [...TOOTH_ROWS.supDir, ...TOOTH_ROWS.supEsq, ...TOOTH_ROWS.infDir, ...TOOTH_ROWS.infEsq];
+    const DECIDUOUS_TOOTH_ROWS = {
+      supDir: ['55','54','53','52','51'],
+      supEsq: ['61','62','63','64','65'],
+      infDir: ['85','84','83','82','81'],
+      infEsq: ['71','72','73','74','75']
+    };
+    const DECIDUOUS_TEETH = [...DECIDUOUS_TOOTH_ROWS.supDir, ...DECIDUOUS_TOOTH_ROWS.supEsq, ...DECIDUOUS_TOOTH_ROWS.infDir, ...DECIDUOUS_TOOTH_ROWS.infEsq];
+    const ODONTO_DECIDUOUS_VIEWBOX = '0 0 384.53 233.56';
+    const ODONTO_DECIDUOUS_PATHS = {"55":"M4.35,26.36c2.27-.59,3,2.48,4.49,2.82s7.62-.82,9.54-.66c1.66.14,3.22,1.37,4.08,2.73,1.11,1.74,5.25,9.6,5.85,11.39,1.77,5.29,1.44,12.8,2.66,18.34,1.15,5.18,5.42,11.03,5.86,15.89.94,10.37-.43,21.31-13.14,21.46-2.72.03-5-.91-7.51-.87-4.59.08-11.8,3.81-14.24-2.18s-2.61-13.83-.4-19.9c.6-1.63,1.95-2.63,2.24-4.51.71-4.62.42-16.02.07-21s-6.27-21.76.49-23.51ZM6.83,70.53h24.73c-.7-4.32-2.8-8.22-3.56-12.56-1.95-11.14-.65-14.04-7.04-24.46-.46-.75-2.86-3.57-3.64-2.73-.99,4.94,1.06,9.41,1.49,13.87.39,3.96.36,11.03.04,15.04-.1,1.32.16,2.88-1.53,3.34-.58-9.36-4.64-16.96-8.07-25.3-1.06-2.57-1.35-8.06-4.29-8.47-1.61-.22-1.01.54-1.34,1.65-1.48,4.98,2.41,14.35,3.15,19.79.59,4.33-.85,8.36-.72,12.73.07,2.48.91,4.64.78,7.09ZM15.81,46.53c.43-2.45-.46-16.53-4.1-15.74-1.52.33-1.33,4.06-.81,5.3l4.91,10.44ZM11.16,73c-4.9.49-7.51.73-8.67,6.32-.64,3.06,0,14.08,2.39,16.03,1.72.93,4.9.99,6.86.72,1.84-.26,2.83-1.58,4.44-1.61,1.7-.03,2.94,1.27,4.54,1.53,3.5.57,9.31-.38,11.61-3.31s3.47-16.1,1.11-18.41-18.4-1.66-22.27-1.27Z","54":"M57.79,27.03c2.06-2.27,8.49-4.1,10.91-2.31,1.58,1.17,6.24,11.09,6.85,13.39,3.01,11.41-.87,24,.22,35.03.36,3.7,2.49,6.36,2.91,9.83.62,5.09.47,11.25-4.47,14.11-6.89,4-9.95-2.52-13.8-2.52-3.07,0-4.35,4.08-9.55,2.75-.68-.17-3.3-1.58-3.94-2.06-8.38-6.29-.91-18.63,1.34-26.41,2.65-9.18,3.78-15.32,3.57-25-.13-5.82-1.16-10.87.13-17.06.85-4.09,5.25-3.66,5.85.22ZM72.76,72.04c1.21-15.09,5.5-33.99-6.74-45.75.41,7.75,2.3,14.8,1.42,22.8-.21,1.89-2.01,10.79-5.13,8.66-3.2-7.61-2.92-16.15-4.75-24.12-.17-.76-1.92-8.4-3.53-6.59.38,2.94-.69,5.69-.78,8.59-.38,11.92,1.78,17.2-1.66,29.85-.3,1.1-2.56,6-2.05,6.56,7.38-3.46,15.56-.58,23.22,0ZM64.52,53.28c.79-7.26,1.24-14.73-.17-21.95-.46-2.35-1.53-4.74-4.32-4.3.15,1.62-.65,3.07-.57,4.68.25,5.05,2.01,13.51,2.91,18.87.23,1.39.29,3.22,2.15,2.7ZM54.59,72.97c-1.09.15-5.15,1.16-5.8,1.69-1.45,1.16-3.88,11.19-3.62,13.29.4,3.24,4.92,7.7,8.32,7.19,1.71-.26,3.67-2.3,5.42-2.93,4.7-1.69,9.84,8.64,16.12,1.2,2.86-3.39,1.44-15.79-1.83-18.45-2.29-1.86-15.31-2.45-18.6-2Z","53":"M93.95.14c5.17-1.51,7.18,9.74,8.12,13.36,2.38,9.22,3.98,18.65,4.87,28.12.62,6.53.13,12.56,1.65,19.35,1.69,7.56,7.83,18.06,8.11,24.95.12,3.07-1.63,4.86-3.78,6.74-1.74,1.52-9.77,6.91-11.58,7.15-1.51.2-4.26.18-5.64-.43-2.76-3-7.9-4.54-10.53-7.46-4.9-5.44,2.38-17.11,3.02-23.26.83-7.97-.48-17.35-.04-25.54.32-6.01,1.96-12.69,2.28-18.72.27-5.09-1.92-22.68,3.53-24.27ZM106.91,63.78c-2.99-11.92-1.71-24.13-3.94-36.17-.73-3.95-4.74-21.38-6.36-23.63-2.38-3.32-3.63-.61-3.95,2.42-.59,5.59.3,12.23.02,18.02-.32,6.46-1.87,13.06-2.28,19.47s.39,13.9.04,20.66c5.79-1.77,10.56-1.54,16.48-.75ZM90.62,67.72c-.4,6.11-6.27,15.2-4.54,21.04.58,1.95,10.1,8.48,12.28,8.75,1.26.16,2.14.02,3.34-.33,1.6-.47,11.04-6.71,11.57-7.91.68-1.53.51-3.92.38-5.61-.22-2.91-3.83-13.12-5.39-15.6-2.27-3.6-14.32-3.73-17.64-.34Z","52":"M129.86,9.84c.83-.18,3.52,2.56,4.03,3.31,3.2,4.74,9.28,29.8,9.73,36.01.7,9.61,1.44,14.11,2.95,23.3.9,5.5,1.42,16.29.84,21.73-.13,1.19-.15,1.77-1.11,2.63-2.15,1.91-16.3,1.98-19.37,1.3-2.24-.49-3.88-2.54-4.24-4.76-.91-5.62-1.34-16.81.3-22.13.69-2.26,3.65-4.79,4.12-7.87.86-5.6-.53-12.87.04-18.71.66-6.76,2.21-12.11,1.49-19.5-.48-4.93-4.26-11.88,1.23-15.32ZM141.38,63.78v-15.38c0-3.3-3.72-16.59-4.86-20.64-.66-2.34-4.14-14.92-6.01-14.98-1.04.73-1.15,1.4-1.19,2.61-.09,2.86,1.38,7.14,1.6,10.47.52,8.26-1.07,14.75-1.57,22.5-.32,5.01.3,10.37.04,15.41,4.2-.69,7.78-1.17,11.99,0ZM127.51,96.03c2.89.72,12,0,15.73,0,.11,0,1.33-1.17,1.49-1.51,1.3-2.78-.12-24.51-2.08-26.79-2.67-3.11-10.38-3.19-13.69-.98-.85.57-3.66,4.9-3.92,5.83-.4,1.48-.94,8.38-.97,10.31-.06,3.69,1.38,7.3.78,11.13.51.37,2.48,1.97,2.64,2.01Z","51":"M166.46,8.43c3.66-.21,6.09,10.93,6.92,13.93,2.62,9.37,6.37,22.72,7.61,32.13.6,4.55.14,10.06,1.02,14.73.83,4.41,3.72,8.87,4.22,13.02.6,4.93-.31,12.81-6.33,13.76-3.35.53-18.25.44-21.19-.46-6.48-2.01-5.8-13.77-5.4-19.41.61-8.69,5.59-16.33,6.57-24.92,1.29-11.36,1.68-22.82,3.29-34.21.42-3.01.57-6.81,3.28-8.56ZM178.84,66.03v-12.38c0-4.02-7.44-31.34-9.2-36.54-.22-.64-2.19-6.66-3.53-5.08-1.08,4.03-.35,8.23-.84,12.29-.68,5.62-2.24,11.53-2.91,17.34-.53,4.55-.02,9.19-.93,14.07-.43,2.29-1.96,4.5-2.09,6.92-.07,1.31-.1,1.18,1.16,1.16,2.21-.03,4.24-.87,6.74-.83,1.79.03,5.64.51,7.3.98,1.82.52,2.51,2.06,4.3,2.08ZM182.35,92.05c4.01-4.43.09-18.63-3.48-22.69-4.59-5.21-15.87-5.06-21.61-1.68-1.61,6.05-4.88,25.14,3.92,26.13,3.78.43,13.55.44,17.31,0,1.22-.14,3.06-.89,3.86-1.76Z","61":"M218.27,9.84c2.27-.51,3.77,6.24,3.95,7.9,2.04,18.3.23,35.91,8.15,52.59,2.29,4.82,2.61,19.71-.23,24.18-2.41,3.79-10.47,2.11-14.25,2.25-5.11.19-9.65,2.71-14.19-1.48-2.44-2.26-2.18-5.26-2.23-8.61-.16-10.11,4.52-16.34,5.59-26.25,1.43-13.21,2.76-26.11,6.79-38.96.84-2.68,3.59-10.97,6.42-11.61ZM219.3,12.79c-1.18-1.31-3.63,3.98-3.91,4.71-3.44,9.05-6.77,25.73-8,35.5-.54,4.32-.6,9.4-.83,13.79,2.8-.55,4.96-2.53,7.92-2.94,3.39-.46,6.75.1,10.05.69-.03-4.24-1.91-8.18-2.24-12.38-.51-6.5.6-13.13-1.5-19.5l-1.5-19.87ZM214.59,66.2c-4,.78-10.1,4.75-11.44,8.8-1.22,3.71-3.1,17.45.94,19.37,3.6,1.71,5.8.22,8.83.16,4.08-.08,14.58,1.54,15.94-2.79s1.37-15.38-.24-19.67c-1.87-5-9.22-6.8-14.04-5.86Z","62":"M253.52,10.6c1.04-.27,1.4.14,2.16.64,3.99,2.65.38,9.4.3,13.2-.11,5.47,1.35,13.04,1.56,18.68.29,7.64-1.77,13.9.75,21.75.83,2.58,3.4,5.46,3.75,8.25.33,2.61.39,17.43-.18,19.39-.51,1.73-5.07,5.01-6.97,5.09-1.56.07-2.98-.73-4.5-.82-3.78-.22-9.35.59-11.97-3.01-2.27-3.13-.55-4.92-.39-7.86.47-8.69,2.37-13.8,3.69-21.8,2.68-16.29.86-33.25,8.27-48.72.6-1.25,2.26-4.45,3.52-4.79ZM255.26,63.03l-1.12-50.24c-2.09,2.64-3.32,6.64-4.34,9.9-3.25,10.35-3.44,16.72-4.28,27.22-.15,1.91-1.98,13.36-1.49,13.87,1.71-.09,2.1-1.3,4.07-1.54,2.44-.29,4.83.2,7.16.79ZM246.06,65.44c-2.54.56-3.48,3.36-4.09,5.66-1.01,3.81-2.21,13.01-2.45,17.07s.55,5.72,4.94,6.3c3.63.48,14.5,1.21,15.29-3.32.54-3.13.36-16.05-.35-19.12-1.59-6.85-6.96-7.99-13.34-6.58Z","63":"M287.26.91c7.26-2.12,5.25,12.06,5.47,16,.57,10.26,1.88,21.33,2.28,31.47.25,6.26-1.49,12.91-.81,18.81.93,8.07,9.15,17.03,3.33,25.03-4.62,6.35-13.25,7.36-20.3,4.71-4.32-1.62-9.63-4.99-9.25-10.24,2.13-12.51,6.39-25.09,8.19-37.61,1.19-8.28,1.1-16.94,2.52-25.22.75-4.36,4.43-21.73,8.57-22.94ZM278.12,63.78c4.4-.44,9.39.32,13.86,0,.16-5.65,1.08-11.17.75-16.87-.75-13.09-1.23-26.65-2.25-39.75-.08-1.08-.29-4.36-1.89-4.14-2.2.3-3.36,4.4-4.07,6.44-5.01,14.51-4.38,29.95-6.85,44.89-.47,2.88-2.01,5.97-2.2,9.06-.16,2.49,1.97.44,2.64.38ZM279.03,66.2c-7.82,1.61-6,13.87-8.75,19.78-1.09,4.87,7.68,9.45,11.64,9.99,4.64.63,12.74-1.45,14.73-6.13,2.55-5.98-3.64-17.39-5.39-23.47-.94-.65-10.56-.52-12.23-.17Z","64":"M325.62,24.78c1-3.97,4.41-4.4,5.8-.17,3.19,9.72-1.59,21.94.25,32.01,1.69,9.27,8.16,18.83,8.88,27.89.35,4.38-1.31,8.82-4.4,11.93-5.67,5.71-8.27.1-13.87.3-4.99.18-7.64,4.2-13.66.95-3.74-2.03-5.18-10.67-4.54-14.6.49-3.01,2.63-6.48,3.36-9.38,3.96-15.84-6.05-26.38,2.67-44.58,4.16-8.69,7.08-7.37,15.51-4.34ZM333.87,71.28c-1.63-5.25-4-10.55-4.49-16.13-.71-8.07,1.33-16.15.78-24.03-.08-1.07-1.43-10.19-2.87-5.81-3.41,10.36-3.94,21.79-6.15,32.47-1.06,1.57-2.63-3.01-2.82-3.55-2.15-6.22-2.91-12.74-2.42-19.32.21-2.84,1.51-6.17,1.52-8.99,0-1.51-.58-1.53-1.82-1.06-3.26,1.24-6.92,14.75-7.2,18.29-.7,8.93,3.21,18.96,2.24,28.12,7.59-1.18,15.63-1.18,23.22,0ZM320.38,49.53c1.17-5.5,1.5-11.14,2.45-16.68.48-2.77,2.64-4.66-.58-7.32-.93-.21-1.75.85-2.18,1.55-1.69,2.74-2.26,14.03-1.85,17.49.17,1.46.59,4.39,2.16,4.95ZM314.98,72.99c-4.49.57-5.71,1.18-7.12,5.62-1.59,5-2.56,17.42,4.72,18.16,3.94.4,7.01-3.33,13.26-2.08,2.23.45,4.72,3.02,7.27,1.72,3.11-1.59,5.02-6.55,5.21-9.88s-1.34-12-4.98-12.85c-4.94-1.15-13.31-1.34-18.35-.71Z","65":"M377.09,26.36c8.17,1.96,1.11,14.07,1.05,19.88-.02,2.04.81,4.13.72,6.7-.11,3.26-1.58,7.32-1.6,10.47-.02,5.07,4.33,13.7,5.12,19.69.42,3.2-.07,7.1-1.73,9.89-.5.85-3.78,4.16-4.59,4.4-4.26,1.27-6.48-1.19-9.6-1.41-2.11-.15-3.95.8-5.98.87-4.78.14-14.1-4.41-14.66-9.4-.68-6.08.78-13.42,2.66-19.17,2.73-8.33,2.91-9.49,4.21-18.29.8-5.43,5.36-18.5,10.12-21.37,3.25-1.95,3.82.8,5.01.54.81-.17,1.45-1.49,3.14-1.48,2.91,0,2.34,3.15,6.13-1.33ZM378.82,29.28h-2.22c-.4,6.08-5.13,10.69-7.33,15.57-2.33,5.19-2.82,12-6.56,16.68l2.64-29.62c.43-1.6-1.42-1.48-2.29-.78-1.83,4-5.33,7.84-6.68,12.06-1.66,5.2-1.17,12.25-2.48,17.77-.78,3.31-2.8,6.26-3.55,9.57,8.78-1.31,17.37.49,26.22,0-1.35-3.84-1.91-6.62-1.42-10.8.7-6.07.7-7.53.67-13.57-.02-3.09,4.35-15.28,3-16.88ZM372.6,35.84c1.28-2.44-.72-7.27-3.17-5.1-3.63,3.22-2.48,7.71-2.59,12.04,2.07.47,1.27-.7,1.83-1.5,1.06-1.51,1.82-3.07,2.74-4.64.35-.59,1.1-.64,1.19-.8ZM355.41,72.23c-6.02,1.14-6.85,1.5-7.34,7.65-.41,5.13-.89,8.51,3.52,11.53,7.01,4.8,8.39,1.98,14.84,2.33,3.25.18,6.25,3.06,9.8.83,5.61-3.53,3.19-16.09,1.13-21.46l-21.96-.88Z","85":"M22.41,172.88c-2.23,4.89-6.81,10.21-8.29,15.32-1.26,4.32-.19,15.55-3.37,17.62-4.05,2.64-5.86-2.43-6.34-5.74-.69-4.84-1.37-13.17-.77-17.87.66-5.14,6.38-12.42,6.68-16.6.2-2.8-3.22-11.94-3.66-15.78-.4-3.49-.41-7.74,2.23-10.38.95-.95,5.98-3.79,7.24-4.04,3.85-.76,4.49,1.91,6.59,2.12,2.41.24,4.12-1.88,6-2.22,2.39-.43,5.95-.13,8.25.68,13.8,4.84,2.25,17.83,1.13,25.2-1.5,9.92,2.18,19.18-2.26,29.24-1.26,2.85-8.58,13.93-10.85,15.39-2.6,1.67-5.69.61-5.7-2.63-.03-7.03,6.11-14.2,6.81-20.26.37-3.24,1.01-10.95-3.68-10.05ZM35.72,161.45c1.96-6.82,11.32-20.9-.48-23.72-6.41-1.53-8.92,2.87-11.8,2.78-1.73-.05-4.6-3.2-6.68-2.99-1.64.16-6.84,3.74-7.54,5.28-1.04,2.29,1.26,17.6,2.72,18.63,8.07.98,15.71,1.2,23.78.03ZM35.8,184.41c.91-5.7-.67-13.54,0-19.5-1.01-1.62-2.41-.36-4.08-.33-6.38.09-12.83.11-19.17-.47-1.07.8-.6,3.44-1.09,4.94-1.29,3.98-4.83,8.79-5.46,12.53-.55,3.24-.09,20.7,2.05,22.34,2.34,1.79,2.87-5.31,3.01-6.77.22-2.19-.28-4.55.04-6.71.48-3.28,7.91-17.56,10.4-19.59,6.47-5.28,7.19,8.03,6.79,12.04-.42,4.25-8.01,18-6.37,20.64.78,1.25,1.34.89,2.22-.04,3.15-3.32,10.97-14.87,11.65-19.09Z","84":"M50.82,215.5c-.82-6.21-1.32-13.49-.7-19.76.74-7.44,6.65-19.7,6.68-25.57.02-4.99-3.88-12.5-4.43-18.09-.81-8.18.57-14.73,10.05-15.3,4.46-.27,7.43,2.35,9.72,2.35,1.64,0,4.84-2.21,7.57-2.26,9.44-.2,9.96,11.3,9.28,18.3-.44,4.51-3.14,9.33-3.69,13.56-.6,4.65.25,10.19-.02,14.98-.31,5.58-2.25,19.18-4.72,23.78-1.22,2.28-9.17,12.29-10.94,6.84-1.58-4.86,2.12-8.28,3.13-12.41,1.41-5.78-.46-8.55-.98-13.74-.19-1.93,1.06-11.6-1.87-10.87-7.21,11-9.67,24.28-13.53,36.72-1.13,2.02-3.51,1.62-5.55,1.5ZM61.07,139.2c-10.8,2.27-5.68,15.86-3.95,23.12l26.68,3.4c2.13-6.66,5.82-18.98.36-24.47-5.04-5.07-9.18.99-12.64.62-3.27-.35-4.45-3.93-10.45-2.67ZM52.29,195.66c-.58,5.56.43,11.97,0,17.62,1.04.19,1.69-.31,2.28-1.09,1.75-2.33,2.26-9.42,3.2-12.54,1.69-5.55,3.9-11.63,6.37-16.88,1.34-2.85,4.09-9.97,8.4-7.38,2.41,1.45,1.21,9.21,1.48,12.01.46,4.65,2.12,8.38,1.32,13.33-.67,4.15-4.14,8.08-3.57,12.55,1.3,1.55,6.85-7.09,7.29-8.07,3.24-7.16,4.66-26.37,3.98-34.35-.06-.65.01-1.3-.38-1.87-1.22-1.76-23.16-4.85-24.39-3.71-.07,2.23.88,3.95.71,6.27-.49,6.53-5.91,16.59-6.7,24.1Z","83":"M110.19,135.44c10.33-2.34,15.97,8.65,15.2,17.47-.66,7.6-4.73,14.14-5.82,20.42-.88,5.06.43,11.16-.23,16.27-.48,3.72-2.63,9.06-3.49,13-1.74,7.96-2.68,18.08-7.21,25.03-5.3,8.13-6.74,2.12-7.22-4.23-1.32-17.33.63-36.5-.75-54-.68-8.64-5.65-12.64-4.53-22.54.25-2.24,1.75-3.41,3.43-4.82,1.3-1.09,9.42-6.34,10.63-6.61ZM118.4,139.28c-1.9-1.91-4.91-2.19-7.43-1.55-.98.25-8.88,4.96-9.94,5.79-6.99,5.42,1.11,18.09,1.97,24.68,5.11,1,10.53,1.25,15.67.47,4.14-8.07,6.85-22.23-.27-29.39ZM117.9,171.28h-12.36c-.36,0-1.55-1.21-2.62-.75-.08,18.65,1.28,37.17.75,55.87l1.87,1.87c5.93-8.48,6.85-19.48,8.82-29.43,1.34-6.79,3.25-12.3,3.49-19.62.07-2.17-1.34-5.06.05-7.96Z","82":"M146.2,136.24c5.97-.69,8.95-.55,9.85,6.23.74,5.53-1.17,16.5-2.36,22.27-.52,2.55-2.28,5.32-2.75,8.5-1.93,12.98.73,44.9-7.25,54.24-3.86,4.52-5.39-4.88-5.56-7.83-.16-2.62.76-4.71.69-6.66-.44-11.73-1.69-26.6-2.93-38.34-1.08-10.24-5.8-19.63-4.55-30.78.62-5.51,10.25-7.1,14.85-7.63ZM137.48,170.44c2.74.01,9.51,1.08,11.59-.59.98-.78,2.95-7.8,3.25-9.5.57-3.28,1.5-11.12,1.49-14.27,0-2.01-.62-7.05-2.71-7.67-2.3-.68-13.87,1.61-15.94,3.26-2.31,1.83-1.74,8.82-1.43,11.9.21,2.06,3.04,16.38,3.76,16.87ZM148.62,172.78h-10.49c-.55,6.94.96,13.76,1.5,20.63.74,9.44.76,19.12,1.47,28.53.1,1.35-.23,2.42,1.15,3.33,4.61-4.83,3.5-12.38,4.12-18.36.37-3.56,1.27-7.73,1.5-11.25.49-7.56.02-15.32.75-22.87Z","81":"M165.31,137.74c2.24-1.95,11.17-1.25,14.37-2.45,2.56.43,4.47,2.33,4.87,4.9.81,5.21.02,17.95-1.65,23.02-2.28,6.92-2.79,17.11-3.55,24.94-.91,9.29,1.22,19.37-3.17,28.33-2.46,5.01-6.59,3.01-7.26-2.14-1.32-10.15-1.91-20.63-1.56-30.69.2-5.97-1.55-9.21-2.19-14.31-.3-2.42.32-5.17-.08-7.42s-3.25-4.76-3.68-7.57c-.71-4.65.16-13.36,3.91-16.62ZM182.24,139.13c-4.93-2.21-10.04.62-15.12-.12-3.25,4.05-4.24,9.48-3.47,14.6.38,2.54,2.52,4.28,3.2,6.54,1.16,3.84-.81,5.99,4.6,6.64,3.93.47,7.44.36,8.98-3.8.95-2.58,1.72-10.06,1.91-13.09.23-3.55-.06-7.22-.1-10.78ZM178.59,169.04l-10.48-.75c-.75.89,1.48,9.53,1.54,11.61.26,9.01-.16,17.88.7,27.01.13,1.41,1.12,9.09,1.5,9.37,1.19.22,2.06-.59,2.57-1.54s2.43-8.71,2.61-10.14c.69-5.4-.53-11.79.05-17.2.21-2,1.22-3.51,1.45-5.29.59-4.42.72-8.69.05-13.07Z","71":"M200.85,135.43c4.92-1.42,12.1,1.78,17.28,1.9,3.27,1.54,3.54,10.76,3.12,14.02-.6,4.64-3.48,9.99-4.27,14.48-2.32,13.22-2.31,28.36-3.13,41.86-.11,1.84-.88,8.64-1.59,9.65-3.29,4.68-6.97-2.42-7.94-5.42-2.92-9.01-3.58-30.45-3.27-40.3.05-1.57.91-3.28.81-4.46-.09-1.01-3.18-4.76-3.79-6.73-1.23-3.95-1.3-19.23.43-22.87.35-.73,1.59-1.91,2.36-2.13ZM201.54,137.63c-1.46.5-1.88,4.68-1.99,6.25-.39,5.07-.97,19.31,5.07,21.24,1.57.5,7.24,1.22,8.68.78,2.5-.76,5.22-11.94,5.55-14.69s.91-11.04-2.55-12.03c-1.59-.46-3.44.11-5.06-.19-2.97-.55-6.42-2.47-9.7-1.35ZM214.56,168.28c-3.25,1.16-10.53-2.61-11.24,1.13-.87,4.57.52,9.75.75,14.25.4,7.83-.29,23.82,3.59,30.15.57.93,1.16,1.78,2.03,2.46,1.85.09.99-11.33,1.12-13.11.8-10.46,2.06-20.72,3.56-30.94.19-1.32.29-2.61.19-3.94Z","72":"M237.88,228.93c-.22-.14-2.49-3.83-2.73-4.39-5.33-12.36-1.52-23.3-2.61-34.89-.27-2.83-1.5-5.15-1.54-8.24s1.07-5.88.81-9.01c-.41-4.91-4.72-10.33-5.25-15.75-.28-2.88-.37-17.37.92-18.94s8.5-.57,10.64-.13c1.15.24,1.96,1.1,3.12,1.38,5.37,1.32,8.56-.65,9.3,6.44,1.05,10.11-2.44,14.13-3.71,22.54-1.66,10.96-1.14,23.05-2.27,33.72-.29,2.77-1.86,5.51-2.18,8.32-.45,3.84.29,8-.15,11.85-.19,1.66-1.53,8.9-4.33,7.1ZM244.53,171.29c-.34-5.77,3.06-11.28,3.67-16.95.32-2.94,1.07-11.07-1.98-12.12-2.67-.93-9.18-2.55-11.98-3.01-3.01-.49-5.09-.98-5.49,2.41-1.21,10.38-.36,17.91,4.27,27.33.32.65.93,2.21,1.53,2.35h9.97ZM239.28,226.03c.51-5.12.26-11.05.83-16.05.34-2.94,1.88-6.04,2.17-9.08.64-6.65-.14-13.49.8-20.2.27-1.92,2.99-6.16.21-7.07-2.3-.75-6.65.31-9.26-.11-.65,5.9.6,11.9.78,17.59.27,8.51-1.49,15.43.14,24.62.52,2.95,1.69,8.75,4.32,10.29Z","73":"M265.29,134.69c8.23-1.86,10.1,2.1,15.27,6.16,2.22,1.74,6.07,2.32,6.55,5.47.16,1.05-1.71,9.36-2.16,11.05-2.9,10.92-3.73,11.44-3.67,23.26.04,7.91-.99,13.6-1.56,21-.39,5.04,1.11,24.29-.78,26.97-2.19,3.1-4.93.69-6.23-1.89-1.6-3.17-6.46-15.32-7.03-18.46-2.04-11.22-2.95-23-3.92-34.33-.62-7.3-5.04-13.19-5.91-21.07-.45-4.03.22-7.01,2.04-10.56,1.22-2.38,4.73-6.98,7.41-7.58ZM284.13,145.14c-6.99-2.23-9.27-9.64-17.46-8.32-2.71.44-5.87,4.15-6.98,6.51-2.3,4.88-1.02,19.57,3.2,23.44,1.96,1.8,14.28,2.3,16.12.39.61-.63,3.91-10.62,4.27-12.23.72-3.2,1.37-6.5.85-9.8ZM278.25,170.53h-14.99c.05,1.16.68,2.19.76,3.36.77,10.97,1.97,22.04,3.92,32.83,1.26,6.97,5.49,14.03,7.68,20.82l1.89-.45c.49-8.53-.69-17.78-.04-26.22.23-3.04,1.32-5.9,1.56-8.94.56-7.17-1.07-14.26-.78-21.4Z","74":"M315.39,217.03c-4.3,1.13-6.96-2.89-9.31-6.06-10.72-14.51-3.92-25.01-6.6-39.89-1.31-7.27-7.4-21.18-2.83-27.93.45-.67,4.23-4.52,4.84-4.91,5.09-3.26,8.85,3.38,12,3.08,1.64-.15,3.57-3.12,5.45-3.62,4.02-1.07,7.44.05,9.68,3.46,3.33,5.06,3.45,8.82,2.31,14.54-.74,3.71-3.68,9.53-3.58,12.92.12,3.95,1.48,13.22,2.46,17.1.62,2.45,2.58,5.59,3.21,8.04,1.8,6.96.55,12.75.22,19.73-1.33,2.65-4.31,4.18-6.18,1.23-.97-5.12-3.21-9.87-4.7-14.79-2.18-7.19-2.53-15.52-8.07-21.16-.94.73-1.38,1.68-1.69,2.8-1.35,4.83-2.06,18.86-.7,23.59,1.1,3.85,4.58,7.35,3.52,11.86ZM320.45,139.93c-3.37.53-4.22,3.52-6.93,3.67-4.42.24-5.32-4.64-11.1-2.92-1.9.57-4.8,4.97-5.05,6.94-.38,2.92,1.79,18.26,3.77,19.59,4.51-.27,8.6-2.21,13.2-2.6,2.58-.22,10.78.56,11.92-.82.99-1.2,3.45-12.68,3.22-14.44-.59-4.58-3.71-10.27-9.04-9.42ZM325.13,166.79c-3.56.15-7.23-.28-10.78.08-2.23.22-9.22,1.59-11.19,2.3-.59.22-1.02.41-1.16,1.09.59,14.02-3.32,28.97,6.66,40.39.46.53,5.48,5.67,4.47,2.28-.6-2-2.67-4.41-3.4-7.1-1.33-4.9-.57-7.17-.34-11.66s-.3-14.62,2.95-17.29c4.59-3.78,6.76,6.34,8.8,9.27l7.38,26.37c1,1.29,1.58,2.11,2.51.31.04-4.75,1.41-9.34.78-14.11-.45-3.42-2.67-7.09-3.46-10.03-1.92-7.13-2.44-14.58-3.23-21.9Z","75":"M358.13,173.56c-.97,4.03-2.04,7.26-1.47,11.55,1.02,7.64,9.87,14.62,6.74,22.61-1.93.87-3.58.23-5.26-.84-4.32-2.73-12.47-18.29-13.35-23.39-1.18-6.81,1.48-14.42.51-21.51-.9-6.65-7.91-8.16-6.72-17.35.8-6.18,10.74-10.7,15.94-8.39,1.53.68,3.35,2.7,4.74,2.83,2.47.23,4.45-3.7,8.76-2.89,2.39.45,8.92,4.42,9.92,6.62,2.77,6.11-3.97,17.82-3.4,25.15.35,4.51,3.68,8.1,4.91,12.33s1.49,15.4,1.12,19.88c-.3,3.63-.59,9.18-5.46,7.75-5.08-1.49-3.93-11.25-4.47-15.05s-6.39-16.64-9.12-18.62c-1.09-.8-2.11-.86-3.4-.68ZM372.24,163.69c1.5-7.55,9.18-21.98-2.69-24.49-6.23-1.32-7.13,3.2-10.16,2.72-1.86-.3-5.17-4.21-7.51-4.21-.81,0-5.56,1.29-6.52,1.69-3.47,1.43-5.11,5.34-4.45,8.97.21,1.14,7.1,13.46,7.77,13.97,3.43,2.63,18.77.97,23.57,1.35ZM361.84,205.78c.04-7.95-6.48-12.88-7.41-20.7-1.09-9.15,3.31-20.88,11.46-9.22,6.16,8.81,5.78,15.17,7.37,24.87.42,2.53,2.95,7.86,4.28,3.14,1.34-4.75.84-17.3-.13-22.29-.53-2.72-3.12-5.99-4.09-8.66-.57-1.57-.91-6.02-1.68-6.56-2.65-1.03-5.15.54-7.92.49-2.32-.04-14.55-2.4-15.36-1.57.09,6.18-2.62,11.82-1.33,18.21.8,3.96,8.95,19.49,12.16,21.58.93.6,1.48.93,2.65.71Z"};
+    const ODONTO_DECIDUOUS_BOXES = {"55":[0.0,26.28,37.07,99.0],"54":[43.03,21.61,78.93,98.68],"53":[83.48,0.0,116.7,99.93],"52":[121.87,9.81,147.65,98.29],"51":[153.09,8.43,186.4,96.35],"61":[199.47,9.81,232.18,98.69],"62":[237.26,8.43,263.26,99.01],"63":[267.95,0.0,299.6,98.69],"64":[303.93,21.61,340.76,99.0],"65":[345.65,26.98,382.53,97.75],"85":[3.41,134.97,43.68,207.14],"84":[51.1,135.97,88.2,217.23],"83":[95.97,135.3,125.46,231.56],"82":[129.26,135.07,156.22,228.28],"81":[161.18,135.3,185.17,220.84],"71":[197.15,135.07,221.4,219.38],"72":[226.38,136.75,250.72,229.22],"73":[255.71,134.22,287.11,230.06],"74":[294.98,137.71,333.96,217.23],"75":[338.45,135.97,382.52,208.14]};
+    function normalizeDentitionType(value){
+      const s = String(value || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+      return (s.includes('decid') || s.includes('infantil') || s.includes('crianca') || s === 'primary') ? 'deciduous' : 'permanent';
+    }
+    function dentitionLabel(value){
+      return normalizeDentitionType(value) === 'deciduous' ? 'Decíduos' : 'Permanentes';
+    }
+    function getOdontoRowsForDentition(value){
+      return normalizeDentitionType(value) === 'deciduous' ? DECIDUOUS_TOOTH_ROWS : TOOTH_ROWS;
+    }
+    function getOdontoTeethForDentition(value){
+      const rows = getOdontoRowsForDentition(value);
+      return [...rows.supDir, ...rows.supEsq, ...rows.infDir, ...rows.infEsq].map(String);
+    }
+    function toothOrderIndex(tooth, dentitionType){
+      const list = getOdontoTeethForDentition(dentitionType);
+      const idx = list.indexOf(String(tooth));
+      return idx >= 0 ? idx : 9999 + Number(String(tooth).replace(/\D/g,'') || 0);
+    }
+    function sortTeethForDentition(list, dentitionType){
+      return (Array.isArray(list) ? list : []).map(String).filter(Boolean).sort((a,b)=>toothOrderIndex(a,dentitionType)-toothOrderIndex(b,dentitionType));
+    }
+    function getFichaDentitionType(ficha, entry=null){
+      const active = getActiveFichaEvaluation(ficha || ensureFicha(entry || {}), entry);
+      return normalizeDentitionType(active?.dentitionType || ficha?.dentitionType || 'permanent');
+    }
+    const ODONTO_AWBOOK_VIEWBOX = '0 0 607.2 236';
+    const ODONTO_AWBOOK_LABELS = {"38":587.94,"37":542.89,"36":497.49,"35":455.94,"34":419.93,"33":384.32,"32":351.46,"31":322.19,"41":285.94,"42":256.59,"43":223.62,"44":189.8,"45":154.79,"46":112.26,"47":66.14,"48":20.27,"28":584.32,"27":546.0,"26":503.57,"25":467.19,"24":433.35,"23":396.78,"22":363.17,"21":328.66,"11":282.65,"12":247.68,"13":213.0,"14":175.2,"15":140.72,"16":104.09,"17":61.44,"18":23.28};
+    const ODONTO_AWBOOK_SVG_INNER = `<g class="odontograma"><g id="g38"><path id="_38" data-name="38" class="cls-2" d="M596.47,195.28c-.57,7.44-6.13.73-8.64-2.24-8.99-10.67-9.2-20.61-13.81-32.68-1.53-4-4.7-6.99-5.26-12.04-.38-3.45,3.01-11.1,6.49-12.15,4.53-1.37,8.18,3.02,11.26,1.55,1.12-.53,1.94-1.99,2.98-2.3,3.12-.93,6.72-.26,9.23,1.71,9.67,7.6,1.22,17.24.04,26.32-.85,6.59,1.27,18.22,4.16,24.23,1.63,3.38,9.06,13.12-.83,11.33-2.47-.45-3.08-3.73-5.63-3.74ZM577.13,163.64c1.41,1.02,17.4,1.41,18.62.55,1.74-5.11,7.43-17.94,4.5-22.58-1-1.59-4.5-3.92-6.38-4.13-5.35-.59-4.89,2.61-7.55,3.06-3.38.56-6.35-3.16-10.11-1.96-1.67.54-3.93,2.98-4.32,4.72-1.88,8.5,3.02,12.81,5.24,20.33ZM596.46,166.78h-17.98c1.86,5.33,3.09,13.01,5.85,17.77,1.05,1.82,6.52,8.87,8,9.99.59.44,1.29,1.52,1.89.36-.59-7.1-5.86-12.99-5.63-19.86,4.78,6.24,5.22,15.32,11.99,20.25,1.96,1.43,5.28,3.04,3.95-.95-.55-1.66-2.38-2.95-3.13-4.37-3.55-6.72-4.62-15.64-4.94-23.18Z"></path><rect id="r38" class="cls-1" x="568.74" y="135.02" width="38.39" height="64.68"></rect></g><g id="g37"><path id="_37" data-name="37" class="cls-2" d="M541.04,173.56c-.97,4.03-2.04,7.26-1.47,11.55,1.02,7.64,9.87,14.62,6.74,22.61-1.93.87-3.58.23-5.26-.84-4.32-2.73-12.47-18.29-13.35-23.39-1.18-6.81,1.48-14.42.51-21.51-.9-6.65-7.91-8.16-6.72-17.35.8-6.18,10.74-10.7,15.94-8.39,1.53.68,3.35,2.7,4.74,2.83,2.47.23,4.45-3.7,8.76-2.89,2.39.45,8.92,4.42,9.92,6.62,2.77,6.11-3.97,17.82-3.4,25.15.35,4.51,3.68,8.1,4.91,12.33s1.49,15.4,1.12,19.88c-.3,3.63-.59,9.18-5.46,7.75-5.08-1.49-3.93-11.25-4.47-15.05s-6.39-16.64-9.12-18.62c-1.09-.8-2.11-.86-3.4-.68ZM555.15,163.69c1.5-7.55,9.18-21.98-2.69-24.49-6.23-1.32-7.13,3.2-10.16,2.72-1.86-.3-5.17-4.21-7.51-4.21-.81,0-5.56,1.29-6.52,1.69-3.47,1.43-5.11,5.34-4.45,8.97.21,1.14,7.1,13.46,7.77,13.97,3.43,2.63,18.77.97,23.57,1.35ZM544.76,205.78c.04-7.95-6.48-12.88-7.41-20.7-1.09-9.15,3.31-20.88,11.46-9.22,6.16,8.81,5.78,15.17,7.37,24.87.42,2.53,2.95,7.86,4.28,3.14,1.34-4.75.84-17.3-.13-22.29-.53-2.72-3.12-5.99-4.09-8.66-.57-1.57-.91-6.02-1.68-6.56-2.65-1.03-5.15.54-7.92.49-2.32-.04-14.55-2.4-15.36-1.57.09,6.18-2.62,11.82-1.33,18.21.8,3.96,8.95,19.49,12.16,21.58.93.6,1.48.93,2.65.71Z"></path><rect id="r37" class="cls-1" x="521.36" y="136.03" width="43.07" height="72.11"></rect></g><g id="g36"><path id="_36" data-name="36" class="cls-2" d="M498.31,217.03c-4.3,1.13-6.96-2.89-9.31-6.06-10.72-14.51-3.92-25.01-6.6-39.89-1.31-7.27-7.4-21.18-2.83-27.93.45-.67,4.23-4.52,4.84-4.91,5.09-3.26,8.85,3.38,12,3.08,1.64-.15,3.57-3.12,5.45-3.62,4.02-1.07,7.44.05,9.68,3.46,3.33,5.06,3.45,8.82,2.31,14.54-.74,3.71-3.68,9.53-3.58,12.92.12,3.95,1.48,13.22,2.46,17.1.62,2.45,2.58,5.59,3.21,8.04,1.8,6.96.55,12.75.22,19.73-1.33,2.65-4.31,4.18-6.18,1.23-.97-5.12-3.21-9.87-4.7-14.79-2.18-7.19-2.53-15.52-8.07-21.16-.94.73-1.38,1.68-1.69,2.8-1.35,4.83-2.06,18.86-.7,23.59,1.1,3.85,4.58,7.35,3.52,11.86ZM503.37,139.93c-3.37.53-4.22,3.52-6.93,3.67-4.42.24-5.32-4.64-11.1-2.92-1.9.57-4.8,4.97-5.05,6.94-.38,2.92,1.79,18.26,3.77,19.59,4.51-.27,8.6-2.21,13.2-2.6,2.58-.22,10.78.56,11.92-.82.99-1.2,3.45-12.68,3.22-14.44-.59-4.58-3.71-10.27-9.04-9.42ZM508.04,166.79c-3.56.15-7.23-.28-10.78.08-2.23.22-9.22,1.59-11.19,2.3-.59.22-1.02.41-1.16,1.09.59,14.02-3.32,28.97,6.66,40.39.46.53,5.48,5.67,4.47,2.28-.6-2-2.67-4.41-3.4-7.1-1.33-4.9-.57-7.17-.34-11.66s-.3-14.62,2.95-17.29c4.59-3.78,6.76,6.34,8.8,9.27l7.38,26.37c1,1.29,1.58,2.11,2.51.31.04-4.75,1.41-9.34.78-14.11-.45-3.42-2.67-7.09-3.46-10.03-1.92-7.13-2.44-14.58-3.23-21.9Z"></path><rect id="r36" class="cls-1" x="477.89" y="137.32" width="39.19" height="80.41"></rect></g><g id="g35"><path id="_35" data-name="35" class="cls-2" d="M450.88,136.19c1.44-.33,3.59-.34,5.06-.11,2.39.37,12.14,6.04,13.93,7.81,1.02,1.01,2.11,2.31,2.2,3.81.23,3.56-6.26,15.25-7.69,19.99-2.67,8.84-5.76,26.46-5.78,35.47-.01,4.43,3.5,11.86.05,15.79-4.62,5.27-9.52-8.2-10.2-11.62-2.79-14.16-2.65-28.89-4.9-43.1-.85-5.34-4.69-12.04-3.52-17.17.58-2.53,8.18-10.26,10.86-10.87ZM451.63,138.43c-3.66.83-10.27,8.74-9.5,12.94.24,1.3,2.06,7.34,2.6,8.66,1.47,3.6,3.57,2.87,6.71,3.79.94.27,1.75,1.1,2.48,1.27,2.84.66,8.29,1,9.76-1.84,2.22-4.29,3.69-9.91,6.05-14.27-.03-3.87-4.51-4.77-6.9-6.3-3.78-2.41-5.79-5.46-11.19-4.24ZM461.59,168.28l-15.74-3c-.67.75,1.94,17.25,2.25,19.87.97,8.19,1.16,20.97,4.82,28.17.75,1.48,1.81,2.64,3.05,3.7,3.98.86.54-9.82.36-11.62-.58-5.93-.26-12.71,2.05-18.2l3.2-18.92Z"></path><rect id="r35" class="cls-1" x="439.8" y="135.92" width="32.27" height="84.23"></rect></g><g id="g34"><path id="_34" data-name="34" class="cls-2" d="M414.94,136.17c1.63-.31,2.27-.08,3.74.44,2.04.72,8.58,4.61,10.5,5.99s6.09,4.91,6.12,7.29c.05,3.88-6.38,12.88-7.26,17.44-.55,2.88.14,5.96-.17,8.83-.88,8.13-3.13,16.3-3.74,24.75-.28,3.86,1.64,17.97-3.41,18.42-8.59-2.85-5.72-14.7-7.17-22.08-.72-3.66-2.69-6.8-2.91-10.6-.17-2.92.84-5.09.78-7.46-.07-3.13-1.59-12.47-2.32-15.74-1.3-5.79-5.38-8.23-4.39-15.73.52-3.91,6.29-10.79,10.23-11.55ZM415.68,138.39c-2.25.4-7.37,5.39-8.2,7.6-2.3,6.1,1.47,10.37,3.41,15.67.5,1.35.27,3.49.84,4.41,1.19,1.9,12.57-.2,14.33-1.48,1.87-1.36,6.38-12.23,6.35-14.72s-3.67-5.02-5.68-6.32c-1.64-1.06-9.81-5.38-11.06-5.16ZM425.63,167.53c-4.41,0-8.11,2.35-12.74,1.5-.72,3.16.72,6.64.79,9.41s-1.06,4.81-.71,8.15c.46,4.39,3.11,8.96,3.58,13.66.56,5.56-1.64,12.25,3.47,16.03,1.35.55,1.7-1.83,1.79-2.68,1.05-9.09.28-18.71,1.63-28.37.82-5.82,3.41-11.26,2.18-17.7Z"></path><rect id="r34" class="cls-1" x="404.56" y="136.03" width="30.74" height="83.35"></rect></g><g id="g33"><path id="_33" data-name="33" class="cls-2" d="M378.2,134.69c8.23-1.86,10.1,2.1,15.27,6.16,2.22,1.74,6.07,2.32,6.55,5.47.16,1.05-1.71,9.36-2.16,11.05-2.9,10.92-3.73,11.44-3.67,23.26.04,7.91-.99,13.6-1.56,21-.39,5.04,1.11,24.29-.78,26.97-2.19,3.1-4.93.69-6.23-1.89-1.6-3.17-6.46-15.32-7.03-18.46-2.04-11.22-2.95-23-3.92-34.33-.62-7.3-5.04-13.19-5.91-21.07-.45-4.03.22-7.01,2.04-10.56,1.22-2.38,4.73-6.98,7.41-7.58ZM397.04,145.14c-6.99-2.23-9.27-9.64-17.46-8.32-2.71.44-5.87,4.15-6.98,6.51-2.3,4.88-1.02,19.57,3.2,23.44,1.96,1.8,14.28,2.3,16.12.39.61-.63,3.91-10.62,4.27-12.23.72-3.2,1.37-6.5.85-9.8ZM391.16,170.53h-14.99c.05,1.16.68,2.19.76,3.36.77,10.97,1.97,22.04,3.92,32.83,1.26,6.97,5.49,14.03,7.68,20.82l1.89-.45c.49-8.53-.69-17.78-.04-26.22.23-3.04,1.32-5.9,1.56-8.94.56-7.17-1.07-14.26-.78-21.4Z"></path><rect id="r33" class="cls-1" x="368.62" y="134.22" width="31.4" height="95.84"></rect></g><g id="g32"><path id="_32" data-name="32" class="cls-2" d="M350.79,228.93c-.22-.14-2.49-3.83-2.73-4.39-5.33-12.36-1.52-23.3-2.61-34.89-.27-2.83-1.5-5.15-1.54-8.24s1.07-5.88.81-9.01c-.41-4.91-4.72-10.33-5.25-15.75-.28-2.88-.37-17.37.92-18.94s8.5-.57,10.64-.13c1.15.24,1.96,1.1,3.12,1.38,5.37,1.32,8.56-.65,9.3,6.44,1.05,10.11-2.44,14.13-3.71,22.54-1.66,10.96-1.14,23.05-2.27,33.72-.29,2.77-1.86,5.51-2.18,8.32-.45,3.84.29,8-.15,11.85-.19,1.66-1.53,8.9-4.33,7.1ZM357.45,171.29c-.34-5.77,3.06-11.28,3.67-16.95.32-2.94,1.07-11.07-1.98-12.12-2.67-.93-9.18-2.55-11.98-3.01-3.01-.49-5.09-.98-5.49,2.41-1.21,10.38-.36,17.91,4.27,27.33.32.65.93,2.21,1.53,2.35h9.97ZM352.19,226.03c.51-5.12.26-11.05.83-16.05.34-2.94,1.88-6.04,2.17-9.08.64-6.65-.14-13.49.8-20.2.27-1.92,2.99-6.16.21-7.07-2.3-.75-6.65.31-9.26-.11-.65,5.9.6,11.9.78,17.59.27,8.51-1.49,15.43.14,24.62.52,2.95,1.69,8.75,4.32,10.29Z"></path><rect id="r32" class="cls-1" x="339.29" y="136.85" width="24.34" height="92.37"></rect></g><g id="g31"><path id="_31" data-name="31" class="cls-2" d="M313.76,135.43c4.92-1.42,12.1,1.78,17.28,1.9,3.27,1.54,3.54,10.76,3.12,14.02-.6,4.64-3.48,9.99-4.27,14.48-2.32,13.22-2.31,28.36-3.13,41.86-.11,1.84-.88,8.64-1.59,9.65-3.29,4.68-6.97-2.42-7.94-5.42-2.92-9.01-3.58-30.45-3.27-40.3.05-1.57.91-3.28.81-4.46-.09-1.01-3.18-4.76-3.79-6.73-1.23-3.95-1.3-19.23.43-22.87.35-.73,1.59-1.91,2.36-2.13ZM314.45,137.63c-1.46.5-1.88,4.68-1.99,6.25-.39,5.07-.97,19.31,5.07,21.24,1.57.5,7.24,1.22,8.68.78,2.5-.76,5.22-11.94,5.55-14.69s.91-11.04-2.55-12.03c-1.59-.46-3.44.11-5.06-.19-2.97-.55-6.42-2.47-9.7-1.35ZM327.47,168.28c-3.25,1.16-10.53-2.61-11.24,1.13-.87,4.57.52,9.75.75,14.25.4,7.83-.29,23.82,3.59,30.15.57.93,1.16,1.78,2.03,2.46,1.85.09.99-11.33,1.12-13.11.8-10.46,2.06-20.72,3.56-30.94.19-1.32.29-2.61.19-3.94Z"></path><rect id="r31" class="cls-1" x="310.06" y="134.22" width="24.25" height="85.93"></rect></g><g id="g41"><path id="_41" data-name="41" class="cls-2" d="M278.22,137.74c2.24-1.95,11.17-1.25,14.37-2.45,2.56.43,4.47,2.33,4.87,4.9.81,5.21.02,17.95-1.65,23.02-2.28,6.92-2.79,17.11-3.55,24.94-.91,9.29,1.22,19.37-3.17,28.33-2.46,5.01-6.59,3.01-7.26-2.14-1.32-10.15-1.91-20.63-1.56-30.69.2-5.97-1.55-9.21-2.19-14.31-.3-2.42.32-5.17-.08-7.42s-3.25-4.76-3.68-7.57c-.71-4.65.16-13.36,3.91-16.62ZM295.16,139.13c-4.93-2.21-10.04.62-15.12-.12-3.25,4.05-4.24,9.48-3.47,14.6.38,2.54,2.52,4.28,3.2,6.54,1.16,3.84-.81,5.99,4.6,6.64,3.93.47,7.44.36,8.98-3.8.95-2.58,1.72-10.06,1.91-13.09.23-3.55-.06-7.22-.1-10.78ZM291.5,169.04l-10.48-.75c-.75.89,1.48,9.53,1.54,11.61.26,9.01-.16,17.88.7,27.01.13,1.41,1.12,9.09,1.5,9.37,1.19.22,2.06-.59,2.57-1.54s2.43-8.71,2.61-10.14c.69-5.4-.53-11.79.05-17.2.21-2,1.22-3.51,1.45-5.29.59-4.42.72-8.69.05-13.07Z"></path><rect id="r41" class="cls-1" x="274.09" y="135.3" width="23.69" height="84.85"></rect></g><g id="g42"><path id="_42" data-name="42" class="cls-2" d="M259.12,136.24c5.97-.69,8.95-.55,9.85,6.23.74,5.53-1.17,16.5-2.36,22.27-.52,2.55-2.28,5.32-2.75,8.5-1.93,12.98.73,44.9-7.25,54.24-3.86,4.52-5.39-4.88-5.56-7.83-.16-2.62.76-4.71.69-6.66-.44-11.73-1.69-26.6-2.93-38.34-1.08-10.24-5.8-19.63-4.55-30.78.62-5.51,10.25-7.1,14.85-7.63ZM250.39,170.44c2.74.01,9.51,1.08,11.59-.59.98-.78,2.95-7.8,3.25-9.5.57-3.28,1.5-11.12,1.49-14.27,0-2.01-.62-7.05-2.71-7.67-2.3-.68-13.87,1.61-15.94,3.26-2.31,1.83-1.74,8.82-1.43,11.9.21,2.06,3.04,16.38,3.76,16.87ZM261.54,172.78h-10.49c-.55,6.94.96,13.76,1.5,20.63.74,9.44.76,19.12,1.47,28.53.1,1.35-.23,2.42,1.15,3.33,4.61-4.83,3.5-12.38,4.12-18.36.37-3.56,1.27-7.73,1.5-11.25.49-7.56.02-15.32.75-22.87Z"></path><rect id="r42" class="cls-1" x="244.05" y="135.97" width="25.08" height="93.25"></rect></g><g id="g43"><path id="_43" data-name="43" class="cls-2" d="M223.1,135.44c10.33-2.34,15.97,8.65,15.2,17.47-.66,7.6-4.73,14.14-5.82,20.42-.88,5.06.43,11.16-.23,16.27-.48,3.72-2.63,9.06-3.49,13-1.74,7.96-2.68,18.08-7.21,25.03-5.3,8.13-6.74,2.12-7.22-4.23-1.32-17.33.63-36.5-.75-54-.68-8.64-5.65-12.64-4.53-22.54.25-2.24,1.75-3.41,3.43-4.82,1.3-1.09,9.42-6.34,10.63-6.61ZM231.32,139.28c-1.9-1.91-4.91-2.19-7.43-1.55-.98.25-8.88,4.96-9.94,5.79-6.99,5.42,1.11,18.09,1.97,24.68,5.11,1,10.53,1.25,15.67.47,4.14-8.07,6.85-22.23-.27-29.39ZM230.82,171.28h-12.36c-.36,0-1.55-1.21-2.62-.75-.08,18.65,1.28,37.17.75,55.87l1.87,1.87c5.93-8.48,6.85-19.48,8.82-29.43,1.34-6.79,3.25-12.3,3.49-19.62.07-2.17-1.34-5.06.05-7.96Z"></path><rect id="r43" class="cls-1" x="208.88" y="135.3" width="29.49" height="96.26"></rect></g><g id="g44"><path id="_44" data-name="44" class="cls-2" d="M191.66,137.7c5.54-1.57,11.53,6.28,11.5,11.46-.03,6.36-2.59,11.65-3.74,17.31-2.84,13.98-2.2,30.4-4.74,44.01-.49,2.61-2.05,10.68-5.44,10.36-1.97-.29-3.1-4.74-3.32-6.49-1.04-8.19-.28-17.24-.81-25.44s-2.57-18.19-3.92-26.08c-.71-4.12-5.26-8.52-5.14-12.15.22-6.41,11.3-9.44,15.6-12.98ZM183.8,165.1c1.94,2.08,11.98,3.42,13.69.95.26-.37,2.43-7.81,2.55-8.7.33-2.49.47-10.99-.65-12.73-.4-.62-3.7-3.76-4.31-3.94-2.87-.86-11.19,3.69-13.67,5.53-6.18,4.59-.5,8.62,1.25,13.67.52,1.51-.03,3.97,1.15,5.24ZM196.35,169.03c-4.43,1.52-7.67-.02-11.98-.75.55,6.89,2.57,13.71,2.99,20.62.59,9.61-.53,19.35,1.5,28.87,1.18.22,1.64-.26,2.07-1.29.79-1.91,2.12-8.91,2.33-11.16.33-3.44-.27-7.09.08-10.42.93-8.62,3.34-17.11,2.99-25.87Z"></path><rect id="r44" class="cls-1" x="176.05" y="137.5" width="27.49" height="83.81"></rect></g><g id="g45"><path id="_45" data-name="45" class="cls-2" d="M152.69,136.96c4.14-.75,7.78.3,11.05,2.84,1.35,1.04,5.38,5.39,5.99,6.75,2.23,5.04-3.32,12.21-4.02,17.68-1.81,14.1-.56,28.58-4.04,42.46-.44,1.77-3.45,10.43-4.24,11.51-1.45,1.99-7.17,3.17-7.57-.06l1.59-14.98c-.28-15.78-6.56-30.27-10.35-45.21-.81-3.2-2.62-10.06-1.32-12.91.59-1.3,11.25-7.78,12.9-8.08ZM152.69,139.21c-1.49.4-3.01,2.32-4.36,3.13-2,1.19-5.74,2.01-6.56,4.73-.59,1.96,2.37,14.26,3.45,16.52.33.7.61,1.32,1.42,1.58,4.26,1.36,11.41-1.76,16.01-1.74,1.04-.51,4.81-10.5,5.08-12.21,1.07-6.76-8.44-13.77-15.04-12ZM163.38,166.04l-16.48,1.5c2.56,12.33,7.31,25.11,6.74,37.87-.08,1.83-1.95,11.9-1.49,12.37,1.7.31,3.33-.86,4.07-2.3,1.08-2.11,3.48-10,3.99-12.51,2.4-11.89,1.7-24.97,3.17-36.94Z"></path><rect id="r45" class="cls-1" x="139.33" y="135.97" width="30.92" height="84.18"></rect></g><g id="g46"><path id="_46" data-name="46" class="cls-2" d="M93.73,215.5c-.82-6.21-1.32-13.49-.7-19.76.74-7.44,6.65-19.7,6.68-25.57.02-4.99-3.88-12.5-4.43-18.09-.81-8.18.57-14.73,10.05-15.3,4.46-.27,7.43,2.35,9.72,2.35,1.64,0,4.84-2.21,7.57-2.26,9.44-.2,9.96,11.3,9.28,18.3-.44,4.51-3.14,9.33-3.69,13.56-.6,4.65.25,10.19-.02,14.98-.31,5.58-2.25,19.18-4.72,23.78-1.22,2.28-9.17,12.29-10.94,6.84-1.58-4.86,2.12-8.28,3.13-12.41,1.41-5.78-.46-8.55-.98-13.74-.19-1.93,1.06-11.6-1.87-10.87-7.21,11-9.67,24.28-13.53,36.72-1.13,2.02-3.51,1.62-5.55,1.5ZM103.98,139.2c-10.8,2.27-5.68,15.86-3.95,23.12l26.68,3.4c2.13-6.66,5.82-18.98.36-24.47-5.04-5.07-9.18.99-12.64.62-3.27-.35-4.45-3.93-10.45-2.67ZM95.2,195.66c-.58,5.56.43,11.97,0,17.62,1.04.19,1.69-.31,2.28-1.09,1.75-2.33,2.26-9.42,3.2-12.54,1.69-5.55,3.9-11.63,6.37-16.88,1.34-2.85,4.09-9.97,8.4-7.38,2.41,1.45,1.21,9.21,1.48,12.01.46,4.65,2.12,8.38,1.32,13.33-.67,4.15-4.14,8.08-3.57,12.55,1.3,1.55,6.85-7.09,7.29-8.07,3.24-7.16,4.66-26.37,3.98-34.35-.06-.65.01-1.3-.38-1.87-1.22-1.76-23.16-4.85-24.39-3.71-.07,2.23.88,3.95.71,6.27-.49,6.53-5.91,16.59-6.7,24.1Z"></path><rect id="r46" class="cls-1" x="93.01" y="135.97" width="38.49" height="80.35"></rect></g><g id="g47"><path id="_47" data-name="47" class="cls-2" d="M65.32,172.88c-2.23,4.89-6.81,10.21-8.29,15.32-1.26,4.32-.19,15.55-3.37,17.62-4.05,2.64-5.86-2.43-6.34-5.74-.69-4.84-1.37-13.17-.77-17.87.66-5.14,6.38-12.42,6.68-16.6.2-2.8-3.22-11.94-3.66-15.78-.4-3.49-.41-7.74,2.23-10.38.95-.95,5.98-3.79,7.24-4.04,3.85-.76,4.49,1.91,6.59,2.12,2.41.24,4.12-1.88,6-2.22,2.39-.43,5.95-.13,8.25.68,13.8,4.84,2.25,17.83,1.13,25.2-1.5,9.92,2.18,19.18-2.26,29.24-1.26,2.85-8.58,13.93-10.85,15.39-2.6,1.67-5.69.61-5.7-2.63-.03-7.03,6.11-14.2,6.81-20.26.37-3.24,1.01-10.95-3.68-10.05ZM78.63,161.45c1.96-6.82,11.32-20.9-.48-23.72-6.41-1.53-8.92,2.87-11.8,2.78-1.73-.05-4.6-3.2-6.68-2.99-1.64.16-6.84,3.74-7.54,5.28-1.04,2.29,1.26,17.6,2.72,18.63,8.07.98,15.71,1.2,23.78.03ZM78.71,184.41c.91-5.7-.67-13.54,0-19.5-1.01-1.62-2.41-.36-4.08-.33-6.38.09-12.83.11-19.17-.47-1.07.8-.6,3.44-1.09,4.94-1.29,3.98-4.83,8.79-5.46,12.53-.55,3.24-.09,20.7,2.05,22.34,2.34,1.79,2.87-5.31,3.01-6.77.22-2.19-.28-4.55.04-6.71.48-3.28,7.91-17.56,10.4-19.59,6.47-5.28,7.19,8.03,6.79,12.04-.42,4.25-8.01,18-6.37,20.64.78,1.25,1.34.89,2.22-.04,3.15-3.32,10.97-14.87,11.65-19.09Z"></path><rect id="r47" class="cls-1" x="46.32" y="135.3" width="39.63" height="71.3"></rect></g><g id="g48"><path id="_48" data-name="48" class="cls-2" d="M40.32,144.83c-.92-5.15-6.46-8.07-11.4-7.26-1.85.3-2.98,1.67-5.28,1.53-3.02-.19-5.56-3.58-9.68-3.06-3.08.39-8.89,4.43-9.84,7.44-2.69,8.53,5.49,16.81,5.25,24.89-.09,3.14-2.61,13.18-3.71,16.41-.93,2.75-5.8,9.22-5.66,10.84.44,5.3,8.46,1.63,10.52-1.09-.54,6.9,5.64,2.54,8.61-.02,7.55-6.51,11.27-21.85,15.23-31.25,2.56-6.09,7.28-11.03,5.96-18.43ZM22.08,187.72c-1.51,1.33-7.45,9.51-9.3,7.19-.44-3.18.37-3.47,1.5-5.62,2.36-4.49,4.44-9.02,4.49-14.25-3.26,2.31-3.15,8.86-5.24,12-1.35,2.43-6.22,8.18-8.95,8.68-4.23.77-.67-2.18.12-3.65,4.11-7.66,5.78-16.77,7.33-25.28h18.73c-3.28,6.6-5.21,14.62-8.68,20.94ZM32.09,163.61c-1.74,1.85-17.4.75-20.86.59-3.19-9.94-11.51-21.8,3.49-25.89,2.75-.44,5.42,2.59,7.46,2.95,4.77.84,8.62-4.02,13.77.44,6.03,5.8-1.62,16.17-3.86,21.9Z"></path><rect id="r48" class="cls-1" y="135.07" width="40.55" height="66.06"></rect></g><g id="g28"><path id="_28" data-name="28" class="cls-2" d="M592.73,30.18c9.33-2.79,5.25,9.74,4.8,13.81-.56,5.15-1.37,11.34-1.61,16.38-.52,10.73,6.47,19.15,2.82,30.58-1.47,4.59-4.63,6.91-9.56,5.49-1.52-.44-3.36-2.36-4.23-2.52-.95-.17-2.32,1.13-3.65,1.33-1.69.26-7.31.31-8.8-.12-3.96-1.15-3.84-10.39-3.52-13.72.53-5.41,4.24-9.05,6.34-13.9,4.8-11.07,7.2-24.6,14.77-34.72.7-.93,1.43-2.25,2.64-2.62ZM595.2,72.03c-2.46-5.93-1.18-10.98-.75-16.87.16-2.22-.14-4.44.09-6.66.34-3.38,2.91-12.31,2.06-14.97-.92-2.88-3.56-.42-4.72,1.06-3.92,5.01-7,14.14-10.13,19.86-.19,4.47-3.59,9.24-3.8,13.45-.07,1.41-.09,1.09,1.12,1.14,1.73.07,3.46-.17,5.19.08,3.93.56,7.18,2.1,10.95,2.91ZM577,71.43c-5.55,1.63-7.73,16.67-4.31,20.52,1.33,1.5,5.93,1.37,7.96,1.12,1.84-.22,2.96-1.72,4.42-1.59,2.34.21,4.69,5.33,9.38,1.9,3.72-2.72,4.07-14.65.81-18.02-2.76-2.85-14.53-5.03-18.25-3.94Z"></path><rect id="r28" class="cls-1" x="568.84" y="29.77" width="30.96" height="67.04"></rect></g><g id="g27"><path id="_27" data-name="27" class="cls-2" d="M559.01,26.36c8.17,1.96,1.11,14.07,1.05,19.88-.02,2.04.81,4.13.72,6.7-.11,3.26-1.58,7.32-1.6,10.47-.02,5.07,4.33,13.7,5.12,19.69.42,3.2-.07,7.1-1.73,9.89-.5.85-3.78,4.16-4.59,4.4-4.26,1.27-6.48-1.19-9.6-1.41-2.11-.15-3.95.8-5.98.87-4.78.14-14.1-4.41-14.66-9.4-.68-6.08.78-13.42,2.66-19.17,2.73-8.33,2.91-9.49,4.21-18.29.8-5.43,5.36-18.5,10.12-21.37,3.25-1.95,3.82.8,5.01.54.81-.17,1.45-1.49,3.14-1.48,2.91,0,2.34,3.15,6.13-1.33ZM560.74,29.28h-2.22c-.4,6.08-5.13,10.69-7.33,15.57-2.33,5.19-2.82,12-6.56,16.68l2.64-29.62c.43-1.6-1.42-1.48-2.29-.78-1.83,4-5.33,7.84-6.68,12.06-1.66,5.2-1.17,12.25-2.48,17.77-.78,3.31-2.8,6.26-3.55,9.57,8.78-1.31,17.37.49,26.22,0-1.35-3.84-1.91-6.62-1.42-10.8.7-6.07.7-7.53.67-13.57-.02-3.09,4.35-15.28,3-16.88ZM554.51,35.84c1.28-2.44-.72-7.27-3.17-5.1-3.63,3.22-2.48,7.71-2.59,12.04,2.07.47,1.27-.7,1.83-1.5,1.06-1.51,1.82-3.07,2.74-4.64.35-.59,1.1-.64,1.19-.8ZM537.32,72.23c-6.02,1.14-6.85,1.5-7.34,7.65-.41,5.13-.89,8.51,3.52,11.53,7.01,4.8,8.39,1.98,14.84,2.33,3.25.18,6.25,3.06,9.8.83,5.61-3.53,3.19-16.09,1.13-21.46l-21.96-.88Z"></path><rect id="r27" class="cls-1" x="527.56" y="26.36" width="36.88" height="71.39"></rect></g><g id="g26"><path id="_26" data-name="26" class="cls-2" d="M507.53,24.78c1-3.97,4.41-4.4,5.8-.17,3.19,9.72-1.59,21.94.25,32.01,1.69,9.27,8.16,18.83,8.88,27.89.35,4.38-1.31,8.82-4.4,11.93-5.67,5.71-8.27.1-13.87.3-4.99.18-7.64,4.2-13.66.95-3.74-2.03-5.18-10.67-4.54-14.6.49-3.01,2.63-6.48,3.36-9.38,3.96-15.84-6.05-26.38,2.67-44.58,4.16-8.69,7.08-7.37,15.51-4.34ZM515.78,71.28c-1.63-5.25-4-10.55-4.49-16.13-.71-8.07,1.33-16.15.78-24.03-.08-1.07-1.43-10.19-2.87-5.81-3.41,10.36-3.94,21.79-6.15,32.47-1.06,1.57-2.63-3.01-2.82-3.55-2.15-6.22-2.91-12.74-2.42-19.32.21-2.84,1.51-6.17,1.52-8.99,0-1.51-.58-1.53-1.82-1.06-3.26,1.24-6.92,14.75-7.2,18.29-.7,8.93,3.21,18.96,2.24,28.12,7.59-1.18,15.63-1.18,23.22,0ZM502.29,49.53c1.17-5.5,1.5-11.14,2.45-16.68.48-2.77,2.64-4.66-.58-7.32-.93-.21-1.75.85-2.18,1.55-1.69,2.74-2.26,14.03-1.85,17.49.17,1.46.59,4.39,2.16,4.95ZM496.89,72.99c-4.49.57-5.71,1.18-7.12,5.62-1.59,5-2.56,17.42,4.72,18.16,3.94.4,7.01-3.33,13.26-2.08,2.23.45,4.72,3.02,7.27,1.72,3.11-1.59,5.02-6.55,5.21-9.88s-1.34-12-4.98-12.85c-4.94-1.15-13.31-1.34-18.35-.71Z"></path><rect id="r26" class="cls-1" x="485.07" y="21.61" width="37" height="78.31"></rect></g><g id="g25"><path id="_25" data-name="25" class="cls-2" d="M472.1,14.39c4.76-1.41,4.85,7.01,4.72,10.02-.31,6.87-1.99,12.94-1.53,20.28.21,3.34,1.29,6.57,1.53,9.72.35,4.58-.53,9.86-.03,14.28.24,2.17,2.94,6.37,3.59,9.15,1.56,6.64,2.28,12.58-3.6,17.01-6.91,5.21-12.13,4.47-18.33-1.06-9.64-8.59-4.23-11.86-1.93-22.22,2.27-10.2,2.2-22.05,4.93-31.82,1.14-4.1,3.62-8.68,5.12-12.87,1.11-3.1,1.85-11.41,5.53-12.5ZM473.82,66.04c2.12-6.78-.27-12.76-.74-19.13-.26-3.55-.24-8.46-.04-12.03.33-5.74,3.53-13.7-.34-18.33-1.75.02-3.73,10.55-4.5,12.73-4.29,12.18-6.73,19.24-7.86,32.63-.12,1.37.03,2.76,0,4.12,4.57-1.05,8.93-1.06,13.48,0ZM463.88,67.71c-2.07.38-3.93,1.43-4.88,3.37-.89,1.81-4.08,13.21-3.8,14.66.4,2.1,8.09,9.56,10.18,10.12,4.2,1.12,12.93-3.27,13.64-7.74.61-3.84-.69-9.26-1.99-12.93-2.55-7.21-5.05-8.96-13.15-7.49Z"></path><rect id="r25" class="cls-1" x="452.91" y="14.24" width="28.56" height="84.28"></rect></g><g id="g24"><path id="_24" data-name="24" class="cls-2" d="M439.88,10.64c7.16-2.13,4.01,12.8,3.94,15.99-.34,13.93,1.52,27.33,1.8,41.15.14,6.73,3.64,11.1,2.74,19.65-.58,5.54-10.41,10.61-15.39,10.14-3.43-.32-13.98-5.96-14.58-9.42-1.5-8.52,5.84-13.37,7.31-20.41,1.54-7.39.15-14.84.99-22.26,1.06-9.33,4.94-24.04,10.1-31.89.55-.83,2.23-2.7,3.09-2.95ZM428.12,66.03c.23.23,5.06-1.34,6.36-1.36,7.9-.07,10.7,5.53,9.36-8.01-1.07-10.87-2.61-18.46-2.28-30.04.07-2.49,2.3-11.96-.35-13.09-1.48-.63-1.51.1-2.09.91-1.98,2.74-6.08,12.04-7.06,15.42-1.36,4.72-2.86,13.63-3.2,18.54-.41,5.86.72,11.86-.75,17.62ZM429.38,67.67c-.55.16-.98.48-1.3.95-1.01,3.92-5.28,8.16-6.37,11.63-.5,1.58-.7,7.11-.22,8.55.16.47,5.61,4.43,6.42,4.82,4.4,2.1,7.94,2.09,12.14-.25,5.46-3.04,7.5-6.22,6.6-12.51-.3-2.12-2.2-8.32-2.97-10.52-1.25-3.51-11.38-3.52-14.3-2.66Z"></path><rect id="r24" class="cls-1" x="418.19" y="10.51" width="30.32" height="86.88"></rect></g><g id="g23"><path id="_23" data-name="23" class="cls-2" d="M400.17.91c7.26-2.12,5.25,12.06,5.47,16,.57,10.26,1.88,21.33,2.28,31.47.25,6.26-1.49,12.91-.81,18.81.93,8.07,9.15,17.03,3.33,25.03-4.62,6.35-13.25,7.36-20.3,4.71-4.32-1.62-9.63-4.99-9.25-10.24,2.13-12.51,6.39-25.09,8.19-37.61,1.19-8.28,1.1-16.94,2.52-25.22.75-4.36,4.43-21.73,8.57-22.94ZM391.03,63.78c4.4-.44,9.39.32,13.86,0,.16-5.65,1.08-11.17.75-16.87-.75-13.09-1.23-26.65-2.25-39.75-.08-1.08-.29-4.36-1.89-4.14-2.2.3-3.36,4.4-4.07,6.44-5.01,14.51-4.38,29.95-6.85,44.89-.47,2.88-2.01,5.97-2.2,9.06-.16,2.49,1.97.44,2.64.38ZM391.94,66.2c-7.82,1.61-6,13.87-8.75,19.78-1.09,4.87,7.68,9.45,11.64,9.99,4.64.63,12.74-1.45,14.73-6.13,2.55-5.98-3.64-17.39-5.39-23.47-.94-.65-10.56-.52-12.23-.17Z"></path><rect id="r23" class="cls-1" x="380.87" y=".7" width="31.82" height="97.82"></rect></g><g id="g22"><path id="_22" data-name="22" class="cls-2" d="M366.43,10.6c1.04-.27,1.4.14,2.16.64,3.99,2.65.38,9.4.3,13.2-.11,5.47,1.35,13.04,1.56,18.68.29,7.64-1.77,13.9.75,21.75.83,2.58,3.4,5.46,3.75,8.25.33,2.61.39,17.43-.18,19.39-.51,1.73-5.07,5.01-6.97,5.09-1.56.07-2.98-.73-4.5-.82-3.78-.22-9.35.59-11.97-3.01-2.27-3.13-.55-4.92-.39-7.86.47-8.69,2.37-13.8,3.69-21.8,2.68-16.29.86-33.25,8.27-48.72.6-1.25,2.26-4.45,3.52-4.79ZM368.17,63.03l-1.12-50.24c-2.09,2.64-3.32,6.64-4.34,9.9-3.25,10.35-3.44,16.72-4.28,27.22-.15,1.91-1.98,13.36-1.49,13.87,1.71-.09,2.1-1.3,4.07-1.54,2.44-.29,4.83.2,7.16.79ZM358.97,65.44c-2.54.56-3.48,3.36-4.09,5.66-1.01,3.81-2.21,13.01-2.45,17.07s.55,5.72,4.94,6.3c3.63.48,14.5,1.21,15.29-3.32.54-3.13.36-16.05-.35-19.12-1.59-6.85-6.96-7.99-13.34-6.58Z"></path><rect id="r22" class="cls-1" x="350.17" y="10.51" width="26" height="86.88"></rect></g><g id="g21"><path id="_21" data-name="21" class="cls-2" d="M331.19,9.84c2.27-.51,3.77,6.24,3.95,7.9,2.04,18.3.23,35.91,8.15,52.59,2.29,4.82,2.61,19.71-.23,24.18-2.41,3.79-10.47,2.11-14.25,2.25-5.11.19-9.65,2.71-14.19-1.48-2.44-2.26-2.18-5.26-2.23-8.61-.16-10.11,4.52-16.34,5.59-26.25,1.43-13.21,2.76-26.11,6.79-38.96.84-2.68,3.59-10.97,6.42-11.61ZM332.21,12.79c-1.18-1.31-3.63,3.98-3.91,4.71-3.44,9.05-6.77,25.73-8,35.5-.54,4.32-.6,9.4-.83,13.79,2.8-.55,4.96-2.53,7.92-2.94,3.39-.46,6.75.1,10.05.69-.03-4.24-1.91-8.18-2.24-12.38-.51-6.5.6-13.13-1.5-19.5l-1.5-19.87ZM327.51,66.2c-4,.78-10.1,4.75-11.44,8.8-1.22,3.71-3.1,17.45.94,19.37,3.6,1.71,5.8.22,8.83.16,4.08-.08,14.58,1.54,15.94-2.79s1.37-15.38-.24-19.67c-1.87-5-9.22-6.8-14.04-5.86Z"></path><rect id="r21" class="cls-1" x="312.23" y="9.81" width="32.86" height="88.28"></rect></g><g id="g11"><path id="_11" data-name="11" class="cls-2" d="M279.38,8.43c3.66-.21,6.09,10.93,6.92,13.93,2.62,9.37,6.37,22.72,7.61,32.13.6,4.55.14,10.06,1.02,14.73.83,4.41,3.72,8.87,4.22,13.02.6,4.93-.31,12.81-6.33,13.76-3.35.53-18.25.44-21.19-.46-6.48-2.01-5.8-13.77-5.4-19.41.61-8.69,5.59-16.33,6.57-24.92,1.29-11.36,1.68-22.82,3.29-34.21.42-3.01.57-6.81,3.28-8.56ZM291.75,66.03v-12.38c0-4.02-7.44-31.34-9.2-36.54-.22-.64-2.19-6.66-3.53-5.08-1.08,4.03-.35,8.23-.84,12.29-.68,5.62-2.24,11.53-2.91,17.34-.53,4.55-.02,9.19-.93,14.07-.43,2.29-1.96,4.5-2.09,6.92-.07,1.31-.1,1.18,1.16,1.16,2.21-.03,4.24-.87,6.74-.83,1.79.03,5.64.51,7.3.98,1.82.52,2.51,2.06,4.3,2.08ZM295.27,92.05c4.01-4.43.09-18.63-3.48-22.69-4.59-5.21-15.87-5.06-21.61-1.68-1.61,6.05-4.88,25.14,3.92,26.13,3.78.43,13.55.44,17.31,0,1.22-.14,3.06-.89,3.86-1.76Z"></path><rect id="r11" class="cls-1" x="265.72" y="8.43" width="33.85" height="87.92"></rect></g><g id="g12"><path id="_12" data-name="12" class="cls-2" d="M242.78,9.84c.83-.18,3.52,2.56,4.03,3.31,3.2,4.74,9.28,29.8,9.73,36.01.7,9.61,1.44,14.11,2.95,23.3.9,5.5,1.42,16.29.84,21.73-.13,1.19-.15,1.77-1.11,2.63-2.15,1.91-16.3,1.98-19.37,1.3-2.24-.49-3.88-2.54-4.24-4.76-.91-5.62-1.34-16.81.3-22.13.69-2.26,3.65-4.79,4.12-7.87.86-5.6-.53-12.87.04-18.71.66-6.76,2.21-12.11,1.49-19.5-.48-4.93-4.26-11.88,1.23-15.32ZM254.29,63.78v-15.38c0-3.3-3.72-16.59-4.86-20.64-.66-2.34-4.14-14.92-6.01-14.98-1.04.73-1.15,1.4-1.19,2.61-.09,2.86,1.38,7.14,1.6,10.47.52,8.26-1.07,14.75-1.57,22.5-.32,5.01.3,10.37.04,15.41,4.2-.69,7.78-1.17,11.99,0ZM240.43,96.03c2.89.72,12,0,15.73,0,.11,0,1.33-1.17,1.49-1.51,1.3-2.78-.12-24.51-2.08-26.79-2.67-3.11-10.38-3.19-13.69-.98-.85.57-3.66,4.9-3.92,5.83-.4,1.48-.94,8.38-.97,10.31-.06,3.69,1.38,7.3.78,11.13.51.37,2.48,1.97,2.64,2.01Z"></path><rect id="r12" class="cls-1" x="234.79" y="9.81" width="25.78" height="88.71"></rect></g><g id="g13"><path id="_13" data-name="13" class="cls-2" d="M206.87.14c5.17-1.51,7.18,9.74,8.12,13.36,2.38,9.22,3.98,18.65,4.87,28.12.62,6.53.13,12.56,1.65,19.35,1.69,7.56,7.83,18.06,8.11,24.95.12,3.07-1.63,4.86-3.78,6.74-1.74,1.52-9.77,6.91-11.58,7.15-1.51.2-4.26.18-5.64-.43-2.76-3-7.9-4.54-10.53-7.46-4.9-5.44,2.38-17.11,3.02-23.26.83-7.97-.48-17.35-.04-25.54.32-6.01,1.96-12.69,2.28-18.72.27-5.09-1.92-22.68,3.53-24.27ZM219.82,63.78c-2.99-11.92-1.71-24.13-3.94-36.17-.73-3.95-4.74-21.38-6.36-23.63-2.38-3.32-3.63-.61-3.95,2.42-.59,5.59.3,12.23.02,18.02-.32,6.46-1.87,13.06-2.28,19.47s.39,13.9.04,20.66c5.79-1.77,10.56-1.54,16.48-.75ZM203.53,67.72c-.4,6.11-6.27,15.2-4.54,21.04.58,1.95,10.1,8.48,12.28,8.75,1.26.16,2.14.02,3.34-.33,1.6-.47,11.04-6.71,11.57-7.91.68-1.53.51-3.92.38-5.61-.22-2.91-3.83-13.12-5.39-15.6-2.27-3.6-14.32-3.73-17.64-.34Z"></path><rect id="r13" class="cls-1" x="196.39" width="33.22" height="99.93"></rect></g><g id="g14"><path id="_14" data-name="14" class="cls-2" d="M166.4,5.38c2.3-.65,3.37,1.07,4.7,2.54,8.95,9.91,9.18,43.21,11.44,56.8,1.24,7.49,10.09,12.88,7.91,22.52-.84,3.73-10.57,10.04-14.45,10.33-4.29.32-12.42-3.94-15.02-7.51-3.99-5.46,2.06-17.44,2.66-23.67.42-4.39-.71-8.08-.78-11.96-.23-13.09-.27-28.33.79-41.28.17-2.11.64-7.17,2.77-7.78ZM180.11,63.78l-1.58-19.04c-3.14-12.12-2.19-27.48-10.78-37.2-1.11-.03-1.82,5.23-1.9,6.33-.93,12.15-.81,29.19.03,41.28.2,2.86-.14,5.77,0,8.63,2.86.61,6-1.59,8.56-1.47,1.84.09,3.64,1.78,5.67,1.46ZM170.17,65.46c-2.39.43-3.32,1.03-4.34,3.16-1.73,3.62-4.62,15.74-3.56,19.39.44,1.5,6.08,5.24,7.68,5.81,2.43.86,6.37,1.13,8.88.56,1.84-.42,8.4-5.76,9.13-7.35,2.55-5.57-5.43-15.06-7.45-20.28-2.02-2-7.63-1.77-10.35-1.29Z"></path><rect id="r14" class="cls-1" x="159.61" y="5.24" width="31.17" height="92.15"></rect></g><g id="g15"><path id="_15" data-name="15" class="cls-2" d="M134.17,14.38c2.14-.63,3.57.99,4.62,2.64,4.62,7.3,10.02,27.19,10.6,35.89.29,4.32-.5,9.25.06,13.44,1.45,10.98,11.86,18.43-1.31,28.05-5.19,3.8-7.07,3.71-12.98,1.25-9.83-4.08-9.36-12.95-7.32-22.32.63-2.89,3.29-7.35,3.61-9.89.55-4.34-.43-9.75-.03-14.28.37-4.25,1.7-7.26,1.52-12.04-.17-4.53-4.39-21.09,1.24-22.74ZM147.14,64.53c.78-13.75-2.48-27.99-7.73-40.63-4.48-10.77-6.52-7.13-5.75,2.75.83,10.5,1.03,12.64,0,23.26-.45,4.66.32,9.9,0,14.62,4.39-1.3,9.03-.89,13.48,0ZM147.78,67.65c-4.87-1.52-10.31-3.04-14.82.31-3.01,2.24-4.21,13.41-3.8,17.2.8,7.4,11.1,12.13,16.86,7.87,11.55-8.53,3.79-14.44,1.76-25.38Z"></path><rect id="r15" class="cls-1" x="126.64" y="14.24" width="28.15" height="83.85"></rect></g><g id="g16"><path id="_16" data-name="16" class="cls-2" d="M100.7,27.03c2.06-2.27,8.49-4.1,10.91-2.31,1.58,1.17,6.24,11.09,6.85,13.39,3.01,11.41-.87,24,.22,35.03.36,3.7,2.49,6.36,2.91,9.83.62,5.09.47,11.25-4.47,14.11-6.89,4-9.95-2.52-13.8-2.52-3.07,0-4.35,4.08-9.55,2.75-.68-.17-3.3-1.58-3.94-2.06-8.38-6.29-.91-18.63,1.34-26.41,2.65-9.18,3.78-15.32,3.57-25-.13-5.82-1.16-10.87.13-17.06.85-4.09,5.25-3.66,5.85.22ZM115.68,72.04c1.21-15.09,5.5-33.99-6.74-45.75.41,7.75,2.3,14.8,1.42,22.8-.21,1.89-2.01,10.79-5.13,8.66-3.2-7.61-2.92-16.15-4.75-24.12-.17-.76-1.92-8.4-3.53-6.59.38,2.94-.69,5.69-.78,8.59-.38,11.92,1.78,17.2-1.66,29.85-.3,1.1-2.56,6-2.05,6.56,7.38-3.46,15.56-.58,23.22,0ZM107.43,53.28c.79-7.26,1.24-14.73-.17-21.95-.46-2.35-1.53-4.74-4.32-4.3.15,1.62-.65,3.07-.57,4.68.25,5.05,2.01,13.51,2.91,18.87.23,1.39.29,3.22,2.15,2.7ZM97.51,72.97c-1.09.15-5.15,1.16-5.8,1.69-1.45,1.16-3.88,11.19-3.62,13.29.4,3.24,4.92,7.7,8.32,7.19,1.71-.26,3.67-2.3,5.42-2.93,4.7-1.69,9.84,8.64,16.12,1.2,2.86-3.39,1.44-15.79-1.83-18.45-2.29-1.86-15.31-2.45-18.6-2Z"></path><rect id="r16" class="cls-1" x="86.09" y="23.93" width="36" height="74.56"></rect></g><g id="g17"><path id="_17" data-name="17" class="cls-2" d="M47.26,26.36c2.27-.59,3,2.48,4.49,2.82s7.62-.82,9.54-.66c1.66.14,3.22,1.37,4.08,2.73,1.11,1.74,5.25,9.6,5.85,11.39,1.77,5.29,1.44,12.8,2.66,18.34,1.15,5.18,5.42,11.03,5.86,15.89.94,10.37-.43,21.31-13.14,21.46-2.72.03-5-.91-7.51-.87-4.59.08-11.8,3.81-14.24-2.18s-2.61-13.83-.4-19.9c.6-1.63,1.95-2.63,2.24-4.51.71-4.62.42-16.02.07-21s-6.27-21.76.49-23.51ZM49.74,70.53h24.73c-.7-4.32-2.8-8.22-3.56-12.56-1.95-11.14-.65-14.04-7.04-24.46-.46-.75-2.86-3.57-3.64-2.73-.99,4.94,1.06,9.41,1.49,13.87.39,3.96.36,11.03.04,15.04-.1,1.32.16,2.88-1.53,3.34-.58-9.36-4.64-16.96-8.07-25.3-1.06-2.57-1.35-8.06-4.29-8.47-1.61-.22-1.01.54-1.34,1.65-1.48,4.98,2.41,14.35,3.15,19.79.59,4.33-.85,8.36-.72,12.73.07,2.48.91,4.64.78,7.09ZM58.72,46.53c.43-2.45-.46-16.53-4.1-15.74-1.52.33-1.33,4.06-.81,5.3l4.91,10.44ZM54.08,73c-4.9.49-7.51.73-8.67,6.32-.64,3.06,0,14.08,2.39,16.03,1.72.93,4.9.99,6.86.72,1.84-.26,2.83-1.58,4.44-1.61,1.7-.03,2.94,1.27,4.54,1.53,3.5.57,9.31-.38,11.61-3.31s3.47-16.1,1.11-18.41-18.4-1.66-22.27-1.27Z"></path><rect id="r17" class="cls-1" x="42.91" y="23.93" width="37.07" height="74.59"></rect></g><g id="g18"><path id="_18" data-name="18" class="cls-2" d="M11.31,28.64c2.52-.74,6.05,2.49,7.28,4.45,5.46,8.71,8.94,21.65,13.03,31.21,3.79,8.88,9.29,13.61,7.46,24.43s-8.28,5.69-15.94,6.54c-2.43.27-3.96,1.58-6.52,1.36-8.61-.74-9.68-8.83-8.86-16,.36-3.15,2.56-7.03,2.95-10.55,1.22-11-1.5-19.67-2.87-29.98-.47-3.51-.69-10.24,3.47-11.46ZM13.03,72.03c.3.32,6.53-3.29,8.03-3.58,1.87-.36,9.97.47,9.93-1.29-.54-.48-1-1.03-1.28-1.7-3.58-8.51-6.46-17.93-10.56-26.18-1.27-2.55-5.03-11.02-8.44-6.68-2.17,2.76,1.85,18.23,2.31,22.57.25,2.35.68,6.91.7,9.07.02,2.33-1.32,5.16-.69,7.79ZM22.58,70.73c-3.32.43-9.99,3.42-11.42,6.57-.56,1.23-1.19,6.29-1.2,7.86-.01,3.24.94,6.48,3.87,8.19,4.12,2.41,5.55.1,9.3-.32,2.33-.26,10.18.79,10.87.43,1.7-.89,2.89-7.09,3.01-9.07.28-4.76-2-8.88-4.49-12.75-3.43-.61-6.45-1.36-9.94-.92Z"></path><rect id="r18" class="cls-1" x="6.28" y="28.09" width="34" height="70"></rect></g></g>`;
+    const ODONTO_BASE_LIGHT = "data:image/svg+xml;base64,PHN2ZyB2ZXJzaW9uPSIxLjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKIHdpZHRoPSIyNTUxLjAwMDAwMHB0IiBoZWlnaHQ9IjgwMC4wMDAwMDBwdCIgdmlld0JveD0iMCAwIDI1NTEuMDAwMDAwIDgwMC4wMDAwMDAiCiBwcmVzZXJ2ZUFzcGVjdFJhdGlvPSJ4TWlkWU1pZCBtZWV0Ij4KPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMC4wMDAwMDAsODAwLjAwMDAwMCkgc2NhbGUoMC4xMDAwMDAsLTAuMTAwMDAwKSIKZmlsbD0iIzExMTgyNyIgc3Ryb2tlPSJub25lIj4KPHBhdGggZD0iTTkwODYgNzg4OSBjLTcyIC04MCAtNzYgLTEwMyAtNzYgLTQ1MyAwIC0xNjYgLTQgLTM0OCAtMTAgLTQwNiAtNQotNTggLTE0IC0xNjggLTIwIC0yNDUgLTYgLTc3IC0xOCAtMjIxIC0yNyAtMzIwIC05IC0xMDcgLTE3IC0zNDcgLTIwIC01OTQgLTQKLTM2MSAtMyAtNDE5IDExIC00NTUgMTUgLTM5IDE1IC00NiAtMyAtMTA2IC02MiAtMjA4IC05MyAtMzA2IC0xMjYgLTM5NSAtNjEKLTE2NiAtNzUgLTIyNCAtNzUgLTMwNyAwIC0xODYgMTA5IC0zMzIgMzMwIC00NDMgMTE4IC02MCAxODkgLTc1IDM0MyAtNzUgMTE2CjAgMTQzIDMgMjA4IDI1IDQxIDE0IDk5IDQyIDEyOSA2MiA4NyA1OCAxOTQgMTc0IDIzNSAyNTUgMzIgNjUgMzUgNzggMzUgMTYwCjAgMTQ3IC02MCAzNTYgLTE2NSA1NzggLTcwIDE0NiAtMTEzIDI3NSAtMTQ0IDQzMCAtMjEgMTA1IC00MSAyNzkgLTQxIDM1NCAwCjEwMyAtMjggNTA3IC00MCA1ODEgLTUgMzMgLTE3IDExMiAtMjUgMTc1IC0yMSAxNTYgLTgyIDQ2OCAtMTMwIDY2NSAtMTExIDQ2MwotMTIzIDQ5NSAtMjA1IDUzOSAtMzEgMTcgLTYzIDI2IC05MyAyNiAtNDIgMCAtNDkgLTQgLTkxIC01MXogbTE0NCAtNjUgYzE3Ci0xNSAzOSAtNDMgNDkgLTYzIDE4IC0zNCA2MCAtMTgzIDk2IC0zMzYgOSAtMzggMjAgLTg2IDI1IC0xMDYgNiAtMjAgMTQgLTU4CjIwIC04NSA1IC0yNyAxNiAtODAgMjUgLTExOSA3OCAtMzUyIDEyMSAtNjc2IDEzNSAtMTAxMCAxMSAtMjQ2IDI1IC00MDIgNDUKLTUwMiA4IC00MCAxNSAtODkgMTUgLTEwOSBsMCAtMzYgLTU3IDggYy03NSAxMiAtNDIxIDExIC00OTQgMCBsLTU2IC04IC0xMgozMiBjLTIyIDY0IC0xMSA2NTMgMTggOTg1IDQyIDQ2NSA2MSA4MTMgNjEgMTA2OCAwIDE4MCAxIDE5MCAyNSAyMzcgMjIgNDMgNDYKNjkgNjcgNzAgMyAwIDIxIC0xMiAzOCAtMjZ6IG0zNjQgLTI0NTggYzM3IC04IDc0IC0yMCA4MiAtMjcgNyAtOCAyNiAtNDggNDMKLTg5IDE2IC00MSA1NyAtMTI5IDg5IC0xOTUgNjAgLTEyMSA3NCAtMTYyIDExOCAtMzM0IDI4IC0xMDggMzAgLTE0OCAxMCAtMTk2Ci0yMiAtNTMgLTg2IC0xMzQgLTE2MiAtMjA0IC0xNjMgLTE1MyAtMzY4IC0xODkgLTU5MCAtMTAyIC05NiAzNyAtMTU2IDc1Ci0yMzYgMTQ5IC03MSA2NiAtMTA0IDEyMCAtMTE5IDE5MyAtMTMgNjYgLTMgMTA5IDcwIDMxOSAyNyA4MCA3MSAyMTEgOTYgMjkxCjI1IDgxIDUzIDE1NyA2NCAxNzAgMjkgMzUgMTI3IDQ5IDMxMSA0NCA4NSAtMyAxODYgLTExIDIyNCAtMTl6Ii8+CjxwYXRoIGQ9Ik0xNjY4NyA3OTAxIGMtNTQgLTM1IC03OCAtODUgLTEzMyAtMjc4IC0xMzIgLTQ1NyAtMTg0IC03MDggLTIwNAotOTgzIC0yOCAtMzk2IC0xMTQgLTEwMDUgLTE3MCAtMTIwOSAtNiAtMjAgLTIxIC04MyAtMzQgLTE0MSAtNDMgLTE4MSAtNjQKLTI3MSAtMTAwIC00MjAgLTUxIC0yMTUgLTYxIC0yOTggLTQ2IC0zNzMgMjggLTEzMyA5MyAtMjExIDI0NiAtMjkzIDE0OSAtODAKMjI5IC05OCA0MTMgLTkyIDEzMiA1IDE1NCA4IDIyOCAzNiAxNjcgNjMgMjU4IDE0NyAzMDUgMjgxIDE3IDQ4IDIwIDczIDE1CjE3MSAtNiAxNDIgLTM4IDI2MCAtMTcyIDYzNSAtNTMgMTQ4IC01MiAxMzggLTE2IDM5NSAxOSAxMjcgMjIgMTg2IDE4IDMzMCAtMwoxNTMgLTI4IDQ0OCAtNDIgNTA1IC01IDIyIC0yMSAzNTggLTM1IDc4MCAtMTQgMzg0IC0yNSA1NDUgLTQzIDU4NyAtOCAxOSAtMzAKNDcgLTQ5IDYyIC0yOSAyMSAtNDYgMjYgLTk0IDI2IC00MSAwIC02OCAtNiAtODcgLTE5eiBtMTI2IC04OSBjOCAtOSAyMSAtMzEKMjggLTQ3IDEzIC0zNSA0OCAtNjM0IDQ5IC04NjAgMCAtODIgNSAtMjA0IDEwIC0yNzAgNiAtNjYgMTUgLTE3NiAyMCAtMjQ1IDYKLTY5IDE1IC0xNTIgMTkgLTE4NSAyNSAtMTY2IDUgLTYyNCAtMzEgLTcxNyAtMTMgLTM2IC0yNiAtMzkgLTExMSAtMjggLTE0OAoxOSAtMzgyIDQgLTQ3MyAtMzAgLTIxIC04IC0zMSAtOCAtNDEgMyAtMTEgMTEgLTExIDI2IDIgOTMgNjQgMzIyIDExNCA2ODEKMTM1IDk2OSAxNyAyMzAgMzUgMzY2IDc2IDU2NSAzNSAxNzUgMTU1IDU5OSAxOTQgNjg2IDM0IDc4IDg3IDEwNiAxMjMgNjZ6Cm03MSAtMjQ2NSBjMTYgLTExIDMxIC00MSA0OSAtOTQgMTQgLTQzIDQ4IC0xNDEgNzUgLTIxOCA1NiAtMTU1IDk0IC0yODUgMTEyCi0zODcgMjYgLTE0MSAtMjkgLTI3NiAtMTQyIC0zNDkgLTYyIC0zOSAtMTcxIC03OSAtMjczIC0xMDAgLTIwOCAtNDEgLTUyNAoxMDMgLTYxNCAyNzkgLTM1IDY5IC0yOCAxMzMgNTAgNDM3IDI3IDEwMyA0OCAxODkgNTkgMjQyIDI2IDExOCA0MSAxNTMgNjgKMTU5IDE1IDMgNDMgMTEgNjIgMTcgMTA0IDMyIDE0OSAzNiAzMzcgMzMgMTUzIC0zIDE5OCAtNyAyMTcgLTE5eiIvPgo8cGF0aCBkPSJNNzU1NCA3NzIxIGMtNDAgLTI0IC02OCAtOTMgLTgyIC0yMDEgLTYgLTQ3IC0xNiAtMjc2IC0yMSAtNTEwIC02Ci0yMzQgLTE2IC01NjIgLTIyIC03MzAgLTEzIC0zMjMgLTEyIC0zNDIgMzEgLTU4NSAyMyAtMTI4IDIzIC0xMzEgNyAtMjY1IC0xNwotMTMyIC01NSAtMzAyIC0xMTUgLTUxMCAtNjIgLTIxMSAtNjggLTM0NyAtMjAgLTQ1MCA0NCAtOTYgMjAzIC0yMzEgMzM2IC0yODUKMjI1IC05MSA0NzUgLTM2IDY2OCAxNDcgODcgODMgMTI5IDE0NSAxNTUgMjMwIDQyIDEzOCAxOCAyNjEgLTkxIDQ2MCAtMTUxCjI3NiAtMTgzIDMzNCAtMjEyIDM4MCAtMjggNDUgLTI5IDQ5IC0xOSAxMDQgMjcgMTQ0IDQgNDQ0IC02MCA3ODQgLTIyIDExNgotMjQgMTMwIC02OSA0NDAgLTU1IDM4NiAtMTA1IDU2OCAtMjExIDc4MSAtNjkgMTM5IC05MyAxNjkgLTE2MSAyMDMgLTYyIDMxCi03NCAzMiAtMTE0IDd6IG0xMjEgLTEzMiBjMjAgLTIzIDY0IC05NyA5NiAtMTY0IDEwNSAtMjE4IDE1NCAtNDA0IDIwMyAtNzgwCjkgLTY2IDIzIC0xNTggMzEgLTIwNSA0NCAtMjYxIDY2IC0zOTcgODAgLTQ5NCAxOSAtMTM2IDIwIC00MjAgMiAtNDU2IGwtMTMKLTI1IC0yMTYgLTEgYy0xMjAgLTEgLTIyOSAtNSAtMjQ0IC04IC00MSAtMTEgLTU0IDggLTU0IDc4IDAgNjYgLTE5IDIwNiAtNDYKMzUxIC0xMyA3MSAtMTUgMTE5IC0xMCAyMzAgOCAxNTcgMjIgNjAyIDM1IDEwNzUgNyAyMzQgMTMgMzI3IDI0IDM2MyAyOSA5MAo1NSA5OSAxMTIgMzZ6IG00MjcgLTIyNDEgYzI4IC0xOSA5MyAtMTMxIDIyNCAtMzg1IDg5IC0xNzIgODkgLTE3MyA5MyAtMjU3IDQKLTExOCAtMjAgLTE3MCAtMTM3IC0yODcgLTc0IC03MyAtMTA0IC05NiAtMTc4IC0xMzEgLTg1IC00MSAtOTQgLTQzIC0xOTUgLTQ2Ci0xMzMgLTUgLTE4NyA5IC0yODkgNzcgLTExMSA3MyAtMTYyIDEyMiAtMjAxIDE5MyAtMzEgNTcgLTM0IDcwIC0zMyAxMzggMiA3OQo1IDkxIDc4IDM0MyAyNSA4NyA1MCAxODQgNTUgMjE2IDE3IDEwNiAzMCAxNDAgNTQgMTQ2IDQ0IDEwIDEyNiAxMyAzMTMgMTEKMTU3IC0yIDE5NiAtNSAyMTYgLTE4eiIvPgo8cGF0aCBkPSJNMTE5NjUgNzU2OSBjLTYyIC03NSAtOTEgLTE3MiAtMTAwIC0zMzQgLTMgLTYwIC0xMCAtMTM5IC0xNSAtMTc1Ci0zMyAtMjM1IC0zMyAtMjM2IC02MCAtNTg1IC05IC0xMjggLTM3IC0zOTYgLTU5IC01NzAgLTE0IC0xMTIgLTU2IC0yOTAgLTEwMQotNDI1IC01NyAtMTc0IC05NiAtMzEzIC0xMjIgLTQ0NCAtMjAgLTk2IC0yMyAtMTQxIC0yMiAtMzQxIDAgLTIxMiAyIC0yMzUgMjIKLTI5MCAzNyAtOTkgNjMgLTEyOSAxNDQgLTE3MCA5OSAtNDggMTcwIC01NSA1NjMgLTUyIGwzMjAgMyA2MSAzMSBjMTAyIDUzCjE0NyAxMzIgMTY2IDI5MiAyOSAyNDUgLTM4IDUzNyAtMTY2IDcyOSBsLTQ1IDY3IDIxIDYwIGMxNSA0NCAyMiA5NCAyNiAxODUgNgoxNjggMCAxOTYgLTI2MCAxMjQ5IC03NCAyOTggLTE3MSA2MTggLTIxMiA3MDAgLTI5IDU3IC03OCAxMDEgLTExMSAxMDEgLTE0IDAKLTM0IC0xMyAtNTAgLTMxeiBtMTA1IC0xNjIgYzMwIC02MyA1NCAtMTM2IDExNiAtMzUyIDQ5IC0xNjkgNTEgLTE3NyA3OSAtMzAwCjE0IC02MCAzMiAtMTM1IDQwIC0xNjUgNyAtMzAgMjUgLTEwOSA0MCAtMTc1IDM1IC0xNTkgODMgLTM2MyA5NSAtNDAwIDY2Ci0yMTUgOTMgLTQ2NSA2MSAtNTc3IC0yMCAtNzEgLTMyIC03NiAtODggLTQwIC0xMjAgNzcgLTI0NyAxMTIgLTQxMSAxMTIgLTYyCjAgLTE0NSAtNSAtMTg0IC0xMSAtMzggLTYgLTc0IC03IC03OCAtMiAtNSA0IDYgNzEgMjUgMTQ4IDE4IDc3IDM4IDE4MSA0NQoyMzAgNiA1MCAxNSAxMTcgMjAgMTUwIDEzIDgyIDQ3IDQ4MiA1NSA2MzQgNCA2OCAxMyAxNzAgMjEgMjI1IDggNTYgMjAgMTc1CjI5IDI2NiAxOCAyMDQgMjEgMjIxIDQ4IDI3NiAzMCA2MyA1MSA1OSA4NyAtMTl6IG0xMjAgLTIwMTUgYzI0NCAtODYgMzc5Ci0yMjMgNDQ1IC00NTUgNDAgLTEzOSA0OCAtMTk5IDQzIC0zMzQgLTMgLTExNCAtNyAtMTM1IC0zMSAtMTg4IC0zNiAtNzcgLTUxCi05MyAtMTEyIC0xMjAgLTQ5IC0yMiAtNjMgLTIzIC0zNDAgLTI0IC00NzcgLTIgLTU1OCAyNCAtNjEyIDE5NiAtMzQgMTEwIC0yNQo0MDQgMTkgNTk4IDIxIDk1IDc3IDI4OCA4NiAyOTcgMTAgMTAgOTkgMzUgMTcyIDQ5IDc2IDE0IDI2OCAzIDMzMCAtMTl6Ii8+CjxwYXRoIGQ9Ik0xNTM4OCA3NTI1IGMtODcgLTQ2IC04OSAtNTEgLTIyMiAtNTI1IC0xMTUgLTQwOSAtMTUxIC02MTUgLTE2MQotOTEwIC0xNSAtNDUzIC00MCAtNjI3IC0xMzMgLTkzMCAtNTAgLTE2MSAtNzYgLTQwMiAtNzEgLTY2NSA0IC0xNTYgNyAtMTg1CjI0IC0yMTkgMzkgLTc4IDEwMCAtOTggMzQ2IC0xMTYgMzIyIC0yMyA0MTkgLTExIDQ4OSA2MSA3MiA3NCA3NSA5NiA3NSA0OTkgMAozMDggLTMgMzY3IC0xOSA0NDUgLTIzIDExMCAtNjEgMTg4IC0xMjYgMjYwIGwtNTAgNTUgMCA1MDAgYzAgMjc2IC01IDYxMSAtMTEKNzQ1IC04IDE4NCAtNyAyOTMgMiA0MzcgMTggMjg2IDE0IDMxOSAtNDcgMzY3IC0zMyAyNiAtMzggMjYgLTk2IC00eiBtNjgKLTEyMCBjMyAtMTQgMSAtOTIgLTYgLTE3MyAtOCAtOTIgLTEwIC0yMTkgLTYgLTM0MiAxMyAtNDI2IDE4IC0xMzcyIDcgLTEzODMKLTcgLTcgLTQ4IC0xMCAtMTA5IC04IC01NCAxIC0xMzYgLTMgLTE4MiAtOSAtMTEzIC0xNiAtMTE3IC0xMiAtMTAxIDEwNyA2IDQ4CjE1IDIwNSAyMSAzNDggMTAgMjY0IDI1IDQyNSA1NSA1NzAgMTcgODYgMTAzIDQyNCAxMTAgNDM1IDMgNCAxMSAzMiAxOSA2MSA4CjMwIDIyIDc5IDMxIDEwOSA5IDMwIDI2IDkzIDM5IDE0MCAyNCA4OCAzOCAxMjMgNjQgMTUzIDIyIDI1IDUwIDIxIDU4IC04egptMTkgLTIwMjQgYzgyIC0zNiAxMzAgLTExMiAxNjEgLTI1MSAyMCAtOTMgMzEgLTU3NSAxNiAtNjkzIC0xMiAtODggLTQyIC0xNDUKLTk1IC0xNzcgLTM5IC0yNCAtMTM2IC0yNiAtMzkzIC02IC0xNDggMTEgLTE3NyAxNiAtMjE1IDM3IC02NyAzNyAtNzIgNjIgLTY1CjMxMSA2IDIyNiAyMyAzNTQgNjMgNDkzIDYyIDIxNyA3NSAyNTUgODggMjY5IDggNyA1NCAxOSAxMDIgMjUgNDggNyA5NSAxNAoxMDMgMTYgNDQgMTEgMTg4IC0zIDIzNSAtMjR6Ii8+CjxwYXRoIGQ9Ik0xODI5NCA3NTI1IGMtNjcgLTMzIC04MSAtNTAgLTE1MyAtMTgwIC0xNTggLTI4NyAtMjc2IC02NDkgLTM0MQotMTA0NSAtMTkgLTExNSAtMzAgLTM0OCAtMzAgLTYzNyBsMCAtMjgxIC0zOCAtNDkgYy04NSAtMTA5IC0xNDIgLTIxOCAtMTc5Ci0zMzcgLTEyNSAtNDEzIC02NyAtNjU5IDE4MyAtNzg0IDE5MCAtOTUgNDI1IC05MiA2MjMgOCAxMDYgNTMgMTk3IDEzOCAyNDIKMjI3IGwzNCA2NyAtMSAxNDEgYy0xIDk5IC03IDE2OSAtMjIgMjQxIC0yNCAxMTcgLTczIDMwMyAtMTAxIDM4OSAtMTggNTUgLTIwCjk2IC0yNCA1MTAgLTIgMjQ4IC0xMCA1NDUgLTE3IDY2MCAtMTYgMjU4IC0xNyA0NDEgLTcgNzQwIGw4IDIzMCAtMzUgNTQgYy01Mwo4MiAtNjQgODUgLTE0MiA0NnogbTc3IC0xMTYgYzE3IC0yMiAxNyAtNDAgOCAtMjQ0IC0xMiAtMjQyIC05IC00MTYgMTUgLTkxMAo5IC0xODEgMTcgLTQ0NiAxNyAtNTg4IDIgLTMwMiA0IC0yOTYgLTgwIC0yNzggLTI5IDYgLTE0NiAxMSAtMjYwIDExIC0xODEgMAotMjEwIDIgLTIxNSAxNiAtMTAgMjYgLTcgNTk3IDQgNjc2IDUgNDAgMTcgMTMxIDI1IDIwMiAyNiAyMDggODkgNDQ5IDE4MCA2ODAKMTAyIDI2MSAyMzMgNDc4IDI3OCA0NjMgNiAtMiAxOSAtMTQgMjggLTI4eiBtLTc0IC0yMTE1IGM1MyAtOCAxMDQgLTE5IDExNAotMjUgMTkgLTEwIDUzIC0xMDkgODQgLTI0NCA5IC0zOCAyMCAtODggMjUgLTExMCAxOSAtODMgMzMgLTE5MyAzNCAtMjcwIDEKLTcwIC0zIC04NyAtMjggLTEzNyAtNTggLTExNCAtMTkyIC0yMTUgLTMzOCAtMjU0IC04MSAtMjEgLTI0NyAtMTggLTMyOSA2Ci0xMTUgMzUgLTIxNyAxMjUgLTI2NyAyMzggLTI4IDY1IC0yMSAyMzIgMTggMzc3IDE3IDY2IDQ0IDE0NyA2MCAxODEgMzUgNzIKMTE5IDIwMyAxNDUgMjI0IDM3IDMxIDMyNyAzOSA0ODIgMTR6Ii8+CjxwYXRoIGQ9Ik0xMDQ4NSA3NTE2IGMtMTEgLTE2IC0yMCAtNTUgLTIzIC05NyAtNCAtNjYgMTUgLTI4NSAzOSAtNDM3IDI2Ci0xNjggMjkgLTQ4MSA1IC01MjAgLTMgLTUgLTE1IC04NyAtMjYgLTE4MyAtMTkgLTE1MSAtMjEgLTIxOCAtMTggLTUwMCBsMwotMzI2IC00NyAtNjkgYy0yNiAtMzggLTU5IC05NiAtNzQgLTEyOSAtMzYgLTg0IC03MSAtMjM0IC03OCAtMzQwIC01IC04OSA2Ci0zNzMgMjMgLTU3MiAxMyAtMTU1IDU4IC0yMTggMTcyIC0yNDIgODAgLTE3IDQ3MSAtMTQgNTcwIDUgMTk2IDM3IDI1MyAxMjMKMjE1IDMyNSAtMTIgNjIgLTE2IDE0NiAtMTYgMzAwIDAgMTk0IC0yIDIyMyAtMjQgMzA0IC01NSAyMDcgLTcwIDMxOCAtOTYgNzIwCi0yMSAzMDcgLTM1IDQyNiAtNzEgNjA3IC02NCAzMjYgLTE0NyA2MzYgLTIyMSA4MjUgLTIyIDYwIC01MiAxMzYgLTY0IDE3MAotMTMgMzQgLTM0IDc4IC00NiA5OCAtMjcgNDEgLTk0IDc2IC0xNTkgODMgLTQyIDQgLTQ5IDIgLTY0IC0yMnogbTEzNyAtMTEzCmM0NSAtNTAgMTc3IC00MDQgMjM0IC02MjggNDQgLTE3MSAxMDAgLTQzMSAxMzUgLTYyMCAxMyAtNzEgMzcgLTM3MyA0NCAtNTQ5Cmw2IC0xNDkgLTM4IDcgYy0xMDYgMjAgLTIwMCAyNSAtMzE1IDIwIGwtMTI3IC03IC02IDI2IGMtNCAxNCAtNSAxOTUgLTMgNDA0CjQgMzU4IDYgMzg1IDMxIDUxOCAzMyAxNzIgMzQgMjczIDcgNTA3IC0xMiA5NSAtMjUgMjA5IC0zMCAyNTMgLTEzIDExMCAtMTMKMjI4IDIgMjQzIDEzIDEzIDM0IDQgNjAgLTI1eiBtMzQ1IC0yMDMxIGM0MCAtMTAgNzcgLTIyIDgyIC0yNyA1IC02IDE2IC01NQoyNiAtMTEwIDkgLTU1IDI4IC0xNDUgNDIgLTIwMCAyMiAtODcgMjcgLTEzMiAzNCAtMzU1IDQgLTE0MCAxMSAtMjgyIDE0IC0zMTUKNSAtNTAgMyAtNjUgLTE0IC05MiAtNDYgLTc0IC0xMzcgLTkzIC00NDAgLTkzIC0yMTAgMCAtMjE1IDAgLTI1NyAyNSAtNjggNDAKLTc5IDc3IC05NSAzMDUgLTE5IDI2NiAtMTggNDE2IDQgNTIwIDMwIDE0MiAxMjMgMzE0IDE4NCAzMzkgNDEgMTYgMTk4IDMwCjI3OCAyNSAzOSAtMyAxMDMgLTEzIDE0MiAtMjJ6Ii8+CjxwYXRoIGQ9Ik0xMzk4NCA3NTIxIGMtNzIgLTMzIC05NCAtNjYgLTE0MSAtMjE2IC0xNTMgLTQ5MCAtMjU0IC05NTAgLTMyMwotMTQ3MCAtNDUgLTM0NiAtNTAgLTQ0MSAtMjUgLTUwMSAxNiAtMzkgMTUgLTQxIC0yNiAtOTUgLTYwIC03NiAtMTI1IC0yMzEKLTE2MyAtMzg3IC0yNCAtOTcgLTIyIC0zNDIgNCAtNDY3IDMxIC0xNDUgNTYgLTE4NiAxMzUgLTIyMiAzNyAtMTYgNzYgLTE4CjQ2MiAtMTYgNDEwIDIgNDIzIDMgNDczIDI0IDExOCA1MSAxNzAgMTgyIDE3MCA0MzQgMCAyMzEgLTQwIDQyMCAtMTQxIDY2NQotNDkgMTE5IC01MiAxMzEgLTU5IDI0NSAtNSA4MiAtMTUgMTQ3IC0zMyAyMDUgLTM4IDEyNyAtNDggMjEyIC01NyA0NzAgLTkKMjMxIC0yNCA0NTcgLTM1IDUwMiAtMyAxMyAtMTAgNjQgLTE1IDExMyAtNSA1MCAtMTYgMTQ0IC0yNCAyMTAgLTkgNjYgLTIwCjE4NyAtMjYgMjY4IC01IDgxIC0xNiAxNjMgLTI0IDE4MSAtMzIgNzYgLTc1IDkyIC0xNTIgNTd6IG03MiAtMTAyIGMxNCAtMTYKMjEgLTQ0IDI2IC0xMTIgNSAtNTEgMTIgLTE0NCAxNyAtMjA3IDExIC0xMzIgMjkgLTI5NCAzNiAtMzMwIDE4IC05MSAzOSAtMzMwCjQ1IC01MzUgMTAgLTMwMCAyMCAtMzkyIDY2IC01NzggMjkgLTExNSAzNSAtMTU1IDI4IC0xNzUgbC0xMCAtMjcgLTE0MSAzCmMtMTc2IDUgLTMwNCAtMTEgLTQxMyAtNDkgLTEzMCAtNDYgLTEyNiAtNDYgLTEzOSAtOSAtMTEgMzIgLTggNjcgMTkgMzE1IDYKNTAgMTUgMTE5IDIwIDE1NSAyOCAxODUgNTEgMzI4IDU2IDM1MCAzIDE0IDkgNDggMTMgNzUgNyA0NSAyMyAxMTggOTIgNDQwIDExCjU1IDM3IDE1MiA1NiAyMTUgMTkgNjMgNDEgMTQwIDQ5IDE3MCAyMCA3NyA2NCAyMDkgODEgMjQ1IDE0IDI4IDYwIDc1IDc0IDc1CjMgMCAxNCAtOSAyNSAtMjF6IG0yMDkgLTIwODMgYzU2IC0zNyAxNDkgLTI5NCAxOTAgLTUyOCAxOSAtMTA3IDE5IC0yNzUgMAotMzU4IC04IC0zNiAtMTcgLTc1IC0yMCAtODcgLTcgLTI5IC02MSAtOTAgLTk0IC0xMDcgLTM0IC0xNyAtODA4IC0yMSAtODU5Ci01IC02OCAyMiAtMTA3IDE2MyAtMTA3IDM4NCAxIDE4MiAxOSAyNjMgOTcgNDIxIDgxIDE2NSAxODYgMjUyIDM1MCAyODkgOTEKMjEgNDA3IDE1IDQ0MyAtOXoiLz4KPHBhdGggZD0iTTYyNzIgNzM3OCBjLTI2IC0xMyAtNTMgLTkxIC03MiAtMjExIC0xNyAtMTA2IC02IC0yNTcgMzMgLTQzNyA3Ci0zMiAxMiAtMTM0IDEyIC0yNDUgLTEgLTE2MSAtNCAtMjA2IC0yNCAtMjk1IC0zMCAtMTM1IC0zNyAtMjkzIC0yMSAtNDM4IDExCi05MyAxMSAtMTI5IDEgLTE5MSAtMTIgLTcwIC0yNSAtMTE4IC0xMTAgLTQwMCAtNTIgLTE2OCAtNjMgLTI0OCAtNjUgLTQ1MQpsLTEgLTE4NSAzNiAtNzUgYzQ2IC05NiAxMDQgLTE2MCAxODcgLTIwOSAxNTEgLTg3IDMyMyAtMTE4IDQ0MCAtNzcgMTMwIDQ1CjMxMCAyMDQgMzYzIDMyMiA0MCA4OCA1NCAxODQgNDIgMjgxIC0xMCA3MyAtOTEgMzIxIC0xNzUgNTM4IGwtMzEgODAgMiAxODUKYzYgNDAzIC0zNyA2OTAgLTE2MSAxMDcwIC0xMTAgMzQwIC0xMzIgNDAwIC0xOTUgNTI1IC04NiAxNzEgLTEwMSAxOTEgLTE2NQoyMTAgLTU5IDE3IC02NSAxNyAtOTYgM3ogbTk3IC0xMjIgYzI5IC0zMSAxMDYgLTE2NSAxMzggLTI0MSAyOSAtNjkgMTY0IC00NzIKMTk4IC01OTAgMzQgLTExOSA1NiAtMjMyIDgxIC00MTAgMjEgLTE0NCAyNiAtNTU3IDggLTU3NSAtOCAtOCAtMzMgLTcgLTk1IDYKLTY2IDEzIC0xMTAgMTUgLTIxNCAxMCAtNzEgLTQgLTE1MCAtOSAtMTczIC0xMiBsLTQ0IC02IDggNzggYzUgNDQgNiAxMjAgNAoxNjkgLTMgNTAgLTUgMTU4IC01IDI0MCAwIDEzMCA0IDE2NyAyOSAyNzUgMjYgMTExIDI5IDE0MiAyOSAyODAgLTEgMTI1IC02CjE4MCAtMjcgMjg1IC00NCAyMTkgLTQ1IDM3NiAtMiA0NzkgMTcgNDIgMzQgNDUgNjUgMTJ6IG0yODIgLTE5MDAgYzQyIC04IDk3Ci0yMyAxMjMgLTM0IDQ3IC0yMSA2NiAtNDkgOTUgLTE0NCA1IC0xOCAyOCAtODUgNTEgLTE0OCA2OSAtMTkzIDkxIC0yNjEgOTYKLTMwNCA2IC00NCAtMTUgLTEzNSAtNDYgLTE5NiAtNTAgLTk4IC0xNjggLTIwNiAtMjg4IC0yNjIgLTU2IC0yNyAtNzEgLTMwCi0xNDAgLTI3IC02OCA0IC04OSAxMCAtMTcyIDUwIC0xMjEgNTggLTE5NyAxMjYgLTIzMyAyMDcgLTQyIDkyIC00OCAxNDcgLTM2CjI5MCAxMyAxNDggMzQgMjQ0IDg5IDQwMSAyMiA2MyA0MCAxMTYgNDAgMTE4IDAgMTIgNzcgMzYgMTUzIDQ3IDEyMCAxOCAxNzYKMTggMjY4IDJ6Ii8+CjxwYXRoIGQ9Ik0xOTUxMyA3Mzc1IGMtMzcgLTE2IC01NSAtNDggLTczIC0xMjUgLTYgLTMwIC0yNSAtMTAwIC00MiAtMTU1IC0zMwotMTEwIC00NSAtMTQ0IC0xNTQgLTQyMCAtMTA3IC0yNzMgLTE1MCAtNDQ1IC0xNzQgLTcwMCAtMzIgLTMyNSAtODUgLTY2OAotMTMyIC04NDUgLTEwIC00MSAtNDAgLTEzOCAtNjYgLTIxNSAtNDUgLTEzNSAtNDYgLTE0NCAtNDcgLTI2MCAwIC0xMTQgMgotMTIzIDMxIC0xODUgMzMgLTY5IDc2IC0xMTggMTkyIC0yMTggMTkwIC0xNjMgMzczIC0xODMgNjAyIC02NyAxNTEgNzYgMjE4CjE2MSAyNDYgMzEwIDM4IDIwMSAtNCA0MjIgLTEzNiA3MzAgbC01MiAxMjAgMTQgNjAgYzE5IDg3IDE3IDQxNyAtNCA1ODAgLTQ3CjM2MCAtNDYgNDY1IDEyIDg4NSAxNiAxMTIgMTIgMzY1IC01IDQwOCAtNDAgOTUgLTEyNiAxMzUgLTIxMiA5N3ogbTEwMSAtMTA0CmM1OCAtNjQgNjAgLTE5NiAxMCAtNTYzIC0xNiAtMTI0IC0xOSAtNTM0IC0zIC02NDMgMzYgLTI1OSA0NSAtNDMwIDI5IC01NjEKLTE0IC0xMTMgLTI3IC0xMzkgLTY1IC0xMzAgLTU2IDE0IC0yNTAgMTggLTM1OSA3IC0xNDUgLTE1IC0xNDkgLTEzIC0xMzUgNjkKMTEgNjEgMzUgMjU4IDQ5IDM5MCAzNiAzNTMgNzkgNTM0IDE5OCA4MjUgMzcgOTAgMTA5IDI4MyAxMzQgMzYwIDE1IDQ2IDI4IDk1CjQyIDE1NyAyMyA5OSA2MSAxMzMgMTAwIDg5eiBtMTEgLTIwMDUgYzMwIC0yMCAxMDEgLTE3MyAxNjUgLTM1NiA1MCAtMTQyIDUzCi0zNTYgNyAtNDUxIC03NSAtMTU1IC0zMTYgLTI4MCAtNDc5IC0yNDggLTY1IDEzIC0xMjQgNDcgLTIyNyAxMzEgLTEwMyA4NQotMTU1IDE1MyAtMTc2IDIzMyAtMjIgODEgLTE1IDEyOSA0OCAzMjUgMjQgNzQgNTAgMTYwIDU3IDE5MCAyNyAxMTMgNDIgMTYwCjUzIDE2NyA1NSAzNCA1MDMgNDEgNTUyIDl6Ii8+CjxwYXRoIGQ9Ik0yMDQ3MSA3MDMyIGMtNDggLTUxIC0xNzMgLTI5NyAtMjA0IC00MDIgLTU0IC0xODAgLTY4IC0yODIgLTY4Ci00NzUgMCAtMTMzIDUgLTIxNiAyMSAtMzE3IDQ0IC0yODQgNTcgLTQzNyA0OSAtNTUzIC03IC0xMTMgLTE1IC0xNDQgLTY5Ci0zMDAgLTc4IC0yMjQgLTk4IC00MTYgLTYyIC01ODcgMjUgLTExOCA1OSAtMTg3IDEyMCAtMjUxIDc2IC03OCAyMDQgLTEwMAozMjggLTU2IDEwMyAzNiAxNjcgNDggMjYyIDQ5IDc3IDAgMTA4IC01IDE4OCAtMzEgMTcyIC01NiAyNjcgLTMwIDM3MCAxMDMgMzQKNDQgNjMgOTcgODQgMTU1IDI5IDc3IDM0IDEwMyAzOCAyMTMgNSAxNTUgLTEzIDI1NSAtNzAgMzg0IC05NCAyMTUgLTE1MiAzNjYKLTIwMSA1MzEgLTE0IDQ1IC0yOSAxMTQgLTU3IDI2MCAtMTggOTAgLTMxIDI5OCAtMjUgNDAwIDUgOTAgMTQgMTYwIDQ1IDM3NwoxNCA5MiAxMiAxNTIgLTUgMjY2IC0yNiAxNzEgLTY1IDI2MyAtMTE0IDI3MCAtNDQgNyAtMTA5IC05IC0xNDggLTM1IC0zNyAtMjUKLTM4IC0yNSAtODMgLTkgLTI2IDkgLTc3IDE2IC0xMjAgMTYgLTQxIDEgLTkzIDcgLTExNSAxNSAtMjIgOCAtNjAgMTUgLTg0IDE1Ci0zOCAwIC00OSAtNSAtODAgLTM4eiBtMTQ0IC03OSBjMTAgLTEwIDE1IC0yNiAxMiAtNDIgLTIgLTE0IC0xNSAtODAgLTI4Ci0xNDYgLTIwIC0xMDYgLTIzIC0xNTEgLTIzIC0zNzUgLTEgLTI0MSAwIC0yNTggMjEgLTMwMiAxMiAtMjYgMzggLTYzIDU3IC04MwpsMzYgLTM2IDAgLTEyNyBjMCAtMTE1IDIgLTEzMCAyMCAtMTUwIDI1IC0yNiAzMyAtMjcgNTQgLTcgMTMgMTMgMTQgMzcgOSAxNTAKLTUgMTE3IC00IDEzNyAxMSAxNjAgNTAgNzcgODUgMjEyIDExNSA0NDUgMzggMjkyIDYxIDQyMSA4MyA0NjUgMzQgNjUgODYgODUKMTA3IDM5IDQ2IC0xMDMgNjUgLTMwMiA0MSAtNDM1IC03NCAtNDAzIC0zOCAtODQxIDk5IC0xMjE5IDE3IC00NiAzMSAtOTAgMzEKLTk4IDAgLTE2IDkgLTE2IC0zNjAgOCAtMTU3IDEwIC0zMDAgNyAtNDQ0IC0xMSAtNTYgLTcgLTgyIC03IC05MCAxIC03IDcgLTEyCjY2IC0xMyAxNTggLTEgODEgLTYgMTc5IC0xMiAyMTcgLTYgMzkgLTE3IDExNyAtMjYgMTc1IC01MiAzNDIgLTU2IDQ0NyAtMjUKNjM0IDI2IDE1MSA2NyAyNzQgMTM2IDQwNSA4MiAxNTUgMTA5IDE5MSAxNDQgMTkxIDE2IDAgMzYgLTcgNDUgLTE3eiBtMjEwCi0xNyBjNTAgLTIxIDU4IC00NCA0MSAtMTE4IC04IC0zNSAtMjIgLTEzMyAtMzEgLTIxOCAtMzAgLTI3OCAtODMgLTUwMSAtMTIwCi01MDQgLTUgLTEgLTIxIDIyIC0zNSA0OSAtMjIgNDUgLTI1IDY1IC0yOSAxOTUgLTQgMTUxIDcgMjYxIDQxIDQ0MCAzNCAxNzYKNDcgMTkyIDEzMyAxNTZ6IG0xNDUgLTE4MzcgYzgwIC02IDE4NyAtMTIgMjM4IC0xMyA1MSAtMiA5NyAtNyAxMDEgLTEyIDEyCi0xNCA4NyAtMTkzIDEwOSAtMjU5IDQ3IC0xNDYgMzcgLTMxNiAtMjcgLTQ0NCAtNDggLTk0IC04MSAtMTM1IC0xNDAgLTE3MwotNTMgLTMzIC05OCAtMzYgLTE1OSAtOCAtNTggMjYgLTE3OCA1MCAtMjUyIDUwIC03MSAwIC0xNzggLTIzIC0yNjggLTU2IC0zNwotMTQgLTg0IC0yNCAtMTE2IC0yNCAtNDUgMCAtNjEgNiAtMTA3IDM4IC00NCAzMCAtNjEgNTIgLTkyIDExMiAtNDcgOTMgLTYxCjE3MyAtNTMgMzEyIDYgMTIwIDMwIDIyMCA4NCAzNTIgMzQgODQgNDAgOTIgNzQgMTAzIDg5IDI5IDM3MiAzOSA2MDggMjJ6Ii8+CjxwYXRoIGQ9Ik00ODA0IDY5ODMgYy0yMCAtMTQgLTQyIC02NyAtNTQgLTEyOCAtOCAtNDIgLTEwIC0xNTQgLTUgLTM3NSAxMwotNjkyIDE4IC02MTAgLTU1IC05MTUgLTE3IC03MSAtNDAgLTE3MyAtNTAgLTIyNSAtMjIgLTEwOSAtMzUgLTE0NyAtMTE4IC0zNTUKLTgzIC0yMDggLTEwNiAtMzAzIC0xMDcgLTQ0MSAwIC0xMDcgMSAtMTEyIDM3IC0xODUgNDEgLTgzIDk1IC0xMzYgMTg4IC0xODUKNDkgLTI2IDY1IC0yOSAxNDUgLTI5IDg2IDAgOTMgMiAxNzIgNDMgMTEyIDU3IDE0MyA1NyAyNDggLTUgMTAyIC01OSAxNDkgLTczCjI1MCAtNzMgMTE5IDAgMTc3IDIxIDI0NiA5MCA2NiA2NiA4NCAxMTYgMTAxIDI4OCAxNSAxNDQgMiAyNDcgLTQzIDM1MiAtNjkKMTYyIC04NCAyNjMgLTc2IDQ5NCA0IDk0IDEyIDIxNiAxOSAyNzEgMTcgMTM3IDE3IDYwOCAwIDcwNSAtMjIgMTI4IC00MiAyMTMKLTYzIDI3MCAtNDAgMTA5IC0xNjEgMzE2IC0yMjQgMzg0IC0yNiAyOCAtMjkgMjggLTkzIDIyIC0zNyAtNCAtMTE1IC0xMSAtMTc0Ci0xNCAtNzkgLTYgLTExMSAtMTIgLTEyNiAtMjUgLTI0IC0yMiAtMjcgLTIyIC02OCAxMCAtMzYgMjcgLTEyNiA0MyAtMTUwIDI2egptNjEzIC0xODQgYzY3IC05NSAxNDggLTI1NyAxNjcgLTMzNCA4IC0zMyAyMCAtODIgMjYgLTExMCAxOSAtNzUgMjQgLTUyMCAxMAotNzEwIC03IC04OCAtMTUgLTIzNSAtMTcgLTMyNyAtMyAtMTEyIC05IC0xNzAgLTE3IC0xNzcgLTExIC05IC0xMDUgMiAtMzQxCjQyIC0xOTkgMzQgLTM1MiAyOSAtNDc0IC0xMyAtNzYgLTI3IC04NiAtMTcgLTY2IDY1IDE3IDY2IDgyIDM1NyA5NSA0MjAgNTIKMjU1IDU4IDM0NyAzNSA1MzAgLTI0IDE5NiAtMTkgNjE0IDggNjYzIDIyIDQwIDM4IDQwIDcxIDIgNDIgLTUxIDU3IC0xMTggMTQyCi02NDUgMjcgLTE3MSA1MiAtMjc3IDg0IC0zNjIgMTEgLTMwIDIwIC03MiAyMCAtOTQgMCAtNTAgMTUgLTc5IDQxIC03OSAyMSAwCjM0IDI0IDQ0IDgyIDMgMjEgMjUgNzUgNDkgMTIwIDU4IDExMiA3MSAxNzkgNzAgMzc4IDAgMTYwIC0xNyAzMzMgLTQ5IDUwNQotMTggOTkgLTE5IDEzMiAtMiAxMzggMjEgOCA1MSAtMTggMTA0IC05NHogbS0yMzcgNjYgYzM0IC0xNyAzMSAtNiA2NyAtMjI1CjI0IC0xNDEgMjggLTE5NCAyOCAtMzY1IDAgLTIxNiAtNCAtMjUyIC0zNSAtMzAzIC0xNiAtMjYgLTI0IC0zMSAtMzQgLTIzIC0yMgoxOCAtNTggMTk4IC05NiA0NzEgLTE3IDExOSAtMzggMjM0IC01NyAzMDcgLTEzIDUyIC0xNCA2NyAtMyA5MyAyNCA1NyA3MyA3NAoxMzAgNDV6IG0zMCAtMTc3NCBjNjkgLTExIDE2NiAtMjcgMjE1IC0zNSA1MCAtOSAxMDYgLTE2IDEyNiAtMTYgMjAgMCA0MiAtNgo0OCAtMTMgNiAtOCAyMiAtNTMgMzYgLTEwMSAxNCAtNDggMzYgLTEwOCA0OSAtMTM0IDQ3IC05MyA1NyAtMTk3IDMyIC0zMzkKLTIyIC0xMjEgLTYyIC0xODYgLTE0MSAtMjI2IC0xMDYgLTUzIC0xODEgLTQxIC0zNTAgNTggLTU2IDMyIC02NiAzNSAtMTQ0IDM1Ci04MCAwIC04OCAtMiAtMTYwIC00MiAtNjMgLTM0IC04NiAtNDEgLTEzMSAtNDIgLTk4IDAgLTIwOSA3NCAtMjU5IDE3NiAtMjcKNTMgLTMxIDcyIC0zMSAxNDMgMCA5NCAyMiAxODkgNzQgMzIyIDY2IDE2OCA3NyAxODMgMTQ4IDE4MyAxNyAwIDYxIDkgOTcgMTkKMzYgMTEgNzcgMjIgOTEgMjQgNjEgMTAgMTg1IDUgMzAwIC0xMnoiLz4KPHBhdGggZD0iTTIyOTYwIDY5MTAgYy0xMCAtMTAgLTMxIC0zNyAtNDQgLTU5IC0zNCAtNTQgLTQzIC01NyAtNzQgLTI4IC03NAo2OCAtMTIxIDcyIC0yMTMgMTUgLTQ5IC0zMCAtNTQgLTMxIC05MyAtMTkgLTEzMiA0MCAtMTQ2IDMwIC0zMjAgLTIyOSAtNTkKLTg5IC0xMDcgLTE4OSAtMTI4IC0yNzAgLTMyIC0xMjMgLTQ5IC0yMTYgLTY3IC0zNzAgLTEyIC05NiAtMjYgLTIwMCAtMzEKLTIzMCAtNSAtMzAgLTEyIC03MyAtMTUgLTk1IC03IC00MSAtOTIgLTMwNSAtMTM5IC00MjYgLTQxIC0xMDggLTY1IC0yNTcgLTc2Ci00NTggLTUgLTEwMiAtNyAtMjAzIC0zIC0yMjYgMTEgLTc3IDQ3IC0xMjUgMTQ4IC0yMDIgNjYgLTUwIDIyMyAtMTM0IDI3OAotMTQ5IDY4IC0xOCAxODIgLTE4IDI0MyAxIDcxIDIyIDEzMiAxOCAyMjYgLTEyIDExOCAtMzggMjExIC0zOCAyOTUgMSA3NSAzNAoxMzUgOTYgMTY5IDE3MiA3MyAxNjYgNDcgNTE0IC02MSA4MDkgLTU0IDE0NyAtNjYgMTk5IC03MiAzMTUgLTQgNzkgLTEgMTI3CjExIDE5MCAzNiAxNzQgNDUgMjg2IDM0IDM4MyAtMTUgMTMxIC00IDI2MiAzMiAzOTIgNDIgMTU1IDU0IDI1NyA0MSAzNDUgLTIyCjEzOCAtODUgMjA2IC0xNDEgMTUweiBtLTE5MCAtMTY2IGMyMiAtMjAgNDAgLTQ0IDQwIC01NCAwIC0xMCAtMTIgLTM3IC0yNgotNjEgLTE0IC0yNCAtNTggLTEwMCAtOTggLTE2OSAtNDAgLTY5IC03OSAtMTI1IC04NyAtMTI1IC0xMSAwIC0xNCAyOSAtMTcKMTY1IC0xIDEwMCAyIDE3NSA4IDE5MCA3IDE3IDMzIDM3IDczIDU3IDM0IDE4IDYzIDMyIDY0IDMyIDIgMSAyMSAtMTUgNDMgLTM1egptMjM4IDE0IGMyMiAtMjIgMTMgLTEzNyAtMjIgLTI3OSAtNDYgLTE4MyAtNjAgLTI3NiAtNTIgLTM0NiAxNSAtMTMzIDE4IC0yMzIKOCAtMjkzIC02IC0zNiAtMjAgLTExNyAtMzEgLTE4MCAtMjUgLTE0MSAtMjYgLTE4NSAtNCAtMzIzIDExIC02NyAxMyAtMTExIDcKLTExNiAtMTQgLTE1IC05NjcgLTE3IC05NzIgLTIgLTIgNiAxMCA0OCAyNiA5NCAzNiA5OSA4OCAyOTUgOTYgMzU3IDY5IDU5NAoxMDEgNzAxIDI3NSA5MzUgOTQgMTI1IDExMSAxNDEgMTM4IDEyNyAxNiAtMTAgMTggLTI5IDE5IC0yMjkgMCAtMTIwIDQgLTI3NAo4IC0zNDMgNyAtMTEwIDUgLTEzNiAtMTQgLTIxNSAtMTEgLTQ5IC00NCAtMTQwIC03MSAtMjAxIC01OSAtMTI5IC02MyAtMTc3Ci0xNyAtMTgyIDI1IC0zIDMxIDQgNzEgODUgNzEgMTQyIDEyNyAzNDEgMTI3IDQ1MSAwIDI0IDIxIDY5IDczIDE1NSA0MSA2NwoxMTMgMTkwIDE2MiAyNzIgMTU3IDI2NiAxNTAgMjU2IDE3MyAyMzN6IG0tNDIgLTE2NTAgYzUgLTYgNTggLTE2OCA3MiAtMjIzCjM5IC0xNTEgNDcgLTM1MSAxOCAtNDUwIC0xMCAtMzMgLTMzIC04NCAtNTIgLTExMyAtNjAgLTkyIC0xNjggLTEyNCAtMjg5IC04NgotMjcgOCAtODMgMjEgLTEyNCAyOSAtNzAgMTQgLTgxIDEzIC0xNjQgLTYgLTEyNCAtMjkgLTE5MyAtMjQgLTI4OSAyNCAtMTE3CjU3IC0yNjUgMTc0IC0yOTUgMjMxIC0xMyAyNSAtMTQgNTIgLTkgMTUzIDggMTM5IDI4IDMwOCA0NSAzNzAgNyAyNSAyMSA0OCAzNAo1NSAxMiA3IDY5IDE1IDEyNyAxOSAxMTYgNyA5MTggNCA5MjYgLTN6Ii8+CjxwYXRoIGQ9Ik0yODM4IDY4ODMgYy04NSAtOTIgLTk2IC0yMjggLTM5IC01MDggNTQgLTI2MCA3NCAtNDQ3IDc1IC02ODAgMgotMzQ5IC0yNyAtNTY1IC0xMDMgLTc4MCAtNTAgLTEzOSAtNTMgLTMzNSAtOSAtNTI1IDQ1IC0xOTUgNzEgLTI1MSAxMzMgLTI4Mgo1NyAtMzAgMTcxIC0zNSAyNTUgLTEzIDkxIDI0IDI1MiAzMCA0MDMgMTUgMjA4IC0yMiAzMTkgNCA0MTggOTYgNTcgNTQgODgKMTAzIDEyMyAxOTIgNjkgMTc3IDc5IDQ0MSAyMyA2NDIgLTE0IDQ3IC01NCAxNTkgLTkwIDI1MCAtOTQgMjM4IC0xMzEgNDEwCi0xNTYgNzMwIC0xNyAyMDkgLTUyIDMwMyAtMjM2IDYzMCAtNDIgNzQgLTg2IDE0NSAtOTggMTU4IC0yNCAyNiAtODMgMzAgLTEyNgo3IC0yMyAtMTEgLTYxIC0xMyAtMTg2IC0xMCAtMTQyIDQgLTE1OSA2IC0xNzEgMjQgLTggMTAgLTM1IDMzIC02MSA1MCAtNjIgNDEKLTExOCA0MyAtMTU1IDR6IG0xMjYgLTEwOSBjNTEgLTUwIDY5IC05MSAxMDUgLTIzOSA2MyAtMjU3IDk4IC0zMjAgMjQ2IC00NDkKbDQwIC0zNCAxMSAtMjQ0IGM3IC0xMzQgMTcgLTI2MCAyNCAtMjgxIDEwIC0zNSAxNCAtMzggNDMgLTM1IDMyIDMgMzIgMyAzMQo1OCAtMSAzMCAtNiAxMTggLTEzIDE5NSAtNiA3NyAtMTMgMjQxIC0xNiAzNjUgLTYgMjIxIC0xNiAzNjAgLTM2IDQ5MiAtNiAzNwotOCA3NiAtNCA4NiA3IDI1IDU4IDQ3IDc5IDM1IDIxIC0xMSAxNjYgLTI2MSAyMzIgLTM5OCA1NSAtMTEzIDg0IC0yMTggODQKLTMwMyAwIC00MyAzNyAtMzI0IDYwIC00NTIgMTEgLTYxIDU5IC0yMTcgOTIgLTI5NyAzNiAtODkgNjQgLTgzIC00MDQgLTgzCi00MTIgMSAtNTYyIDEwIC01ODkgMzcgLTEwIDEwIC0xMCA0OSAwIDE4MCAyNSAzNjMgOCA1OTAgLTc5IDEwNzEgLTI2IDE0MAotMjkgMTcwIC0yNCAyMDIgOSA0OCA1MSAxMzAgNjggMTMwIDcgMCAyOSAtMTYgNTAgLTM2eiBtMzEyIC03NyBjMjkgLTI1IDI5Ci0yOCA1MyAtMjMyIDYgLTQ0IDExIC0xMTggMTMgLTE2NSAzIC03MiAxIC04NSAtMTMgLTg4IC0yMiAtNCAtMTA0IDExOCAtMTMxCjE5NSAtMjggODAgLTY4IDI0MiAtNjggMjc0IDAgMzIgOSAzNyA3MiAzOCAzNSAxIDUzIC01IDc0IC0yMnogbS0xMTYgLTE1OTcKYzkxIC02IDI4OCAtOCA0NzYgLTQgMTc2IDQgMzMyIDQgMzQ2IDEgNzUgLTE5IDEyMSAtMzUwIDc0IC01MzcgLTQzIC0xNzAKLTExNSAtMjc4IC0yMTkgLTMzMCAtODMgLTQxIC0xMzcgLTQ1IC0yOTIgLTI1IC0xNTggMjEgLTI4NiAxNCAtNDE4IC0yMSAtMTA1Ci0yOSAtMTQxIC0yNiAtMTg3IDEzIC00MiAzNSAtNjMgODEgLTg4IDE4OCAtNjIgMjcyIC01OSAzMzYgMjcgNTc1IDE3IDQ3IDMxCjkwIDMxIDk3IDAgNiA1IDI0IDEwIDM4IDkgMjQgMTQgMjYgNDggMjEgMjAgLTMgMTA3IC0xMSAxOTIgLTE2eiIvPgo8cGF0aCBkPSJNMTQ0MCA2Nzk4IGMtMzMgLTE3IC01MSAtMzUgLTY4IC02OCAtMjIgLTQzIC0yMyAtNTIgLTE3IC0xODUgOAotMTk4IDI1IC0zNDQgNjAgLTUxNSA3IC0zNiAxOCAtOTAgMjQgLTEyMCA0MCAtMTk5IDUzIC01NTYgMjYgLTcyMyAtOCAtNTEKLTM2IC0xNTYgLTYxIC0yMzIgLTU1IC0xNjQgLTYzIC0yNDcgLTQ1IC00NDIgMTcgLTE4NCA1NiAtMjU1IDE2OSAtMzA1IDg0Ci0zOCAxNDIgLTQwIDMxMyAtMTMgMTU5IDI1IDMwNSAzMSAzODkgMTUgMjUgLTQgNjIgLTExIDgyIC0xNSA1NCAtMTEgMTA0IDIKMTQzIDM2IDY1IDU3IDEwOCAyMjYgMTA5IDQyOSAwIDIyMCAtNTQgMzY4IC0yMDUgNTYwIC0xNyAyMSAtNTAgMTAwIC04MiAxOTUKLTE2MSA0NzQgLTM1NiA5MzggLTUyMyAxMjQ0IC02OSAxMjggLTEwMCAxNTMgLTE5NiAxNTggLTYyIDQgLTgwIDEgLTExOCAtMTl6Cm0xNzMgLTk4IGM3NyAtNjcgMzE3IC01NzQgNDc1IC0xMDAwIDc2IC0yMDYgMTMyIC0zNzYgMTMyIC0zOTkgMCAtMjcgLTExIC0yOQotMjA1IC0zNSAtMTcwIC01IC0yODAgLTI3IC0zNzMgLTc1IC0yNCAtMTIgLTUzIC0yMSAtNjQgLTE5IC0yMSAzIC0yMSA4IC0yMwoyNzggLTIgMjIyIC03IDMwMSAtMjQgNDEzIC0xMSA3NyAtMjMgMTQyIC0yNiAxNDcgLTMgNCAtOSAzNiAtMTQgNzEgLTYgMzUKLTE3IDEwNyAtMjYgMTU5IC0xOCAxMDYgLTMxIDM4MyAtMjEgNDI0IDQgMTUgMjEgMzUgMzkgNDYgNDcgMjkgOTAgMjYgMTMwCi0xMHogbTY5NyAtMTU3NiBjMTI5IC0xNDIgMTkxIC0zNDAgMTY5IC01NDQgLTE4IC0xODEgLTY5IC0yOTAgLTEzMyAtMjkwIC0xNQowIC03MCA3IC0xMjQgMTYgLTExNCAxOSAtMTg4IDE1IC0zOTIgLTIwIC0xMTUgLTIwIC0xNTQgLTIzIC0xODkgLTE1IC04NSAxOQotMTM4IDU3IC0xNzQgMTI0IC0yMCAzNyAtMjIgNTQgLTIyIDIzNSAwIDE4OCAxIDE5NyAyNiAyNTUgMTQgMzMgMzMgODAgNDIKMTA1IDE2IDQzIDIxIDQ3IDk5IDgxIDIyNiAxMDAgMjU2IDEwNiA0OTEgMTA2IGwxNTggMCA0OSAtNTN6Ii8+CjxwYXRoIGQ9Ik0yNDI4MCA2NzcxIGMtNTAgLTI3IC01NyAtMzcgLTE2MiAtMjI2IC0yMDMgLTM2NiAtMjY3IC01MDQgLTM2MwotNzkwIC03MSAtMjEyIC05OSAtMzEzIC0xMTAgLTQwOSAtNyAtNTEgLTE0IC02NiAtNTAgLTEwNSAtNjQgLTcxIC0xNzUgLTI2NAotMjEyIC0zNzEgLTI5IC04NCAtMzMgLTEwNyAtMzMgLTIwMSAwIC03NyA1IC0xMjUgMTkgLTE3MCAxMSAtMzUgMjQgLTkxIDMwCi0xMjMgNiAtMzMgMTggLTcwIDI3IC04NCAyMCAtMzAgMTA3IC02OSAyMDEgLTkwIDcyIC0xNSA3MyAtMTUgMTYzIDEzIDEyNCAzOAoyMjcgMzMgMzUwIC0xNSAxNDggLTU4IDI1NiAtNDAgMzIyIDU1IDM4IDU1IDc2IDE5OCA4NyAzMjIgMTMgMTQ1IC0xIDI3MyAtNDMKNDA4IC0zMSAxMDEgLTQzIDE2MSAtNjcgMzQ1IC0xMSA4OSAtMTEgMzQyIDEgNDc1IDEwIDExMCAxNSAxNTAgNDQgMzQ1IDM1CjIzMSA0OCAzNTkgNDQgNDQxIC01IDEwMSAtMTggMTI2IC04NiAxNzAgLTU0IDM0IC0xMDkgMzggLTE2MiAxMHogbTExNCAtOTIKYzM2IC0yOCA1NiAtNzAgNTYgLTExNiAwIC0zNSAtMTYgLTE2NiAtNTUgLTQ0OCAtNDAgLTI4NSAtNDcgLTM2MSAtNTIgLTUxNQotMyAtMTMzIDAgLTE5MSAxNiAtMzAwIDEzIC04NiAxNyAtMTM4IDEwIC0xNDUgLTYgLTYgLTI0IC01IC01MiAzIC0xNjYgNDcKLTI1MCA2NSAtNDAxIDgzIC05NCAxMiAtMTc3IDI3IC0xODQgMzQgLTExIDEwIC0xMSAyNSAtMiA3NiAxNyAxMDIgNDAgMTg2IDcyCjI3MyAxNiA0NSA0NSAxMzEgNjUgMTkxIDQyIDEzMCAxMTYgMjk4IDIwMCA0NTAgMTcwIDMxMCAyMDcgMzczIDIzOCA0MDMgNDEKMzggNTMgMzkgODkgMTF6IG0tNTAxIC0xNTI5IGMyNTEgLTMzIDQ3OCAtMTAyIDUxNCAtMTU3IDMyIC00OCA2NCAtMjAzIDY1Ci0zMDggMSAtMTY5IC00NiAtMzQwIC0xMDggLTM5NCAtNDYgLTQxIC05NCAtNDEgLTE5OSAwIC0xMDcgNDIgLTI1NiA1MSAtMzU1CjIzIC05NCAtMjcgLTE4MiAtMjQgLTI1MiA4IC02MyAyOSAtNTkgMjIgLTEwOCAyMTQgLTM1IDEzOSAtMjUgMjIxIDQ2IDM2NyA5OAoyMDMgMTQ4IDI2NyAyMDggMjY3IDE5IDAgMTA0IC05IDE4OSAtMjB6Ii8+CjxwYXRoIGQ9Ik0xNTkwMCAzODA3IGMtMTI3IC0yOSAtMjU5IC0xMjcgLTMxMyAtMjMzIC01NSAtMTA4IC02MiAtMTU4IC02MgotNDI5IDAgLTMxMSAxMSAtMzY2IDEyNSAtNjE0IGw2MiAtMTM0IDkgLTIxNiBjNSAtMTE5IDExIC0yMjcgMTQgLTI0MSAyIC0xNAoxNiAtOTUgMzAgLTE4MCAyMyAtMTQ2IDM0IC0yMjMgNTYgLTM4NCAxOCAtMTM2IDYwIC0zNzMgODUgLTQ4MSA2MSAtMjYyIDEyOQotNDU0IDI0NiAtNzAzIDUwIC0xMDUgMTMzIC0xNTcgMTk4IC0xMjIgMjcgMTUgNjEgNjYgNzEgMTA4IDUgMjAgNCAyMzUgLTEKNDc3IC0xMCA0NDMgLTggNDk0IDI1IDcwMCAyOCAxNzUgMzUgMzE0IDI0IDQ3NyAtMjAgMzE4IC0yMiA0MDAgLTkgNTE3IDE0CjEzNyAxNCAxMzQgODAgMzI0IDg3IDI1MSAxMTIgMzU0IDE0MCA1NTggMTcgMTI2IDEgMTkxIC02MCAyNDIgLTE3IDE1IC00NiAzMQotNjUgMzYgLTQ1IDEyIC04MiAzOSAtMTg1IDEzNSAtMTEzIDEwNSAtMjMwIDE2NCAtMzQwIDE3MSAtNDMgMyAtOTkgLTEgLTEzMAotOHogbTI1MiAtMTIwIGM2NCAtMzYgMTM2IC05NCAyMTggLTE3NCAyNSAtMjUgNzcgLTYwIDExNyAtNzkgNDAgLTE5IDgyIC00Nwo5NCAtNjIgMTkgLTI0IDIxIC0zNSAxNSAtMTA3IC03IC04NSAtMjggLTIwNCAtNTMgLTI5NSAtNTEgLTE5MCAtMTUwIC00NTgKLTE3NCAtNDcxIC0zMyAtMTcgLTE2OCAtMjEgLTM3NCAtMTEgLTExMCA2IC0yMDcgMTMgLTIxNSAxNiAtMjIgOSAtOTYgMTUxCi0xMjYgMjQyIC01MSAxNTYgLTY2IDM2MyAtNDMgNTg1IDEyIDEyNSAzNiAxODIgMTA3IDI2MCA1MCA1NSAxNDQgMTE0IDIwNwoxMzAgMTYgNSA2MCA3IDk3IDUgNTQgLTMgNzggLTEwIDEzMCAtMzl6IG0tMjQgLTEyOTUgbDI0MyAtNyA3IC0yNzUgYzkgLTM5MAo3IC01ODQgLTcgLTY3MCAtMzMgLTIwNiAtMzYgLTI1NyAtMzUgLTU4MCAwIC0xODQgNCAtMzk4IDggLTQ3NSA3IC0xMTggNgotMTQ2IC03IC0xNzggLTMxIC03NCAtNzIgLTQzIC0xNDIgMTA4IC0xMjcgMjcyIC0xODIgNDQ1IC0yNDAgNzQ1IC00NiAyNDYKLTU2IDMxMCAtOTUgNjMwIC00IDM2IC0xOCAxMTkgLTMwIDE4NSAtMjQgMTMxIC00MyA1MDAgLTI3IDUyMiA2IDggMjIgMTEgNDYKNyAyMCAtMyAxNDUgLTkgMjc5IC0xMnoiLz4KPHBhdGggZD0iTTEzMzQzIDM3ODIgYy0yMyAtOSAtNTQgLTI3IC02OSAtNDAgLTQ5IC00NCAtNTYgLTc5IC03MCAtMzU3IC0yNwotNTM4IC0xNyAtNjExIDExNiAtNzc1IDU0IC02OSA1OCAtODMgMzQgLTE1MCAtMjUgLTcxIC0zMCAtMjc1IC05IC0zODUgMjYKLTEzNyAzNCAtMjU5IDQ0IC02NDUgOSAtMzE4IDEyIC0zNjggMzUgLTQ4MCAyOCAtMTM3IDUxIC0yMTMgOTAgLTI5MSAzNSAtNjgKOTMgLTEzOCAxMjMgLTE0NSA1MyAtMTQgMTEyIDM3IDE1NSAxMzMgMTkgNDIgMjAgNjkgMjMgMzQyIDEgMTkyIDggMzQwIDE4CjQyMSA4IDY5IDIwIDE4NCAyNiAyNTUgNyA3MiAxNiAxNzEgMjEgMjIyIDYgNTAgMTAgMTM0IDEwIDE4NyAwIDIwNiA3MyA1NjUKMTgwIDg4NiA1NiAxNjggNjQgMjExIDY0IDM1NSAwIDExMCAtNCAxNDEgLTIzIDIwMCAtMzEgOTEgLTQ3IDEyMiAtNzkgMTUyCi01MSA0NyAtOTUgNjIgLTIzOCA3OCAtNzcgOSAtMTgxIDI1IC0yMzIgMzYgLTExMiAyMyAtMTY0IDIzIC0yMTkgMXogbTE0NwotODIgYzM5IC0xMSAxOTMgLTM1IDMyNCAtNDkgMTA1IC0xMiAxNDEgLTMyIDE4OCAtMTA0IDM4IC01OSA1OCAtMTM5IDU4IC0yMzIKMCAtODggLTE4IC0xNzIgLTY5IC0zMjggLTIzIC02NyAtNTYgLTE3OCAtNzUgLTI0NyAtMTkgLTY5IC0zNyAtMTMzIC00MSAtMTQzCi0xMCAtMjQgLTQ2IC0zMSAtMTI5IC0yMiAtMzkgNCAtMTE0IDEwIC0xNjYgMTQgLTExMCA3IC0xMjYgMTUgLTE5MiA5MyAtOTEKMTA2IC0xMTIgMTczIC0xMTMgMzQ4IDAgMTk0IDIyIDU0OCAzNyA1OTUgMjMgNzAgOTIgMTAwIDE3OCA3NXogbTI1NyAtMTIxNgpjMTAyIC04IDEwOSAtMTQgOTUgLTkyIC0xNCAtNzIgLTMwIC0yNDMgLTQyIC00MzcgLTUgLTgyIC0xNiAtMjE1IC0yNSAtMjk1Ci0zNCAtMzIyIC00NSAtNTE0IC00NCAtNzE1IDEgLTE2NiAtMiAtMjE3IC0xMyAtMjQ1IC0xOCAtNDIgLTUyIC03NCAtNzEgLTY3Ci0xNSA2IC05NCAxNTEgLTEwOCAyMDAgLTQ0IDE1MCAtNjkgMzcxIC03MCA2MjIgMCAyNTcgLTEzIDQ3MCAtMzUgNTkwIC0zNgoxOTkgLTI0IDM4NSAyOCA0MzcgMjEgMjEgMzggMjEgMjg1IDJ6Ii8+CjxwYXRoIGQ9Ik0yNDE0MSAzNzc1IGMtMzAgLTE0IC03NCAtNDQgLTk4IC02NSAtMjMgLTIyIC01MSAtNDAgLTYwIC00MCAtMTAgMAotNDMgMTIgLTczIDI2IC04NyA0MSAtMTM5IDU0IC0yMjAgNTQgLTEzMiAtMSAtMjE3IC02MyAtMjkyIC0yMTcgLTQzIC04NyAtNDMKLTg5IC00NiAtMjEzIC02IC0xODYgMyAtMjEyIDE2OCAtNTEzIDQ5IC05MCAxMDUgLTI0NCAxNjAgLTQ0MiAyMSAtNzcgNTAKLTE3OSA2MyAtMjI2IDUwIC0xNzggMTQ2IC0zNjQgMjc3IC01MzggMTI4IC0xNjkgMjAzIC0yNDggMjQyIC0yNTMgNDQgLTcgOTYKNiAxMjIgMzEgMTIgMTIgMjggMjEgMzQgMjEgNyAwIDU2IC0yNSAxMTAgLTU1IDEwOSAtNjAgMTY3IC03NSAyMjcgLTU1IDQ4IDE2Cjc1IDYwIDc1IDEyMyAwIDUyIC0xMSA3OSAtNzUgMTc3IC05OSAxNTIgLTE2NyAzMTkgLTIwNCA0OTUgLTMwIDE0NyAtNjEgMzcxCi02MSA0NDEgMCAxMzEgNDggMzIxIDExMyA0NDkgMjkgNTggMzggODggNzIgMjQ2IDMwIDEzOSAzMSAxNjQgNyAyNTYgLTI5IDEwOQotMTAzIDIwNCAtMTk3IDI1NSAtMTMxIDY5IC0yNTQgODUgLTM0NCA0M3ogbTI1NCAtMTA0IGM4MiAtMzggMTUxIC0xMDYgMTkxCi0xODcgMjMgLTQ3IDI2IC02MiAyMSAtMTI2IC04IC0xMTcgLTQzIC0yNTcgLTkwIC0zNTkgLTUwIC0xMDYgLTg1IC0yMTcgLTk0Ci0yOTEgLTMgLTI3IC0xMiAtNTUgLTE5IC02MiAtMTkgLTE5IC02ODIgLTIzIC03MDYgLTQgLTkgNyAtMzEgNDkgLTQ4IDkzIC0xNwo0NCAtNjUgMTQxIC0xMDUgMjE1IC04NiAxNTggLTg5IDE2NCAtMTEwIDI2NSAtMTMgNjIgLTEzIDg4IC00IDEzOCAyNCAxMzYKMTI4IDI4MyAyMTUgMzA2IDUzIDE0IDkxIDYgMTg0IC0zNyA3NyAtMzYgMTYyIC01MSAyMTYgLTM4IDE0IDQgNDkgMjkgNzggNTUKMjggMjYgNjAgNTMgNzEgNjAgMzUgMjAgMTI0IDggMjAwIC0yOHogbTMgLTExNDQgYzcgLTcgMTYgLTY3IDIyIC0xMzMgMzEKLTM2MSAxMjQgLTY2MSAyNzQgLTg4OSAyNSAtMzggNDYgLTc3IDQ2IC04NiAwIC0xOSAtMjUgLTQ5IC00MSAtNDkgLTE0IDAKLTEyMiA1NiAtMTgyIDk0IC02NiA0MiAtODMgNjIgLTEwMSAxMTQgLTkgMjQgLTQwIDk1IC02OSAxNjAgLTEyOSAyNzkgLTE1NQozNDggLTE3NyA0NjQgLTExIDU2IC0yNiA3MyAtNTUgNjIgLTIyIC05IC0yMCAtMTAzIDQgLTE5NSAxOSAtNzQgMTEyIC0zMDIKMTY5IC00MTQgNTcgLTExNSA2NSAtMTgyIDIzIC0yMDQgLTE0IC04IC0yNSAtNiAtNDUgMTAgLTQ0IDM0IC0xODUgMjA5IC0yNTcKMzE3IC0xMTcgMTc2IC0xNTUgMjcyIC0yNTUgNjM1IC0xOCA2OSAtMjMgMTAxIC0xNiAxMTAgMTYgMTkgNjQ1IDIzIDY2MCA0eiIvPgo8cGF0aCBkPSJNMzg1MSAzNzgwIGMtMzAgLTQgLTg3IC0yNSAtMTI3IC00NSAtODQgLTQzIC0xMDcgLTQzIC0yMTkgLTEgLTE4Mgo2NyAtMzczIDkgLTQ2OSAtMTQzIC01NyAtODkgLTc3IC0yNTQgLTU3IC00NDYgMTUgLTEzNSAyMiAtMTY3IDczIC0zMjQgMzYKLTExMyA0MCAtMTMyIDM2IC0yMDAgLTYgLTk1IC0zMCAtMTY1IC0xMjMgLTM2MSAtODQgLTE3OCAtMTAwIC0yMjQgLTExNyAtMzM1Ci0yNCAtMTUxIC0xNyAtMjg4IDMxIC02NTAgMjUgLTE4NyAzNCAtMjE3IDcyIC0yNDkgMjUgLTIyIDQxIC0yNiA4OSAtMjYgMzMgMAo3MCA1IDg0IDExIDU0IDI1IDgzIDE0NyA4OSAzNzkgNCAxNDEgOSAxNzggMzIgMjU1IDMwIDEwNCA5MCAyMzUgMTY4IDM2NyAzMAo1MSA3MyAxMzAgOTYgMTc2IDIzIDQ1IDUwIDkxIDYxIDEwMiA0OSA0OSAxMTQgNiAxNTYgLTEwMSA0MyAtMTE0IDI4IC0yMTIKLTY5IC00NTQgLTIyIC01NSAtNTIgLTEzNCAtNjggLTE3NSAtMTUgLTQxIC00MyAtMTE0IC02MyAtMTYzIC02NSAtMTU2IC03MQotMzEzIC0xNiAtMzY5IDI1IC0yNSAzNiAtMjggOTAgLTI4IGw2MiAwIDcyIDcyIGMxNzcgMTc5IDI4NCAzNDQgMzY3IDU2NCAxMDMKMjczIDEyNSA1OTIgNjkgOTg1IC0xMCA2NSAtOSA2OCAyOSAxNTAgMjIgNDYgNDcgMTA3IDU2IDEzNCA5IDI4IDQzIDEwOSA3NQoxODEgNjggMTUyIDgzIDIyNiA2OCAzNDQgLTIxIDE3MyAtMTE2IDI5MiAtMjY3IDMzNSAtNjAgMTcgLTIxMiAyNiAtMjgwIDE1egptMTkyIC05MCBjODMgLTEyIDEzMCAtMzUgMTgzIC05MiA3MSAtNzQgMTExIC0xODEgOTggLTI2NyAtMyAtMjUgLTMyIC0xMDcKLTYzIC0xODEgLTMyIC03NCAtNzkgLTE5MCAtMTA2IC0yNTggLTQxIC0xMDMgLTU0IC0xMjYgLTc5IC0xNDAgLTI3IC0xNSAtODAKLTE3IC00NDYgLTE5IC0yMjggLTIgLTQyNSAtMSAtNDM3IDIgLTE1IDQgLTI2IDE5IC0zNiA1MyAtOSAyNiAtMjcgODAgLTQyCjEyMCAtNTggMTYxIC03OSA0MzIgLTQyIDUzOCAyOCA4MCA2OSAxMzYgMTMxIDE3OSA1NyAzOSA2MCA0MCAxNDUgNDAgNzQgLTEKOTQgLTUgMTQ2IC0zMCA0OCAtMjMgNzQgLTI5IDEzMCAtMjkgNjMgMCA3NyA0IDEzOCAzOCAxMDQgNTkgMTQ1IDY1IDI4MCA0NnoKbTQxIC0xMDYyIGMzNSAtNTggNDkgLTQ3OSAyMCAtNjU2IC01MyAtMzMwIC0xNzggLTU2NyAtNDQwIC04MzAgLTI4IC0yOCAtNTkKLTUyIC02OCAtNTIgLTIzIDAgLTM2IDMyIC0zNiA4NyAxIDYwIDEwIDk2IDUzIDIwMyAxNjkgNDIwIDIxNyA1NzIgMjE3IDY5MAotMSAxMDQgLTM4IDIzMCAtODIgMjc3IC00NyA1MSAtMTc1IDY3IC0yMzIgMzAgLTE0IC05IC01NCAtNzQgLTk0IC0xNDkgLTM4Ci03MyAtOTUgLTE3OSAtMTI1IC0yMzUgLTY1IC0xMTkgLTEyMSAtMjU4IC0xNDMgLTM1MCAtOCAtMzYgLTE5IC0xNDggLTI0Ci0yNDkgLTEzIC0yNTYgLTM0IC0zMjAgLTEwMCAtMjk5IC0zMCA5IC00OCA1MiAtNTkgMTQxIC02IDQzIC0xOCAxMjkgLTI3IDE4OQotOSA2MSAtMTggMTc5IC0yMSAyNjQgLTggMjI1IDcgMjg4IDEyMiA1MjYgNzYgMTU4IDEwNiAyMzkgMTI2IDM0MiA2IDM1IDE3CjY3IDI0IDczIDcgNiAxNjEgMTEgNDA2IDEzIDIxNyAxIDQxMSAzIDQzMSA1IDMwIDEgNDEgLTMgNTIgLTIweiIvPgo8cGF0aCBkPSJNOTcyMCAzNzU3IGMtMzAgLTEzIC0xMTAgLTU5IC0xNzcgLTEwMyAtNjcgLTQzIC0xNTAgLTk3IC0xODUgLTExOQotMTE3IC03NCAtMTQzIC0xNDQgLTEzNSAtMzY5IDYgLTE2MSAyMSAtMjM2IDcyIC0zNTYgMTUgLTM2IDQyIC0xMDMgNjEgLTE1MApsMzMgLTg1IDEgLTMwNSBjMSAtMTY4IDUgLTMzOSAxMSAtMzgwIDggLTY4IDE1IC0zMTMgMzcgLTE0MDAgOCAtMzgyIDEwIC0zOTcKNjQgLTQzNCA3MSAtNTAgMTg4IDI1IDI0OSAxNTkgNTMgMTE4IDEzOCAzOTMgMTcyIDU2MCAyMCA5NCA1MiAyNDcgNzMgMzQwIDIwCjk0IDQ3IDIyMCA2MCAyODAgNjggMzE0IDk3IDUzMiA4MyA2NDAgLTEzIDEwMiAtMTAgMjMwIDYgMjk0IDkgMzMgMzMgOTggNTQKMTQzIDc1IDE2NCAxMjMgMzUwIDE1MCA1ODQgMjMgMTk2IDcgMjk2IC03NSA0NjEgLTcyIDE0NCAtMTA0IDE4MSAtMTk2IDIyNAotNjggMzIgLTgxIDM0IC0xODggMzcgLTEwMiAyIC0xMjEgMCAtMTcwIC0yMXogbTI2MCAtNzggYzkwIC0yNCAxNTUgLTg3IDIyNAotMjE5IDYxIC0xMTcgNjggLTE1NSA2MyAtMzA4IC01IC0xNTYgLTI2IC0yOTcgLTYyIC00MjUgLTMwIC0xMDMgLTExMSAtMjgzCi0xMzEgLTI5MSAtNyAtMyAtNjAgLTEgLTExNiA0IC01NyA2IC0xNzMgMTUgLTI1OCAyMSAtMTcwIDExIC0yMDggMjEgLTIxNSA1MwotMiAxMSAtOSA0OCAtMTYgODEgLTYgMzMgLTMzIDExMiAtNTkgMTc1IC03MCAxNjggLTc3IDE4NyAtOTQgMjc0IC0yMCAxMDAKLTIwIDIxOCAtMSAyODQgMjAgNjUgNjAgMTEyIDEzMyAxNTMgMzEgMTggMTA1IDYzIDE2NCAxMDAgNTkgMzcgMTIyIDc2IDE0MAo4NSA2MSAzMyAxMzggMzcgMjI4IDEzeiBtLTI1NSAtMTMxNCBjMjY2IC0yMSAzMTUgLTI3IDMyMSAtMzcgMyAtNSA4IC0xMTYgMTAKLTI0NiA1IC0yMTEgMyAtMjUxIC0xNiAtMzYyIC0zMCAtMTc3IC0zNSAtMTk5IC04NiAtNDE1IC0yMiAtOTIgLTQzIC0xOTMKLTEwNSAtNDkwIC0zMCAtMTQ3IC0xMTMgLTQwOSAtMTY4IC01MjkgLTMyIC03MSAtODUgLTEzNiAtMTEwIC0xMzYgLTMxIDAgLTQxCjQ1IC00MSAxODggMCA3NSAtNSAyMjMgLTEwIDMyNyAtNiAxMDUgLTExIDMzNiAtMTEgNTE1IC0xIDE3OSAtOCA0MjIgLTE1IDU0MAotOCAxMTggLTE3IDMwNyAtMjEgNDIwIC01IDE4NiAtNCAyMDcgMTEgMjIzIDIxIDIwIDcgMjAgMjQxIDJ6Ii8+CjxwYXRoIGQ9Ik0xMjI5OSAzNzU2IGMtMiAtMyAtNDUgLTEwIC05NCAtMTcgLTUwIC02IC0xMjcgLTI1IC0xNzIgLTQxIC0xODAKLTY1IC0yNDMgLTE3NSAtMjQzIC00MjUgMCAtMTU0IDIyIC0yNzQgNzQgLTM5NyA3NyAtMTgyIDgwIC0xOTYgMTA2IC01MTYgNQotNjkgMTQgLTE2MyAyMCAtMjEwIDE0IC0xMjMgMjkgLTQxNyAzNSAtNzE1IDYgLTI4OSAxMyAtMzc2IDU2IC03MTAgMTEgLTg4CjQzIC0xNjIgOTIgLTIxMyA1OSAtNjIgMTAyIC0zOCAxNzUgOTggMTA1IDE5NiAxMzIgMzYwIDE1MyA5MjUgMTIgMzE1IDE5IDQyMgozOSA1NzAgMTQgMTAxIDggMjg4IC0xMSAzNDcgLTEwIDMyIC05IDQxIDEwIDczIDM2IDYxIDc4IDE2OCAxMDAgMjU2IDE5IDc0CjIzIDEzMSAzMyA0NjUgbDExIDM4MSAtMjQgNDQgYy0zOCA3MCAtODYgODggLTIzNSA4OSAtNjYgMCAtMTIzIC0yIC0xMjUgLTR6Cm0yNDMgLTEwMyBjNTggLTI5IDU5IC0zOSA0OSAtNDA1IC0xMSAtMzcwIC0xOSAtNDI4IC03OCAtNTY1IC0yMyAtNTUgLTQ3IC05NAotNzEgLTExNCBsLTM2IC0zMiAtMTYwIDUgYy05NSAzIC0xNzAgOSAtMTgzIDE2IC0yNCAxMyAtMzYgNDcgLTUzIDE0NiAtMTEgNjkKLTE3IDg4IC04NCAyNDkgLTQ0IDEwOCAtNjEgMjMwIC01MiAzNzEgOCAxMTUgMjAgMTQ4IDcyIDIwNiA2OCA3NiAxMzIgOTggMzY0CjEzMCAxMzkgMTkgMTg1IDE3IDIzMiAtN3ogbS0yNTkgLTEyMDggYzExNCAtMSAxNTEgLTUgMTU3IC0xNiA1IC03IDE0IC00NSAyMQotODMgMTEgLTY3IDEwIC05OCAtMTEgLTI5NiAtOSAtODkgLTMxIC00NDggLTUwIC04MTAgLTE0IC0yODggLTMzIC0zODUgLTEwNgotNTM3IC01MCAtMTA2IC02OCAtMTE2IC0xMDQgLTU4IC00OSA4MCAtNzUgMzYyIC0xMDAgMTEwNCAtNiAxNjggLTE1IDMzNiAtMjAKMzc1IC00MSAzMTcgLTM4IDM0NCAyOSAzMzAgMjAgLTQgMTAzIC04IDE4NCAtOXoiLz4KPHBhdGggZD0iTTE3MjcwIDM3NTEgYy0xNjUgLTU0IC0zMTUgLTI0NSAtMzY2IC00NjYgLTIyIC05NyAtMTIgLTE3NiAzNyAtMjk3CjUxIC0xMjQgMTEzIC0zMjMgMTI4IC00MTMgNyAtMzggMTcgLTg2IDIxIC0xMDUgMjIgLTg3IDUwIC0yOTggNTAgLTM3NyAwIC00OQotNSAtMTM5IC0xMCAtMjAxIC0xMyAtMTQ1IC0xIC0yMjIgNTcgLTM3MSA2NCAtMTY0IDgzIC0yNzkgODMgLTUxMCAwIC0xNTAgNAotMTk5IDE4IC0yNTIgMzMgLTEyMCA5OCAtMjA5IDE4NSAtMjU1IDUwIC0yNiA1NyAtMjcgODcgLTE0IDI0IDEwIDM5IDI3IDU2CjY0IDIzIDQ4IDI0IDYyIDI0IDI2MSAwIDE4MiAxNCAzNzkgNDUgNjc1IDEyIDExMCA3NSA0OTggOTcgNjAwIDggMzMgMTMgMTM3CjEzIDI1NyAwIDE5NSAxIDIwMiAyMyAyMjUgMTIgMTQgMjIgMjggMjIgMzIgMCA1IDQzIDk3IDk1IDIwNSAxMDkgMjI3IDEyOQoyOTMgMTIzIDQwMiAtNCA2MCAtMTAgODYgLTMxIDEyMiAtMzQgNTggLTEzMCAxNDAgLTIzMyAxOTggLTQzIDI2IC0xMjQgNzIKLTE3OSAxMDMgLTU1IDMyIC0xMjIgNzIgLTE0OSA4OSAtMzggMjUgLTYwIDMyIC0xMTAgMzQgLTMzIDEgLTcyIC0xIC04NiAtNnoKbTEzMSAtMTA0IGM2MSAtNDEgMjAyIC0xMjQgMjY3IC0xNTYgMTQ4IC03NSAyNTUgLTE2MCAyOTQgLTIzNSAzNyAtNzIgMjUKLTEyNSAtNzkgLTM0MSAtNTAgLTEwNSAtOTYgLTIwNCAtMTAzIC0yMjIgLTIwIC01NCAtNDIgLTY0IC0yMDcgLTEwMCAtMjQwCi01MSAtMzA5IC01OSAtMzYzIC00MiAtNTAgMTYgLTQyIC0yIC05OSAyMTMgLTE3IDY1IC01NCAxNzQgLTgxIDI0MiAtNTggMTQzCi02MyAxOTYgLTI5IDI5NyA2MCAxODEgMjMzIDM2NyAzNDAgMzY3IDE0IDAgNDEgLTEwIDYwIC0yM3ogbTI5NyAtMTE2MCBjMzQKLTcwIDI2IC0yNDIgLTIyIC01MTIgLTgwIC00NDAgLTEwNiAtNjc3IC0xMTIgLTEwMzAgLTMgLTE1NCAtMTAgLTI5NSAtMTYKLTMxMiAtMTQgLTQ2IC00MiAtNDMgLTkwIDkgLTg2IDkzIC05OSAxNDMgLTEwOCA0MjMgLTkgMjQ0IC0yMiAzMzggLTY2IDQ1NAotODMgMjE3IC04NSAyMzUgLTYyIDQ2OSAxMSAxMTIgMTAgMTM3IC0xMCAyNzkgLTE2IDExNSAtMTkgMTYwIC0xMSAxNzAgOCA5CjM3IDEzIDg4IDE0IDUwIDAgMTI2IDEyIDIyMSAzNCA4MCAxOSAxNTIgMzMgMTYwIDMyIDggLTEgMjEgLTE1IDI4IC0zMHoiLz4KPHBhdGggZD0iTTE4Njk3IDM3NDYgYy0yMSAtOCAtNTcgLTI2IC04MCAtNDEgLTU1IC0zNiAtMjMwIC0yMTYgLTI3MyAtMjgwCi03MiAtMTA3IC04MCAtMjQxIC0yNCAtMzk5IDY2IC0xODkgMTE1IC00NjQgMTQwIC03OTYgNiAtNzQgMTMgLTE2NiAxNiAtMjA1CjYgLTc1IDI4IC0yNjggNDQgLTM3NSAxNSAtMTA5IDMwIC0yMjEgNDAgLTMxNSAyNCAtMjE2IDY5IC00NTcgMTAxIC01NDUgNTEKLTEzOSAxMzIgLTI2NiAxODkgLTI5NSA2NiAtMzQgMTQ3IC05IDE4MCA1NSAzNiA3MCA0MyAxNDggMjQgMjUzIC0xNyA5MSAtMjcKMTcxIC00MCAzMjAgLTE0IDE1NCAyNyA0NzkgMTAxIDgwNyA5NiA0MjMgMTA1IDQ2OSAxMDUgNTM2IDAgNDggOCA3MCA2NCAxNzcKNjQgMTIyIDEwNCAyMTQgMTkwIDQ0NCA3MSAxODkgNjQgMjczIC0zMCAzNDYgLTE4NCAxNDMgLTQyNyAyOTEgLTUxOSAzMTYgLTU1CjE1IC0xODIgMTMgLTIyOCAtM3ogbTE3OCAtODAgYzU5IC0xNSA4NyAtMjkgMjIwIC0xMDkgMTIwIC03MiAzMjEgLTIyMSAzMzYKLTI0OSAxNyAtMzIgNyAtNjcgLTc2IC0yNzggLTg3IC0yMjEgLTE3OCAtNDA1IC0yMTIgLTQyNyAtMzIgLTIxIC0xNjcgLTkKLTMxMyAyOCAtMzE5IDgwIC0zMjMgODIgLTM0MiAxMjAgLTkgMTkgLTI0IDY4IC0zNCAxMDkgLTkgNDEgLTMyIDEyMiAtNTAgMTc5Ci01MiAxNTggLTUzIDE5MSAtOSAyODAgMjcgNTYgNTggOTcgMTIzIDE2NCAxMDUgMTA3IDE2OSAxNTUgMjM2IDE3OSA2MiAyMSA1OQoyMSAxMjEgNHogbS0yNDAgLTEwODcgYzE5MCAtNTYgMzA5IC03OSA0MDUgLTc5IDQ4IDAgNzEgLTQgODAgLTE1IDE4IC0yMSA4Ci05OCAtMzQgLTI4MCAtNTIgLTIyNiAtMTEzIC01MzUgLTEzMiAtNjcwIC0yNyAtMTkwIC0yNSAtNTExIDUgLTY5MSAxNSAtOTAKMjEgLTE1NSAxNyAtMTc5IC03IC0zNyAtNDUgLTg1IC02NyAtODUgLTIzIDAgLTg4IDgzIC0xMjkgMTY0IC00MiA4NiAtODEgMjIxCi05OSAzNDcgLTIxIDE0MiAtNDAgMjg1IC01MSAzNzkgLTYgNTIgLTIxIDE2OSAtMzQgMjYwIC0xNCA5MSAtMjkgMjIxIC0zNQoyOTAgLTYgNjkgLTIwIDIyMyAtMzIgMzQzIC0xMSAxMTkgLTE3IDIyMiAtMTQgMjI3IDkgMTUgNDMgMTIgMTIwIC0xMXoiLz4KPHBhdGggZD0iTTIxNzU0IDM3MTYgYy00OSAtMjQgLTExMCAtNjIgLTEzNSAtODQgLTg4IC03OCAtMTM3IC0yMTQgLTEyNSAtMzQ0CjggLTkyIDM0IC0xNTYgMTE4IC0yODkgMTQ3IC0yMzYgMTcyIC0zMTYgMTQ5IC00ODkgLTYgLTQ3IC0yMCAtMTU1IC0zMSAtMjQwCi0yNSAtMTkxIC0yNSAtMjM3IDAgLTM3MCAyMCAtMTE0IDQyIC0xNzcgMTE4IC0zNDUgNjcgLTE0NyAxMTQgLTIzMCAyMzggLTQxNQoxMjUgLTE4OCAxNDQgLTIwNSAyMzQgLTIwNSAxMTMgMCAxNTUgNDYgMTU0IDE2NyBsMCA3OCAtMTM2IDI3NyBjLTc1IDE1MwotMTQxIDI5OSAtMTQ3IDMyNSAtMjUgMTA3IC04IDMyNCAzMiA0MTkgMjYgNjQgNzggODQgMTM1IDU1IDUxIC0yNiAyMjggLTMwNQoyNzcgLTQzNSA4IC0yMyAyMSAtNTggMjkgLTc4IDUzIC0xNDIgOTYgLTM3NiA5NiAtNTI1IDAgLTEwMyAyIC0xMTIgMzQgLTE3Ngo0OCAtOTYgNjQgLTEwNyAxNDUgLTEwNyA3OCAwIDExNiAxNiAxMzcgNTggMTkgMzUgMzMgMjExIDQxIDQ5MiA4IDMxNyAtMjEKNDc2IC0xMzMgNzE0IC04MyAxNzUgLTg4IDE5NyAtODggMzcxIC0xIDE3MCA4IDIyMCA2OSAzODUgNTggMTU4IDcwIDIxOSA3MAozNTAgLTEgMTEzIC0yIDEyNCAtMzEgMTg1IC02MiAxMzIgLTE5OCAyMjggLTM1NiAyNTEgLTY5IDEwIC04NCA5IC0xNDYgLTEwCi00NSAtMTMgLTg5IC0zNiAtMTI3IC02NiAtMzIgLTI0IC02MSAtNDMgLTY0IC00MSAtMyAxIC00NCAyNiAtOTEgNTMgLTExNyA3MAotMTYxIDgzIC0yNzkgODMgLTk1IDAgLTEwMCAtMSAtMTg3IC00NHogbTMyMSAtNzAgYzI4IC0xMyA4OCAtNDggMTM0IC03OSAxMTAKLTc0IDEzMCAtNzUgMjAyIC02IDMwIDI4IDc3IDYyIDEwNiA3NiA0NyAyMSA1NyAyMyAxMTMgMTQgMjE4IC0zNSAzNTYgLTIxNQozMjAgLTQxOCAtNiAtMzYgLTMzIC0xMzMgLTYxIC0yMTYgLTI3IC04NCAtNTggLTE5MSAtNjcgLTI0MCAtMTAgLTQ4IC0yMyAtOTIKLTI4IC05NyAtMTkgLTE5IC0yMTcgLTMzIC0zODkgLTI2IC0yMDcgNyAtNDU1IDM2IC01MzcgNjIgLTkgMyAtMjYgMzAgLTM3IDYwCi0yOCA3NSAtNzQgMTYzIC0xMzMgMjU4IC05MiAxNDYgLTExOCAyMTEgLTExOCAyOTIgMCA1OSA1IDgxIDMwIDEzMSA1MyAxMDYKMTY4IDE5MyAyODIgMjEyIDY4IDEyIDEyMCA1IDE4MyAtMjN6IG0tMzUgLTEwNTggYzExOSAtMTcgMTkzIC0yMSA0MTAgLTIyCjE0NiAtMSAyNzkgMiAyOTcgNiA0OCAxMSA2MyAtMTAgNjMgLTg3IDAgLTEwNCAyNCAtMTgxIDExMCAtMzYwIDMxIC02NCA2MAotMTQ0IDc5IC0yMjQgMzAgLTEyMCAzMSAtMTMwIDMxIC0zNTUgMCAtMjA3IC0xMSAtNDExIC0yNSAtNDczIC03IC0zMCAtNDgKLTU2IC03NSAtNDggLTM1IDExIC04MCAxMTQgLTgwIDE4MyAwIDEzNyAtNDUgMzg2IC0xMDEgNTU1IC02MSAxODYgLTIwOCA0NTUKLTI5NiA1NDMgLTc2IDc2IC0yNDYgNjYgLTI4OSAtMTcgLTU0IC0xMDUgLTc5IC0zNDggLTUzIC01MDggMTMgLTgyIDU2IC0xODYKMTc2IC00MjggMTEwIC0yMjAgMTIxIC0yNjYgODAgLTMwNyAtMTQgLTE0IC0zMyAtMjYgLTQyIC0yNiAtNzAgMCAtMzMyIDQwMAotNDQ1IDY3OSAtODYgMjE0IC05NyAzMzIgLTU5IDYyNiAxMiA4OCAyNCAxODQgMjggMjEzIDYgNDYgMjEgNzEgNDEgNzIgMyAwCjcxIC0xMCAxNTAgLTIyeiIvPgo8cGF0aCBkPSJNMTUwOCAzNzM1IGMtMTM0IC0zNyAtMjkxIC0xNzkgLTMzOSAtMzA2IC0yMyAtNTkgLTI1IC0xOTUgLTUgLTI0OQo3IC0xOSA0OCAtMTI5IDkwIC0yNDUgNDMgLTExNSA4OCAtMjM3IDEwMSAtMjcwIDUyIC0xMzIgNTEgLTExOSAxNiAtMjY2IC0xOAotNzQgLTM2IC0xNTQgLTQyIC0xNzkgLTY5IC0zMTEgLTExOCAtNDU0IC0xOTggLTU4MiAtOTQgLTE0NyAtMTAxIC0xNjEgLTEwMQotMjExIDAgLTU1IDIwIC0xMDEgNTIgLTExOCA0MyAtMjMgMTkwIDE1IDI3OCA3MSA1MiAzMyA3MSAzMiA4OCAtNiAxNiAtMzQgNzEKLTU4IDExNSAtNTAgNTQgMTAgMTU0IDgwIDI0MiAxNzEgMTI3IDEzMSAyMTIgMjg1IDMyMiA1ODUgODYgMjM2IDEzOCAzNjkgMTYzCjQyMCAxNSAzMCAzMCA2OSAzNCA4NSA0IDE3IDQ3IDExMSA5NiAyMTAgNDkgOTkgMTA4IDIzMiAxMzEgMjk1IDQxIDEwOSA0MwoxMjEgNDMgMjI1IDAgOTggLTMgMTE2IC0yNiAxNjYgLTYyIDEzNSAtMTkyIDIxOSAtMzM4IDIxOSAtMzAgMCAtOTMgLTEyIC0xMzkKLTI1IC0xMjAgLTM1IC0xNzkgLTMzIC0yNjkgMTAgLTEzNiA2NSAtMjE1IDc4IC0zMTQgNTB6IG0yMzMgLTEyMSBjMTM4IC02MwoyMDAgLTcyIDMwOSAtNDQgMTY0IDQyIDE4OSA0NSAyNTIgMjYgODcgLTI1IDE2OSAtMTA1IDE5OSAtMTkzIDI2IC04MCAyMwotMTE2IC0yNyAtMjYyIC00OSAtMTQ1IC0yMDMgLTQ2MSAtMjM5IC00ODkgLTI3IC0yMiAtMzIgLTIyIC0zODcgLTIyIGwtMzU5IDAKLTIyIDIzIGMtMzEgMzAgLTIzNyA1OTQgLTIzNyA2NDYgMCA5NiAxMjEgMjU1IDI0MSAzMTYgMTEwIDU3IDE0NSA1NyAyNzAgLTF6Cm00NTQgLTEwODQgYzMgLTUgLTE3IC03MSAtNDUgLTE0NyAtMjggLTc2IC03MSAtMTk0IC05NiAtMjYzIC0xMTIgLTMwNyAtMjMzCi00OTggLTM5NyAtNjI4IC05MSAtNzIgLTEwMCAtNzYgLTEzMSAtNTEgLTMzIDI2IC0zNCA2MiAtMiAxMDMgNTQgNzEgMTMxIDI1MgoyMzYgNTU0IDMzIDk1IDI5IDEzMiAtMTQgMTMyIC0zMiAwIC0zOSAtMTEgLTcxIC0xMTAgLTQyIC0xMjggLTE0MiAtMzc4IC0xNzYKLTQzNyAtODMgLTE0NSAtMTgwIC0yMzMgLTI5NCAtMjY5IC00NCAtMTQgLTU3IC0xNSAtNjkgLTQgLTI0IDE5IC0yMCAyOSAzMAoxMDUgODkgMTM0IDE1NiAzMDAgMjA0IDUwMSAxMSA0OSAyNiAxMTQgMzQgMTQ0IDcgMzAgMTkgODIgMjcgMTE1IDMzIDE1MyA1OQoyNDkgNzEgMjU2IDE5IDEyIDY4NSAxMSA2OTMgLTF6Ii8+CjxwYXRoIGQ9Ik0xMTEzMiAzNzM5IGMtNDUgLTUgLTExNSAtMTggLTE1NSAtMzAgLTM5IC0xMSAtMTA0IC0yOSAtMTQzIC00MAotMTAyIC0yOSAtMTg0IC03OCAtMjExIC0xMjQgLTMxIC01NSAtMzYgLTExMSAtMjQgLTI0OSA2IC02NiAxNSAtMTg2IDIxIC0yNjYKMjAgLTI3MyA0NyAtNDA0IDEyNiAtNjE2IDMzIC05MSAzMyAtOTIgNDQgLTM1MCA1IC0xNDMgMTcgLTM0OSAyNSAtNDU5IDgKLTExMCAxOSAtMjYzIDI1IC0zNDAgNSAtNzcgMTggLTI2OCAyOSAtNDI1IDExIC0xNTcgMjMgLTM1MiAyNiAtNDM1IDQgLTEwMAoxMSAtMTYyIDIyIC0xODYgMzAgLTczIDExNyAtMTA2IDE2NCAtNjQgMjggMjYgOTUgMTQwIDEyMSAyMDcgMzAgNzggNTUgMTkwCjY3IDMwMyAxNyAxNTUgNTIgNzE5IDcyIDExNTAgMjkgNjQwIDIzIDU5NSAxMDIgNzg3IDQwIDk2IDUxIDE0MiA3MiAyOTMgOSA2MQoyMSAxNDQgMjggMTg1IDcgNDIgMTIgMTY4IDEyIDI4NSAwIDE3NyAtMyAyMTcgLTE4IDI1NiAtNDQgMTE0IC0xNDggMTQ1IC00MDUKMTE4eiBtMjU4IC05NyBjMjEgLTEwIDQ1IC0zNCA2MCAtNjIgMjQgLTQyIDI1IC01MyAyNSAtMTk1IDAgLTE0MyAtNSAtMTk0Ci0zOSAtNDU1IC0xNyAtMTI0IC00NiAtMjMxIC05NSAtMzQ5IC0xNyAtNDAgLTM2IC05MSAtNDEgLTExMiAtNiAtMjIgLTIxIC00NgotMzMgLTUzIC0yOSAtMTkgLTI1OSAtNDEgLTMzMSAtMzIgLTMxIDQgLTY1IDE1IC03NiAyNCAtMzEgMjYgLTg2IDE3NCAtMTE0CjMwNyAtMjYgMTI3IC01MCAzNTYgLTYxIDU4NiAtOCAxNzcgLTIgMTk1IDg3IDIzNyAxODcgOTAgNTMyIDE0OCA2MTggMTA0egptLTEyNSAtMTUzNyBjLTEgLTIxOSAtMjAgLTYwMyAtNjUgLTEyNjAgLTE3IC0yNDkgLTQ5IC0zODIgLTEyMyAtNTIwIC0zOSAtNzMKLTY5IC04NSAtODUgLTMzIC02IDE4IC0xMyA5MSAtMTcgMTYzIC0xMiAyNjIgLTI0IDQ2NCAtMzkgNjUwIC04IDEwNSAtMjAgMjYwCi0yNiAzNDUgLTYgODUgLTE1IDE5NiAtMjAgMjQ3IC02IDUwIC0xMCAxMzggLTEwIDE5NSAwIDU3IC01IDE2MiAtMTAgMjMzIC01CjcyIC03IDEzOCAtNCAxNDcgNCAxNSAyMyAxOCAxMzcgMjEgNzMgMiAxNjEgMyAxOTcgMyBsNjUgLTEgMCAtMTkweiIvPgo8cGF0aCBkPSJNNTAzMiAzNzEwIGMtMTEwIC0zOSAtMTY3IC05MCAtMjIyIC0xOTkgLTQxIC04MSAtNTAgLTEzMCAtNTAgLTI3MgowIC0xOTggMzYgLTM3MiAxMTAgLTUzNSAzMCAtNjYgMzEgLTc1IDMyIC0yMDQgMSAtMTU3IC05IC0yMTkgLTY0IC0zOTAgLTczCi0yMjggLTEwNyAtMzczIC0xMzkgLTU5MyAtMTcgLTExOCAtMjEgLTE5MSAtMjEgLTQzMiAwIC0yODEgNyAtMzc4IDM0IC00MjkgOQotMTYgMTkgLTE4IDc1IC0xMyA0MiAzIDc1IDEyIDkyIDI0IDMzIDI0IDY3IDkyIDgxIDE2MyA0MCAxOTUgMTE0IDQ2NiAxODIKNjY1IDc5IDIzMCAyNDAgNTczIDI4MyA2MDEgMjcgMTggNTcgNyA3NSAtMjYgMTQgLTI3IDI4IC0xNTYgMzkgLTM3MCA3IC0xMTcKMTcgLTIwMiAzMCAtMjU1IDExIC00NCAyMSAtOTYgMjEgLTExNSAwIC01NSAtMzUgLTE3OCAtNzUgLTI2NSAtNTIgLTExMyAtOTIKLTIyNCAtMTAwIC0yNzYgLTkgLTYzIDI2IC0xMjggNzggLTE0OCA2NSAtMjQgMTA3IC00IDIxMiAxMDMgNzIgNzIgMTAwIDExMAoxMzcgMTgxIDI1IDUwIDUxIDEwNiA1NiAxMjUgNTcgMTk1IDc5IDMxNCAxMjEgNjY1IDI5IDIzNCAzNSA0MDcgMjEgNjAyIGwtMTIKMTcxIDI2IDY0IGMxMjMgMzA5IDE2NiA1OTUgMTIxIDgxNyAtNDEgMjAxIC0xMTAgMjk3IC0yNDAgMzMyIC02MyAxOCAtMTkwIDYKLTI2NiAtMjUgLTg4IC0zNSAtMTczIC0zNSAtMjQ3IC0xIC04OSA0MSAtMTUwIDU1IC0yNDYgNTUgLTY0IC0xIC0xMDcgLTYKLTE0NCAtMjB6IG0zNDUgLTExOSBjMTMxIC01MyAxNzYgLTU0IDMxOSAtNiAxMjggNDMgMTg5IDQ2IDI0OSAxMCA2OSAtNDAgMTIwCi0xMjEgMTUwIC0yMzYgMjAgLTc2IDIzIC0yNzQgNSAtMzcwIC0zMCAtMTYzIC0xMTcgLTQwNCAtMTUwIC00MTQgLTkgLTMgLTUyCjQgLTk2IDE1IC0yMzIgNjAgLTQwOSA4NyAtNjY0IDEwMCAtMTAzIDUgLTE5NSAxMyAtMjA0IDE2IC0yMSA4IC01NiA3NyAtODQKMTY0IC00MCAxMjMgLTU2IDIyOSAtNTYgMzY1IDAgMTQ3IDE1IDIwMyA4MSAyODIgNzkgOTcgMTQxIDEyNSAyNjMgMTE5IDcxIC0zCjEwMiAtMTAgMTg3IC00NXogbTgzIC0xMDIwIGM3NSAtMTIgMTc2IC0zMCAyMjUgLTQwIDUwIC0xMSAxMTUgLTI1IDE0NSAtMzIKNjkgLTE0IDEwNyAtMzQgMTE0IC01NiAyNyAtOTQgMzYgLTQxNSAxNiAtNTgzIC02MiAtNTEzIC05OSAtNjkzIC0xNzUgLTg0NwotMzYgLTczIC02NCAtMTEyIC0xMzIgLTE4MyAtNzEgLTc1IC05MSAtOTAgLTExMiAtODggLTIzIDMgLTI2IDggLTI5IDQ0IC0yCjMzIDkgNjkgNTQgMTcwIDc0IDE2NyA5MyAyMzAgMTAwIDMzNCA1IDYzIDIgMTA0IC0xMSAxNTUgLTkgMzkgLTIzIDE1OCAtMzAKMjY1IC0yMCAyNzQgLTM0IDQwMCAtNDggNDI5IC0xNyAzNSAtNjIgNTUgLTEyNyA1NSAtODggMSAtMTA1IC0xNyAtMjAwIC0yMTIKLTE0NyAtMzAwIC0yMzEgLTUzNyAtMzMyIC05NDYgLTUwIC0yMDMgLTY3IC0yNTYgLTg3IC0yNzUgbC0yNCAtMjUgLTE4IDIyCmMtNTAgNjMgLTQ1IDQ5OSAxMSA4NTcgMTMgODIgNzAgMzAzIDExOSA0NTUgNTUgMTczIDcxIDI2NCA3MSAzOTQgMCA3NiA0IDExNgoxMyAxMjUgMTcgMTkgMjgyIDggNDU3IC0xOHoiLz4KPHBhdGggZD0iTTY5OTAgMzcwNiBjLTY4IC0yNCAtMTc3IC04NSAtMzQxIC0xOTIgLTEwNyAtNjkgLTEyOSAtOTkgLTE0OSAtMTkxCi0xMiAtNTMgNSAtMjAxIDM1IC0zMjMgOSAtMzYgMjMgLTk0IDMxIC0xMjkgOCAtMzUgMTYgLTY3IDE5IC03MSAzIC01IDE0IC00MQoyNSAtODIgMTkgLTcyIDM3IC0xMzQgMTAwIC0zMzMgODggLTI4MiAxNjQgLTYyMyAyMTEgLTk0NSAyOCAtMTk2IDI3IC01MjIgLTIKLTY4MCAtMjkgLTE1NCAtMzMgLTIxNSAtMTkgLTI1MSAzMyAtNzggMTkwIC05MCAyNTYgLTIwIDU0IDU3IDE2OCAzNTcgMjEwCjU1MCA1MCAyMjkgNjUgMzM5IDg0IDYxNiA1IDgzIDE4IDIzMyAyNyAzMzUgMTAgMTAyIDE4IDI4OSAxOSA0MTUgbDIgMjMwIDM2Cjc2IGMxOSA0MiA2MSAxNTIgOTIgMjQ1IDUxIDE1MyA1NyAxNzcgNTggMjU5IDEgODQgLTIgOTUgLTM2IDE2NyAtMzkgODMgLTk1CjE0NCAtMjAzIDIyNSAtMTU1IDExNiAtMzEyIDE1MCAtNDU1IDk5eiBtMjc1IC0xMDUgYzE1MiAtNjkgMjkyIC0yMTMgMzM0Ci0zNDIgMTQgLTQ0IDEgLTEwNiAtNjMgLTI5NCAtNjAgLTE3NSAtOTkgLTI2MCAtMTMxIC0yODEgLTE2IC0xMSAtNjggLTIxCi0xNDMgLTMwIC02NCAtNyAtMTc4IC0yMCAtMjUyIC0yOSAtNzQgLTkgLTE2NCAtMTkgLTIwMCAtMjIgLTY1IC01IC02NiAtNQotNzkgMjMgLTggMTYgLTE3IDQzIC0yMiA1OSAtNCAxNyAtMjEgNzcgLTM5IDEzNSAtNDkgMTY3IC05MCAzNzAgLTkwIDQ0OCAwCjQ4IDQgNTcgNDEgOTcgMjMgMjUgNTkgNTUgODAgNjcgMjEgMTMgODIgNTEgMTM2IDg0IDE3MiAxMDggMjIxIDEyNiAzMTEgMTE4CjI5IC0yIDgyIC0xNyAxMTcgLTMzeiBtMTI4IC0xMDQ2IGMzMyAtMzMgMzAgLTI0NyAtOSAtNjMzIC04IC03OCAtMTQgLTE3NAotMTQgLTIxNCAwIC0xMzEgLTQyIC00NTEgLTgwIC02MTMgLTM3IC0xNTUgLTcwIC0yNTMgLTEyNCAtMzczIC0yNCAtNTMgLTQ3Ci0xMDcgLTUwIC0xMTggLTE4IC02MSAtODYgLTkzIC0xMjEgLTU3IC0xOSAxOCAtMTggMzIgOSAxOTggMzUgMjEzIDI4IDYxMAotMTQgODIwIC01IDI4IC0yNCAxMjIgLTQxIDIxMCAtNDkgMjU0IC0xMDAgNDYyIC0xNjAgNjQ5IC0xMyA0MCAtMTYgNjMgLTkgNzEKNiA3IDY3IDE3IDE0MiAyNCA3MyA2IDE2NSAxNiAyMDMgMjIgMzkgNSA5NyAxNCAxMzAgMTggOTIgMTMgMTIyIDEyIDEzOCAtNHoiLz4KPHBhdGggZD0iTTE0NDU1IDM3MTYgYy01NyAtMjUgLTc0IC01NyAtMTAyIC0xODQgLTIxIC0xMDEgLTI0IC00NzQgLTUgLTU3NwozOCAtMTk3IDg3IC0zNTcgMTY2IC01MzggbDQ3IC0xMDggLTIyIC04NyBjLTI5IC0xMTIgLTMzIC0zNDUgLTcgLTQzMiAyNiAtODcKNDEgLTE5MSAzNSAtMjQ1IC0yIC0yNyAtMTEgLTEwNCAtMTggLTE3MCAtMTYgLTE0MSAtMTcgLTQxNCAtMiAtNTM1IDEyIC05MgoyNSAtMTU3IDgyIC00MTAgNDkgLTIxMiA2NCAtMjQ4IDEyMyAtMjgwIDQxIC0yMSA1MCAtMjMgODQgLTEyIDIyIDcgNDcgMjQgNTgKMzggMjYgMzcgNDYgMTE5IDQ2IDE5NCAwIDM2IDcgMTMwIDE1IDIxMCA5IDgwIDIwIDE4OCAyNiAyNDAgNSA1MiAyMSAxOTQgMzUKMzE1IDM2IDMwNyA1MyA1MDAgNzkgODgwIDggMTIxIDE5IDI0MCAyNCAyNjUgNSAyNSAxNSA3NCAyMSAxMTAgNyAzNiAyOCAxMjYKNDYgMjAwIDY2IDI2NSA4NiAzODUgOTEgNTUyIDExIDM0MyAtMzIgNDMyIC0yMjggNDY4IC0zNSA3IC0xMTggMjggLTE4NCA0NwotMjIzIDY0IC0yNjAgNzMgLTMyMCA3MiAtMzMgMCAtNzMgLTYgLTkwIC0xM3ogbTMxNSAtMTMzIGM4MCAtMjUgMTgyIC01MSAyMjgKLTU4IDExMiAtMTggMTQxIC0zNyAxNzIgLTExMCAyMyAtNTUgMjUgLTcyIDI1IC0yMTUgMCAtMTc0IC05IC0yMzAgLTg1IC01NDUKLTI2IC0xMTAgLTUxIC0yMTUgLTU1IC0yMzMgLTEyIC02MCAtMTggLTYyIC0yMTUgLTYyIC0xNTUgMCAtMTgwIDIgLTE5OCAxOAotMjUgMjEgLTg3IDE2MSAtMTM1IDMwMiAtODggMjU5IC0xMTQgNDk0IC04MyA3NDAgMTUgMTE2IDM3IDE4MyA3MCAyMDYgMzEgMjIKMTAzIDExIDI3NiAtNDN6IG0yNDkgLTEzMjcgYzkgLTExIDEwIC0zMyAyIC05MSAtNiAtNDIgLTExIC0xMjEgLTExIC0xNzYgMAotNTUgLTUgLTE0MiAtMTAgLTE5MiAtNiAtNTEgLTE5IC0xODIgLTMwIC0yOTIgLTExIC0xMTAgLTI0IC0yMzYgLTMwIC0yODAKLTE4IC0xNTYgLTM5IC0zNDEgLTQ1IC00MDAgLTMgLTMzIC0xMCAtMTAzIC0xNSAtMTU1IC02IC01MiAtMTUgLTE1OCAtMjEKLTIzNCAtMTAgLTE0MCAtMjYgLTE5NiAtNTQgLTE5NiAtMjUgMCAtNDcgNDcgLTgxIDE3OCAtMTAyIDM4NiAtMTMwIDYyOSAtOTgKODY3IDI3IDIwMSAyNSA0MDUgLTUgNTEwIC0yOSAxMDMgLTM4IDIyOSAtMjEgMzAzIDQxIDE4MyAyNiAxNzIgMjM5IDE3MiAxMzQKMCAxNzEgLTMgMTgwIC0xNHoiLz4KPHBhdGggZD0iTTIwNzQwIDM2ODYgYy02OCAtMjEgLTEzMiAtNTIgLTE3NSAtODYgLTUwIC00MCAtMTAxIC00MCAtMTg2IDAKLTE3MSA3OSAtMzM0IDgwIC00NDMgMyAtMTI0IC04OCAtMTczIC0yMzkgLTE1NSAtNDgwIDExIC0xNDggMjAgLTE5NiA3NyAtMzkwCjI4IC05MiA1MiAtMTgxIDU1IC0xOTggMyAtMTYgMTcgLTkzIDMxIC0xNjkgMjIgLTExOSAyNiAtMTY4IDI2IC0zMjcgMCAtMTAyCi01IC0yNDQgLTEwIC0zMTQgLTExIC0xMzcgLTIgLTMwMCAyNSAtNDQ4IDQxIC0yMjIgMTUxIC00MjQgMzE3IC01ODMgMTAyIC05NwoxMzUgLTExNCAxODQgLTkxIDQ0IDIxIDc0IDcxIDc0IDEyMyAwIDMxIC0xMCA1NiAtNDIgMTA1IC05MCAxMzkgLTExOCAyNTAKLTExOCA0NzcgMCA5NSA1IDIwMyAxMCAyNDAgNiAzNyAxNCAxMzkgMTkgMjI3IDcgMTM2IDExIDE2NyAzMSAyMDUgMjMgNDcgNTgKOTAgNzIgOTAgMTYgMCA3OCAtMTA5IDEyNyAtMjIyIDYwIC0xMzggMTEwIC0yOTMgMTcyIC01MzIgOTQgLTM2MyAxNzUgLTU5NwoyNDAgLTY4OCAyNSAtMzUgNzYgLTM4IDEyNCAtOCA2MSAzOCA2OSA2MCA3NyAyMjAgNCA4MCAxMCAxODkgMTQgMjQ0IDcgMTA2Ci0xIDE3MyAtNDIgMzM2IC0xMTMgNDU0IC0xOTQgODU4IC0yMTAgMTA1MCAtNyA3NyAtNiA3OCA0NSAxOTcgODkgMjA4IDExNgozNDQgMTA3IDUzOCAtMTEgMjQ2IC04MSAzODggLTIyNSA0NTQgLTgyIDM4IC0xNTYgNDcgLTIyMSAyN3ogbTE2NiAtMTA1IGM5OAotNDUgMTYyIC0xNDYgMTg5IC0zMDIgMjAgLTExMSAxOSAtMTY4IC00IC0yODEgLTMwIC0xNDYgLTExMSAtMzU5IC0xNDMgLTM3MAotNyAtMyAtNDcgLTEgLTg4IDQgLTEyMSAxNiAtMzMwIDIgLTQ5MyAtMzIgLTE3MCAtMzYgLTI2MSAtNTcgLTMwMyAtNzEgLTQ3Ci0xNCAtNjIgLTMgLTgwIDYwIC04IDMxIC0zNSAxMjYgLTU5IDIxMSAtMjUgODUgLTUwIDE5OCAtNTYgMjUwIC0xNSAxMjQgLTUKMjg4IDIwIDM0NSAyNyA2MSA4OCAxMjQgMTQ2IDE1MSA4NSA0MCAxNDEgMzIgMzI0IC00NSAxMTYgLTQ5IDE5MSAtMzkgMzAwIDM5CjgzIDYxIDE3MSA3NSAyNDcgNDF6IG0tNzYgLTEwNDEgYzM2IC02IDcyIC0xMyA4MSAtMTYgMjQgLTcgMzcgLTQ2IDQ5IC0xNDQKMTYgLTEzNyAyOCAtMjA5IDQ5IC0zMTAgMTAgLTUyIDI2IC0xMzEgMzUgLTE3NSA5IC00NCAyMSAtOTggMjYgLTEyMCA1IC0yMgoxNiAtNjkgMjQgLTEwNSA4IC0zNiAzNCAtMTQxIDU4IC0yMzUgbDQzIC0xNzAgLTMgLTI0NCBjLTMgLTI1MyAtMTAgLTMwMSAtNDgKLTMwMSAtMzUgMCAtMTQ5IDMwMiAtMjI0IDU5NSAtNTAgMTk1IC03MSAyNjggLTExNyA0MTAgLTM2IDExMSAtMTM2IDMzNCAtMTg2CjQxMyAtMjQgMzcgLTMxIDQyIC02NiA0MiAtNzYgMCAtMTU1IC04NiAtMTg3IC0yMDIgLTggLTI5IC0xOSAtMTM4IC0yNCAtMjQzCi02IC0xMDQgLTE0IC0yMzAgLTIwIC0yODAgLTE0IC0xMjYgLTEyIC0yMDEgNiAtMzI0IDIwIC0xMzggNDUgLTIyMyA5NSAtMzE3CjQwIC03NCA0NCAtMTA0IDE1IC0xMDQgLTcgMCAtNTggNDcgLTExMyAxMDMgLTgyIDg3IC0xMDcgMTIxIC0xNTUgMjEzIC0xMDQKMjAyIC0xNDUgMzkwIC0xMzQgNjE5IDE4IDM3NCAxOCA1MTAgMiA2MzUgbC0xNyAxMjUgMjIgMTggYzEyIDkgMjggMTcgMzYgMTcKOCAwIDYzIDEyIDEyMiAyNiAxNDQgMzQgMjQ2IDUzIDM3MSA2OSAxMzUgMTYgMTgxIDE3IDI2MCA1eiIvPgo8cGF0aCBkPSJNODQ3MSAzNjQwIGMtMzAgLTExIC04NCAtMzcgLTEyMCAtNTkgLTM2IC0yMSAtOTUgLTUzIC0xMzEgLTcxIC04NwotNDQgLTE4MyAtMTEzIC0yMTggLTE1OCAtNTIgLTY2IC02MiAtOTUgLTYyIC0xNzkgMCAtNzUgMiAtODEgNTEgLTE2OCA4MQotMTQzIDExNCAtMjQ5IDE1MCAtNDc1IDYgLTQxIDI0IC0xMzMgMzkgLTIwNSA0NyAtMjE3IDQ5IC0yMzQgNjQgLTQwMCAxNAotMTU1IDI0IC0zMzggNDYgLTg0NSAxNCAtMzIxIDI2IC00MjcgNTcgLTUxNCAzMyAtOTMgNTUgLTExNiAxMDcgLTExNiA5MCAwCjExNSAzNSAxNTIgMjExIDY3IDMyNSA3NCAzNzQgODUgNjQyIDUgMTQ0IDE2IDMwMiAyNCAzNTIgOCA0OSAyMyAxNDkgMzUgMjIwCjExIDcyIDI1IDE2MiAzMCAyMDEgNSAzOSAxMyAxMDAgMTkgMTM1IDUgMzUgMTMgMTE4IDE3IDE4NCA2IDEwMCAxMiAxMzIgMzgKMjAwIDM4IDkzIDUwIDEzNCA3MiAyMzAgMjEgOTYgNDQgMzQ4IDM4IDQxNSAtMjEgMjE5IC02OCAzMTEgLTE5OSAzODYgLTQzIDI1Ci02MSAyOSAtMTQ1IDMxIC03NiAzIC0xMDYgLTEgLTE0OSAtMTd6IG0yNTEgLTEwMiBjNjUgLTM0IDg1IC01OCAxMjYgLTE0NSAyNgotNTYgMjcgLTY0IDI2IC0yMjMgMCAtMTA4IC02IC0xOTUgLTE3IC0yNTAgLTMzIC0xNzEgLTEwMSAtMzU3IC0xNDEgLTM4NiAtMzcKLTI2IC0xODggLTE4IC0zMjMgMTYgLTE5MiA1MCAtMTgzIDQzIC0yMDMgMTU1IC0xOSAxMTMgLTUwIDIwMyAtMTEyIDMyNCAtNjgKMTM0IC03MyAxNjggLTI5IDIyOCA0NSA2MSAxMDIgMTAzIDI3NiAxOTggMTkwIDEwNCAyMTMgMTEzIDI4NCAxMTQgNDEgMSA2NgotNiAxMTMgLTMxeiBtLTM3MiAtMTA3NCBjNjkgLTIxIDExNCAtMjggMjM1IC0zMyBsMTUwIC02IC0yIC0zMCBjLTQgLTU0IC0zMwotMjg4IC00NyAtMzc1IC01NyAtMzUzIC03NCAtNTEyIC04MSAtNzUwIC0yIC0xMDIgLTExIC0yMjMgLTIwIC0yNzAgLTE4IC0xMDAKLTUyIC0yNjkgLTY2IC0zMjIgLTI5IC0xMjAgLTI5IC0xMTkgLTUyIC0xMTYgLTMyIDQgLTY1IDk2IC03NyAyMTUgLTkgOTQgLTIyCjM1OSAtNDAgODAzIC0xMiAzMDggLTM5IDUzNyAtODYgNzM4IC0zMCAxMjggLTMxIDE3MyAtNSAxNzIgMyAwIDQ0IC0xMiA5MQotMjZ6Ii8+CjwvZz4KPC9zdmc+";
+    const ODONTO_BASE_DARK = "data:image/svg+xml;base64,PHN2ZyB2ZXJzaW9uPSIxLjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKIHdpZHRoPSIyNTUxLjAwMDAwMHB0IiBoZWlnaHQ9IjgwMC4wMDAwMDBwdCIgdmlld0JveD0iMCAwIDI1NTEuMDAwMDAwIDgwMC4wMDAwMDAiCiBwcmVzZXJ2ZUFzcGVjdFJhdGlvPSJ4TWlkWU1pZCBtZWV0Ij4KPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMC4wMDAwMDAsODAwLjAwMDAwMCkgc2NhbGUoMC4xMDAwMDAsLTAuMTAwMDAwKSIKZmlsbD0iI2U4ZWVmNiIgc3Ryb2tlPSJub25lIj4KPHBhdGggZD0iTTkwODYgNzg4OSBjLTcyIC04MCAtNzYgLTEwMyAtNzYgLTQ1MyAwIC0xNjYgLTQgLTM0OCAtMTAgLTQwNiAtNQotNTggLTE0IC0xNjggLTIwIC0yNDUgLTYgLTc3IC0xOCAtMjIxIC0yNyAtMzIwIC05IC0xMDcgLTE3IC0zNDcgLTIwIC01OTQgLTQKLTM2MSAtMyAtNDE5IDExIC00NTUgMTUgLTM5IDE1IC00NiAtMyAtMTA2IC02MiAtMjA4IC05MyAtMzA2IC0xMjYgLTM5NSAtNjEKLTE2NiAtNzUgLTIyNCAtNzUgLTMwNyAwIC0xODYgMTA5IC0zMzIgMzMwIC00NDMgMTE4IC02MCAxODkgLTc1IDM0MyAtNzUgMTE2CjAgMTQzIDMgMjA4IDI1IDQxIDE0IDk5IDQyIDEyOSA2MiA4NyA1OCAxOTQgMTc0IDIzNSAyNTUgMzIgNjUgMzUgNzggMzUgMTYwCjAgMTQ3IC02MCAzNTYgLTE2NSA1NzggLTcwIDE0NiAtMTEzIDI3NSAtMTQ0IDQzMCAtMjEgMTA1IC00MSAyNzkgLTQxIDM1NCAwCjEwMyAtMjggNTA3IC00MCA1ODEgLTUgMzMgLTE3IDExMiAtMjUgMTc1IC0yMSAxNTYgLTgyIDQ2OCAtMTMwIDY2NSAtMTExIDQ2MwotMTIzIDQ5NSAtMjA1IDUzOSAtMzEgMTcgLTYzIDI2IC05MyAyNiAtNDIgMCAtNDkgLTQgLTkxIC01MXogbTE0NCAtNjUgYzE3Ci0xNSAzOSAtNDMgNDkgLTYzIDE4IC0zNCA2MCAtMTgzIDk2IC0zMzYgOSAtMzggMjAgLTg2IDI1IC0xMDYgNiAtMjAgMTQgLTU4CjIwIC04NSA1IC0yNyAxNiAtODAgMjUgLTExOSA3OCAtMzUyIDEyMSAtNjc2IDEzNSAtMTAxMCAxMSAtMjQ2IDI1IC00MDIgNDUKLTUwMiA4IC00MCAxNSAtODkgMTUgLTEwOSBsMCAtMzYgLTU3IDggYy03NSAxMiAtNDIxIDExIC00OTQgMCBsLTU2IC04IC0xMgozMiBjLTIyIDY0IC0xMSA2NTMgMTggOTg1IDQyIDQ2NSA2MSA4MTMgNjEgMTA2OCAwIDE4MCAxIDE5MCAyNSAyMzcgMjIgNDMgNDYKNjkgNjcgNzAgMyAwIDIxIC0xMiAzOCAtMjZ6IG0zNjQgLTI0NTggYzM3IC04IDc0IC0yMCA4MiAtMjcgNyAtOCAyNiAtNDggNDMKLTg5IDE2IC00MSA1NyAtMTI5IDg5IC0xOTUgNjAgLTEyMSA3NCAtMTYyIDExOCAtMzM0IDI4IC0xMDggMzAgLTE0OCAxMCAtMTk2Ci0yMiAtNTMgLTg2IC0xMzQgLTE2MiAtMjA0IC0xNjMgLTE1MyAtMzY4IC0xODkgLTU5MCAtMTAyIC05NiAzNyAtMTU2IDc1Ci0yMzYgMTQ5IC03MSA2NiAtMTA0IDEyMCAtMTE5IDE5MyAtMTMgNjYgLTMgMTA5IDcwIDMxOSAyNyA4MCA3MSAyMTEgOTYgMjkxCjI1IDgxIDUzIDE1NyA2NCAxNzAgMjkgMzUgMTI3IDQ5IDMxMSA0NCA4NSAtMyAxODYgLTExIDIyNCAtMTl6Ii8+CjxwYXRoIGQ9Ik0xNjY4NyA3OTAxIGMtNTQgLTM1IC03OCAtODUgLTEzMyAtMjc4IC0xMzIgLTQ1NyAtMTg0IC03MDggLTIwNAotOTgzIC0yOCAtMzk2IC0xMTQgLTEwMDUgLTE3MCAtMTIwOSAtNiAtMjAgLTIxIC04MyAtMzQgLTE0MSAtNDMgLTE4MSAtNjQKLTI3MSAtMTAwIC00MjAgLTUxIC0yMTUgLTYxIC0yOTggLTQ2IC0zNzMgMjggLTEzMyA5MyAtMjExIDI0NiAtMjkzIDE0OSAtODAKMjI5IC05OCA0MTMgLTkyIDEzMiA1IDE1NCA4IDIyOCAzNiAxNjcgNjMgMjU4IDE0NyAzMDUgMjgxIDE3IDQ4IDIwIDczIDE1CjE3MSAtNiAxNDIgLTM4IDI2MCAtMTcyIDYzNSAtNTMgMTQ4IC01MiAxMzggLTE2IDM5NSAxOSAxMjcgMjIgMTg2IDE4IDMzMCAtMwoxNTMgLTI4IDQ0OCAtNDIgNTA1IC01IDIyIC0yMSAzNTggLTM1IDc4MCAtMTQgMzg0IC0yNSA1NDUgLTQzIDU4NyAtOCAxOSAtMzAKNDcgLTQ5IDYyIC0yOSAyMSAtNDYgMjYgLTk0IDI2IC00MSAwIC02OCAtNiAtODcgLTE5eiBtMTI2IC04OSBjOCAtOSAyMSAtMzEKMjggLTQ3IDEzIC0zNSA0OCAtNjM0IDQ5IC04NjAgMCAtODIgNSAtMjA0IDEwIC0yNzAgNiAtNjYgMTUgLTE3NiAyMCAtMjQ1IDYKLTY5IDE1IC0xNTIgMTkgLTE4NSAyNSAtMTY2IDUgLTYyNCAtMzEgLTcxNyAtMTMgLTM2IC0yNiAtMzkgLTExMSAtMjggLTE0OAoxOSAtMzgyIDQgLTQ3MyAtMzAgLTIxIC04IC0zMSAtOCAtNDEgMyAtMTEgMTEgLTExIDI2IDIgOTMgNjQgMzIyIDExNCA2ODEKMTM1IDk2OSAxNyAyMzAgMzUgMzY2IDc2IDU2NSAzNSAxNzUgMTU1IDU5OSAxOTQgNjg2IDM0IDc4IDg3IDEwNiAxMjMgNjZ6Cm03MSAtMjQ2NSBjMTYgLTExIDMxIC00MSA0OSAtOTQgMTQgLTQzIDQ4IC0xNDEgNzUgLTIxOCA1NiAtMTU1IDk0IC0yODUgMTEyCi0zODcgMjYgLTE0MSAtMjkgLTI3NiAtMTQyIC0zNDkgLTYyIC0zOSAtMTcxIC03OSAtMjczIC0xMDAgLTIwOCAtNDEgLTUyNAoxMDMgLTYxNCAyNzkgLTM1IDY5IC0yOCAxMzMgNTAgNDM3IDI3IDEwMyA0OCAxODkgNTkgMjQyIDI2IDExOCA0MSAxNTMgNjgKMTU5IDE1IDMgNDMgMTEgNjIgMTcgMTA0IDMyIDE0OSAzNiAzMzcgMzMgMTUzIC0zIDE5OCAtNyAyMTcgLTE5eiIvPgo8cGF0aCBkPSJNNzU1NCA3NzIxIGMtNDAgLTI0IC02OCAtOTMgLTgyIC0yMDEgLTYgLTQ3IC0xNiAtMjc2IC0yMSAtNTEwIC02Ci0yMzQgLTE2IC01NjIgLTIyIC03MzAgLTEzIC0zMjMgLTEyIC0zNDIgMzEgLTU4NSAyMyAtMTI4IDIzIC0xMzEgNyAtMjY1IC0xNwotMTMyIC01NSAtMzAyIC0xMTUgLTUxMCAtNjIgLTIxMSAtNjggLTM0NyAtMjAgLTQ1MCA0NCAtOTYgMjAzIC0yMzEgMzM2IC0yODUKMjI1IC05MSA0NzUgLTM2IDY2OCAxNDcgODcgODMgMTI5IDE0NSAxNTUgMjMwIDQyIDEzOCAxOCAyNjEgLTkxIDQ2MCAtMTUxCjI3NiAtMTgzIDMzNCAtMjEyIDM4MCAtMjggNDUgLTI5IDQ5IC0xOSAxMDQgMjcgMTQ0IDQgNDQ0IC02MCA3ODQgLTIyIDExNgotMjQgMTMwIC02OSA0NDAgLTU1IDM4NiAtMTA1IDU2OCAtMjExIDc4MSAtNjkgMTM5IC05MyAxNjkgLTE2MSAyMDMgLTYyIDMxCi03NCAzMiAtMTE0IDd6IG0xMjEgLTEzMiBjMjAgLTIzIDY0IC05NyA5NiAtMTY0IDEwNSAtMjE4IDE1NCAtNDA0IDIwMyAtNzgwCjkgLTY2IDIzIC0xNTggMzEgLTIwNSA0NCAtMjYxIDY2IC0zOTcgODAgLTQ5NCAxOSAtMTM2IDIwIC00MjAgMiAtNDU2IGwtMTMKLTI1IC0yMTYgLTEgYy0xMjAgLTEgLTIyOSAtNSAtMjQ0IC04IC00MSAtMTEgLTU0IDggLTU0IDc4IDAgNjYgLTE5IDIwNiAtNDYKMzUxIC0xMyA3MSAtMTUgMTE5IC0xMCAyMzAgOCAxNTcgMjIgNjAyIDM1IDEwNzUgNyAyMzQgMTMgMzI3IDI0IDM2MyAyOSA5MAo1NSA5OSAxMTIgMzZ6IG00MjcgLTIyNDEgYzI4IC0xOSA5MyAtMTMxIDIyNCAtMzg1IDg5IC0xNzIgODkgLTE3MyA5MyAtMjU3IDQKLTExOCAtMjAgLTE3MCAtMTM3IC0yODcgLTc0IC03MyAtMTA0IC05NiAtMTc4IC0xMzEgLTg1IC00MSAtOTQgLTQzIC0xOTUgLTQ2Ci0xMzMgLTUgLTE4NyA5IC0yODkgNzcgLTExMSA3MyAtMTYyIDEyMiAtMjAxIDE5MyAtMzEgNTcgLTM0IDcwIC0zMyAxMzggMiA3OQo1IDkxIDc4IDM0MyAyNSA4NyA1MCAxODQgNTUgMjE2IDE3IDEwNiAzMCAxNDAgNTQgMTQ2IDQ0IDEwIDEyNiAxMyAzMTMgMTEKMTU3IC0yIDE5NiAtNSAyMTYgLTE4eiIvPgo8cGF0aCBkPSJNMTE5NjUgNzU2OSBjLTYyIC03NSAtOTEgLTE3MiAtMTAwIC0zMzQgLTMgLTYwIC0xMCAtMTM5IC0xNSAtMTc1Ci0zMyAtMjM1IC0zMyAtMjM2IC02MCAtNTg1IC05IC0xMjggLTM3IC0zOTYgLTU5IC01NzAgLTE0IC0xMTIgLTU2IC0yOTAgLTEwMQotNDI1IC01NyAtMTc0IC05NiAtMzEzIC0xMjIgLTQ0NCAtMjAgLTk2IC0yMyAtMTQxIC0yMiAtMzQxIDAgLTIxMiAyIC0yMzUgMjIKLTI5MCAzNyAtOTkgNjMgLTEyOSAxNDQgLTE3MCA5OSAtNDggMTcwIC01NSA1NjMgLTUyIGwzMjAgMyA2MSAzMSBjMTAyIDUzCjE0NyAxMzIgMTY2IDI5MiAyOSAyNDUgLTM4IDUzNyAtMTY2IDcyOSBsLTQ1IDY3IDIxIDYwIGMxNSA0NCAyMiA5NCAyNiAxODUgNgoxNjggMCAxOTYgLTI2MCAxMjQ5IC03NCAyOTggLTE3MSA2MTggLTIxMiA3MDAgLTI5IDU3IC03OCAxMDEgLTExMSAxMDEgLTE0IDAKLTM0IC0xMyAtNTAgLTMxeiBtMTA1IC0xNjIgYzMwIC02MyA1NCAtMTM2IDExNiAtMzUyIDQ5IC0xNjkgNTEgLTE3NyA3OSAtMzAwCjE0IC02MCAzMiAtMTM1IDQwIC0xNjUgNyAtMzAgMjUgLTEwOSA0MCAtMTc1IDM1IC0xNTkgODMgLTM2MyA5NSAtNDAwIDY2Ci0yMTUgOTMgLTQ2NSA2MSAtNTc3IC0yMCAtNzEgLTMyIC03NiAtODggLTQwIC0xMjAgNzcgLTI0NyAxMTIgLTQxMSAxMTIgLTYyCjAgLTE0NSAtNSAtMTg0IC0xMSAtMzggLTYgLTc0IC03IC03OCAtMiAtNSA0IDYgNzEgMjUgMTQ4IDE4IDc3IDM4IDE4MSA0NQoyMzAgNiA1MCAxNSAxMTcgMjAgMTUwIDEzIDgyIDQ3IDQ4MiA1NSA2MzQgNCA2OCAxMyAxNzAgMjEgMjI1IDggNTYgMjAgMTc1CjI5IDI2NiAxOCAyMDQgMjEgMjIxIDQ4IDI3NiAzMCA2MyA1MSA1OSA4NyAtMTl6IG0xMjAgLTIwMTUgYzI0NCAtODYgMzc5Ci0yMjMgNDQ1IC00NTUgNDAgLTEzOSA0OCAtMTk5IDQzIC0zMzQgLTMgLTExNCAtNyAtMTM1IC0zMSAtMTg4IC0zNiAtNzcgLTUxCi05MyAtMTEyIC0xMjAgLTQ5IC0yMiAtNjMgLTIzIC0zNDAgLTI0IC00NzcgLTIgLTU1OCAyNCAtNjEyIDE5NiAtMzQgMTEwIC0yNQo0MDQgMTkgNTk4IDIxIDk1IDc3IDI4OCA4NiAyOTcgMTAgMTAgOTkgMzUgMTcyIDQ5IDc2IDE0IDI2OCAzIDMzMCAtMTl6Ii8+CjxwYXRoIGQ9Ik0xNTM4OCA3NTI1IGMtODcgLTQ2IC04OSAtNTEgLTIyMiAtNTI1IC0xMTUgLTQwOSAtMTUxIC02MTUgLTE2MQotOTEwIC0xNSAtNDUzIC00MCAtNjI3IC0xMzMgLTkzMCAtNTAgLTE2MSAtNzYgLTQwMiAtNzEgLTY2NSA0IC0xNTYgNyAtMTg1CjI0IC0yMTkgMzkgLTc4IDEwMCAtOTggMzQ2IC0xMTYgMzIyIC0yMyA0MTkgLTExIDQ4OSA2MSA3MiA3NCA3NSA5NiA3NSA0OTkgMAozMDggLTMgMzY3IC0xOSA0NDUgLTIzIDExMCAtNjEgMTg4IC0xMjYgMjYwIGwtNTAgNTUgMCA1MDAgYzAgMjc2IC01IDYxMSAtMTEKNzQ1IC04IDE4NCAtNyAyOTMgMiA0MzcgMTggMjg2IDE0IDMxOSAtNDcgMzY3IC0zMyAyNiAtMzggMjYgLTk2IC00eiBtNjgKLTEyMCBjMyAtMTQgMSAtOTIgLTYgLTE3MyAtOCAtOTIgLTEwIC0yMTkgLTYgLTM0MiAxMyAtNDI2IDE4IC0xMzcyIDcgLTEzODMKLTcgLTcgLTQ4IC0xMCAtMTA5IC04IC01NCAxIC0xMzYgLTMgLTE4MiAtOSAtMTEzIC0xNiAtMTE3IC0xMiAtMTAxIDEwNyA2IDQ4CjE1IDIwNSAyMSAzNDggMTAgMjY0IDI1IDQyNSA1NSA1NzAgMTcgODYgMTAzIDQyNCAxMTAgNDM1IDMgNCAxMSAzMiAxOSA2MSA4CjMwIDIyIDc5IDMxIDEwOSA5IDMwIDI2IDkzIDM5IDE0MCAyNCA4OCAzOCAxMjMgNjQgMTUzIDIyIDI1IDUwIDIxIDU4IC04egptMTkgLTIwMjQgYzgyIC0zNiAxMzAgLTExMiAxNjEgLTI1MSAyMCAtOTMgMzEgLTU3NSAxNiAtNjkzIC0xMiAtODggLTQyIC0xNDUKLTk1IC0xNzcgLTM5IC0yNCAtMTM2IC0yNiAtMzkzIC02IC0xNDggMTEgLTE3NyAxNiAtMjE1IDM3IC02NyAzNyAtNzIgNjIgLTY1CjMxMSA2IDIyNiAyMyAzNTQgNjMgNDkzIDYyIDIxNyA3NSAyNTUgODggMjY5IDggNyA1NCAxOSAxMDIgMjUgNDggNyA5NSAxNAoxMDMgMTYgNDQgMTEgMTg4IC0zIDIzNSAtMjR6Ii8+CjxwYXRoIGQ9Ik0xODI5NCA3NTI1IGMtNjcgLTMzIC04MSAtNTAgLTE1MyAtMTgwIC0xNTggLTI4NyAtMjc2IC02NDkgLTM0MQotMTA0NSAtMTkgLTExNSAtMzAgLTM0OCAtMzAgLTYzNyBsMCAtMjgxIC0zOCAtNDkgYy04NSAtMTA5IC0xNDIgLTIxOCAtMTc5Ci0zMzcgLTEyNSAtNDEzIC02NyAtNjU5IDE4MyAtNzg0IDE5MCAtOTUgNDI1IC05MiA2MjMgOCAxMDYgNTMgMTk3IDEzOCAyNDIKMjI3IGwzNCA2NyAtMSAxNDEgYy0xIDk5IC03IDE2OSAtMjIgMjQxIC0yNCAxMTcgLTczIDMwMyAtMTAxIDM4OSAtMTggNTUgLTIwCjk2IC0yNCA1MTAgLTIgMjQ4IC0xMCA1NDUgLTE3IDY2MCAtMTYgMjU4IC0xNyA0NDEgLTcgNzQwIGw4IDIzMCAtMzUgNTQgYy01Mwo4MiAtNjQgODUgLTE0MiA0NnogbTc3IC0xMTYgYzE3IC0yMiAxNyAtNDAgOCAtMjQ0IC0xMiAtMjQyIC05IC00MTYgMTUgLTkxMAo5IC0xODEgMTcgLTQ0NiAxNyAtNTg4IDIgLTMwMiA0IC0yOTYgLTgwIC0yNzggLTI5IDYgLTE0NiAxMSAtMjYwIDExIC0xODEgMAotMjEwIDIgLTIxNSAxNiAtMTAgMjYgLTcgNTk3IDQgNjc2IDUgNDAgMTcgMTMxIDI1IDIwMiAyNiAyMDggODkgNDQ5IDE4MCA2ODAKMTAyIDI2MSAyMzMgNDc4IDI3OCA0NjMgNiAtMiAxOSAtMTQgMjggLTI4eiBtLTc0IC0yMTE1IGM1MyAtOCAxMDQgLTE5IDExNAotMjUgMTkgLTEwIDUzIC0xMDkgODQgLTI0NCA5IC0zOCAyMCAtODggMjUgLTExMCAxOSAtODMgMzMgLTE5MyAzNCAtMjcwIDEKLTcwIC0zIC04NyAtMjggLTEzNyAtNTggLTExNCAtMTkyIC0yMTUgLTMzOCAtMjU0IC04MSAtMjEgLTI0NyAtMTggLTMyOSA2Ci0xMTUgMzUgLTIxNyAxMjUgLTI2NyAyMzggLTI4IDY1IC0yMSAyMzIgMTggMzc3IDE3IDY2IDQ0IDE0NyA2MCAxODEgMzUgNzIKMTE5IDIwMyAxNDUgMjI0IDM3IDMxIDMyNyAzOSA0ODIgMTR6Ii8+CjxwYXRoIGQ9Ik0xMDQ4NSA3NTE2IGMtMTEgLTE2IC0yMCAtNTUgLTIzIC05NyAtNCAtNjYgMTUgLTI4NSAzOSAtNDM3IDI2Ci0xNjggMjkgLTQ4MSA1IC01MjAgLTMgLTUgLTE1IC04NyAtMjYgLTE4MyAtMTkgLTE1MSAtMjEgLTIxOCAtMTggLTUwMCBsMwotMzI2IC00NyAtNjkgYy0yNiAtMzggLTU5IC05NiAtNzQgLTEyOSAtMzYgLTg0IC03MSAtMjM0IC03OCAtMzQwIC01IC04OSA2Ci0zNzMgMjMgLTU3MiAxMyAtMTU1IDU4IC0yMTggMTcyIC0yNDIgODAgLTE3IDQ3MSAtMTQgNTcwIDUgMTk2IDM3IDI1MyAxMjMKMjE1IDMyNSAtMTIgNjIgLTE2IDE0NiAtMTYgMzAwIDAgMTk0IC0yIDIyMyAtMjQgMzA0IC01NSAyMDcgLTcwIDMxOCAtOTYgNzIwCi0yMSAzMDcgLTM1IDQyNiAtNzEgNjA3IC02NCAzMjYgLTE0NyA2MzYgLTIyMSA4MjUgLTIyIDYwIC01MiAxMzYgLTY0IDE3MAotMTMgMzQgLTM0IDc4IC00NiA5OCAtMjcgNDEgLTk0IDc2IC0xNTkgODMgLTQyIDQgLTQ5IDIgLTY0IC0yMnogbTEzNyAtMTEzCmM0NSAtNTAgMTc3IC00MDQgMjM0IC02MjggNDQgLTE3MSAxMDAgLTQzMSAxMzUgLTYyMCAxMyAtNzEgMzcgLTM3MyA0NCAtNTQ5Cmw2IC0xNDkgLTM4IDcgYy0xMDYgMjAgLTIwMCAyNSAtMzE1IDIwIGwtMTI3IC03IC02IDI2IGMtNCAxNCAtNSAxOTUgLTMgNDA0CjQgMzU4IDYgMzg1IDMxIDUxOCAzMyAxNzIgMzQgMjczIDcgNTA3IC0xMiA5NSAtMjUgMjA5IC0zMCAyNTMgLTEzIDExMCAtMTMKMjI4IDIgMjQzIDEzIDEzIDM0IDQgNjAgLTI1eiBtMzQ1IC0yMDMxIGM0MCAtMTAgNzcgLTIyIDgyIC0yNyA1IC02IDE2IC01NQoyNiAtMTEwIDkgLTU1IDI4IC0xNDUgNDIgLTIwMCAyMiAtODcgMjcgLTEzMiAzNCAtMzU1IDQgLTE0MCAxMSAtMjgyIDE0IC0zMTUKNSAtNTAgMyAtNjUgLTE0IC05MiAtNDYgLTc0IC0xMzcgLTkzIC00NDAgLTkzIC0yMTAgMCAtMjE1IDAgLTI1NyAyNSAtNjggNDAKLTc5IDc3IC05NSAzMDUgLTE5IDI2NiAtMTggNDE2IDQgNTIwIDMwIDE0MiAxMjMgMzE0IDE4NCAzMzkgNDEgMTYgMTk4IDMwCjI3OCAyNSAzOSAtMyAxMDMgLTEzIDE0MiAtMjJ6Ii8+CjxwYXRoIGQ9Ik0xMzk4NCA3NTIxIGMtNzIgLTMzIC05NCAtNjYgLTE0MSAtMjE2IC0xNTMgLTQ5MCAtMjU0IC05NTAgLTMyMwotMTQ3MCAtNDUgLTM0NiAtNTAgLTQ0MSAtMjUgLTUwMSAxNiAtMzkgMTUgLTQxIC0yNiAtOTUgLTYwIC03NiAtMTI1IC0yMzEKLTE2MyAtMzg3IC0yNCAtOTcgLTIyIC0zNDIgNCAtNDY3IDMxIC0xNDUgNTYgLTE4NiAxMzUgLTIyMiAzNyAtMTYgNzYgLTE4CjQ2MiAtMTYgNDEwIDIgNDIzIDMgNDczIDI0IDExOCA1MSAxNzAgMTgyIDE3MCA0MzQgMCAyMzEgLTQwIDQyMCAtMTQxIDY2NQotNDkgMTE5IC01MiAxMzEgLTU5IDI0NSAtNSA4MiAtMTUgMTQ3IC0zMyAyMDUgLTM4IDEyNyAtNDggMjEyIC01NyA0NzAgLTkKMjMxIC0yNCA0NTcgLTM1IDUwMiAtMyAxMyAtMTAgNjQgLTE1IDExMyAtNSA1MCAtMTYgMTQ0IC0yNCAyMTAgLTkgNjYgLTIwCjE4NyAtMjYgMjY4IC01IDgxIC0xNiAxNjMgLTI0IDE4MSAtMzIgNzYgLTc1IDkyIC0xNTIgNTd6IG03MiAtMTAyIGMxNCAtMTYKMjEgLTQ0IDI2IC0xMTIgNSAtNTEgMTIgLTE0NCAxNyAtMjA3IDExIC0xMzIgMjkgLTI5NCAzNiAtMzMwIDE4IC05MSAzOSAtMzMwCjQ1IC01MzUgMTAgLTMwMCAyMCAtMzkyIDY2IC01NzggMjkgLTExNSAzNSAtMTU1IDI4IC0xNzUgbC0xMCAtMjcgLTE0MSAzCmMtMTc2IDUgLTMwNCAtMTEgLTQxMyAtNDkgLTEzMCAtNDYgLTEyNiAtNDYgLTEzOSAtOSAtMTEgMzIgLTggNjcgMTkgMzE1IDYKNTAgMTUgMTE5IDIwIDE1NSAyOCAxODUgNTEgMzI4IDU2IDM1MCAzIDE0IDkgNDggMTMgNzUgNyA0NSAyMyAxMTggOTIgNDQwIDExCjU1IDM3IDE1MiA1NiAyMTUgMTkgNjMgNDEgMTQwIDQ5IDE3MCAyMCA3NyA2NCAyMDkgODEgMjQ1IDE0IDI4IDYwIDc1IDc0IDc1CjMgMCAxNCAtOSAyNSAtMjF6IG0yMDkgLTIwODMgYzU2IC0zNyAxNDkgLTI5NCAxOTAgLTUyOCAxOSAtMTA3IDE5IC0yNzUgMAotMzU4IC04IC0zNiAtMTcgLTc1IC0yMCAtODcgLTcgLTI5IC02MSAtOTAgLTk0IC0xMDcgLTM0IC0xNyAtODA4IC0yMSAtODU5Ci01IC02OCAyMiAtMTA3IDE2MyAtMTA3IDM4NCAxIDE4MiAxOSAyNjMgOTcgNDIxIDgxIDE2NSAxODYgMjUyIDM1MCAyODkgOTEKMjEgNDA3IDE1IDQ0MyAtOXoiLz4KPHBhdGggZD0iTTYyNzIgNzM3OCBjLTI2IC0xMyAtNTMgLTkxIC03MiAtMjExIC0xNyAtMTA2IC02IC0yNTcgMzMgLTQzNyA3Ci0zMiAxMiAtMTM0IDEyIC0yNDUgLTEgLTE2MSAtNCAtMjA2IC0yNCAtMjk1IC0zMCAtMTM1IC0zNyAtMjkzIC0yMSAtNDM4IDExCi05MyAxMSAtMTI5IDEgLTE5MSAtMTIgLTcwIC0yNSAtMTE4IC0xMTAgLTQwMCAtNTIgLTE2OCAtNjMgLTI0OCAtNjUgLTQ1MQpsLTEgLTE4NSAzNiAtNzUgYzQ2IC05NiAxMDQgLTE2MCAxODcgLTIwOSAxNTEgLTg3IDMyMyAtMTE4IDQ0MCAtNzcgMTMwIDQ1CjMxMCAyMDQgMzYzIDMyMiA0MCA4OCA1NCAxODQgNDIgMjgxIC0xMCA3MyAtOTEgMzIxIC0xNzUgNTM4IGwtMzEgODAgMiAxODUKYzYgNDAzIC0zNyA2OTAgLTE2MSAxMDcwIC0xMTAgMzQwIC0xMzIgNDAwIC0xOTUgNTI1IC04NiAxNzEgLTEwMSAxOTEgLTE2NQoyMTAgLTU5IDE3IC02NSAxNyAtOTYgM3ogbTk3IC0xMjIgYzI5IC0zMSAxMDYgLTE2NSAxMzggLTI0MSAyOSAtNjkgMTY0IC00NzIKMTk4IC01OTAgMzQgLTExOSA1NiAtMjMyIDgxIC00MTAgMjEgLTE0NCAyNiAtNTU3IDggLTU3NSAtOCAtOCAtMzMgLTcgLTk1IDYKLTY2IDEzIC0xMTAgMTUgLTIxNCAxMCAtNzEgLTQgLTE1MCAtOSAtMTczIC0xMiBsLTQ0IC02IDggNzggYzUgNDQgNiAxMjAgNAoxNjkgLTMgNTAgLTUgMTU4IC01IDI0MCAwIDEzMCA0IDE2NyAyOSAyNzUgMjYgMTExIDI5IDE0MiAyOSAyODAgLTEgMTI1IC02CjE4MCAtMjcgMjg1IC00NCAyMTkgLTQ1IDM3NiAtMiA0NzkgMTcgNDIgMzQgNDUgNjUgMTJ6IG0yODIgLTE5MDAgYzQyIC04IDk3Ci0yMyAxMjMgLTM0IDQ3IC0yMSA2NiAtNDkgOTUgLTE0NCA1IC0xOCAyOCAtODUgNTEgLTE0OCA2OSAtMTkzIDkxIC0yNjEgOTYKLTMwNCA2IC00NCAtMTUgLTEzNSAtNDYgLTE5NiAtNTAgLTk4IC0xNjggLTIwNiAtMjg4IC0yNjIgLTU2IC0yNyAtNzEgLTMwCi0xNDAgLTI3IC02OCA0IC04OSAxMCAtMTcyIDUwIC0xMjEgNTggLTE5NyAxMjYgLTIzMyAyMDcgLTQyIDkyIC00OCAxNDcgLTM2CjI5MCAxMyAxNDggMzQgMjQ0IDg5IDQwMSAyMiA2MyA0MCAxMTYgNDAgMTE4IDAgMTIgNzcgMzYgMTUzIDQ3IDEyMCAxOCAxNzYKMTggMjY4IDJ6Ii8+CjxwYXRoIGQ9Ik0xOTUxMyA3Mzc1IGMtMzcgLTE2IC01NSAtNDggLTczIC0xMjUgLTYgLTMwIC0yNSAtMTAwIC00MiAtMTU1IC0zMwotMTEwIC00NSAtMTQ0IC0xNTQgLTQyMCAtMTA3IC0yNzMgLTE1MCAtNDQ1IC0xNzQgLTcwMCAtMzIgLTMyNSAtODUgLTY2OAotMTMyIC04NDUgLTEwIC00MSAtNDAgLTEzOCAtNjYgLTIxNSAtNDUgLTEzNSAtNDYgLTE0NCAtNDcgLTI2MCAwIC0xMTQgMgotMTIzIDMxIC0xODUgMzMgLTY5IDc2IC0xMTggMTkyIC0yMTggMTkwIC0xNjMgMzczIC0xODMgNjAyIC02NyAxNTEgNzYgMjE4CjE2MSAyNDYgMzEwIDM4IDIwMSAtNCA0MjIgLTEzNiA3MzAgbC01MiAxMjAgMTQgNjAgYzE5IDg3IDE3IDQxNyAtNCA1ODAgLTQ3CjM2MCAtNDYgNDY1IDEyIDg4NSAxNiAxMTIgMTIgMzY1IC01IDQwOCAtNDAgOTUgLTEyNiAxMzUgLTIxMiA5N3ogbTEwMSAtMTA0CmM1OCAtNjQgNjAgLTE5NiAxMCAtNTYzIC0xNiAtMTI0IC0xOSAtNTM0IC0zIC02NDMgMzYgLTI1OSA0NSAtNDMwIDI5IC01NjEKLTE0IC0xMTMgLTI3IC0xMzkgLTY1IC0xMzAgLTU2IDE0IC0yNTAgMTggLTM1OSA3IC0xNDUgLTE1IC0xNDkgLTEzIC0xMzUgNjkKMTEgNjEgMzUgMjU4IDQ5IDM5MCAzNiAzNTMgNzkgNTM0IDE5OCA4MjUgMzcgOTAgMTA5IDI4MyAxMzQgMzYwIDE1IDQ2IDI4IDk1CjQyIDE1NyAyMyA5OSA2MSAxMzMgMTAwIDg5eiBtMTEgLTIwMDUgYzMwIC0yMCAxMDEgLTE3MyAxNjUgLTM1NiA1MCAtMTQyIDUzCi0zNTYgNyAtNDUxIC03NSAtMTU1IC0zMTYgLTI4MCAtNDc5IC0yNDggLTY1IDEzIC0xMjQgNDcgLTIyNyAxMzEgLTEwMyA4NQotMTU1IDE1MyAtMTc2IDIzMyAtMjIgODEgLTE1IDEyOSA0OCAzMjUgMjQgNzQgNTAgMTYwIDU3IDE5MCAyNyAxMTMgNDIgMTYwCjUzIDE2NyA1NSAzNCA1MDMgNDEgNTUyIDl6Ii8+CjxwYXRoIGQ9Ik0yMDQ3MSA3MDMyIGMtNDggLTUxIC0xNzMgLTI5NyAtMjA0IC00MDIgLTU0IC0xODAgLTY4IC0yODIgLTY4Ci00NzUgMCAtMTMzIDUgLTIxNiAyMSAtMzE3IDQ0IC0yODQgNTcgLTQzNyA0OSAtNTUzIC03IC0xMTMgLTE1IC0xNDQgLTY5Ci0zMDAgLTc4IC0yMjQgLTk4IC00MTYgLTYyIC01ODcgMjUgLTExOCA1OSAtMTg3IDEyMCAtMjUxIDc2IC03OCAyMDQgLTEwMAozMjggLTU2IDEwMyAzNiAxNjcgNDggMjYyIDQ5IDc3IDAgMTA4IC01IDE4OCAtMzEgMTcyIC01NiAyNjcgLTMwIDM3MCAxMDMgMzQKNDQgNjMgOTcgODQgMTU1IDI5IDc3IDM0IDEwMyAzOCAyMTMgNSAxNTUgLTEzIDI1NSAtNzAgMzg0IC05NCAyMTUgLTE1MiAzNjYKLTIwMSA1MzEgLTE0IDQ1IC0yOSAxMTQgLTU3IDI2MCAtMTggOTAgLTMxIDI5OCAtMjUgNDAwIDUgOTAgMTQgMTYwIDQ1IDM3NwoxNCA5MiAxMiAxNTIgLTUgMjY2IC0yNiAxNzEgLTY1IDI2MyAtMTE0IDI3MCAtNDQgNyAtMTA5IC05IC0xNDggLTM1IC0zNyAtMjUKLTM4IC0yNSAtODMgLTkgLTI2IDkgLTc3IDE2IC0xMjAgMTYgLTQxIDEgLTkzIDcgLTExNSAxNSAtMjIgOCAtNjAgMTUgLTg0IDE1Ci0zOCAwIC00OSAtNSAtODAgLTM4eiBtMTQ0IC03OSBjMTAgLTEwIDE1IC0yNiAxMiAtNDIgLTIgLTE0IC0xNSAtODAgLTI4Ci0xNDYgLTIwIC0xMDYgLTIzIC0xNTEgLTIzIC0zNzUgLTEgLTI0MSAwIC0yNTggMjEgLTMwMiAxMiAtMjYgMzggLTYzIDU3IC04MwpsMzYgLTM2IDAgLTEyNyBjMCAtMTE1IDIgLTEzMCAyMCAtMTUwIDI1IC0yNiAzMyAtMjcgNTQgLTcgMTMgMTMgMTQgMzcgOSAxNTAKLTUgMTE3IC00IDEzNyAxMSAxNjAgNTAgNzcgODUgMjEyIDExNSA0NDUgMzggMjkyIDYxIDQyMSA4MyA0NjUgMzQgNjUgODYgODUKMTA3IDM5IDQ2IC0xMDMgNjUgLTMwMiA0MSAtNDM1IC03NCAtNDAzIC0zOCAtODQxIDk5IC0xMjE5IDE3IC00NiAzMSAtOTAgMzEKLTk4IDAgLTE2IDkgLTE2IC0zNjAgOCAtMTU3IDEwIC0zMDAgNyAtNDQ0IC0xMSAtNTYgLTcgLTgyIC03IC05MCAxIC03IDcgLTEyCjY2IC0xMyAxNTggLTEgODEgLTYgMTc5IC0xMiAyMTcgLTYgMzkgLTE3IDExNyAtMjYgMTc1IC01MiAzNDIgLTU2IDQ0NyAtMjUKNjM0IDI2IDE1MSA2NyAyNzQgMTM2IDQwNSA4MiAxNTUgMTA5IDE5MSAxNDQgMTkxIDE2IDAgMzYgLTcgNDUgLTE3eiBtMjEwCi0xNyBjNTAgLTIxIDU4IC00NCA0MSAtMTE4IC04IC0zNSAtMjIgLTEzMyAtMzEgLTIxOCAtMzAgLTI3OCAtODMgLTUwMSAtMTIwCi01MDQgLTUgLTEgLTIxIDIyIC0zNSA0OSAtMjIgNDUgLTI1IDY1IC0yOSAxOTUgLTQgMTUxIDcgMjYxIDQxIDQ0MCAzNCAxNzYKNDcgMTkyIDEzMyAxNTZ6IG0xNDUgLTE4MzcgYzgwIC02IDE4NyAtMTIgMjM4IC0xMyA1MSAtMiA5NyAtNyAxMDEgLTEyIDEyCi0xNCA4NyAtMTkzIDEwOSAtMjU5IDQ3IC0xNDYgMzcgLTMxNiAtMjcgLTQ0NCAtNDggLTk0IC04MSAtMTM1IC0xNDAgLTE3MwotNTMgLTMzIC05OCAtMzYgLTE1OSAtOCAtNTggMjYgLTE3OCA1MCAtMjUyIDUwIC03MSAwIC0xNzggLTIzIC0yNjggLTU2IC0zNwotMTQgLTg0IC0yNCAtMTE2IC0yNCAtNDUgMCAtNjEgNiAtMTA3IDM4IC00NCAzMCAtNjEgNTIgLTkyIDExMiAtNDcgOTMgLTYxCjE3MyAtNTMgMzEyIDYgMTIwIDMwIDIyMCA4NCAzNTIgMzQgODQgNDAgOTIgNzQgMTAzIDg5IDI5IDM3MiAzOSA2MDggMjJ6Ii8+CjxwYXRoIGQ9Ik00ODA0IDY5ODMgYy0yMCAtMTQgLTQyIC02NyAtNTQgLTEyOCAtOCAtNDIgLTEwIC0xNTQgLTUgLTM3NSAxMwotNjkyIDE4IC02MTAgLTU1IC05MTUgLTE3IC03MSAtNDAgLTE3MyAtNTAgLTIyNSAtMjIgLTEwOSAtMzUgLTE0NyAtMTE4IC0zNTUKLTgzIC0yMDggLTEwNiAtMzAzIC0xMDcgLTQ0MSAwIC0xMDcgMSAtMTEyIDM3IC0xODUgNDEgLTgzIDk1IC0xMzYgMTg4IC0xODUKNDkgLTI2IDY1IC0yOSAxNDUgLTI5IDg2IDAgOTMgMiAxNzIgNDMgMTEyIDU3IDE0MyA1NyAyNDggLTUgMTAyIC01OSAxNDkgLTczCjI1MCAtNzMgMTE5IDAgMTc3IDIxIDI0NiA5MCA2NiA2NiA4NCAxMTYgMTAxIDI4OCAxNSAxNDQgMiAyNDcgLTQzIDM1MiAtNjkKMTYyIC04NCAyNjMgLTc2IDQ5NCA0IDk0IDEyIDIxNiAxOSAyNzEgMTcgMTM3IDE3IDYwOCAwIDcwNSAtMjIgMTI4IC00MiAyMTMKLTYzIDI3MCAtNDAgMTA5IC0xNjEgMzE2IC0yMjQgMzg0IC0yNiAyOCAtMjkgMjggLTkzIDIyIC0zNyAtNCAtMTE1IC0xMSAtMTc0Ci0xNCAtNzkgLTYgLTExMSAtMTIgLTEyNiAtMjUgLTI0IC0yMiAtMjcgLTIyIC02OCAxMCAtMzYgMjcgLTEyNiA0MyAtMTUwIDI2egptNjEzIC0xODQgYzY3IC05NSAxNDggLTI1NyAxNjcgLTMzNCA4IC0zMyAyMCAtODIgMjYgLTExMCAxOSAtNzUgMjQgLTUyMCAxMAotNzEwIC03IC04OCAtMTUgLTIzNSAtMTcgLTMyNyAtMyAtMTEyIC05IC0xNzAgLTE3IC0xNzcgLTExIC05IC0xMDUgMiAtMzQxCjQyIC0xOTkgMzQgLTM1MiAyOSAtNDc0IC0xMyAtNzYgLTI3IC04NiAtMTcgLTY2IDY1IDE3IDY2IDgyIDM1NyA5NSA0MjAgNTIKMjU1IDU4IDM0NyAzNSA1MzAgLTI0IDE5NiAtMTkgNjE0IDggNjYzIDIyIDQwIDM4IDQwIDcxIDIgNDIgLTUxIDU3IC0xMTggMTQyCi02NDUgMjcgLTE3MSA1MiAtMjc3IDg0IC0zNjIgMTEgLTMwIDIwIC03MiAyMCAtOTQgMCAtNTAgMTUgLTc5IDQxIC03OSAyMSAwCjM0IDI0IDQ0IDgyIDMgMjEgMjUgNzUgNDkgMTIwIDU4IDExMiA3MSAxNzkgNzAgMzc4IDAgMTYwIC0xNyAzMzMgLTQ5IDUwNQotMTggOTkgLTE5IDEzMiAtMiAxMzggMjEgOCA1MSAtMTggMTA0IC05NHogbS0yMzcgNjYgYzM0IC0xNyAzMSAtNiA2NyAtMjI1CjI0IC0xNDEgMjggLTE5NCAyOCAtMzY1IDAgLTIxNiAtNCAtMjUyIC0zNSAtMzAzIC0xNiAtMjYgLTI0IC0zMSAtMzQgLTIzIC0yMgoxOCAtNTggMTk4IC05NiA0NzEgLTE3IDExOSAtMzggMjM0IC01NyAzMDcgLTEzIDUyIC0xNCA2NyAtMyA5MyAyNCA1NyA3MyA3NAoxMzAgNDV6IG0zMCAtMTc3NCBjNjkgLTExIDE2NiAtMjcgMjE1IC0zNSA1MCAtOSAxMDYgLTE2IDEyNiAtMTYgMjAgMCA0MiAtNgo0OCAtMTMgNiAtOCAyMiAtNTMgMzYgLTEwMSAxNCAtNDggMzYgLTEwOCA0OSAtMTM0IDQ3IC05MyA1NyAtMTk3IDMyIC0zMzkKLTIyIC0xMjEgLTYyIC0xODYgLTE0MSAtMjI2IC0xMDYgLTUzIC0xODEgLTQxIC0zNTAgNTggLTU2IDMyIC02NiAzNSAtMTQ0IDM1Ci04MCAwIC04OCAtMiAtMTYwIC00MiAtNjMgLTM0IC04NiAtNDEgLTEzMSAtNDIgLTk4IDAgLTIwOSA3NCAtMjU5IDE3NiAtMjcKNTMgLTMxIDcyIC0zMSAxNDMgMCA5NCAyMiAxODkgNzQgMzIyIDY2IDE2OCA3NyAxODMgMTQ4IDE4MyAxNyAwIDYxIDkgOTcgMTkKMzYgMTEgNzcgMjIgOTEgMjQgNjEgMTAgMTg1IDUgMzAwIC0xMnoiLz4KPHBhdGggZD0iTTIyOTYwIDY5MTAgYy0xMCAtMTAgLTMxIC0zNyAtNDQgLTU5IC0zNCAtNTQgLTQzIC01NyAtNzQgLTI4IC03NAo2OCAtMTIxIDcyIC0yMTMgMTUgLTQ5IC0zMCAtNTQgLTMxIC05MyAtMTkgLTEzMiA0MCAtMTQ2IDMwIC0zMjAgLTIyOSAtNTkKLTg5IC0xMDcgLTE4OSAtMTI4IC0yNzAgLTMyIC0xMjMgLTQ5IC0yMTYgLTY3IC0zNzAgLTEyIC05NiAtMjYgLTIwMCAtMzEKLTIzMCAtNSAtMzAgLTEyIC03MyAtMTUgLTk1IC03IC00MSAtOTIgLTMwNSAtMTM5IC00MjYgLTQxIC0xMDggLTY1IC0yNTcgLTc2Ci00NTggLTUgLTEwMiAtNyAtMjAzIC0zIC0yMjYgMTEgLTc3IDQ3IC0xMjUgMTQ4IC0yMDIgNjYgLTUwIDIyMyAtMTM0IDI3OAotMTQ5IDY4IC0xOCAxODIgLTE4IDI0MyAxIDcxIDIyIDEzMiAxOCAyMjYgLTEyIDExOCAtMzggMjExIC0zOCAyOTUgMSA3NSAzNAoxMzUgOTYgMTY5IDE3MiA3MyAxNjYgNDcgNTE0IC02MSA4MDkgLTU0IDE0NyAtNjYgMTk5IC03MiAzMTUgLTQgNzkgLTEgMTI3CjExIDE5MCAzNiAxNzQgNDUgMjg2IDM0IDM4MyAtMTUgMTMxIC00IDI2MiAzMiAzOTIgNDIgMTU1IDU0IDI1NyA0MSAzNDUgLTIyCjEzOCAtODUgMjA2IC0xNDEgMTUweiBtLTE5MCAtMTY2IGMyMiAtMjAgNDAgLTQ0IDQwIC01NCAwIC0xMCAtMTIgLTM3IC0yNgotNjEgLTE0IC0yNCAtNTggLTEwMCAtOTggLTE2OSAtNDAgLTY5IC03OSAtMTI1IC04NyAtMTI1IC0xMSAwIC0xNCAyOSAtMTcKMTY1IC0xIDEwMCAyIDE3NSA4IDE5MCA3IDE3IDMzIDM3IDczIDU3IDM0IDE4IDYzIDMyIDY0IDMyIDIgMSAyMSAtMTUgNDMgLTM1egptMjM4IDE0IGMyMiAtMjIgMTMgLTEzNyAtMjIgLTI3OSAtNDYgLTE4MyAtNjAgLTI3NiAtNTIgLTM0NiAxNSAtMTMzIDE4IC0yMzIKOCAtMjkzIC02IC0zNiAtMjAgLTExNyAtMzEgLTE4MCAtMjUgLTE0MSAtMjYgLTE4NSAtNCAtMzIzIDExIC02NyAxMyAtMTExIDcKLTExNiAtMTQgLTE1IC05NjcgLTE3IC05NzIgLTIgLTIgNiAxMCA0OCAyNiA5NCAzNiA5OSA4OCAyOTUgOTYgMzU3IDY5IDU5NAoxMDEgNzAxIDI3NSA5MzUgOTQgMTI1IDExMSAxNDEgMTM4IDEyNyAxNiAtMTAgMTggLTI5IDE5IC0yMjkgMCAtMTIwIDQgLTI3NAo4IC0zNDMgNyAtMTEwIDUgLTEzNiAtMTQgLTIxNSAtMTEgLTQ5IC00NCAtMTQwIC03MSAtMjAxIC01OSAtMTI5IC02MyAtMTc3Ci0xNyAtMTgyIDI1IC0zIDMxIDQgNzEgODUgNzEgMTQyIDEyNyAzNDEgMTI3IDQ1MSAwIDI0IDIxIDY5IDczIDE1NSA0MSA2NwoxMTMgMTkwIDE2MiAyNzIgMTU3IDI2NiAxNTAgMjU2IDE3MyAyMzN6IG0tNDIgLTE2NTAgYzUgLTYgNTggLTE2OCA3MiAtMjIzCjM5IC0xNTEgNDcgLTM1MSAxOCAtNDUwIC0xMCAtMzMgLTMzIC04NCAtNTIgLTExMyAtNjAgLTkyIC0xNjggLTEyNCAtMjg5IC04NgotMjcgOCAtODMgMjEgLTEyNCAyOSAtNzAgMTQgLTgxIDEzIC0xNjQgLTYgLTEyNCAtMjkgLTE5MyAtMjQgLTI4OSAyNCAtMTE3CjU3IC0yNjUgMTc0IC0yOTUgMjMxIC0xMyAyNSAtMTQgNTIgLTkgMTUzIDggMTM5IDI4IDMwOCA0NSAzNzAgNyAyNSAyMSA0OCAzNAo1NSAxMiA3IDY5IDE1IDEyNyAxOSAxMTYgNyA5MTggNCA5MjYgLTN6Ii8+CjxwYXRoIGQ9Ik0yODM4IDY4ODMgYy04NSAtOTIgLTk2IC0yMjggLTM5IC01MDggNTQgLTI2MCA3NCAtNDQ3IDc1IC02ODAgMgotMzQ5IC0yNyAtNTY1IC0xMDMgLTc4MCAtNTAgLTEzOSAtNTMgLTMzNSAtOSAtNTI1IDQ1IC0xOTUgNzEgLTI1MSAxMzMgLTI4Mgo1NyAtMzAgMTcxIC0zNSAyNTUgLTEzIDkxIDI0IDI1MiAzMCA0MDMgMTUgMjA4IC0yMiAzMTkgNCA0MTggOTYgNTcgNTQgODgKMTAzIDEyMyAxOTIgNjkgMTc3IDc5IDQ0MSAyMyA2NDIgLTE0IDQ3IC01NCAxNTkgLTkwIDI1MCAtOTQgMjM4IC0xMzEgNDEwCi0xNTYgNzMwIC0xNyAyMDkgLTUyIDMwMyAtMjM2IDYzMCAtNDIgNzQgLTg2IDE0NSAtOTggMTU4IC0yNCAyNiAtODMgMzAgLTEyNgo3IC0yMyAtMTEgLTYxIC0xMyAtMTg2IC0xMCAtMTQyIDQgLTE1OSA2IC0xNzEgMjQgLTggMTAgLTM1IDMzIC02MSA1MCAtNjIgNDEKLTExOCA0MyAtMTU1IDR6IG0xMjYgLTEwOSBjNTEgLTUwIDY5IC05MSAxMDUgLTIzOSA2MyAtMjU3IDk4IC0zMjAgMjQ2IC00NDkKbDQwIC0zNCAxMSAtMjQ0IGM3IC0xMzQgMTcgLTI2MCAyNCAtMjgxIDEwIC0zNSAxNCAtMzggNDMgLTM1IDMyIDMgMzIgMyAzMQo1OCAtMSAzMCAtNiAxMTggLTEzIDE5NSAtNiA3NyAtMTMgMjQxIC0xNiAzNjUgLTYgMjIxIC0xNiAzNjAgLTM2IDQ5MiAtNiAzNwotOCA3NiAtNCA4NiA3IDI1IDU4IDQ3IDc5IDM1IDIxIC0xMSAxNjYgLTI2MSAyMzIgLTM5OCA1NSAtMTEzIDg0IC0yMTggODQKLTMwMyAwIC00MyAzNyAtMzI0IDYwIC00NTIgMTEgLTYxIDU5IC0yMTcgOTIgLTI5NyAzNiAtODkgNjQgLTgzIC00MDQgLTgzCi00MTIgMSAtNTYyIDEwIC01ODkgMzcgLTEwIDEwIC0xMCA0OSAwIDE4MCAyNSAzNjMgOCA1OTAgLTc5IDEwNzEgLTI2IDE0MAotMjkgMTcwIC0yNCAyMDIgOSA0OCA1MSAxMzAgNjggMTMwIDcgMCAyOSAtMTYgNTAgLTM2eiBtMzEyIC03NyBjMjkgLTI1IDI5Ci0yOCA1MyAtMjMyIDYgLTQ0IDExIC0xMTggMTMgLTE2NSAzIC03MiAxIC04NSAtMTMgLTg4IC0yMiAtNCAtMTA0IDExOCAtMTMxCjE5NSAtMjggODAgLTY4IDI0MiAtNjggMjc0IDAgMzIgOSAzNyA3MiAzOCAzNSAxIDUzIC01IDc0IC0yMnogbS0xMTYgLTE1OTcKYzkxIC02IDI4OCAtOCA0NzYgLTQgMTc2IDQgMzMyIDQgMzQ2IDEgNzUgLTE5IDEyMSAtMzUwIDc0IC01MzcgLTQzIC0xNzAKLTExNSAtMjc4IC0yMTkgLTMzMCAtODMgLTQxIC0xMzcgLTQ1IC0yOTIgLTI1IC0xNTggMjEgLTI4NiAxNCAtNDE4IC0yMSAtMTA1Ci0yOSAtMTQxIC0yNiAtMTg3IDEzIC00MiAzNSAtNjMgODEgLTg4IDE4OCAtNjIgMjcyIC01OSAzMzYgMjcgNTc1IDE3IDQ3IDMxCjkwIDMxIDk3IDAgNiA1IDI0IDEwIDM4IDkgMjQgMTQgMjYgNDggMjEgMjAgLTMgMTA3IC0xMSAxOTIgLTE2eiIvPgo8cGF0aCBkPSJNMTQ0MCA2Nzk4IGMtMzMgLTE3IC01MSAtMzUgLTY4IC02OCAtMjIgLTQzIC0yMyAtNTIgLTE3IC0xODUgOAotMTk4IDI1IC0zNDQgNjAgLTUxNSA3IC0zNiAxOCAtOTAgMjQgLTEyMCA0MCAtMTk5IDUzIC01NTYgMjYgLTcyMyAtOCAtNTEKLTM2IC0xNTYgLTYxIC0yMzIgLTU1IC0xNjQgLTYzIC0yNDcgLTQ1IC00NDIgMTcgLTE4NCA1NiAtMjU1IDE2OSAtMzA1IDg0Ci0zOCAxNDIgLTQwIDMxMyAtMTMgMTU5IDI1IDMwNSAzMSAzODkgMTUgMjUgLTQgNjIgLTExIDgyIC0xNSA1NCAtMTEgMTA0IDIKMTQzIDM2IDY1IDU3IDEwOCAyMjYgMTA5IDQyOSAwIDIyMCAtNTQgMzY4IC0yMDUgNTYwIC0xNyAyMSAtNTAgMTAwIC04MiAxOTUKLTE2MSA0NzQgLTM1NiA5MzggLTUyMyAxMjQ0IC02OSAxMjggLTEwMCAxNTMgLTE5NiAxNTggLTYyIDQgLTgwIDEgLTExOCAtMTl6Cm0xNzMgLTk4IGM3NyAtNjcgMzE3IC01NzQgNDc1IC0xMDAwIDc2IC0yMDYgMTMyIC0zNzYgMTMyIC0zOTkgMCAtMjcgLTExIC0yOQotMjA1IC0zNSAtMTcwIC01IC0yODAgLTI3IC0zNzMgLTc1IC0yNCAtMTIgLTUzIC0yMSAtNjQgLTE5IC0yMSAzIC0yMSA4IC0yMwoyNzggLTIgMjIyIC03IDMwMSAtMjQgNDEzIC0xMSA3NyAtMjMgMTQyIC0yNiAxNDcgLTMgNCAtOSAzNiAtMTQgNzEgLTYgMzUKLTE3IDEwNyAtMjYgMTU5IC0xOCAxMDYgLTMxIDM4MyAtMjEgNDI0IDQgMTUgMjEgMzUgMzkgNDYgNDcgMjkgOTAgMjYgMTMwCi0xMHogbTY5NyAtMTU3NiBjMTI5IC0xNDIgMTkxIC0zNDAgMTY5IC01NDQgLTE4IC0xODEgLTY5IC0yOTAgLTEzMyAtMjkwIC0xNQowIC03MCA3IC0xMjQgMTYgLTExNCAxOSAtMTg4IDE1IC0zOTIgLTIwIC0xMTUgLTIwIC0xNTQgLTIzIC0xODkgLTE1IC04NSAxOQotMTM4IDU3IC0xNzQgMTI0IC0yMCAzNyAtMjIgNTQgLTIyIDIzNSAwIDE4OCAxIDE5NyAyNiAyNTUgMTQgMzMgMzMgODAgNDIKMTA1IDE2IDQzIDIxIDQ3IDk5IDgxIDIyNiAxMDAgMjU2IDEwNiA0OTEgMTA2IGwxNTggMCA0OSAtNTN6Ii8+CjxwYXRoIGQ9Ik0yNDI4MCA2NzcxIGMtNTAgLTI3IC01NyAtMzcgLTE2MiAtMjI2IC0yMDMgLTM2NiAtMjY3IC01MDQgLTM2MwotNzkwIC03MSAtMjEyIC05OSAtMzEzIC0xMTAgLTQwOSAtNyAtNTEgLTE0IC02NiAtNTAgLTEwNSAtNjQgLTcxIC0xNzUgLTI2NAotMjEyIC0zNzEgLTI5IC04NCAtMzMgLTEwNyAtMzMgLTIwMSAwIC03NyA1IC0xMjUgMTkgLTE3MCAxMSAtMzUgMjQgLTkxIDMwCi0xMjMgNiAtMzMgMTggLTcwIDI3IC04NCAyMCAtMzAgMTA3IC02OSAyMDEgLTkwIDcyIC0xNSA3MyAtMTUgMTYzIDEzIDEyNCAzOAoyMjcgMzMgMzUwIC0xNSAxNDggLTU4IDI1NiAtNDAgMzIyIDU1IDM4IDU1IDc2IDE5OCA4NyAzMjIgMTMgMTQ1IC0xIDI3MyAtNDMKNDA4IC0zMSAxMDEgLTQzIDE2MSAtNjcgMzQ1IC0xMSA4OSAtMTEgMzQyIDEgNDc1IDEwIDExMCAxNSAxNTAgNDQgMzQ1IDM1CjIzMSA0OCAzNTkgNDQgNDQxIC01IDEwMSAtMTggMTI2IC04NiAxNzAgLTU0IDM0IC0xMDkgMzggLTE2MiAxMHogbTExNCAtOTIKYzM2IC0yOCA1NiAtNzAgNTYgLTExNiAwIC0zNSAtMTYgLTE2NiAtNTUgLTQ0OCAtNDAgLTI4NSAtNDcgLTM2MSAtNTIgLTUxNQotMyAtMTMzIDAgLTE5MSAxNiAtMzAwIDEzIC04NiAxNyAtMTM4IDEwIC0xNDUgLTYgLTYgLTI0IC01IC01MiAzIC0xNjYgNDcKLTI1MCA2NSAtNDAxIDgzIC05NCAxMiAtMTc3IDI3IC0xODQgMzQgLTExIDEwIC0xMSAyNSAtMiA3NiAxNyAxMDIgNDAgMTg2IDcyCjI3MyAxNiA0NSA0NSAxMzEgNjUgMTkxIDQyIDEzMCAxMTYgMjk4IDIwMCA0NTAgMTcwIDMxMCAyMDcgMzczIDIzOCA0MDMgNDEKMzggNTMgMzkgODkgMTF6IG0tNTAxIC0xNTI5IGMyNTEgLTMzIDQ3OCAtMTAyIDUxNCAtMTU3IDMyIC00OCA2NCAtMjAzIDY1Ci0zMDggMSAtMTY5IC00NiAtMzQwIC0xMDggLTM5NCAtNDYgLTQxIC05NCAtNDEgLTE5OSAwIC0xMDcgNDIgLTI1NiA1MSAtMzU1CjIzIC05NCAtMjcgLTE4MiAtMjQgLTI1MiA4IC02MyAyOSAtNTkgMjIgLTEwOCAyMTQgLTM1IDEzOSAtMjUgMjIxIDQ2IDM2NyA5OAoyMDMgMTQ4IDI2NyAyMDggMjY3IDE5IDAgMTA0IC05IDE4OSAtMjB6Ii8+CjxwYXRoIGQ9Ik0xNTkwMCAzODA3IGMtMTI3IC0yOSAtMjU5IC0xMjcgLTMxMyAtMjMzIC01NSAtMTA4IC02MiAtMTU4IC02MgotNDI5IDAgLTMxMSAxMSAtMzY2IDEyNSAtNjE0IGw2MiAtMTM0IDkgLTIxNiBjNSAtMTE5IDExIC0yMjcgMTQgLTI0MSAyIC0xNAoxNiAtOTUgMzAgLTE4MCAyMyAtMTQ2IDM0IC0yMjMgNTYgLTM4NCAxOCAtMTM2IDYwIC0zNzMgODUgLTQ4MSA2MSAtMjYyIDEyOQotNDU0IDI0NiAtNzAzIDUwIC0xMDUgMTMzIC0xNTcgMTk4IC0xMjIgMjcgMTUgNjEgNjYgNzEgMTA4IDUgMjAgNCAyMzUgLTEKNDc3IC0xMCA0NDMgLTggNDk0IDI1IDcwMCAyOCAxNzUgMzUgMzE0IDI0IDQ3NyAtMjAgMzE4IC0yMiA0MDAgLTkgNTE3IDE0CjEzNyAxNCAxMzQgODAgMzI0IDg3IDI1MSAxMTIgMzU0IDE0MCA1NTggMTcgMTI2IDEgMTkxIC02MCAyNDIgLTE3IDE1IC00NiAzMQotNjUgMzYgLTQ1IDEyIC04MiAzOSAtMTg1IDEzNSAtMTEzIDEwNSAtMjMwIDE2NCAtMzQwIDE3MSAtNDMgMyAtOTkgLTEgLTEzMAotOHogbTI1MiAtMTIwIGM2NCAtMzYgMTM2IC05NCAyMTggLTE3NCAyNSAtMjUgNzcgLTYwIDExNyAtNzkgNDAgLTE5IDgyIC00Nwo5NCAtNjIgMTkgLTI0IDIxIC0zNSAxNSAtMTA3IC03IC04NSAtMjggLTIwNCAtNTMgLTI5NSAtNTEgLTE5MCAtMTUwIC00NTgKLTE3NCAtNDcxIC0zMyAtMTcgLTE2OCAtMjEgLTM3NCAtMTEgLTExMCA2IC0yMDcgMTMgLTIxNSAxNiAtMjIgOSAtOTYgMTUxCi0xMjYgMjQyIC01MSAxNTYgLTY2IDM2MyAtNDMgNTg1IDEyIDEyNSAzNiAxODIgMTA3IDI2MCA1MCA1NSAxNDQgMTE0IDIwNwoxMzAgMTYgNSA2MCA3IDk3IDUgNTQgLTMgNzggLTEwIDEzMCAtMzl6IG0tMjQgLTEyOTUgbDI0MyAtNyA3IC0yNzUgYzkgLTM5MAo3IC01ODQgLTcgLTY3MCAtMzMgLTIwNiAtMzYgLTI1NyAtMzUgLTU4MCAwIC0xODQgNCAtMzk4IDggLTQ3NSA3IC0xMTggNgotMTQ2IC03IC0xNzggLTMxIC03NCAtNzIgLTQzIC0xNDIgMTA4IC0xMjcgMjcyIC0xODIgNDQ1IC0yNDAgNzQ1IC00NiAyNDYKLTU2IDMxMCAtOTUgNjMwIC00IDM2IC0xOCAxMTkgLTMwIDE4NSAtMjQgMTMxIC00MyA1MDAgLTI3IDUyMiA2IDggMjIgMTEgNDYKNyAyMCAtMyAxNDUgLTkgMjc5IC0xMnoiLz4KPHBhdGggZD0iTTEzMzQzIDM3ODIgYy0yMyAtOSAtNTQgLTI3IC02OSAtNDAgLTQ5IC00NCAtNTYgLTc5IC03MCAtMzU3IC0yNwotNTM4IC0xNyAtNjExIDExNiAtNzc1IDU0IC02OSA1OCAtODMgMzQgLTE1MCAtMjUgLTcxIC0zMCAtMjc1IC05IC0zODUgMjYKLTEzNyAzNCAtMjU5IDQ0IC02NDUgOSAtMzE4IDEyIC0zNjggMzUgLTQ4MCAyOCAtMTM3IDUxIC0yMTMgOTAgLTI5MSAzNSAtNjgKOTMgLTEzOCAxMjMgLTE0NSA1MyAtMTQgMTEyIDM3IDE1NSAxMzMgMTkgNDIgMjAgNjkgMjMgMzQyIDEgMTkyIDggMzQwIDE4CjQyMSA4IDY5IDIwIDE4NCAyNiAyNTUgNyA3MiAxNiAxNzEgMjEgMjIyIDYgNTAgMTAgMTM0IDEwIDE4NyAwIDIwNiA3MyA1NjUKMTgwIDg4NiA1NiAxNjggNjQgMjExIDY0IDM1NSAwIDExMCAtNCAxNDEgLTIzIDIwMCAtMzEgOTEgLTQ3IDEyMiAtNzkgMTUyCi01MSA0NyAtOTUgNjIgLTIzOCA3OCAtNzcgOSAtMTgxIDI1IC0yMzIgMzYgLTExMiAyMyAtMTY0IDIzIC0yMTkgMXogbTE0NwotODIgYzM5IC0xMSAxOTMgLTM1IDMyNCAtNDkgMTA1IC0xMiAxNDEgLTMyIDE4OCAtMTA0IDM4IC01OSA1OCAtMTM5IDU4IC0yMzIKMCAtODggLTE4IC0xNzIgLTY5IC0zMjggLTIzIC02NyAtNTYgLTE3OCAtNzUgLTI0NyAtMTkgLTY5IC0zNyAtMTMzIC00MSAtMTQzCi0xMCAtMjQgLTQ2IC0zMSAtMTI5IC0yMiAtMzkgNCAtMTE0IDEwIC0xNjYgMTQgLTExMCA3IC0xMjYgMTUgLTE5MiA5MyAtOTEKMTA2IC0xMTIgMTczIC0xMTMgMzQ4IDAgMTk0IDIyIDU0OCAzNyA1OTUgMjMgNzAgOTIgMTAwIDE3OCA3NXogbTI1NyAtMTIxNgpjMTAyIC04IDEwOSAtMTQgOTUgLTkyIC0xNCAtNzIgLTMwIC0yNDMgLTQyIC00MzcgLTUgLTgyIC0xNiAtMjE1IC0yNSAtMjk1Ci0zNCAtMzIyIC00NSAtNTE0IC00NCAtNzE1IDEgLTE2NiAtMiAtMjE3IC0xMyAtMjQ1IC0xOCAtNDIgLTUyIC03NCAtNzEgLTY3Ci0xNSA2IC05NCAxNTEgLTEwOCAyMDAgLTQ0IDE1MCAtNjkgMzcxIC03MCA2MjIgMCAyNTcgLTEzIDQ3MCAtMzUgNTkwIC0zNgoxOTkgLTI0IDM4NSAyOCA0MzcgMjEgMjEgMzggMjEgMjg1IDJ6Ii8+CjxwYXRoIGQ9Ik0yNDE0MSAzNzc1IGMtMzAgLTE0IC03NCAtNDQgLTk4IC02NSAtMjMgLTIyIC01MSAtNDAgLTYwIC00MCAtMTAgMAotNDMgMTIgLTczIDI2IC04NyA0MSAtMTM5IDU0IC0yMjAgNTQgLTEzMiAtMSAtMjE3IC02MyAtMjkyIC0yMTcgLTQzIC04NyAtNDMKLTg5IC00NiAtMjEzIC02IC0xODYgMyAtMjEyIDE2OCAtNTEzIDQ5IC05MCAxMDUgLTI0NCAxNjAgLTQ0MiAyMSAtNzcgNTAKLTE3OSA2MyAtMjI2IDUwIC0xNzggMTQ2IC0zNjQgMjc3IC01MzggMTI4IC0xNjkgMjAzIC0yNDggMjQyIC0yNTMgNDQgLTcgOTYKNiAxMjIgMzEgMTIgMTIgMjggMjEgMzQgMjEgNyAwIDU2IC0yNSAxMTAgLTU1IDEwOSAtNjAgMTY3IC03NSAyMjcgLTU1IDQ4IDE2Cjc1IDYwIDc1IDEyMyAwIDUyIC0xMSA3OSAtNzUgMTc3IC05OSAxNTIgLTE2NyAzMTkgLTIwNCA0OTUgLTMwIDE0NyAtNjEgMzcxCi02MSA0NDEgMCAxMzEgNDggMzIxIDExMyA0NDkgMjkgNTggMzggODggNzIgMjQ2IDMwIDEzOSAzMSAxNjQgNyAyNTYgLTI5IDEwOQotMTAzIDIwNCAtMTk3IDI1NSAtMTMxIDY5IC0yNTQgODUgLTM0NCA0M3ogbTI1NCAtMTA0IGM4MiAtMzggMTUxIC0xMDYgMTkxCi0xODcgMjMgLTQ3IDI2IC02MiAyMSAtMTI2IC04IC0xMTcgLTQzIC0yNTcgLTkwIC0zNTkgLTUwIC0xMDYgLTg1IC0yMTcgLTk0Ci0yOTEgLTMgLTI3IC0xMiAtNTUgLTE5IC02MiAtMTkgLTE5IC02ODIgLTIzIC03MDYgLTQgLTkgNyAtMzEgNDkgLTQ4IDkzIC0xNwo0NCAtNjUgMTQxIC0xMDUgMjE1IC04NiAxNTggLTg5IDE2NCAtMTEwIDI2NSAtMTMgNjIgLTEzIDg4IC00IDEzOCAyNCAxMzYKMTI4IDI4MyAyMTUgMzA2IDUzIDE0IDkxIDYgMTg0IC0zNyA3NyAtMzYgMTYyIC01MSAyMTYgLTM4IDE0IDQgNDkgMjkgNzggNTUKMjggMjYgNjAgNTMgNzEgNjAgMzUgMjAgMTI0IDggMjAwIC0yOHogbTMgLTExNDQgYzcgLTcgMTYgLTY3IDIyIC0xMzMgMzEKLTM2MSAxMjQgLTY2MSAyNzQgLTg4OSAyNSAtMzggNDYgLTc3IDQ2IC04NiAwIC0xOSAtMjUgLTQ5IC00MSAtNDkgLTE0IDAKLTEyMiA1NiAtMTgyIDk0IC02NiA0MiAtODMgNjIgLTEwMSAxMTQgLTkgMjQgLTQwIDk1IC02OSAxNjAgLTEyOSAyNzkgLTE1NQozNDggLTE3NyA0NjQgLTExIDU2IC0yNiA3MyAtNTUgNjIgLTIyIC05IC0yMCAtMTAzIDQgLTE5NSAxOSAtNzQgMTEyIC0zMDIKMTY5IC00MTQgNTcgLTExNSA2NSAtMTgyIDIzIC0yMDQgLTE0IC04IC0yNSAtNiAtNDUgMTAgLTQ0IDM0IC0xODUgMjA5IC0yNTcKMzE3IC0xMTcgMTc2IC0xNTUgMjcyIC0yNTUgNjM1IC0xOCA2OSAtMjMgMTAxIC0xNiAxMTAgMTYgMTkgNjQ1IDIzIDY2MCA0eiIvPgo8cGF0aCBkPSJNMzg1MSAzNzgwIGMtMzAgLTQgLTg3IC0yNSAtMTI3IC00NSAtODQgLTQzIC0xMDcgLTQzIC0yMTkgLTEgLTE4Mgo2NyAtMzczIDkgLTQ2OSAtMTQzIC01NyAtODkgLTc3IC0yNTQgLTU3IC00NDYgMTUgLTEzNSAyMiAtMTY3IDczIC0zMjQgMzYKLTExMyA0MCAtMTMyIDM2IC0yMDAgLTYgLTk1IC0zMCAtMTY1IC0xMjMgLTM2MSAtODQgLTE3OCAtMTAwIC0yMjQgLTExNyAtMzM1Ci0yNCAtMTUxIC0xNyAtMjg4IDMxIC02NTAgMjUgLTE4NyAzNCAtMjE3IDcyIC0yNDkgMjUgLTIyIDQxIC0yNiA4OSAtMjYgMzMgMAo3MCA1IDg0IDExIDU0IDI1IDgzIDE0NyA4OSAzNzkgNCAxNDEgOSAxNzggMzIgMjU1IDMwIDEwNCA5MCAyMzUgMTY4IDM2NyAzMAo1MSA3MyAxMzAgOTYgMTc2IDIzIDQ1IDUwIDkxIDYxIDEwMiA0OSA0OSAxMTQgNiAxNTYgLTEwMSA0MyAtMTE0IDI4IC0yMTIKLTY5IC00NTQgLTIyIC01NSAtNTIgLTEzNCAtNjggLTE3NSAtMTUgLTQxIC00MyAtMTE0IC02MyAtMTYzIC02NSAtMTU2IC03MQotMzEzIC0xNiAtMzY5IDI1IC0yNSAzNiAtMjggOTAgLTI4IGw2MiAwIDcyIDcyIGMxNzcgMTc5IDI4NCAzNDQgMzY3IDU2NCAxMDMKMjczIDEyNSA1OTIgNjkgOTg1IC0xMCA2NSAtOSA2OCAyOSAxNTAgMjIgNDYgNDcgMTA3IDU2IDEzNCA5IDI4IDQzIDEwOSA3NQoxODEgNjggMTUyIDgzIDIyNiA2OCAzNDQgLTIxIDE3MyAtMTE2IDI5MiAtMjY3IDMzNSAtNjAgMTcgLTIxMiAyNiAtMjgwIDE1egptMTkyIC05MCBjODMgLTEyIDEzMCAtMzUgMTgzIC05MiA3MSAtNzQgMTExIC0xODEgOTggLTI2NyAtMyAtMjUgLTMyIC0xMDcKLTYzIC0xODEgLTMyIC03NCAtNzkgLTE5MCAtMTA2IC0yNTggLTQxIC0xMDMgLTU0IC0xMjYgLTc5IC0xNDAgLTI3IC0xNSAtODAKLTE3IC00NDYgLTE5IC0yMjggLTIgLTQyNSAtMSAtNDM3IDIgLTE1IDQgLTI2IDE5IC0zNiA1MyAtOSAyNiAtMjcgODAgLTQyCjEyMCAtNTggMTYxIC03OSA0MzIgLTQyIDUzOCAyOCA4MCA2OSAxMzYgMTMxIDE3OSA1NyAzOSA2MCA0MCAxNDUgNDAgNzQgLTEKOTQgLTUgMTQ2IC0zMCA0OCAtMjMgNzQgLTI5IDEzMCAtMjkgNjMgMCA3NyA0IDEzOCAzOCAxMDQgNTkgMTQ1IDY1IDI4MCA0NnoKbTQxIC0xMDYyIGMzNSAtNTggNDkgLTQ3OSAyMCAtNjU2IC01MyAtMzMwIC0xNzggLTU2NyAtNDQwIC04MzAgLTI4IC0yOCAtNTkKLTUyIC02OCAtNTIgLTIzIDAgLTM2IDMyIC0zNiA4NyAxIDYwIDEwIDk2IDUzIDIwMyAxNjkgNDIwIDIxNyA1NzIgMjE3IDY5MAotMSAxMDQgLTM4IDIzMCAtODIgMjc3IC00NyA1MSAtMTc1IDY3IC0yMzIgMzAgLTE0IC05IC01NCAtNzQgLTk0IC0xNDkgLTM4Ci03MyAtOTUgLTE3OSAtMTI1IC0yMzUgLTY1IC0xMTkgLTEyMSAtMjU4IC0xNDMgLTM1MCAtOCAtMzYgLTE5IC0xNDggLTI0Ci0yNDkgLTEzIC0yNTYgLTM0IC0zMjAgLTEwMCAtMjk5IC0zMCA5IC00OCA1MiAtNTkgMTQxIC02IDQzIC0xOCAxMjkgLTI3IDE4OQotOSA2MSAtMTggMTc5IC0yMSAyNjQgLTggMjI1IDcgMjg4IDEyMiA1MjYgNzYgMTU4IDEwNiAyMzkgMTI2IDM0MiA2IDM1IDE3CjY3IDI0IDczIDcgNiAxNjEgMTEgNDA2IDEzIDIxNyAxIDQxMSAzIDQzMSA1IDMwIDEgNDEgLTMgNTIgLTIweiIvPgo8cGF0aCBkPSJNOTcyMCAzNzU3IGMtMzAgLTEzIC0xMTAgLTU5IC0xNzcgLTEwMyAtNjcgLTQzIC0xNTAgLTk3IC0xODUgLTExOQotMTE3IC03NCAtMTQzIC0xNDQgLTEzNSAtMzY5IDYgLTE2MSAyMSAtMjM2IDcyIC0zNTYgMTUgLTM2IDQyIC0xMDMgNjEgLTE1MApsMzMgLTg1IDEgLTMwNSBjMSAtMTY4IDUgLTMzOSAxMSAtMzgwIDggLTY4IDE1IC0zMTMgMzcgLTE0MDAgOCAtMzgyIDEwIC0zOTcKNjQgLTQzNCA3MSAtNTAgMTg4IDI1IDI0OSAxNTkgNTMgMTE4IDEzOCAzOTMgMTcyIDU2MCAyMCA5NCA1MiAyNDcgNzMgMzQwIDIwCjk0IDQ3IDIyMCA2MCAyODAgNjggMzE0IDk3IDUzMiA4MyA2NDAgLTEzIDEwMiAtMTAgMjMwIDYgMjk0IDkgMzMgMzMgOTggNTQKMTQzIDc1IDE2NCAxMjMgMzUwIDE1MCA1ODQgMjMgMTk2IDcgMjk2IC03NSA0NjEgLTcyIDE0NCAtMTA0IDE4MSAtMTk2IDIyNAotNjggMzIgLTgxIDM0IC0xODggMzcgLTEwMiAyIC0xMjEgMCAtMTcwIC0yMXogbTI2MCAtNzggYzkwIC0yNCAxNTUgLTg3IDIyNAotMjE5IDYxIC0xMTcgNjggLTE1NSA2MyAtMzA4IC01IC0xNTYgLTI2IC0yOTcgLTYyIC00MjUgLTMwIC0xMDMgLTExMSAtMjgzCi0xMzEgLTI5MSAtNyAtMyAtNjAgLTEgLTExNiA0IC01NyA2IC0xNzMgMTUgLTI1OCAyMSAtMTcwIDExIC0yMDggMjEgLTIxNSA1MwotMiAxMSAtOSA0OCAtMTYgODEgLTYgMzMgLTMzIDExMiAtNTkgMTc1IC03MCAxNjggLTc3IDE4NyAtOTQgMjc0IC0yMCAxMDAKLTIwIDIxOCAtMSAyODQgMjAgNjUgNjAgMTEyIDEzMyAxNTMgMzEgMTggMTA1IDYzIDE2NCAxMDAgNTkgMzcgMTIyIDc2IDE0MAo4NSA2MSAzMyAxMzggMzcgMjI4IDEzeiBtLTI1NSAtMTMxNCBjMjY2IC0yMSAzMTUgLTI3IDMyMSAtMzcgMyAtNSA4IC0xMTYgMTAKLTI0NiA1IC0yMTEgMyAtMjUxIC0xNiAtMzYyIC0zMCAtMTc3IC0zNSAtMTk5IC04NiAtNDE1IC0yMiAtOTIgLTQzIC0xOTMKLTEwNSAtNDkwIC0zMCAtMTQ3IC0xMTMgLTQwOSAtMTY4IC01MjkgLTMyIC03MSAtODUgLTEzNiAtMTEwIC0xMzYgLTMxIDAgLTQxCjQ1IC00MSAxODggMCA3NSAtNSAyMjMgLTEwIDMyNyAtNiAxMDUgLTExIDMzNiAtMTEgNTE1IC0xIDE3OSAtOCA0MjIgLTE1IDU0MAotOCAxMTggLTE3IDMwNyAtMjEgNDIwIC01IDE4NiAtNCAyMDcgMTEgMjIzIDIxIDIwIDcgMjAgMjQxIDJ6Ii8+CjxwYXRoIGQ9Ik0xMjI5OSAzNzU2IGMtMiAtMyAtNDUgLTEwIC05NCAtMTcgLTUwIC02IC0xMjcgLTI1IC0xNzIgLTQxIC0xODAKLTY1IC0yNDMgLTE3NSAtMjQzIC00MjUgMCAtMTU0IDIyIC0yNzQgNzQgLTM5NyA3NyAtMTgyIDgwIC0xOTYgMTA2IC01MTYgNQotNjkgMTQgLTE2MyAyMCAtMjEwIDE0IC0xMjMgMjkgLTQxNyAzNSAtNzE1IDYgLTI4OSAxMyAtMzc2IDU2IC03MTAgMTEgLTg4CjQzIC0xNjIgOTIgLTIxMyA1OSAtNjIgMTAyIC0zOCAxNzUgOTggMTA1IDE5NiAxMzIgMzYwIDE1MyA5MjUgMTIgMzE1IDE5IDQyMgozOSA1NzAgMTQgMTAxIDggMjg4IC0xMSAzNDcgLTEwIDMyIC05IDQxIDEwIDczIDM2IDYxIDc4IDE2OCAxMDAgMjU2IDE5IDc0CjIzIDEzMSAzMyA0NjUgbDExIDM4MSAtMjQgNDQgYy0zOCA3MCAtODYgODggLTIzNSA4OSAtNjYgMCAtMTIzIC0yIC0xMjUgLTR6Cm0yNDMgLTEwMyBjNTggLTI5IDU5IC0zOSA0OSAtNDA1IC0xMSAtMzcwIC0xOSAtNDI4IC03OCAtNTY1IC0yMyAtNTUgLTQ3IC05NAotNzEgLTExNCBsLTM2IC0zMiAtMTYwIDUgYy05NSAzIC0xNzAgOSAtMTgzIDE2IC0yNCAxMyAtMzYgNDcgLTUzIDE0NiAtMTEgNjkKLTE3IDg4IC04NCAyNDkgLTQ0IDEwOCAtNjEgMjMwIC01MiAzNzEgOCAxMTUgMjAgMTQ4IDcyIDIwNiA2OCA3NiAxMzIgOTggMzY0CjEzMCAxMzkgMTkgMTg1IDE3IDIzMiAtN3ogbS0yNTkgLTEyMDggYzExNCAtMSAxNTEgLTUgMTU3IC0xNiA1IC03IDE0IC00NSAyMQotODMgMTEgLTY3IDEwIC05OCAtMTEgLTI5NiAtOSAtODkgLTMxIC00NDggLTUwIC04MTAgLTE0IC0yODggLTMzIC0zODUgLTEwNgotNTM3IC01MCAtMTA2IC02OCAtMTE2IC0xMDQgLTU4IC00OSA4MCAtNzUgMzYyIC0xMDAgMTEwNCAtNiAxNjggLTE1IDMzNiAtMjAKMzc1IC00MSAzMTcgLTM4IDM0NCAyOSAzMzAgMjAgLTQgMTAzIC04IDE4NCAtOXoiLz4KPHBhdGggZD0iTTE3MjcwIDM3NTEgYy0xNjUgLTU0IC0zMTUgLTI0NSAtMzY2IC00NjYgLTIyIC05NyAtMTIgLTE3NiAzNyAtMjk3CjUxIC0xMjQgMTEzIC0zMjMgMTI4IC00MTMgNyAtMzggMTcgLTg2IDIxIC0xMDUgMjIgLTg3IDUwIC0yOTggNTAgLTM3NyAwIC00OQotNSAtMTM5IC0xMCAtMjAxIC0xMyAtMTQ1IC0xIC0yMjIgNTcgLTM3MSA2NCAtMTY0IDgzIC0yNzkgODMgLTUxMCAwIC0xNTAgNAotMTk5IDE4IC0yNTIgMzMgLTEyMCA5OCAtMjA5IDE4NSAtMjU1IDUwIC0yNiA1NyAtMjcgODcgLTE0IDI0IDEwIDM5IDI3IDU2CjY0IDIzIDQ4IDI0IDYyIDI0IDI2MSAwIDE4MiAxNCAzNzkgNDUgNjc1IDEyIDExMCA3NSA0OTggOTcgNjAwIDggMzMgMTMgMTM3CjEzIDI1NyAwIDE5NSAxIDIwMiAyMyAyMjUgMTIgMTQgMjIgMjggMjIgMzIgMCA1IDQzIDk3IDk1IDIwNSAxMDkgMjI3IDEyOQoyOTMgMTIzIDQwMiAtNCA2MCAtMTAgODYgLTMxIDEyMiAtMzQgNTggLTEzMCAxNDAgLTIzMyAxOTggLTQzIDI2IC0xMjQgNzIKLTE3OSAxMDMgLTU1IDMyIC0xMjIgNzIgLTE0OSA4OSAtMzggMjUgLTYwIDMyIC0xMTAgMzQgLTMzIDEgLTcyIC0xIC04NiAtNnoKbTEzMSAtMTA0IGM2MSAtNDEgMjAyIC0xMjQgMjY3IC0xNTYgMTQ4IC03NSAyNTUgLTE2MCAyOTQgLTIzNSAzNyAtNzIgMjUKLTEyNSAtNzkgLTM0MSAtNTAgLTEwNSAtOTYgLTIwNCAtMTAzIC0yMjIgLTIwIC01NCAtNDIgLTY0IC0yMDcgLTEwMCAtMjQwCi01MSAtMzA5IC01OSAtMzYzIC00MiAtNTAgMTYgLTQyIC0yIC05OSAyMTMgLTE3IDY1IC01NCAxNzQgLTgxIDI0MiAtNTggMTQzCi02MyAxOTYgLTI5IDI5NyA2MCAxODEgMjMzIDM2NyAzNDAgMzY3IDE0IDAgNDEgLTEwIDYwIC0yM3ogbTI5NyAtMTE2MCBjMzQKLTcwIDI2IC0yNDIgLTIyIC01MTIgLTgwIC00NDAgLTEwNiAtNjc3IC0xMTIgLTEwMzAgLTMgLTE1NCAtMTAgLTI5NSAtMTYKLTMxMiAtMTQgLTQ2IC00MiAtNDMgLTkwIDkgLTg2IDkzIC05OSAxNDMgLTEwOCA0MjMgLTkgMjQ0IC0yMiAzMzggLTY2IDQ1NAotODMgMjE3IC04NSAyMzUgLTYyIDQ2OSAxMSAxMTIgMTAgMTM3IC0xMCAyNzkgLTE2IDExNSAtMTkgMTYwIC0xMSAxNzAgOCA5CjM3IDEzIDg4IDE0IDUwIDAgMTI2IDEyIDIyMSAzNCA4MCAxOSAxNTIgMzMgMTYwIDMyIDggLTEgMjEgLTE1IDI4IC0zMHoiLz4KPHBhdGggZD0iTTE4Njk3IDM3NDYgYy0yMSAtOCAtNTcgLTI2IC04MCAtNDEgLTU1IC0zNiAtMjMwIC0yMTYgLTI3MyAtMjgwCi03MiAtMTA3IC04MCAtMjQxIC0yNCAtMzk5IDY2IC0xODkgMTE1IC00NjQgMTQwIC03OTYgNiAtNzQgMTMgLTE2NiAxNiAtMjA1CjYgLTc1IDI4IC0yNjggNDQgLTM3NSAxNSAtMTA5IDMwIC0yMjEgNDAgLTMxNSAyNCAtMjE2IDY5IC00NTcgMTAxIC01NDUgNTEKLTEzOSAxMzIgLTI2NiAxODkgLTI5NSA2NiAtMzQgMTQ3IC05IDE4MCA1NSAzNiA3MCA0MyAxNDggMjQgMjUzIC0xNyA5MSAtMjcKMTcxIC00MCAzMjAgLTE0IDE1NCAyNyA0NzkgMTAxIDgwNyA5NiA0MjMgMTA1IDQ2OSAxMDUgNTM2IDAgNDggOCA3MCA2NCAxNzcKNjQgMTIyIDEwNCAyMTQgMTkwIDQ0NCA3MSAxODkgNjQgMjczIC0zMCAzNDYgLTE4NCAxNDMgLTQyNyAyOTEgLTUxOSAzMTYgLTU1CjE1IC0xODIgMTMgLTIyOCAtM3ogbTE3OCAtODAgYzU5IC0xNSA4NyAtMjkgMjIwIC0xMDkgMTIwIC03MiAzMjEgLTIyMSAzMzYKLTI0OSAxNyAtMzIgNyAtNjcgLTc2IC0yNzggLTg3IC0yMjEgLTE3OCAtNDA1IC0yMTIgLTQyNyAtMzIgLTIxIC0xNjcgLTkKLTMxMyAyOCAtMzE5IDgwIC0zMjMgODIgLTM0MiAxMjAgLTkgMTkgLTI0IDY4IC0zNCAxMDkgLTkgNDEgLTMyIDEyMiAtNTAgMTc5Ci01MiAxNTggLTUzIDE5MSAtOSAyODAgMjcgNTYgNTggOTcgMTIzIDE2NCAxMDUgMTA3IDE2OSAxNTUgMjM2IDE3OSA2MiAyMSA1OQoyMSAxMjEgNHogbS0yNDAgLTEwODcgYzE5MCAtNTYgMzA5IC03OSA0MDUgLTc5IDQ4IDAgNzEgLTQgODAgLTE1IDE4IC0yMSA4Ci05OCAtMzQgLTI4MCAtNTIgLTIyNiAtMTEzIC01MzUgLTEzMiAtNjcwIC0yNyAtMTkwIC0yNSAtNTExIDUgLTY5MSAxNSAtOTAKMjEgLTE1NSAxNyAtMTc5IC03IC0zNyAtNDUgLTg1IC02NyAtODUgLTIzIDAgLTg4IDgzIC0xMjkgMTY0IC00MiA4NiAtODEgMjIxCi05OSAzNDcgLTIxIDE0MiAtNDAgMjg1IC01MSAzNzkgLTYgNTIgLTIxIDE2OSAtMzQgMjYwIC0xNCA5MSAtMjkgMjIxIC0zNQoyOTAgLTYgNjkgLTIwIDIyMyAtMzIgMzQzIC0xMSAxMTkgLTE3IDIyMiAtMTQgMjI3IDkgMTUgNDMgMTIgMTIwIC0xMXoiLz4KPHBhdGggZD0iTTIxNzU0IDM3MTYgYy00OSAtMjQgLTExMCAtNjIgLTEzNSAtODQgLTg4IC03OCAtMTM3IC0yMTQgLTEyNSAtMzQ0CjggLTkyIDM0IC0xNTYgMTE4IC0yODkgMTQ3IC0yMzYgMTcyIC0zMTYgMTQ5IC00ODkgLTYgLTQ3IC0yMCAtMTU1IC0zMSAtMjQwCi0yNSAtMTkxIC0yNSAtMjM3IDAgLTM3MCAyMCAtMTE0IDQyIC0xNzcgMTE4IC0zNDUgNjcgLTE0NyAxMTQgLTIzMCAyMzggLTQxNQoxMjUgLTE4OCAxNDQgLTIwNSAyMzQgLTIwNSAxMTMgMCAxNTUgNDYgMTU0IDE2NyBsMCA3OCAtMTM2IDI3NyBjLTc1IDE1MwotMTQxIDI5OSAtMTQ3IDMyNSAtMjUgMTA3IC04IDMyNCAzMiA0MTkgMjYgNjQgNzggODQgMTM1IDU1IDUxIC0yNiAyMjggLTMwNQoyNzcgLTQzNSA4IC0yMyAyMSAtNTggMjkgLTc4IDUzIC0xNDIgOTYgLTM3NiA5NiAtNTI1IDAgLTEwMyAyIC0xMTIgMzQgLTE3Ngo0OCAtOTYgNjQgLTEwNyAxNDUgLTEwNyA3OCAwIDExNiAxNiAxMzcgNTggMTkgMzUgMzMgMjExIDQxIDQ5MiA4IDMxNyAtMjEKNDc2IC0xMzMgNzE0IC04MyAxNzUgLTg4IDE5NyAtODggMzcxIC0xIDE3MCA4IDIyMCA2OSAzODUgNTggMTU4IDcwIDIxOSA3MAozNTAgLTEgMTEzIC0yIDEyNCAtMzEgMTg1IC02MiAxMzIgLTE5OCAyMjggLTM1NiAyNTEgLTY5IDEwIC04NCA5IC0xNDYgLTEwCi00NSAtMTMgLTg5IC0zNiAtMTI3IC02NiAtMzIgLTI0IC02MSAtNDMgLTY0IC00MSAtMyAxIC00NCAyNiAtOTEgNTMgLTExNyA3MAotMTYxIDgzIC0yNzkgODMgLTk1IDAgLTEwMCAtMSAtMTg3IC00NHogbTMyMSAtNzAgYzI4IC0xMyA4OCAtNDggMTM0IC03OSAxMTAKLTc0IDEzMCAtNzUgMjAyIC02IDMwIDI4IDc3IDYyIDEwNiA3NiA0NyAyMSA1NyAyMyAxMTMgMTQgMjE4IC0zNSAzNTYgLTIxNQozMjAgLTQxOCAtNiAtMzYgLTMzIC0xMzMgLTYxIC0yMTYgLTI3IC04NCAtNTggLTE5MSAtNjcgLTI0MCAtMTAgLTQ4IC0yMyAtOTIKLTI4IC05NyAtMTkgLTE5IC0yMTcgLTMzIC0zODkgLTI2IC0yMDcgNyAtNDU1IDM2IC01MzcgNjIgLTkgMyAtMjYgMzAgLTM3IDYwCi0yOCA3NSAtNzQgMTYzIC0xMzMgMjU4IC05MiAxNDYgLTExOCAyMTEgLTExOCAyOTIgMCA1OSA1IDgxIDMwIDEzMSA1MyAxMDYKMTY4IDE5MyAyODIgMjEyIDY4IDEyIDEyMCA1IDE4MyAtMjN6IG0tMzUgLTEwNTggYzExOSAtMTcgMTkzIC0yMSA0MTAgLTIyCjE0NiAtMSAyNzkgMiAyOTcgNiA0OCAxMSA2MyAtMTAgNjMgLTg3IDAgLTEwNCAyNCAtMTgxIDExMCAtMzYwIDMxIC02NCA2MAotMTQ0IDc5IC0yMjQgMzAgLTEyMCAzMSAtMTMwIDMxIC0zNTUgMCAtMjA3IC0xMSAtNDExIC0yNSAtNDczIC03IC0zMCAtNDgKLTU2IC03NSAtNDggLTM1IDExIC04MCAxMTQgLTgwIDE4MyAwIDEzNyAtNDUgMzg2IC0xMDEgNTU1IC02MSAxODYgLTIwOCA0NTUKLTI5NiA1NDMgLTc2IDc2IC0yNDYgNjYgLTI4OSAtMTcgLTU0IC0xMDUgLTc5IC0zNDggLTUzIC01MDggMTMgLTgyIDU2IC0xODYKMTc2IC00MjggMTEwIC0yMjAgMTIxIC0yNjYgODAgLTMwNyAtMTQgLTE0IC0zMyAtMjYgLTQyIC0yNiAtNzAgMCAtMzMyIDQwMAotNDQ1IDY3OSAtODYgMjE0IC05NyAzMzIgLTU5IDYyNiAxMiA4OCAyNCAxODQgMjggMjEzIDYgNDYgMjEgNzEgNDEgNzIgMyAwCjcxIC0xMCAxNTAgLTIyeiIvPgo8cGF0aCBkPSJNMTUwOCAzNzM1IGMtMTM0IC0zNyAtMjkxIC0xNzkgLTMzOSAtMzA2IC0yMyAtNTkgLTI1IC0xOTUgLTUgLTI0OQo3IC0xOSA0OCAtMTI5IDkwIC0yNDUgNDMgLTExNSA4OCAtMjM3IDEwMSAtMjcwIDUyIC0xMzIgNTEgLTExOSAxNiAtMjY2IC0xOAotNzQgLTM2IC0xNTQgLTQyIC0xNzkgLTY5IC0zMTEgLTExOCAtNDU0IC0xOTggLTU4MiAtOTQgLTE0NyAtMTAxIC0xNjEgLTEwMQotMjExIDAgLTU1IDIwIC0xMDEgNTIgLTExOCA0MyAtMjMgMTkwIDE1IDI3OCA3MSA1MiAzMyA3MSAzMiA4OCAtNiAxNiAtMzQgNzEKLTU4IDExNSAtNTAgNTQgMTAgMTU0IDgwIDI0MiAxNzEgMTI3IDEzMSAyMTIgMjg1IDMyMiA1ODUgODYgMjM2IDEzOCAzNjkgMTYzCjQyMCAxNSAzMCAzMCA2OSAzNCA4NSA0IDE3IDQ3IDExMSA5NiAyMTAgNDkgOTkgMTA4IDIzMiAxMzEgMjk1IDQxIDEwOSA0MwoxMjEgNDMgMjI1IDAgOTggLTMgMTE2IC0yNiAxNjYgLTYyIDEzNSAtMTkyIDIxOSAtMzM4IDIxOSAtMzAgMCAtOTMgLTEyIC0xMzkKLTI1IC0xMjAgLTM1IC0xNzkgLTMzIC0yNjkgMTAgLTEzNiA2NSAtMjE1IDc4IC0zMTQgNTB6IG0yMzMgLTEyMSBjMTM4IC02MwoyMDAgLTcyIDMwOSAtNDQgMTY0IDQyIDE4OSA0NSAyNTIgMjYgODcgLTI1IDE2OSAtMTA1IDE5OSAtMTkzIDI2IC04MCAyMwotMTE2IC0yNyAtMjYyIC00OSAtMTQ1IC0yMDMgLTQ2MSAtMjM5IC00ODkgLTI3IC0yMiAtMzIgLTIyIC0zODcgLTIyIGwtMzU5IDAKLTIyIDIzIGMtMzEgMzAgLTIzNyA1OTQgLTIzNyA2NDYgMCA5NiAxMjEgMjU1IDI0MSAzMTYgMTEwIDU3IDE0NSA1NyAyNzAgLTF6Cm00NTQgLTEwODQgYzMgLTUgLTE3IC03MSAtNDUgLTE0NyAtMjggLTc2IC03MSAtMTk0IC05NiAtMjYzIC0xMTIgLTMwNyAtMjMzCi00OTggLTM5NyAtNjI4IC05MSAtNzIgLTEwMCAtNzYgLTEzMSAtNTEgLTMzIDI2IC0zNCA2MiAtMiAxMDMgNTQgNzEgMTMxIDI1MgoyMzYgNTU0IDMzIDk1IDI5IDEzMiAtMTQgMTMyIC0zMiAwIC0zOSAtMTEgLTcxIC0xMTAgLTQyIC0xMjggLTE0MiAtMzc4IC0xNzYKLTQzNyAtODMgLTE0NSAtMTgwIC0yMzMgLTI5NCAtMjY5IC00NCAtMTQgLTU3IC0xNSAtNjkgLTQgLTI0IDE5IC0yMCAyOSAzMAoxMDUgODkgMTM0IDE1NiAzMDAgMjA0IDUwMSAxMSA0OSAyNiAxMTQgMzQgMTQ0IDcgMzAgMTkgODIgMjcgMTE1IDMzIDE1MyA1OQoyNDkgNzEgMjU2IDE5IDEyIDY4NSAxMSA2OTMgLTF6Ii8+CjxwYXRoIGQ9Ik0xMTEzMiAzNzM5IGMtNDUgLTUgLTExNSAtMTggLTE1NSAtMzAgLTM5IC0xMSAtMTA0IC0yOSAtMTQzIC00MAotMTAyIC0yOSAtMTg0IC03OCAtMjExIC0xMjQgLTMxIC01NSAtMzYgLTExMSAtMjQgLTI0OSA2IC02NiAxNSAtMTg2IDIxIC0yNjYKMjAgLTI3MyA0NyAtNDA0IDEyNiAtNjE2IDMzIC05MSAzMyAtOTIgNDQgLTM1MCA1IC0xNDMgMTcgLTM0OSAyNSAtNDU5IDgKLTExMCAxOSAtMjYzIDI1IC0zNDAgNSAtNzcgMTggLTI2OCAyOSAtNDI1IDExIC0xNTcgMjMgLTM1MiAyNiAtNDM1IDQgLTEwMAoxMSAtMTYyIDIyIC0xODYgMzAgLTczIDExNyAtMTA2IDE2NCAtNjQgMjggMjYgOTUgMTQwIDEyMSAyMDcgMzAgNzggNTUgMTkwCjY3IDMwMyAxNyAxNTUgNTIgNzE5IDcyIDExNTAgMjkgNjQwIDIzIDU5NSAxMDIgNzg3IDQwIDk2IDUxIDE0MiA3MiAyOTMgOSA2MQoyMSAxNDQgMjggMTg1IDcgNDIgMTIgMTY4IDEyIDI4NSAwIDE3NyAtMyAyMTcgLTE4IDI1NiAtNDQgMTE0IC0xNDggMTQ1IC00MDUKMTE4eiBtMjU4IC05NyBjMjEgLTEwIDQ1IC0zNCA2MCAtNjIgMjQgLTQyIDI1IC01MyAyNSAtMTk1IDAgLTE0MyAtNSAtMTk0Ci0zOSAtNDU1IC0xNyAtMTI0IC00NiAtMjMxIC05NSAtMzQ5IC0xNyAtNDAgLTM2IC05MSAtNDEgLTExMiAtNiAtMjIgLTIxIC00NgotMzMgLTUzIC0yOSAtMTkgLTI1OSAtNDEgLTMzMSAtMzIgLTMxIDQgLTY1IDE1IC03NiAyNCAtMzEgMjYgLTg2IDE3NCAtMTE0CjMwNyAtMjYgMTI3IC01MCAzNTYgLTYxIDU4NiAtOCAxNzcgLTIgMTk1IDg3IDIzNyAxODcgOTAgNTMyIDE0OCA2MTggMTA0egptLTEyNSAtMTUzNyBjLTEgLTIxOSAtMjAgLTYwMyAtNjUgLTEyNjAgLTE3IC0yNDkgLTQ5IC0zODIgLTEyMyAtNTIwIC0zOSAtNzMKLTY5IC04NSAtODUgLTMzIC02IDE4IC0xMyA5MSAtMTcgMTYzIC0xMiAyNjIgLTI0IDQ2NCAtMzkgNjUwIC04IDEwNSAtMjAgMjYwCi0yNiAzNDUgLTYgODUgLTE1IDE5NiAtMjAgMjQ3IC02IDUwIC0xMCAxMzggLTEwIDE5NSAwIDU3IC01IDE2MiAtMTAgMjMzIC01CjcyIC03IDEzOCAtNCAxNDcgNCAxNSAyMyAxOCAxMzcgMjEgNzMgMiAxNjEgMyAxOTcgMyBsNjUgLTEgMCAtMTkweiIvPgo8cGF0aCBkPSJNNTAzMiAzNzEwIGMtMTEwIC0zOSAtMTY3IC05MCAtMjIyIC0xOTkgLTQxIC04MSAtNTAgLTEzMCAtNTAgLTI3MgowIC0xOTggMzYgLTM3MiAxMTAgLTUzNSAzMCAtNjYgMzEgLTc1IDMyIC0yMDQgMSAtMTU3IC05IC0yMTkgLTY0IC0zOTAgLTczCi0yMjggLTEwNyAtMzczIC0xMzkgLTU5MyAtMTcgLTExOCAtMjEgLTE5MSAtMjEgLTQzMiAwIC0yODEgNyAtMzc4IDM0IC00MjkgOQotMTYgMTkgLTE4IDc1IC0xMyA0MiAzIDc1IDEyIDkyIDI0IDMzIDI0IDY3IDkyIDgxIDE2MyA0MCAxOTUgMTE0IDQ2NiAxODIKNjY1IDc5IDIzMCAyNDAgNTczIDI4MyA2MDEgMjcgMTggNTcgNyA3NSAtMjYgMTQgLTI3IDI4IC0xNTYgMzkgLTM3MCA3IC0xMTcKMTcgLTIwMiAzMCAtMjU1IDExIC00NCAyMSAtOTYgMjEgLTExNSAwIC01NSAtMzUgLTE3OCAtNzUgLTI2NSAtNTIgLTExMyAtOTIKLTIyNCAtMTAwIC0yNzYgLTkgLTYzIDI2IC0xMjggNzggLTE0OCA2NSAtMjQgMTA3IC00IDIxMiAxMDMgNzIgNzIgMTAwIDExMAoxMzcgMTgxIDI1IDUwIDUxIDEwNiA1NiAxMjUgNTcgMTk1IDc5IDMxNCAxMjEgNjY1IDI5IDIzNCAzNSA0MDcgMjEgNjAyIGwtMTIKMTcxIDI2IDY0IGMxMjMgMzA5IDE2NiA1OTUgMTIxIDgxNyAtNDEgMjAxIC0xMTAgMjk3IC0yNDAgMzMyIC02MyAxOCAtMTkwIDYKLTI2NiAtMjUgLTg4IC0zNSAtMTczIC0zNSAtMjQ3IC0xIC04OSA0MSAtMTUwIDU1IC0yNDYgNTUgLTY0IC0xIC0xMDcgLTYKLTE0NCAtMjB6IG0zNDUgLTExOSBjMTMxIC01MyAxNzYgLTU0IDMxOSAtNiAxMjggNDMgMTg5IDQ2IDI0OSAxMCA2OSAtNDAgMTIwCi0xMjEgMTUwIC0yMzYgMjAgLTc2IDIzIC0yNzQgNSAtMzcwIC0zMCAtMTYzIC0xMTcgLTQwNCAtMTUwIC00MTQgLTkgLTMgLTUyCjQgLTk2IDE1IC0yMzIgNjAgLTQwOSA4NyAtNjY0IDEwMCAtMTAzIDUgLTE5NSAxMyAtMjA0IDE2IC0yMSA4IC01NiA3NyAtODQKMTY0IC00MCAxMjMgLTU2IDIyOSAtNTYgMzY1IDAgMTQ3IDE1IDIwMyA4MSAyODIgNzkgOTcgMTQxIDEyNSAyNjMgMTE5IDcxIC0zCjEwMiAtMTAgMTg3IC00NXogbTgzIC0xMDIwIGM3NSAtMTIgMTc2IC0zMCAyMjUgLTQwIDUwIC0xMSAxMTUgLTI1IDE0NSAtMzIKNjkgLTE0IDEwNyAtMzQgMTE0IC01NiAyNyAtOTQgMzYgLTQxNSAxNiAtNTgzIC02MiAtNTEzIC05OSAtNjkzIC0xNzUgLTg0NwotMzYgLTczIC02NCAtMTEyIC0xMzIgLTE4MyAtNzEgLTc1IC05MSAtOTAgLTExMiAtODggLTIzIDMgLTI2IDggLTI5IDQ0IC0yCjMzIDkgNjkgNTQgMTcwIDc0IDE2NyA5MyAyMzAgMTAwIDMzNCA1IDYzIDIgMTA0IC0xMSAxNTUgLTkgMzkgLTIzIDE1OCAtMzAKMjY1IC0yMCAyNzQgLTM0IDQwMCAtNDggNDI5IC0xNyAzNSAtNjIgNTUgLTEyNyA1NSAtODggMSAtMTA1IC0xNyAtMjAwIC0yMTIKLTE0NyAtMzAwIC0yMzEgLTUzNyAtMzMyIC05NDYgLTUwIC0yMDMgLTY3IC0yNTYgLTg3IC0yNzUgbC0yNCAtMjUgLTE4IDIyCmMtNTAgNjMgLTQ1IDQ5OSAxMSA4NTcgMTMgODIgNzAgMzAzIDExOSA0NTUgNTUgMTczIDcxIDI2NCA3MSAzOTQgMCA3NiA0IDExNgoxMyAxMjUgMTcgMTkgMjgyIDggNDU3IC0xOHoiLz4KPHBhdGggZD0iTTY5OTAgMzcwNiBjLTY4IC0yNCAtMTc3IC04NSAtMzQxIC0xOTIgLTEwNyAtNjkgLTEyOSAtOTkgLTE0OSAtMTkxCi0xMiAtNTMgNSAtMjAxIDM1IC0zMjMgOSAtMzYgMjMgLTk0IDMxIC0xMjkgOCAtMzUgMTYgLTY3IDE5IC03MSAzIC01IDE0IC00MQoyNSAtODIgMTkgLTcyIDM3IC0xMzQgMTAwIC0zMzMgODggLTI4MiAxNjQgLTYyMyAyMTEgLTk0NSAyOCAtMTk2IDI3IC01MjIgLTIKLTY4MCAtMjkgLTE1NCAtMzMgLTIxNSAtMTkgLTI1MSAzMyAtNzggMTkwIC05MCAyNTYgLTIwIDU0IDU3IDE2OCAzNTcgMjEwCjU1MCA1MCAyMjkgNjUgMzM5IDg0IDYxNiA1IDgzIDE4IDIzMyAyNyAzMzUgMTAgMTAyIDE4IDI4OSAxOSA0MTUgbDIgMjMwIDM2Cjc2IGMxOSA0MiA2MSAxNTIgOTIgMjQ1IDUxIDE1MyA1NyAxNzcgNTggMjU5IDEgODQgLTIgOTUgLTM2IDE2NyAtMzkgODMgLTk1CjE0NCAtMjAzIDIyNSAtMTU1IDExNiAtMzEyIDE1MCAtNDU1IDk5eiBtMjc1IC0xMDUgYzE1MiAtNjkgMjkyIC0yMTMgMzM0Ci0zNDIgMTQgLTQ0IDEgLTEwNiAtNjMgLTI5NCAtNjAgLTE3NSAtOTkgLTI2MCAtMTMxIC0yODEgLTE2IC0xMSAtNjggLTIxCi0xNDMgLTMwIC02NCAtNyAtMTc4IC0yMCAtMjUyIC0yOSAtNzQgLTkgLTE2NCAtMTkgLTIwMCAtMjIgLTY1IC01IC02NiAtNQotNzkgMjMgLTggMTYgLTE3IDQzIC0yMiA1OSAtNCAxNyAtMjEgNzcgLTM5IDEzNSAtNDkgMTY3IC05MCAzNzAgLTkwIDQ0OCAwCjQ4IDQgNTcgNDEgOTcgMjMgMjUgNTkgNTUgODAgNjcgMjEgMTMgODIgNTEgMTM2IDg0IDE3MiAxMDggMjIxIDEyNiAzMTEgMTE4CjI5IC0yIDgyIC0xNyAxMTcgLTMzeiBtMTI4IC0xMDQ2IGMzMyAtMzMgMzAgLTI0NyAtOSAtNjMzIC04IC03OCAtMTQgLTE3NAotMTQgLTIxNCAwIC0xMzEgLTQyIC00NTEgLTgwIC02MTMgLTM3IC0xNTUgLTcwIC0yNTMgLTEyNCAtMzczIC0yNCAtNTMgLTQ3Ci0xMDcgLTUwIC0xMTggLTE4IC02MSAtODYgLTkzIC0xMjEgLTU3IC0xOSAxOCAtMTggMzIgOSAxOTggMzUgMjEzIDI4IDYxMAotMTQgODIwIC01IDI4IC0yNCAxMjIgLTQxIDIxMCAtNDkgMjU0IC0xMDAgNDYyIC0xNjAgNjQ5IC0xMyA0MCAtMTYgNjMgLTkgNzEKNiA3IDY3IDE3IDE0MiAyNCA3MyA2IDE2NSAxNiAyMDMgMjIgMzkgNSA5NyAxNCAxMzAgMTggOTIgMTMgMTIyIDEyIDEzOCAtNHoiLz4KPHBhdGggZD0iTTE0NDU1IDM3MTYgYy01NyAtMjUgLTc0IC01NyAtMTAyIC0xODQgLTIxIC0xMDEgLTI0IC00NzQgLTUgLTU3NwozOCAtMTk3IDg3IC0zNTcgMTY2IC01MzggbDQ3IC0xMDggLTIyIC04NyBjLTI5IC0xMTIgLTMzIC0zNDUgLTcgLTQzMiAyNiAtODcKNDEgLTE5MSAzNSAtMjQ1IC0yIC0yNyAtMTEgLTEwNCAtMTggLTE3MCAtMTYgLTE0MSAtMTcgLTQxNCAtMiAtNTM1IDEyIC05MgoyNSAtMTU3IDgyIC00MTAgNDkgLTIxMiA2NCAtMjQ4IDEyMyAtMjgwIDQxIC0yMSA1MCAtMjMgODQgLTEyIDIyIDcgNDcgMjQgNTgKMzggMjYgMzcgNDYgMTE5IDQ2IDE5NCAwIDM2IDcgMTMwIDE1IDIxMCA5IDgwIDIwIDE4OCAyNiAyNDAgNSA1MiAyMSAxOTQgMzUKMzE1IDM2IDMwNyA1MyA1MDAgNzkgODgwIDggMTIxIDE5IDI0MCAyNCAyNjUgNSAyNSAxNSA3NCAyMSAxMTAgNyAzNiAyOCAxMjYKNDYgMjAwIDY2IDI2NSA4NiAzODUgOTEgNTUyIDExIDM0MyAtMzIgNDMyIC0yMjggNDY4IC0zNSA3IC0xMTggMjggLTE4NCA0NwotMjIzIDY0IC0yNjAgNzMgLTMyMCA3MiAtMzMgMCAtNzMgLTYgLTkwIC0xM3ogbTMxNSAtMTMzIGM4MCAtMjUgMTgyIC01MSAyMjgKLTU4IDExMiAtMTggMTQxIC0zNyAxNzIgLTExMCAyMyAtNTUgMjUgLTcyIDI1IC0yMTUgMCAtMTc0IC05IC0yMzAgLTg1IC01NDUKLTI2IC0xMTAgLTUxIC0yMTUgLTU1IC0yMzMgLTEyIC02MCAtMTggLTYyIC0yMTUgLTYyIC0xNTUgMCAtMTgwIDIgLTE5OCAxOAotMjUgMjEgLTg3IDE2MSAtMTM1IDMwMiAtODggMjU5IC0xMTQgNDk0IC04MyA3NDAgMTUgMTE2IDM3IDE4MyA3MCAyMDYgMzEgMjIKMTAzIDExIDI3NiAtNDN6IG0yNDkgLTEzMjcgYzkgLTExIDEwIC0zMyAyIC05MSAtNiAtNDIgLTExIC0xMjEgLTExIC0xNzYgMAotNTUgLTUgLTE0MiAtMTAgLTE5MiAtNiAtNTEgLTE5IC0xODIgLTMwIC0yOTIgLTExIC0xMTAgLTI0IC0yMzYgLTMwIC0yODAKLTE4IC0xNTYgLTM5IC0zNDEgLTQ1IC00MDAgLTMgLTMzIC0xMCAtMTAzIC0xNSAtMTU1IC02IC01MiAtMTUgLTE1OCAtMjEKLTIzNCAtMTAgLTE0MCAtMjYgLTE5NiAtNTQgLTE5NiAtMjUgMCAtNDcgNDcgLTgxIDE3OCAtMTAyIDM4NiAtMTMwIDYyOSAtOTgKODY3IDI3IDIwMSAyNSA0MDUgLTUgNTEwIC0yOSAxMDMgLTM4IDIyOSAtMjEgMzAzIDQxIDE4MyAyNiAxNzIgMjM5IDE3MiAxMzQKMCAxNzEgLTMgMTgwIC0xNHoiLz4KPHBhdGggZD0iTTIwNzQwIDM2ODYgYy02OCAtMjEgLTEzMiAtNTIgLTE3NSAtODYgLTUwIC00MCAtMTAxIC00MCAtMTg2IDAKLTE3MSA3OSAtMzM0IDgwIC00NDMgMyAtMTI0IC04OCAtMTczIC0yMzkgLTE1NSAtNDgwIDExIC0xNDggMjAgLTE5NiA3NyAtMzkwCjI4IC05MiA1MiAtMTgxIDU1IC0xOTggMyAtMTYgMTcgLTkzIDMxIC0xNjkgMjIgLTExOSAyNiAtMTY4IDI2IC0zMjcgMCAtMTAyCi01IC0yNDQgLTEwIC0zMTQgLTExIC0xMzcgLTIgLTMwMCAyNSAtNDQ4IDQxIC0yMjIgMTUxIC00MjQgMzE3IC01ODMgMTAyIC05NwoxMzUgLTExNCAxODQgLTkxIDQ0IDIxIDc0IDcxIDc0IDEyMyAwIDMxIC0xMCA1NiAtNDIgMTA1IC05MCAxMzkgLTExOCAyNTAKLTExOCA0NzcgMCA5NSA1IDIwMyAxMCAyNDAgNiAzNyAxNCAxMzkgMTkgMjI3IDcgMTM2IDExIDE2NyAzMSAyMDUgMjMgNDcgNTgKOTAgNzIgOTAgMTYgMCA3OCAtMTA5IDEyNyAtMjIyIDYwIC0xMzggMTEwIC0yOTMgMTcyIC01MzIgOTQgLTM2MyAxNzUgLTU5NwoyNDAgLTY4OCAyNSAtMzUgNzYgLTM4IDEyNCAtOCA2MSAzOCA2OSA2MCA3NyAyMjAgNCA4MCAxMCAxODkgMTQgMjQ0IDcgMTA2Ci0xIDE3MyAtNDIgMzM2IC0xMTMgNDU0IC0xOTQgODU4IC0yMTAgMTA1MCAtNyA3NyAtNiA3OCA0NSAxOTcgODkgMjA4IDExNgozNDQgMTA3IDUzOCAtMTEgMjQ2IC04MSAzODggLTIyNSA0NTQgLTgyIDM4IC0xNTYgNDcgLTIyMSAyN3ogbTE2NiAtMTA1IGM5OAotNDUgMTYyIC0xNDYgMTg5IC0zMDIgMjAgLTExMSAxOSAtMTY4IC00IC0yODEgLTMwIC0xNDYgLTExMSAtMzU5IC0xNDMgLTM3MAotNyAtMyAtNDcgLTEgLTg4IDQgLTEyMSAxNiAtMzMwIDIgLTQ5MyAtMzIgLTE3MCAtMzYgLTI2MSAtNTcgLTMwMyAtNzEgLTQ3Ci0xNCAtNjIgLTMgLTgwIDYwIC04IDMxIC0zNSAxMjYgLTU5IDIxMSAtMjUgODUgLTUwIDE5OCAtNTYgMjUwIC0xNSAxMjQgLTUKMjg4IDIwIDM0NSAyNyA2MSA4OCAxMjQgMTQ2IDE1MSA4NSA0MCAxNDEgMzIgMzI0IC00NSAxMTYgLTQ5IDE5MSAtMzkgMzAwIDM5CjgzIDYxIDE3MSA3NSAyNDcgNDF6IG0tNzYgLTEwNDEgYzM2IC02IDcyIC0xMyA4MSAtMTYgMjQgLTcgMzcgLTQ2IDQ5IC0xNDQKMTYgLTEzNyAyOCAtMjA5IDQ5IC0zMTAgMTAgLTUyIDI2IC0xMzEgMzUgLTE3NSA5IC00NCAyMSAtOTggMjYgLTEyMCA1IC0yMgoxNiAtNjkgMjQgLTEwNSA4IC0zNiAzNCAtMTQxIDU4IC0yMzUgbDQzIC0xNzAgLTMgLTI0NCBjLTMgLTI1MyAtMTAgLTMwMSAtNDgKLTMwMSAtMzUgMCAtMTQ5IDMwMiAtMjI0IDU5NSAtNTAgMTk1IC03MSAyNjggLTExNyA0MTAgLTM2IDExMSAtMTM2IDMzNCAtMTg2CjQxMyAtMjQgMzcgLTMxIDQyIC02NiA0MiAtNzYgMCAtMTU1IC04NiAtMTg3IC0yMDIgLTggLTI5IC0xOSAtMTM4IC0yNCAtMjQzCi02IC0xMDQgLTE0IC0yMzAgLTIwIC0yODAgLTE0IC0xMjYgLTEyIC0yMDEgNiAtMzI0IDIwIC0xMzggNDUgLTIyMyA5NSAtMzE3CjQwIC03NCA0NCAtMTA0IDE1IC0xMDQgLTcgMCAtNTggNDcgLTExMyAxMDMgLTgyIDg3IC0xMDcgMTIxIC0xNTUgMjEzIC0xMDQKMjAyIC0xNDUgMzkwIC0xMzQgNjE5IDE4IDM3NCAxOCA1MTAgMiA2MzUgbC0xNyAxMjUgMjIgMTggYzEyIDkgMjggMTcgMzYgMTcKOCAwIDYzIDEyIDEyMiAyNiAxNDQgMzQgMjQ2IDUzIDM3MSA2OSAxMzUgMTYgMTgxIDE3IDI2MCA1eiIvPgo8cGF0aCBkPSJNODQ3MSAzNjQwIGMtMzAgLTExIC04NCAtMzcgLTEyMCAtNTkgLTM2IC0yMSAtOTUgLTUzIC0xMzEgLTcxIC04NwotNDQgLTE4MyAtMTEzIC0yMTggLTE1OCAtNTIgLTY2IC02MiAtOTUgLTYyIC0xNzkgMCAtNzUgMiAtODEgNTEgLTE2OCA4MQotMTQzIDExNCAtMjQ5IDE1MCAtNDc1IDYgLTQxIDI0IC0xMzMgMzkgLTIwNSA0NyAtMjE3IDQ5IC0yMzQgNjQgLTQwMCAxNAotMTU1IDI0IC0zMzggNDYgLTg0NSAxNCAtMzIxIDI2IC00MjcgNTcgLTUxNCAzMyAtOTMgNTUgLTExNiAxMDcgLTExNiA5MCAwCjExNSAzNSAxNTIgMjExIDY3IDMyNSA3NCAzNzQgODUgNjQyIDUgMTQ0IDE2IDMwMiAyNCAzNTIgOCA0OSAyMyAxNDkgMzUgMjIwCjExIDcyIDI1IDE2MiAzMCAyMDEgNSAzOSAxMyAxMDAgMTkgMTM1IDUgMzUgMTMgMTE4IDE3IDE4NCA2IDEwMCAxMiAxMzIgMzgKMjAwIDM4IDkzIDUwIDEzNCA3MiAyMzAgMjEgOTYgNDQgMzQ4IDM4IDQxNSAtMjEgMjE5IC02OCAzMTEgLTE5OSAzODYgLTQzIDI1Ci02MSAyOSAtMTQ1IDMxIC03NiAzIC0xMDYgLTEgLTE0OSAtMTd6IG0yNTEgLTEwMiBjNjUgLTM0IDg1IC01OCAxMjYgLTE0NSAyNgotNTYgMjcgLTY0IDI2IC0yMjMgMCAtMTA4IC02IC0xOTUgLTE3IC0yNTAgLTMzIC0xNzEgLTEwMSAtMzU3IC0xNDEgLTM4NiAtMzcKLTI2IC0xODggLTE4IC0zMjMgMTYgLTE5MiA1MCAtMTgzIDQzIC0yMDMgMTU1IC0xOSAxMTMgLTUwIDIwMyAtMTEyIDMyNCAtNjgKMTM0IC03MyAxNjggLTI5IDIyOCA0NSA2MSAxMDIgMTAzIDI3NiAxOTggMTkwIDEwNCAyMTMgMTEzIDI4NCAxMTQgNDEgMSA2NgotNiAxMTMgLTMxeiBtLTM3MiAtMTA3NCBjNjkgLTIxIDExNCAtMjggMjM1IC0zMyBsMTUwIC02IC0yIC0zMCBjLTQgLTU0IC0zMwotMjg4IC00NyAtMzc1IC01NyAtMzUzIC03NCAtNTEyIC04MSAtNzUwIC0yIC0xMDIgLTExIC0yMjMgLTIwIC0yNzAgLTE4IC0xMDAKLTUyIC0yNjkgLTY2IC0zMjIgLTI5IC0xMjAgLTI5IC0xMTkgLTUyIC0xMTYgLTMyIDQgLTY1IDk2IC03NyAyMTUgLTkgOTQgLTIyCjM1OSAtNDAgODAzIC0xMiAzMDggLTM5IDUzNyAtODYgNzM4IC0zMCAxMjggLTMxIDE3MyAtNSAxNzIgMyAwIDQ0IC0xMiA5MQotMjZ6Ii8+CjwvZz4KPC9zdmc+";
+
+    function injectFichaStyles(){
+      if(document.getElementById('cronosFichaStyles')) return;
+      const style = document.createElement('style');
+      style.id = 'cronosFichaStyles';
+      style.textContent = `
+        .btnFicha{border-color: rgba(99,102,241,.35)!important}
+        .procCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
+        .procGrid{display:grid;grid-template-columns:minmax(320px,1.55fr) minmax(220px,.9fr) minmax(130px,.55fr) minmax(130px,.55fr) minmax(130px,.55fr) minmax(140px,.6fr);gap:12px;align-items:end}
+        .procCatalogModal #modalBody{max-height:calc(92vh - 142px); overflow:auto; padding-right:8px}
+        .procCatalogModal .modalFoot{padding-top:10px;margin-top:10px}
+        .procCatalogModal .tableWrap{overflow-x:auto; max-width:100%}
+        .procCatalogTable{width:100%;min-width:0;table-layout:fixed}
+        .procCatalogTable td,.procCatalogTable th{font-size:13px;white-space:normal;vertical-align:middle;line-height:1.25;word-break:normal}
+        .procCatalogTable th:nth-child(1),.procCatalogTable td:nth-child(1){width:22%}
+        .procCatalogTable th:nth-child(2),.procCatalogTable td:nth-child(2){width:9%}
+        .procCatalogTable th:nth-child(3),.procCatalogTable td:nth-child(3){width:8%;white-space:nowrap}
+        .procCatalogTable th:nth-child(4),.procCatalogTable td:nth-child(4),
+        .procCatalogTable th:nth-child(5),.procCatalogTable td:nth-child(5){width:5%;white-space:nowrap;text-align:center}
+        .procCatalogTable th:nth-child(6),.procCatalogTable td:nth-child(6){width:6%;white-space:nowrap;text-align:center}
+        .procCatalogTable th:nth-child(7),.procCatalogTable td:nth-child(7){width:9%}
+        .procCatalogTable th:nth-child(8),.procCatalogTable td:nth-child(8){width:10%}
+        .procCatalogTable th:nth-child(9),.procCatalogTable td:nth-child(9){width:8%}
+        .procCatalogTable th:nth-child(10),.procCatalogTable td:nth-child(10){width:6%;white-space:nowrap;text-align:center}
+        .procCatalogTable th:nth-child(11),.procCatalogTable td:nth-child(11){width:12%;white-space:nowrap}
+        .procCatalogTable .miniBtn{padding:6px 8px;font-size:12px}
+        .procCatalogTable th:last-child,.procCatalogTable td:last-child{position:sticky;right:0;z-index:2;background:var(--panel2);min-width:150px;box-shadow:-10px 0 16px rgba(15,23,42,.04)}
+        .procCatalogTable td:last-child>button+button,.procCatalogTable td:last-child .miniBtn+.miniBtn{margin-left:6px}
+        html.light .procNameSuggestPanel,body.light .procNameSuggestPanel,:root.light .procNameSuggestPanel{background:#ffffff!important;color:#0f172a!important;border-color:rgba(15,23,42,.16)!important;box-shadow:0 20px 48px rgba(15,23,42,.20)!important}
+        html:not(.light) .procNameSuggestPanel,body:not(.light) .procNameSuggestPanel,:root:not(.light) .procNameSuggestPanel{background:#111827!important;color:#e5edf8!important;border-color:rgba(148,163,184,.26)!important;box-shadow:0 20px 48px rgba(0,0,0,.44)!important}
+        .procNameSuggestPanel{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;isolation:isolate}
+        .procNameSuggestPanel .miniBtn{background:rgba(148,163,184,.08);border-color:rgba(148,163,184,.20);display:flex;align-items:center;gap:8px}
+        .procNameSuggestPanel .miniBtn:hover{background:rgba(124,92,255,.14)}
+        @media(max-width:1120px){.procGrid{grid-template-columns:1fr 1fr}.procCatalogTable{min-width:1180px;table-layout:auto}.procCatalogTable th,.procCatalogTable td{white-space:nowrap}.procCatalogTable td:first-child,.procCatalogTable th:first-child{white-space:normal}}
+        .brandCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
+        .brandRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+        .brandPreview{width:72px;height:72px;border:1px dashed var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:rgba(255,255,255,.03)}
+        .brandPreview img{max-width:100%;max-height:100%;display:block}
+        .fichaHead{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;margin-bottom:12px}
+        .fichaHead .cardMini{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
+        .fichaAddWrap{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03);margin-bottom:14px}
+        .fichaAddGrid{display:grid;grid-template-columns:1.2fr .8fr .8fr;gap:10px;align-items:end}
+        .fichaAddGrid + .fichaAddGrid{margin-top:10px}
+        .toothToolbar{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+        .toothWrap{display:grid;grid-template-columns:repeat(8,minmax(44px,1fr));gap:8px;margin-top:10px}
+        .toothBtn{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);border-radius:12px;padding:10px 6px;cursor:pointer;font-weight:800;min-height:44px}
+        .toothBtn:hover{background:rgba(255,255,255,.06)}
+        .toothBtn.sel{outline:2px solid rgba(124,92,255,.7);background:rgba(124,92,255,.12)}
+        .toothChipRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+        .toothChip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:rgba(255,255,255,.04);padding:6px 10px;border-radius:999px;font-size:12px}
+        .fichaLayout{display:block}
+        .financialPaymentTable{width:max-content!important;min-width:874px!important;max-width:874px!important;table-layout:fixed}
+        .financialPaymentTable th,.financialPaymentTable td{padding:9px 8px!important}
+        .financialPaymentTable td:last-child{display:flex;gap:8px;align-items:center;flex-wrap:nowrap}
+        @media(max-width:760px){.newBudgetGrid{grid-template-columns:1fr!important;max-width:100%!important}.newPayLayout{grid-template-columns:1fr!important;max-width:100%!important}.newPayTopGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.newPayObsGrid{grid-template-columns:1fr!important}}
+        .fichaPlanToolbar{border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.025)}
+        .modalFichaWide{width:min(99vw,1880px)!important;max-width:min(99vw,1880px)!important}
+        .modalFichaWide #modalBody{max-height:calc(92vh - 142px)}
+        .fichaTableWrap{overflow:auto;border:1px solid var(--line);border-radius:16px}
+        .fichaTable{width:100%;border-collapse:collapse;min-width:1260px;background:rgba(255,255,255,.02)}
+        @media(min-width:1200px){
+          .modalFichaWide .fichaTable{min-width:0;table-layout:fixed}
+          .modalFichaWide .fichaTable th,.modalFichaWide .fichaTable td{padding:10px 10px;font-size:12.5px;overflow-wrap:anywhere}
+          .modalFichaWide .fichaTable th:nth-child(1),.modalFichaWide .fichaTable td:nth-child(1){width:3%}
+          .modalFichaWide .fichaTable th:nth-child(2),.modalFichaWide .fichaTable td:nth-child(2){width:3%}
+          .modalFichaWide .fichaTable th:nth-child(3),.modalFichaWide .fichaTable td:nth-child(3){width:8%}
+          .modalFichaWide .fichaTable th:nth-child(4),.modalFichaWide .fichaTable td:nth-child(4){width:22%;white-space:normal}
+          .modalFichaWide .fichaTable th:nth-child(5),.modalFichaWide .fichaTable td:nth-child(5){width:5%;text-align:center}
+          .modalFichaWide .fichaTable th:nth-child(6),.modalFichaWide .fichaTable td:nth-child(6){width:10%}
+          .modalFichaWide .fichaTable th:nth-child(7),.modalFichaWide .fichaTable td:nth-child(7){width:8%}
+          .modalFichaWide .fichaTable th:nth-child(8),.modalFichaWide .fichaTable td:nth-child(8){width:10%}
+          .modalFichaWide .fichaTable th:nth-child(9),.modalFichaWide .fichaTable td:nth-child(9){width:7%}
+          .modalFichaWide .fichaTable th:nth-child(10),.modalFichaWide .fichaTable td:nth-child(10){width:7%}
+          .modalFichaWide .fichaTable th:nth-child(11),.modalFichaWide .fichaTable td:nth-child(11){width:11%}
+          .modalFichaWide .fichaTable th:nth-child(12),.modalFichaWide .fichaTable td:nth-child(12){width:6%}
+          .modalFichaWide .fichaTable input[type="number"],
+          .modalFichaWide .fichaTable input[type="text"]{width:100%;box-sizing:border-box;min-width:0}
+          .modalFichaWide .fichaTable .miniBtn,.modalFichaWide .fichaTable .btn.small{padding:7px 9px;font-size:12px;white-space:nowrap}
+        }
+        /* Ações não ficam mais fixas: agora rolam junto com a tabela, evitando sobreposição em linhas coloridas */
+        .fichaTable th:last-child,.fichaTable td:last-child{position:static;right:auto;z-index:auto;background:inherit}
+        .fichaTable th,.fichaTable td{padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
+        .fichaTable th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;background:color-mix(in srgb, var(--panel2) 92%, transparent)}
+        .fichaTable input[type="number"], .fichaTable select, .fichaTable input[type="text"], .fichaTable textarea{padding:8px 10px;border-radius:12px;font-size:13px}
+        .fichaDone{background:rgba(46,229,157,.12)!important}
+        .fichaDone td{background:rgba(46,229,157,.12)!important}
+        .totalsGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+        .fichaTotalsUnderOdonto{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:14px}
+        .totalBox{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
+        .totalBox .label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+        .totalBox .value{font-size:19px;font-weight:800}.totalBox .value.valueHighlight{display:inline-flex;align-items:center;border-radius:999px;padding:4px 10px;margin-left:-2px;background:rgba(37,99,235,.10);box-shadow:inset 0 0 0 1px rgba(37,99,235,.18)}.totalBox .value.valueHighlight.discount{background:rgba(22,163,74,.11);box-shadow:inset 0 0 0 1px rgba(22,163,74,.20)}
+        .odontoFull{border:1px solid var(--line);border-radius:16px;padding:14px;background:rgba(255,255,255,.03);margin-bottom:14px}
+        .odontoGrid{display:grid;grid-template-columns:minmax(520px,1.05fr) minmax(390px,.95fr);gap:14px;align-items:start}
+        .odontoPanel{border:1px solid var(--line);border-radius:14px;padding:14px;background:rgba(255,255,255,.025)}
+        .odontoPanel textarea{min-height:100px}
+        .odontoPanel label{display:block;margin:10px 0 6px}
+        .odontoPanel input,.odontoPanel select{width:100%;box-sizing:border-box}
+        .odontoPanel .sideFormGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        .odontoPanel .sideFormGrid .full{grid-column:1 / -1}
+        .odontoPanel .sideActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+        .odontoPanel .fichaQuickActions{margin-top:12px;align-items:center}
+        .odontoPanel .fichaQuickActions .btn{width:auto;min-height:38px}
+        .odontoPanel .fichaAddPlanBtn{flex:1 1 220px;max-width:300px;justify-content:center}
+        .odontoPanel .fichaQuickActions .btn.small{flex:0 0 auto}
+        .fichaQuickActions .fichaPaidAction{border-color:rgba(245,158,11,.52);background:rgba(245,158,11,.14);color:var(--text)}
+        .fichaQuickActions .fichaDoneAction{border-color:rgba(34,197,94,.52);background:rgba(34,197,94,.14);color:var(--text)}
+        .fichaQuickActions .fichaAbsentAction{border-color:rgba(239,68,68,.52);background:rgba(239,68,68,.14);color:var(--text)}
+        .fichaQuickActions .fichaNeutralAction{border-color:var(--line);background:rgba(255,255,255,.035);color:var(--text)}
+        .light .fichaQuickActions .fichaPaidAction{border-color:#d97706;background:#f59e0b;color:#111827}
+        .light .fichaQuickActions .fichaDoneAction{border-color:#16a34a;background:#22c55e;color:#052e16}
+        .light .fichaQuickActions .fichaAbsentAction{border-color:#dc2626;background:#ef4444;color:#fff}
+        .light .fichaQuickActions .fichaNeutralAction{background:#ffffff;color:#0f172a}
+        .fichaMoneyInput{font-variant-numeric:tabular-nums}
+        .faceChipWrap{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+        .faceChip{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);border-radius:999px;padding:8px 10px;font-weight:800;font-size:12px;cursor:pointer;transition:.15s ease}
+        .faceChip:hover{background:rgba(124,92,255,.12);border-color:rgba(124,92,255,.45)}
+        .faceChip.active{background:rgba(124,92,255,.18);border-color:rgba(124,92,255,.75);box-shadow:0 0 0 2px rgba(124,92,255,.12) inset}
+        .faceChip:disabled{opacity:.48;cursor:not-allowed}
+        .faceSelectedText{margin-top:8px;font-size:12px;color:var(--muted)}
+
+        .procPickerWrap{position:relative}
+        .procPickerWrap input{padding-right:46px}
+        .procDropBtn{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-left:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer;font-size:16px;font-weight:900}
+        .procSuggestMenu{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:50;max-height:310px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb, var(--panel2) 96%, #000 4%);box-shadow:0 18px 36px rgba(0,0,0,.32);padding:6px;display:none}
+        .procSuggestMenu.show{display:block}
+        .procSuggestItem{width:100%;text-align:left;border:0;border-radius:10px;background:transparent;color:var(--text);padding:10px 11px;cursor:pointer;font-weight:800}
+        .procSuggestItem:hover{background:rgba(124,92,255,.18)}
+        .procSuggestItem .muted{font-size:12px;font-weight:700}
+        .procSuggestEmpty{padding:12px;color:var(--muted);font-size:13px}
+
+        .odontoRefStage{position:relative;width:100%;aspect-ratio:1536/740;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:transparent;box-sizing:border-box}
+        .odontoRefStage .odontoStatusLayer,.odontoRefStage .odontoClickLayer,.odontoRefStage .odontoLabelLayer{position:absolute;inset:0;width:100%;height:100%;display:block;user-select:none}
+        .odontoRefStage .odontoStatusLayer{z-index:2;pointer-events:none;overflow:visible}
+        .odontoRefStage .odontoLabelLayer{z-index:4;pointer-events:none;overflow:visible}
+        .odontoRefStage .odontoClickLayer{z-index:5;overflow:visible;touch-action:manipulation}
+        .odontoStatusLayer .toothLine{fill:#6b7280;stroke:none;pointer-events:none;transition:fill .16s ease,opacity .16s ease;shape-rendering:geometricPrecision}
+        body:not(.light) .odontoStatusLayer .toothLine{fill:rgba(203,213,225,.82)}
+        .odontoStatusLayer.deciduous,.odontoLabelLayer.deciduous,.odontoClickLayer.deciduous{transform:scale(.78);transform-origin:50% 50%}
+        .odontoStatusLayer .odontogramaTooth.active .toothLine{fill:#7c5cff;opacity:1}
+        .odontoStatusLayer .odontogramaTooth.paid .toothLine,.odontoStatusLayer .odontogramaTooth.plan .toothLine,.odontoStatusLayer .odontogramaTooth.closed .toothLine{fill:#ca8a04;opacity:1}
+        .odontoStatusLayer .odontogramaTooth.done .toothLine{fill:#16a34a;opacity:1}
+        .odontoStatusLayer .odontogramaTooth.absent .toothLine{fill:#dc2626;opacity:1}
+        .odontoClickLayer .toothHit{fill:rgba(255,255,255,0);stroke:transparent;pointer-events:all;cursor:pointer}
+        .odontoLabelLayer .odontoNumberText{fill:var(--text);font-size:38px;font-weight:900;text-anchor:middle;dominant-baseline:middle;pointer-events:none;user-select:none;letter-spacing:.2px}
+        .odontoLabelLayer.deciduous .odontoNumberText{font-size:10px;font-weight:900}
+        body:not(.light) .odontoLabelLayer .odontoNumberText{fill:rgba(226,232,240,.92)}
+        .dentitionToggle{display:inline-flex;gap:6px;padding:5px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);margin:0 0 12px;flex-wrap:wrap}
+        .dentitionToggle button{border:0;border-radius:999px;background:transparent;color:var(--muted);font-weight:900;padding:8px 12px;cursor:pointer}
+        .dentitionToggle button.active{background:rgba(124,92,255,.18);color:var(--text);box-shadow:inset 0 0 0 1px rgba(124,92,255,.22)}
+.fichaPaid{background:rgba(255,212,0,.18)!important}.fichaPaid td{background:rgba(255,212,0,.18)!important}
+        .fichaAbsent{background:rgba(220,38,38,.12)!important}.fichaAbsent td{background:rgba(220,38,38,.12)!important}
+        .fichaPlan{background:rgba(255,212,0,.14)!important}.fichaPlan td{background:rgba(255,212,0,.14)!important}
+        .fichaClosed{background:rgba(255,212,0,.14)!important}.fichaClosed td{background:rgba(255,212,0,.14)!important}
+        .odontoLegend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+        .legendPill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);padding:5px 10px;border-radius:999px;font-size:12px;background:rgba(255,255,255,.03)}
+        .legendDot{width:12px;height:12px;border-radius:999px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+        body.dark .legendDot{border-color:rgba(255,255,255,.22)}
+        .lp-neutral .legendDot{background:#6b7280}.lp-paid .legendDot,.lp-plan .legendDot,.lp-closed .legendDot{background:#ffd400}.lp-done .legendDot{background:#16a34a}.lp-absent .legendDot{background:#dc2626}
+        .panelMiniGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.panelMiniGrid>div{border:1px solid var(--line);border-radius:12px;padding:9px;background:rgba(255,255,255,.03)}.panelMiniGrid span{display:block;font-size:11px;margin-bottom:4px}.panelMiniGrid b{font-size:13px}
+        .fichaEmpty{padding:18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}
+        @media(max-width:1180px){.fichaHead,.procGrid,.fichaAddGrid,.totalsGrid,.odontoGrid{grid-template-columns:1fr}.fichaTable{min-width:760px}}
+      `;
+      document.head.appendChild(style);
+    }
+
+    function procedureCatalogDefaults(){
+      return [
+        {id:'proc_rest_1f', nome:'Restauração de resina 1 face', categoria:'Dentística', valorBase:250, tipoClinico:'restaurador', indicacao:'cárie/fratura em uma face', abrangencia:'unitário', exigeDente:true, exigeFace:true, cobraPorDente:true, ativo:true},
+        {id:'proc_rest_2f', nome:'Restauração de resina 2 faces', categoria:'Dentística', valorBase:320, tipoClinico:'restaurador', indicacao:'cárie/fratura em duas faces', abrangencia:'unitário', exigeDente:true, exigeFace:true, cobraPorDente:true, ativo:true},
+        {id:'proc_rest_3f', nome:'Restauração de resina 3 faces', categoria:'Dentística', valorBase:380, tipoClinico:'restaurador', indicacao:'cárie/fratura em três faces', abrangencia:'unitário', exigeDente:true, exigeFace:true, cobraPorDente:true, ativo:true},
+        {id:'proc_implante', nome:'Implante unitário', categoria:'Implante', valorBase:2200, tipoClinico:'reabilitação de ausência', indicacao:'perda dentária unitária', abrangencia:'unitário', exigeDente:true, exigeFace:false, cobraPorDente:true, ativo:true},
+        {id:'proc_canal', nome:'Canal', categoria:'Endodontia', valorBase:900, tipoClinico:'endodôntico', indicacao:'comprometimento pulpar', abrangencia:'unitário', exigeDente:true, exigeFace:false, cobraPorDente:true, ativo:true},
+        {id:'proc_exodontia', nome:'Exodontia', categoria:'Cirurgia', valorBase:400, tipoClinico:'cirúrgico', indicacao:'extração dentária', abrangencia:'unitário', exigeDente:true, exigeFace:false, cobraPorDente:true, ativo:true},
+        {id:'proc_coroa', nome:'Coroa unitária', categoria:'Prótese', valorBase:1500, tipoClinico:'protético', indicacao:'reabilitação unitária', abrangencia:'unitário', exigeDente:true, exigeFace:false, cobraPorDente:true, ativo:true},
+        {id:'proc_profilaxia', nome:'Profilaxia', categoria:'Clínica geral', valorBase:180, tipoClinico:'preventivo', indicacao:'controle preventivo', abrangencia:'boca toda', exigeDente:false, exigeFace:false, cobraPorDente:false, ativo:true}
+      ];
+    }
+
+    function getProcedureCatalog(db=loadDB()){
+      const arr = db?.settings?.procedureCatalog;
+      return Array.isArray(arr) ? arr.filter(item=>!item?.deletedAt) : [];
+    }
+    function getProcedureCatalogRaw(db=loadDB()){
+      const arr = db?.settings?.procedureCatalog;
+      return Array.isArray(arr) ? arr : [];
+    }
+    function ensureProcedureCatalogSeeded(){
+      const db = loadDB();
+      if(!db.settings) db.settings = {};
+      if(!Array.isArray(db.settings.procedureCatalog) || !db.settings.procedureCatalog.length){
+        db.settings.procedureCatalog = procedureCatalogDefaults().map(item=>({
+          ...item,
+          createdAt: item.createdAt || new Date().toISOString(),
+          updatedAt: item.updatedAt || new Date().toISOString()
+        }));
+        saveDB(db, { immediate:true });
+      }
+    }
+    function getEntryById(entryId){
+      const db = loadDB();
+      return (db.entries || []).find(x=>String(x.id)===String(entryId));
+    }
+    function getContactForEntry(entry){
+      const db = loadDB();
+      if(!entry?.contactId) return null;
+      return (db.contacts || []).find(c=>String(c.id)===String(entry.contactId)) || null;
+    }
+    function ensureFicha(entry){
+      if(!entry.ficha || typeof entry.ficha !== 'object'){
+        entry.ficha = { plano: [], odontograma: {}, avaliacoes: [] };
+      }
+      if(!Array.isArray(entry.ficha.plano)) entry.ficha.plano = [];
+      if(!entry.ficha.odontograma || typeof entry.ficha.odontograma !== 'object') entry.ficha.odontograma = {};
+      if(!Array.isArray(entry.ficha.avaliacoes)) entry.ficha.avaliacoes = [];
+
+      if(!entry.ficha.avaliacoes.length){
+        const evalDate = String(entry.firstContactAt || entry.monthKey || todayISO()).slice(0,10);
+        entry.ficha.avaliacoes.push({
+          id: 'eval_1',
+          label: 'Avaliação 1',
+          date: /^\d{4}-\d{2}-\d{2}$/.test(evalDate) ? evalDate : todayISO(),
+          createdAt: new Date().toISOString()
+        });
+      }
+      if(!entry.ficha.activeEvaluationId){
+        entry.ficha.activeEvaluationId = entry.ficha.avaliacoes[entry.ficha.avaliacoes.length - 1]?.id || 'eval_1';
+      }
+      if(!entry.ficha.dentitionType) entry.ficha.dentitionType = 'permanent';
+      entry.ficha.avaliacoes.forEach(av=>{
+        if(!av.dentitionType) av.dentitionType = normalizeDentitionType(entry.ficha.dentitionType || 'permanent');
+      });
+
+      const firstEval = entry.ficha.avaliacoes[0] || { id:'eval_1', label:'Avaliação 1', date: todayISO(), dentitionType:'permanent' };
+      entry.ficha.plano.forEach(item=>{
+        if(!item.id) item.id = uid('plan');
+        if(!item.avaliacaoId) item.avaliacaoId = firstEval.id;
+        if(!item.avaliacaoLabel) item.avaliacaoLabel = firstEval.label || 'Avaliação 1';
+        if(!item.avaliacaoData) item.avaliacaoData = firstEval.date || todayISO();
+        if(!item.createdAt) item.createdAt = new Date().toISOString();
+        if(item.recebimentoId && !item.financialPlanId) item.financialPlanId = item.recebimentoId;
+        if(item.financialPlanId && !item.recebimentoId) item.recebimentoId = item.financialPlanId;
+      });
+
+      try{ syncFichaFinancialLinks(entry); }catch(_){}
+      return entry.ficha;
+    }
+    function deriveToothType(tooth){
+      const t = String(tooth||'').replace(/\D/g,'');
+      const first = t.slice(0,1);
+      const second = t.slice(1,2);
+      if(['5','6','7','8'].includes(first)){
+        if(['1','2'].includes(second)) return 'Incisivo decíduo';
+        if(second === '3') return 'Canino decíduo';
+        if(['4','5'].includes(second)) return 'Molar decíduo';
+      }
+      if(['1','2'].includes(second)) return 'Incisivo';
+      if(second === '3') return 'Canino';
+      if(['4','5'].includes(second)) return 'Pré-molar';
+      if(['6','7','8'].includes(second)) return 'Molar';
+      return 'Dente';
+    }
+    function parseMoneyInput(v){
+      const raw = String(v ?? '').trim();
+      if(!raw) return 0;
+      let normalized = raw.replace(/\s/g,'').replace(/R\$/gi,'');
+      const hasComma = normalized.includes(',');
+      const hasDot = normalized.includes('.');
+      if(hasComma && hasDot){
+        normalized = normalized.replace(/\./g,'').replace(',', '.');
+      }else if(hasComma){
+        normalized = normalized.replace(',', '.');
+      }
+      const n = Number(normalized);
+      return Number.isFinite(n) ? n : 0;
+    }
+    function percent(num, den){
+      if(!den) return 0;
+      return (Number(num||0) / Number(den||0)) * 100;
+    }
+    function calcFichaTotals(plano=[], entry=null){
+      plano = (Array.isArray(plano) ? plano : []).filter(x=>!(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(x)));
+      const totalBase = plano.reduce((s,x)=>s + Number(x.valorBase||0), 0);
+      const totalFechado = plano.reduce((s,x)=>s + Number(x.valorFechado||0), 0);
+      const totalDesconto = totalBase - totalFechado;
+      const totalPago = fichaLinkedFinancialPaidTotal(entry, plano);
+      const totalFeito = plano.filter(x=>isFichaItemClinicallyDone(entry, x)).reduce((s,x)=>s + Number(x.valorFechado||0), 0);
+      const emAberto = Math.max(0, totalFechado - totalPago);
+      return {
+        totalBase, totalFechado, totalDesconto, totalPago, totalFeito,
+        emAberto, descontoPct: percent(totalDesconto, totalBase)
+      };
+    }
+
+
+    function getActiveFichaEvaluation(ficha, entry=null){
+      ficha = ficha || ensureFicha(entry || {});
+      if(!Array.isArray(ficha.avaliacoes) || !ficha.avaliacoes.length){
+        ficha.avaliacoes = [{id:'eval_1', label:'Avaliação 1', date: todayISO(), createdAt:new Date().toISOString()}];
+      }
+      let active = ficha.avaliacoes.find(a=>String(a.id)===String(ficha.activeEvaluationId));
+      if(!active){
+        active = ficha.avaliacoes[ficha.avaliacoes.length - 1];
+        ficha.activeEvaluationId = active.id;
+      }
+      return active;
+    }
+
+    function nextFichaEvaluationLabel(ficha){
+      const n = (Array.isArray(ficha?.avaliacoes) ? ficha.avaliacoes.length : 0) + 1;
+      return `Avaliação ${n}`;
+    }
+
+    function getFinancialPlanForFichaItem(entry, item){
+      if(!entry || !item) return null;
+      const plan = findFinancialPlanByFichaItem(entry, item);
+      if(plan){
+        item.financialPlanId = String(plan.id);
+        item.recebimentoId = String(plan.id);
+      }
+      return plan;
+    }
+
+    function financialPlanIsFullyPaid(plan){
+      if(!plan) return false;
+      const t = financialPlanTotals(plan);
+      const target = Number(t.total || plan.amount || 0);
+      return target > 0 && Number(t.paid || 0) >= (target - 0.01);
+    }
+
+    function financialPlanHasAnyPayment(plan){
+      if(!plan) return false;
+      const pays = Array.isArray(plan.payments) ? plan.payments : [];
+      return pays.length > 0 || Number(financialPlanTotals(plan).scheduled || 0) > 0;
+    }
+
+    function getFichaItemFinancialStatus(entry, item){
+      const plan = getFinancialPlanForFichaItem(entry, item);
+      if(plan){
+        const t = financialPlanTotals(plan);
+        if(financialPlanIsFullyPaid(plan)) return {key:'paid', label:'Pago', plan, totals:t};
+        if(Number(t.paid||0) > 0) return {key:'partial', label:'Parcial', plan, totals:t};
+        if(financialPlanHasAnyPayment(plan)) return {key:'pending', label:'Em pagamento', plan, totals:t};
+        return {key:'linked', label:'Recebimento criado', plan, totals:t};
+      }
+      if(item?.pago) return {key:'paid_legacy', label:'Pago legado', plan:null, totals:null};
+      return {key:'open', label:'Sem recebimento', plan:null, totals:null};
+    }
+
+    function isFichaItemFinancialPaid(entry, item){
+      const st = getFichaItemFinancialStatus(entry, item);
+      return st.key === 'paid' || st.key === 'paid_legacy';
+    }
+
+    function isFichaItemFinancialLinked(entry, item){
+      const st = getFichaItemFinancialStatus(entry, item);
+      return st.key !== 'open';
+    }
+
+    function isFichaItemClinicallyDone(entry, item){
+      // Status clínico é do PROCEDIMENTO, não do dente inteiro.
+      // Antes, se o dente 46 estivesse marcado como realizado, qualquer item do 46
+      // ficava verde também. Isso misturava odontograma com plano de tratamento.
+      if(!item) return false;
+      return item.feito === true
+        || String(item.status || '').toLowerCase() === 'feito'
+        || String(item.statusClinico || '').toLowerCase() === 'feito'
+        || String(item.clinicalStatus || '').toLowerCase() === 'done';
+    }
+
+    function isFichaItemAvailableForReceiving(entry, item){
+      const st = getFichaItemFinancialStatus(entry, item);
+      return st.key === 'open';
+    }
+
+    function fichaFinanceBadge(entry, item){
+      const st = getFichaItemFinancialStatus(entry, item);
+      const klass = st.key === 'paid' || st.key === 'paid_legacy' ? 'ok' : (st.key === 'open' ? 'pending' : 'warn');
+      const title = st.plan ? `Recebimento: ${escapeHTML(st.plan.title || st.plan.id)}` : '';
+      return `<span class="badge ${klass}" title="${title}">${escapeHTML(st.label)}</span>`;
+    }
+
+    function fichaEvaluationSummaryHTML(ficha){
+      const map = new Map();
+      (ficha.plano || []).filter(item=>!(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(item))).forEach(item=>{
+        const id = item.avaliacaoId || 'eval_1';
+        if(!map.has(id)) map.set(id, {count:0, total:0});
+        const row = map.get(id);
+        row.count++;
+        row.total += Number(item.valorFechado || 0);
+      });
+      return (ficha.avaliacoes || []).map(av=>{
+        const row = map.get(av.id) || {count:0,total:0};
+        const active = String(ficha.activeEvaluationId) === String(av.id);
+        return `<button type="button" class="miniBtn ${active ? 'primary' : ''}" onclick="CRONOS_FICHA_UI.setActiveEvaluation('${escapeHTML(av.id)}')" title="Adicionar novos procedimentos nesta avaliação">
+          ${escapeHTML(av.label || 'Avaliação')} • ${fmtBR(av.date)} • ${row.count} item(ns) • ${moneyBR(row.total)}
+        </button>`;
+      }).join('');
+    }
+
+    function getFichaEvaluationItems(ficha, evaluationId){
+      const evalId = String(evaluationId || ficha?.activeEvaluationId || 'eval_1');
+      return (Array.isArray(ficha?.plano) ? ficha.plano : []).filter(item=>String(item.avaliacaoId || 'eval_1') === evalId && !(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(item)));
+    }
+
+    function resetFichaTransientSelection(state){
+      if(!state) return;
+      state.selectedItemIds = [];
+      state.selectedTeeth = [];
+      state.selectedTooth = null;
+      state.selectedFace = '';
+      state.selectedProcId = '';
+      state.procSearch = '';
+      state.procMenuOpen = false;
+      state.price = '';
+    }
+
+    function buildFichaReceivingPayments({total, type, date, method, count, obs, recordPaidNow=false}){
+      total = parseMoney(total);
+      const payments = [];
+      const n = type === 'parcelado' ? Math.max(1, parseInt(count || 1, 10) || 1) : 1;
+      const base = Math.floor((total / n) * 100) / 100;
+      let acc = 0;
+      const shouldRegisterAsPaidNow = (type === 'avista') && recordPaidNow === true;
+      for(let i=1;i<=n;i++){
+        const amount = i === n ? Number((total - acc).toFixed(2)) : Number(base.toFixed(2));
+        acc += amount;
+        const dueDate = addMonthsISO(date, i-1);
+        const paid = shouldRegisterAsPaidNow;
+        payments.push({
+          id: uid('pay'),
+          amount,
+          dueDate,
+          payMethod: method || '',
+          notes: obs || '',
+          status: paid ? 'PAGA' : 'PENDENTE',
+          paidAt: paid ? date : '',
+          cashDate: paid ? date : '',
+          receivedNow: paid,
+          createdAt: new Date().toISOString(),
+          source: 'ficha'
+        });
+      }
+      return payments;
+    }
+
+    function createFichaReceiving(entryId, itemIds, options={}){
+      const actor = currentActor();
+      const db = loadDB();
+      const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
+      if(!entry) return toast('Recebimento', 'Paciente não encontrado.');
+      const ficha = ensureFicha(entry);
+      const ids = Array.from(new Set((itemIds||[]).map(String).filter(Boolean)));
+      const items = ficha.plano.filter(item=>ids.includes(String(item.id)));
+      if(!items.length) return toast('Recebimento', 'Selecione pelo menos um procedimento da ficha.');
+
+      const unavailable = items.filter(item=>!isFichaItemAvailableForReceiving(entry, item));
+      if(unavailable.length){
+        return toast('Recebimento já vinculado', `${unavailable.length} procedimento(s) já possuem recebimento.`);
+      }
+
+      const total = items.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
+      if(total <= 0) return toast('Recebimento', 'Os procedimentos selecionados precisam ter valor maior que zero.');
+
+      const type = String(options.type || 'parcelado');
+      const date = String(options.date || todayISO()).slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Data inválida', 'Use uma data válida.');
+      const count = type === 'parcelado' ? Math.max(1, parseInt(options.count || 1, 10) || 1) : 1;
+      const method = String(options.method || '').trim();
+      const obs = String(options.obs || '').trim();
+      const recordPaidNow = options.recordPaidNow === true || options.recordPaidNow === 'true' || options.recordPaidNow === 'on';
+
+      const evalLabel = items[0]?.avaliacaoLabel || 'Avaliação';
+      const plan = {
+        id: uid('budget'),
+        title: `${type === 'parcelado' ? 'Recebimento parcelado' : 'Recebimento à vista'} • ${evalLabel}`,
+        dentist: '',
+        amount: total,
+        status: recordPaidNow ? 'Aprovado' : 'Aguardando',
+        createdAt: new Date().toISOString(),
+        createdBy: actor?.name || '',
+        source: 'ficha',
+        receivedNow: recordPaidNow,
+        fichaItemIds: ids,
+        evaluationIds: Array.from(new Set(items.map(i=>i.avaliacaoId).filter(Boolean))),
+        payments: buildFichaReceivingPayments({total, type, date, method, count, obs, recordPaidNow})
+      };
+
+      ensureFinancialPlans(entry).push(plan);
+      items.forEach(item=>{
+        item.financialPlanId = plan.id;
+        item.recebimentoId = plan.id;
+        item.financeStatus = recordPaidNow ? 'pago' : 'em_pagamento';
+        item.pago = recordPaidNow;
+      });
+      try{ syncFichaFinancialLinks(entry); }catch(_){}
+
+      if(recordPaidNow){
+        db.payments = db.payments || [];
+        plan.payments.filter(p=>String(p.status||'').toUpperCase()==='PAGA').forEach(p=>{
+          db.payments.push({
+            id: uid('p'),
+            masterId: actor.masterId,
+            entryId: entry.id,
+            contactId: entry.contactId || '',
+            financialPlanId: plan.id,
+            financialPaymentId: p.id,
+            at: new Date().toISOString(),
+            date: p.cashDate || date,
+            value: parseMoney(p.amount),
+            method: p.payMethod || method || '',
+            desc: `Recebimento da ficha • ${evalLabel}`,
+            source: 'financialPlan',
+            receivedNow: true
+          });
+        });
+      }
+
+      try{ syncInstallmentTasks(db, actor); }catch(_){}
+      saveDB(db, { immediate:true });
+      return plan;
+    }
+
+
+    function getClinicBranding(db=loadDB(), actor=currentActor()){
+      const clinicId = actor?.masterId || actor?.clinicId || null;
+      if(!db.settings) db.settings = {};
+      if(!db.settings.clinicBranding) db.settings.clinicBranding = { byClinic:{} };
+      if(!db.settings.clinicBranding.byClinic) db.settings.clinicBranding.byClinic = {};
+      if(clinicId && !db.settings.clinicBranding.byClinic[String(clinicId)]){
+        db.settings.clinicBranding.byClinic[String(clinicId)] = { clinicName:'', logoDataUri:'' };
+      }
+      return clinicId ? db.settings.clinicBranding.byClinic[String(clinicId)] : { clinicName:'', logoDataUri:'' };
+    }
+    function getClinicDisplayName(db=loadDB(), actor=currentActor()){
+      const branding = getClinicBranding(db, actor);
+      return String(branding?.clinicName || actor?.masterName || actor?.clinicName || 'Clínica').trim();
+    }
+    function injectBrandingSettingsCard(){
+      const host = el('view-settings');
+      if(!host) return;
+      let card = el('settingsBrandingCard');
+      const db = loadDB();
+      const actor = currentActor();
+      const branding = getClinicBranding(db, actor);
+      if(!card){
+        card = document.createElement('div');
+        card.className = 'card';
+        card.id = 'settingsBrandingCard';
+        host.appendChild(card);
+      }
+      card.innerHTML = `
+        <h3>Identidade da clínica</h3>
+        <div class="muted" style="line-height:1.5; margin-bottom:10px">A ficha do paciente usa estes dados no cabeçalho e na impressão. Cada clínica gerencia a própria marca sem depender de ti.</div>
+        <div class="procGrid" style="grid-template-columns:1fr .8fr; align-items:start">
+          <div>
+            <label>Nome da clínica na ficha</label>
+            <input id="brandClinicName" type="text" value="${escapeHTML(branding?.clinicName || actor?.masterName || '')}" placeholder="Ex: Mundo Odonto">
+            <div class="brandCardHint">Se ficar vazio, a ficha usa o nome padrão da clínica.</div>
+          </div>
+          <div>
+            <label>Logo da clínica</label>
+            <div class="brandRow">
+              <div class="brandPreview">${branding?.logoDataUri ? `<img src="${branding.logoDataUri}" alt="Logo">` : `<span class="muted">Sem logo</span>`}</div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap">
+                <label class="btn small" style="cursor:pointer">Enviar logo<input id="brandLogoInput" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+                ${branding?.logoDataUri ? `<button class="btn small" id="btnRemoveBrandLogo" type="button">Remover</button>` : ''}
+              </div>
+            </div>
+            <div class="brandCardHint">PNG, JPG ou WEBP. Idealmente quadrada e leve.</div>
+          </div>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
+          <button class="btn ok" id="btnSaveBranding" type="button">Salvar identidade</button>
+        </div>
+      `;
+      const saveBtn = el('btnSaveBranding');
+      if(saveBtn) saveBtn.onclick = ()=>window.CRONOS_BRAND_UI.save();
+      const remBtn = el('btnRemoveBrandLogo');
+      if(remBtn) remBtn.onclick = ()=>window.CRONOS_BRAND_UI.removeLogo();
+      const fileInput = el('brandLogoInput');
+      if(fileInput){
+        fileInput.onchange = ev => {
+          const file = ev.target.files && ev.target.files[0];
+          if(!file) return;
+          const reader = new FileReader();
+          reader.onload = () => { window.CRONOS_BRAND_UI.setLogo(String(reader.result || '')); };
+          reader.readAsDataURL(file);
+        };
+      }
+    }
+    window.CRONOS_BRAND_UI = {
+      setLogo(dataUri){
+        const db = loadDB();
+        const actor = currentActor();
+        const branding = getClinicBranding(db, actor);
+        branding.logoDataUri = dataUri || '';
+        saveDB(db);
+        injectBrandingSettingsCard();
+      },
+      removeLogo(){
+        const db = loadDB();
+        const actor = currentActor();
+        const branding = getClinicBranding(db, actor);
+        branding.logoDataUri = '';
+        saveDB(db);
+        injectBrandingSettingsCard();
+      },
+      save(){
+        const db = loadDB();
+        const actor = currentActor();
+        const branding = getClinicBranding(db, actor);
+        branding.clinicName = String(val('brandClinicName') || '').trim();
+        saveDB(db);
+        injectBrandingSettingsCard();
+        toast('Identidade salva ✅', branding.clinicName || getClinicDisplayName(db, actor));
+      }
+    };
+
+
+    function injectProcedureSettingsCard(){
+      const host = el('view-settings');
+      if(!host) return;
+      let card = el('settingsProceduresCard');
+      if(!card){
+        card = document.createElement('div');
+        card.className = 'card';
+        card.id = 'settingsProceduresCard';
+        card.innerHTML = `
+          <h3>Procedimentos odontológicos</h3>
+          <div class="muted" style="line-height:1.5; margin-bottom:10px">
+            Cadastro mestre usado na <b>Ficha</b> do lead. O valor base entra automático no plano de tratamento, mas continua editável no paciente.
+          </div>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+            <button class="btn ok" id="btnManageProcedures">🦷 Gerenciar procedimentos</button>
+            <span class="muted" id="proceduresCountHint" style="font-size:12px"></span>
+          </div>
+          <div class="procCardHint">Sugestão: deixa só procedimentos ativos e valores de tabela aqui. Ajustes e desconto implícito ficam na ficha do paciente.</div>
+        `;
+        host.appendChild(card);
+      }
+      const btn = el('btnManageProcedures');
+      if(btn) btn.onclick = openProcedureCatalogModal;
+      const hint = el('proceduresCountHint');
+      if(hint){
+        const catalog = getProcedureCatalog(loadDB());
+        const active = catalog.filter(x=>x.ativo !== false).length;
+        hint.textContent = `${catalog.length} cadastrados • ${active} ativos`;
+      }
+    }
+
+    function openProcedureCatalogModal(){
+      ensureProcedureCatalogSeeded();
+      window.__procCatalogState = { editingId:null, search:'' };
+      openModal({
+        title:'Cadastro de procedimentos',
+        sub:'Usado pela Ficha do lead. Valor base é referência; o valor do paciente continua editável no plano de tratamento.',
+        bodyHTML:'<div id="procCatalogApp" style="width:100%"></div>',
+        footHTML:'<button class="btn" onclick="closeModal()">Fechar</button>',
+        onMount: renderProcedureCatalogApp,
+        maxWidth:'min(99vw, 1880px)',
+        width:'min(99vw, 1880px)',
+        modalClass:'procCatalogModal'
+      });
+    }
+
+    function renderProcedureCatalogApp(){
+      const box = el('procCatalogApp');
+      if(!box) return;
+      const state = window.__procCatalogState || { editingId:null, search:'' };
+      const db = loadDB();
+      const catalog = getProcedureCatalog(db);
+      const editItem = catalog.find(x=>x.id===state.editingId) || null;
+      const filtered = catalog.filter(x=>{
+        const q = String(state.search||'').trim().toLowerCase();
+        if(!q) return true;
+        return String(x.nome||'').toLowerCase().includes(q)
+          || String(x.categoria||'').toLowerCase().includes(q)
+          || String(x.tipoClinico||'').toLowerCase().includes(q)
+          || String(x.indicacao||'').toLowerCase().includes(q)
+          || String(x.abrangencia||'').toLowerCase().includes(q);
+      });
+      box.innerHTML = `
+        <div class="procGrid">
+          <div style="position:relative">
+            <label>Nome do procedimento</label>
+            <input id="procName" type="text" autocomplete="new-password" spellcheck="false" placeholder="Ex: Restauração de resina 1 face" value="${escapeHTML(editItem?.nome || '')}" oninput="CRONOS_PROC_UI.nameInput(this.value)" onfocus="CRONOS_PROC_UI.nameInput(this.value)" onblur="CRONOS_PROC_UI.hideNameSuggestions()">
+            <div id="procNameSuggestions" style="display:none; position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:9999"></div>
+          </div>
+          <div>
+            <label>Categoria</label>
+            <input id="procCategory" type="text" placeholder="Ex: Dentística" value="${escapeHTML(editItem?.categoria || '')}">
+          </div>
+          <div>
+            <label>Valor base</label>
+            <input id="procValue" type="number" step="0.01" value="${Number(editItem?.valorBase || 0) || ''}">
+          </div>
+          <div>
+            <label>Exige dente?</label>
+            <select id="procNeedsTooth">
+              <option value="0" ${editItem?.exigeDente ? '' : 'selected'}>Não</option>
+              <option value="1" ${editItem?.exigeDente ? 'selected' : ''}>Sim</option>
+            </select>
+          </div>
+          <div>
+            <label>Exige face?</label>
+            <select id="procNeedsFace">
+              <option value="0" ${editItem?.exigeFace ? '' : 'selected'}>Não</option>
+              <option value="1" ${editItem?.exigeFace ? 'selected' : ''}>Sim</option>
+            </select>
+          </div>
+          <div>
+            <label>Cobra por dente?</label>
+            <select id="procPerTooth">
+              <option value="0" ${editItem?.cobraPorDente ? '' : 'selected'}>Não</option>
+              <option value="1" ${editItem?.cobraPorDente ? 'selected' : ''}>Sim</option>
+            </select>
+          </div>
+        </div>
+        <div class="procGrid procClinicalGrid" style="grid-template-columns:1fr 1fr 1fr; margin-top:10px">
+          <div>
+            <label>Tipo clínico <span class="muted">(preparado para inteligência futura)</span></label>
+            <input id="procClinicalType" type="text" placeholder="Ex: perda dentária, restauração, endodontia" value="${escapeHTML(editItem?.tipoClinico || '')}">
+          </div>
+          <div>
+            <label>Indicação</label>
+            <input id="procIndication" type="text" placeholder="Ex: ausência unitária, cárie extensa" value="${escapeHTML(editItem?.indicacao || '')}">
+          </div>
+          <div>
+            <label>Abrangência</label>
+            <input id="procScope" type="text" placeholder="Ex: unitário, múltiplo, arcada" value="${escapeHTML(editItem?.abrangencia || '')}">
+          </div>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
+          <label style="display:flex; gap:8px; align-items:center; margin:0">
+            <input id="procActive" type="checkbox" ${editItem?.ativo === false ? '' : 'checked'} style="width:auto"> Ativo
+          </label>
+          <button class="btn ok" onclick="CRONOS_PROC_UI.save()">${editItem ? 'Salvar alteração' : 'Adicionar procedimento'}</button>
+          <button class="btn" onclick="CRONOS_PROC_UI.reset()">${editItem ? 'Cancelar edição' : 'Limpar campos'}</button>
+          <div style="flex:1"></div>
+          <input id="procSearch" type="text" placeholder="Buscar procedimento..." value="${escapeHTML(state.search||'')}" oninput="CRONOS_PROC_UI.search(this.value)" style="max-width:280px">
+        </div>
+        <div class="tableWrap" style="margin-top:14px">
+          <table class="procCatalogTable">
+            <thead>
+              <tr>
+                <th>Procedimento</th>
+                <th>Categoria</th>
+                <th>Valor base</th>
+                <th>Dente</th>
+                <th>Face</th>
+                <th>Por dente</th>
+                <th>Tipo clínico</th>
+                <th>Indicação</th>
+                <th>Abrangência</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.length ? filtered.map(item=>`
+                <tr>
+                  <td>${escapeHTML(item.nome||'—')}</td>
+                  <td>${escapeHTML(item.categoria||'—')}</td>
+                  <td>${moneyBR(item.valorBase||0)}</td>
+                  <td>${item.exigeDente ? 'Sim' : 'Não'}</td>
+                  <td>${item.exigeFace ? 'Sim' : 'Não'}</td>
+                  <td>${item.cobraPorDente ? 'Sim' : 'Não'}</td>
+                  <td>${escapeHTML(item.tipoClinico || '—')}</td>
+                  <td>${escapeHTML(item.indicacao || '—')}</td>
+                  <td>${escapeHTML(item.abrangencia || '—')}</td>
+                  <td>${item.ativo === false ? 'Inativo' : 'Ativo'}</td>
+                  <td>
+                    <button class="miniBtn" onclick="CRONOS_PROC_UI.edit('${escapeHTML(item.id)}')">Editar</button>
+                    <button class="miniBtn danger" onclick="CRONOS_PROC_UI.remove('${escapeHTML(item.id)}')">Inativar</button>
+                  </td>
+                </tr>
+              `).join('') : `<tr><td colspan="11" class="muted">Nenhum procedimento encontrado.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      `;
+      requestAnimationFrame(()=>renderProcedureNameSuggestions(el('procName')?.value || ''));
+    }
+
+    
+    function __cronosRefocusInput(id, value=''){
+      requestAnimationFrame(()=>{
+        const input = el(id);
+        if(!input) return;
+        try{
+          input.focus();
+          const pos = String(value ?? '').length;
+          if(typeof input.setSelectionRange === 'function') input.setSelectionRange(pos, pos);
+        }catch(_){}
+      });
+    }
+
+
+    /* Mantém a posição de rolagem quando uma mini alteração redesenha a ficha/modal.
+       Sem isso, editar valor ou marcar checkbox joga o usuário para o topo — o famoso elevador quebrado do JavaScript. */
+    function __cronosCaptureModalScrollState(){
+      const nodes = [];
+      const addNode = (key, node)=>{
+        if(!node) return;
+        nodes.push({ key, top:Number(node.scrollTop || 0), left:Number(node.scrollLeft || 0) });
+      };
+      addNode('modalBody', el('modalBody'));
+      addNode('modalInner', qs('#modalBg .modalInner'));
+      addNode('fichaApp', el('fichaApp'));
+      addNode('newFinancialInstallmentApp', el('newFinancialInstallmentApp'));
+      try{
+        document.querySelectorAll('[data-cronos-scroll-key]').forEach(node=>{
+          addNode(String(node.getAttribute('data-cronos-scroll-key') || ''), node);
+        });
+      }catch(_){}
+      const active = document.activeElement;
+      return {
+        nodes,
+        activeId: active && active.id ? String(active.id) : '',
+        selectionStart: active && typeof active.selectionStart === 'number' ? active.selectionStart : null,
+        selectionEnd: active && typeof active.selectionEnd === 'number' ? active.selectionEnd : null
+      };
+    }
+    function __cronosRestoreModalScrollState(state, opts={}){
+      if(!state) return;
+      const applyRestore = ()=>{
+        try{
+          (state.nodes || []).forEach(item=>{
+            let node = null;
+            if(item.key === 'modalBody') node = el('modalBody');
+            else if(item.key === 'modalInner') node = qs('#modalBg .modalInner');
+            else if(item.key === 'fichaApp') node = el('fichaApp');
+            else if(item.key === 'newFinancialInstallmentApp') node = el('newFinancialInstallmentApp');
+            else node = document.querySelector(`[data-cronos-scroll-key="${String(item.key).replace(/"/g,'\\"')}"]`);
+            if(node){
+              node.scrollTop = Number(item.top || 0);
+              node.scrollLeft = Number(item.left || 0);
+            }
+          });
+          const focusId = opts.focusId || state.activeId;
+          if(focusId){
+            const input = el(focusId);
+            if(input){
+              input.focus({ preventScroll:true });
+              if(typeof input.setSelectionRange === 'function'){
+                const len = String(input.value || '').length;
+                const start = opts.selectionStart ?? state.selectionStart ?? len;
+                const end = opts.selectionEnd ?? state.selectionEnd ?? start;
+                input.setSelectionRange(Math.min(start, len), Math.min(end, len));
+              }
+            }
+          }
+        }catch(_){}
+      };
+      requestAnimationFrame(applyRestore);
+      setTimeout(applyRestore, 0);
+      setTimeout(applyRestore, 80);
+    }
+    function __cronosRenderFichaPreservingScroll(opts={}){
+      const scrollState = __cronosCaptureModalScrollState();
+      renderFichaApp();
+      __cronosRestoreModalScrollState(scrollState, opts);
+    }
+    function __cronosRenderNewFinancialPreservingScroll(opts={}){
+      const scrollState = __cronosCaptureModalScrollState();
+      renderNewFinancialInstallmentApp();
+      __cronosRestoreModalScrollState(scrollState, opts);
+    }
+    function __cronosThemeIsDark(){
+      try{
+        const root = document.documentElement;
+        const body = document.body;
+        const cls = `${root.className||''} ${body.className||''}`.toLowerCase();
+        if(/(^|\s)dark(\s|$)/.test(cls)) return true;
+        const attr = String(root.getAttribute('data-theme') || body.getAttribute('data-theme') || '').toLowerCase();
+        if(attr.includes('dark')) return true;
+        const bg = getComputedStyle(body).backgroundColor || getComputedStyle(root).backgroundColor || '';
+        const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+        if(m){
+          const r=+m[1], g=+m[2], b=+m[3];
+          const lum = (0.2126*r + 0.7152*g + 0.0722*b);
+          return lum < 140;
+        }
+      }catch(_){}
+      return false;
+    }
+    function __odontoBoxLeftPct(tooth, i){
+      const base = 5.5 + i * 6.0;
+      const tweak = ({
+        '16': 0,
+        '26': 0,
+        '46': 0,
+        '36': 0
+      })[String(tooth)] || 0;
+      return (base + tweak).toFixed(2);
+    }
+
+
+    function renderProcedureNameSuggestions(value){
+      const host = el('procNameSuggestions');
+      if(!host) return;
+      const q = __cronosNormProcName(value || '');
+      const state = window.__procCatalogState || { editingId:null };
+      if(q.length < 2){
+        host.innerHTML = '';
+        host.style.display = 'none';
+        return;
+      }
+      const catalog = getProcedureCatalog(loadDB())
+        .filter(item=>String(item.id || '') !== String(state.editingId || ''));
+      const matches = catalog.filter(item=>{
+        const name = __cronosNormProcName(item.nome || '');
+        const category = __cronosNormProcName(item.categoria || '');
+        return name.includes(q) || q.includes(name) || category.includes(q);
+      }).slice(0, 5);
+      if(!matches.length){
+        host.innerHTML = '';
+        host.style.display = 'none';
+        return;
+      }
+      host.style.display = 'block';
+      host.innerHTML = `
+        <div class="procNameSuggestPanel" style="border:1px solid rgba(148,163,184,.30); border-radius:14px; padding:8px; background:#ffffff; box-shadow:0 18px 44px rgba(15,23,42,.24); max-height:240px; overflow:auto">
+          <div class="small muted" style="margin-bottom:6px">Procedimentos parecidos:</div>
+          <div style="display:grid; gap:6px">
+            ${matches.map(item=>`
+              <button type="button" class="miniBtn" style="width:100%; justify-content:space-between; text-align:left" onmousedown="event.preventDefault(); CRONOS_PROC_UI.edit('${escapeHTML(item.id || '')}')" title="Editar procedimento já cadastrado">
+                <span>${escapeHTML(item.nome || 'Procedimento')}</span>
+                <span class="muted">${item.ativo === false ? 'inativo' : 'ativo'}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+window.CRONOS_PROC_UI = {
+      nameInput(v){ renderProcedureNameSuggestions(v); },
+      hideNameSuggestions(){ setTimeout(()=>{ const host = el('procNameSuggestions'); if(host){ host.style.display='none'; host.innerHTML=''; } }, 180); },
+      search(v){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {search:v}); renderProcedureCatalogApp(); __cronosRefocusInput('procSearch', v); },
+      edit(id){
+        window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:id});
+        renderProcedureCatalogApp();
+
+        requestAnimationFrame(()=>{
+          try{
+            const modalBody = el('modalBody') || qs('#modalBg .modalBody');
+            const modalInner = qs('#modalBg .modalInner');
+            const app = el('procCatalogApp');
+
+            if(modalBody && typeof modalBody.scrollTo === 'function'){
+              modalBody.scrollTo({ top:0, behavior:'smooth' });
+            }
+            if(modalInner && typeof modalInner.scrollTo === 'function'){
+              modalInner.scrollTo({ top:0, behavior:'smooth' });
+            }
+            if(app && typeof app.scrollIntoView === 'function'){
+              app.scrollIntoView({ behavior:'smooth', block:'start' });
+            }
+
+            setTimeout(()=>{ try{ el('procName')?.focus(); }catch(_){} }, 220);
+          }catch(_){}
+        });
+      },
+      reset(){ window.__procCatalogState = Object.assign(window.__procCatalogState || {}, {editingId:null}); renderProcedureCatalogApp(); },
+      save(){
+        const db = loadDB();
+        if(!db.settings) db.settings = {};
+        const catalog = getProcedureCatalogRaw(db).slice();
+        const state = window.__procCatalogState || { editingId:null };
+        const nome = String(val('procName') || '').trim();
+        const categoria = String(val('procCategory') || '').trim();
+        const valorBase = parseMoneyInput(val('procValue'));
+        const tipoClinico = String(val('procClinicalType') || '').trim();
+        const indicacao = String(val('procIndication') || '').trim();
+        const abrangencia = String(val('procScope') || '').trim();
+        const exigeDente = String(val('procNeedsTooth')) === '1';
+        const exigeFace = String(val('procNeedsFace')) === '1';
+        const cobraPorDente = String(val('procPerTooth')) === '1';
+        const ativo = !!el('procActive')?.checked;
+        if(!nome) return toast('Procedimento', 'Digite o nome do procedimento.');
+        const normNome = __cronosNormProcName(nome);
+        const duplicated = catalog.find(item=>
+          String(item.id || '') !== String(state.editingId || '') &&
+          !item.deletedAt &&
+          __cronosNormProcName(item.nome || '') === normNome
+        );
+        if(duplicated){
+          window.__procCatalogState = Object.assign(window.__procCatalogState || {}, { search:nome });
+          renderProcedureCatalogApp();
+          return toast('Procedimento já cadastrado', `${duplicated.nome || nome} já existe como ${duplicated.ativo === false ? 'inativo' : 'ativo'}. Use Editar para ajustar em vez de cadastrar duplicado.`);
+        }
+        const now = new Date().toISOString();
+        const currentItem = state.editingId ? catalog.find(x=>String(x.id)===String(state.editingId)) : null;
+        const payload = {
+          ...(currentItem || {}),
+          id: state.editingId || uid('proc'),
+          nome,
+          categoria,
+          valorBase,
+          tipoClinico,
+          indicacao,
+          abrangencia,
+          exigeDente,
+          exigeFace,
+          cobraPorDente,
+          ativo,
+          createdAt: currentItem?.createdAt || now,
+          updatedAt: now,
+          deletedAt: ''
+        };
+        const idx = catalog.findIndex(x=>String(x.id)===String(payload.id));
+        if(idx >= 0) catalog[idx] = payload; else catalog.push(payload);
+        db.settings.procedureCatalog = catalog;
+        const cloudSave = saveDB(db, { immediate:true });
+        window.__procCatalogState = { editingId:null, search: state.search || '' };
+        renderProcedureCatalogApp();
+        injectProcedureSettingsCard();
+        if(cloudSave && typeof cloudSave.then === 'function'){
+          cloudSave.then(ok=>{
+            if(ok) toast('Procedimento salvo na nuvem ✅', nome);
+            else toast('Procedimento salvo neste navegador', 'Não consegui confirmar a nuvem agora. Clique em Atualizar depois para sincronizar.');
+          });
+        }else{
+          toast('Procedimento salvo ✅', nome);
+        }
+      },
+      remove(id){
+        if(!confirm('Inativar este procedimento? Ele não aparecerá para novos lançamentos, mas continuará preservado no histórico.')) return;
+        const db = loadDB();
+        if(!db.settings) db.settings = {};
+        const now = new Date().toISOString();
+        const raw = getProcedureCatalogRaw(db).slice();
+        const idx = raw.findIndex(x=>String(x.id)===String(id));
+        if(idx >= 0){
+          raw[idx] = { ...raw[idx], ativo:false, deletedAt:'', updatedAt: now };
+        }
+        db.settings.procedureCatalog = raw;
+        const cloudSave = saveDB(db, { immediate:true });
+        if(window.__procCatalogState?.editingId === id) window.__procCatalogState.editingId = null;
+        renderProcedureCatalogApp();
+        injectProcedureSettingsCard();
+        if(cloudSave && typeof cloudSave.then === 'function'){
+          cloudSave.then(ok=>{
+            if(ok) toast('Procedimento inativado na nuvem.');
+            else toast('Procedimento inativado neste navegador', 'Não consegui confirmar a nuvem agora.');
+          });
+        }else{
+          toast('Procedimento inativado.');
+        }
+      }
+    };
+
+    function setupFichaState(entryId){
+      const db = loadDB();
+      const entry = getEntryById(entryId);
+      if(!entry) return null;
+      const ficha = ensureFicha(entry);
+      const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+      saveDB(db);
+      window.__fichaFeatureState = {
+        entryId: String(entryId),
+        procSearch: '',
+        procMenuOpen: false,
+        selectedProcId: '',
+        selectedTeeth: [],
+        selectedFace: '',
+        price: '',
+        selectedTooth: null,
+        selectedItemIds: [],
+        activeEvaluationId: String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1'),
+        activeDentitionType: getFichaDentitionType(ficha, entry),
+        dentitionRequestId: ''
+      };
+      return window.__fichaFeatureState;
+    }
+    function getFichaState(){ return window.__fichaFeatureState || null; }
+    function getSelectedProc(state, db){ return getProcedureCatalog(db).find(x=>x.id===state?.selectedProcId) || null; }
+    function procLabel(item){
+      if(!item) return '';
+      return `${String(item.nome||'')}${item.categoria ? ` • ${String(item.categoria||'')}` : ''}`;
+    }
+    function getFaceOptionsHTML(cur=''){
+      const selected = new Set(String(cur || '').split(',').map(s=>s.trim()).filter(Boolean));
+      if(!selected.size && !String(cur||'').trim()) selected.add('');
+      return FACE_OPTIONS.map(opt=>`<option value="${escapeHTML(opt.value)}" ${selected.has(String(opt.value)) ? 'selected' : ''}>${escapeHTML(opt.label)}</option>`).join('');
+    }
+    function getFaceChipsHTML(cur='', enabled=true){
+      const selected = new Set(String(cur || '').split(',').map(s=>s.trim()).filter(Boolean));
+      const hasFaces = selected.size > 0;
+      return `
+        <div class="faceChipWrap">
+          ${FACE_OPTIONS.map(opt=>{
+            const value = String(opt.value || '');
+            const active = value ? selected.has(value) : !hasFaces;
+            return `<button type="button" class="faceChip ${active ? 'active' : ''}" ${enabled ? '' : 'disabled'} onclick="CRONOS_FICHA_UI.toggleFaceChip('${escapeHTML(value)}')">${escapeHTML(opt.label)}</button>`;
+          }).join('')}
+        </div>
+        <div class="faceSelectedText">${enabled ? (hasFaces ? `Selecionado: <b>${escapeHTML(Array.from(selected).join(', '))}</b>` : 'Sem face selecionada.') : 'Este procedimento não exige face.'}</div>
+      `;
+    }
+    function normalizeProcSearchText(v){
+      return String(v || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    }
+    function filterProcedureCatalog(catalog, query){
+      const q = normalizeProcSearchText(query);
+      if(!q) return catalog;
+      return catalog.filter(item=>{
+        const text = normalizeProcSearchText(`${item.nome || ''} ${item.categoria || ''} ${procLabel(item)}`);
+        return text.includes(q);
+      });
+    }
+    function getProcSuggestionsHTML(catalog, query=''){
+      const list = filterProcedureCatalog(catalog, query).slice(0, 40);
+      if(!list.length){
+        return `<div class="procSuggestEmpty">Nenhum procedimento encontrado.</div>`;
+      }
+      return list.map(item=>`
+        <button type="button" class="procSuggestItem" onmousedown="event.preventDefault(); CRONOS_FICHA_UI.selectProc('${escapeHTML(item.id)}')">
+          <div>${escapeHTML(item.nome || 'Procedimento')}</div>
+          <div class="muted">${escapeHTML(item.categoria || 'Sem categoria')} ${Number(item.valorBase || 0) ? `• ${moneyBR(item.valorBase || 0)}` : ''}</div>
+        </button>
+      `).join('');
+    }
+    function lineDiscount(item){
+      return Number(item.valorBase||0) - Number(item.valorFechado||0);
+    }
+    function lineDiscountPct(item){
+      return percent(lineDiscount(item), Number(item.valorBase||0));
+    }
+    let __fichaValueLeadsTimer = null;
+    function __scheduleFichaLeadsFinancialRefresh(){
+      try{ clearTimeout(__fichaValueLeadsTimer); }catch(_){}
+      __fichaValueLeadsTimer = setTimeout(()=>{
+        try{ renderLeadsTable(filteredEntries()); }catch(_){}
+      }, 260);
+    }
+    function __setFichaText(id, text){
+      const node = el(id);
+      if(node) node.textContent = text;
+    }
+    function __setFichaHTML(id, html){
+      const node = el(id);
+      if(node) node.innerHTML = html;
+    }
+    function refreshFichaLiveFinancialSummary(entry, changedItemId=''){
+      try{
+        const state = getFichaState();
+        if(!state || !entry) return;
+        const ficha = ensureFicha(entry);
+        const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+        const visiblePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
+        const totals = calcFichaTotals(visiblePlan || [], entry);
+        __setFichaText('fichaTotalBase', moneyBR(totals.totalBase));
+        __setFichaText('fichaTotalFechado', moneyBR(totals.totalFechado));
+        __setFichaText('fichaTotalDesconto', moneyBR(totals.totalDesconto));
+        __setFichaText('fichaTotalDescontoPct', `${totals.descontoPct.toFixed(2)}%`);
+        __setFichaText('fichaTotalFeito', moneyBR(totals.totalFeito));
+        __setFichaText('fichaTotalPago', moneyBR(totals.totalPago));
+        __setFichaText('fichaTotalAberto', moneyBR(totals.emAberto));
+
+        if(changedItemId){
+          const item = (Array.isArray(ficha.plano) ? ficha.plano : []).find(x=>String(x.id) === String(changedItemId));
+          if(item){
+            __setFichaHTML(`fichaDiscount_${String(changedItemId)}`, `${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span>`);
+          }
+        }
+
+        const visiblePlanIds = new Set(visiblePlan.map(item=>String(item.id)));
+        const selectedIds = new Set((Array.isArray(state.selectedItemIds) ? state.selectedItemIds.map(String) : []).filter(id=>visiblePlanIds.has(id)));
+        const selectedItems = visiblePlan.filter(item=>selectedIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
+        const selectedTotal = selectedItems.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
+        const btn = el('fichaGenerateReceivingBtn');
+        if(btn){
+          btn.textContent = `Gerar recebimento (${selectedItems.length}) • ${moneyBR(selectedTotal)}`;
+          btn.disabled = !selectedItems.length;
+        }
+      }catch(err){
+        console.warn('Falha ao atualizar resumo financeiro da ficha:', err);
+      }
+    }
+    function getToothMeta(entry, tooth){
+      const ficha = ensureFicha(entry);
+      return ficha.odontograma?.[String(tooth)] || {};
+    }
+    function isToothAbsent(entry, tooth){
+      const meta = getToothMeta(entry, tooth);
+      return meta?.absent === true || meta?.condition === 'absent' || meta?.status === 'absent';
+    }
+    function getToothProgressStatus(entry, tooth){
+      const ficha = ensureFicha(entry);
+      const meta = getToothMeta(entry, tooth);
+      const manualStatus = String(meta?.status || '').toLowerCase();
+
+      // A cor escolhida no odontograma pertence ao próprio dente.
+      // Antes ela era ignorada sempre que existia procedimento vinculado, fazendo
+      // amarelo/verde desaparecerem ou parecerem alternar ao marcar outro dente.
+      if(manualStatus === 'done' || manualStatus === 'realizado') return 'done';
+      if(manualStatus === 'paid' || manualStatus === 'pago' || manualStatus === 'closed' || manualStatus === 'plan') return 'paid';
+
+      const planForTooth = ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
+      if(planForTooth.length){
+        const allClinicallyDone = planForTooth.every(x=>isFichaItemClinicallyDone(entry, x));
+        if(allClinicallyDone) return 'done';
+        if(planForTooth.some(x=>x.pago || isFichaItemFinancialLinked(entry, x))) return 'paid';
+      }
+      return '';
+    }
+    function getToothVisualState(entry, tooth){
+      if(isToothAbsent(entry, tooth)) return 'absent';
+      return getToothProgressStatus(entry, tooth);
+    }
+
+    const ODONTO_CRONOS_ORIGINAL_VIEWBOX = '0 0 2551 800';
+    const ODONTO_CRONOS_ORIGINAL_PATHS = {"18":"M1440 6798 c-33 -17 -51 -35 -68 -68 -22 -43 -23 -52 -17 -185 8 -198 25 -344 60 -515 7 -36 18 -90 24 -120 40 -199 53 -556 26 -723 -8 -51 -36 -156 -61 -232 -55 -164 -63 -247 -45 -442 17 -184 56 -255 169 -305 84 -38 142 -40 313 -13 159 25 305 31 389 15 25 -4 62 -11 82 -15 54 -11 104 2 143 36 65 57 108 226 109 429 0 220 -54 368 -205 560 -17 21 -50 100 -82 195 -161 474 -356 938 -523 1244 -69 128 -100 153 -196 158 -62 4 -80 1 -118 -19z m173 -98 c77 -67 317 -574 475 -1000 76 -206 132 -376 132 -399 0 -27 -11 -29 -205 -35 -170 -5 -280 -27 -373 -75 -24 -12 -53 -21 -64 -19 -21 3 -21 8 -23 278 -2 222 -7 301 -24 413 -11 77 -23 142 -26 147 -3 4 -9 36 -14 71 -6 35 -17 107 -26 159 -18 106 -31 383 -21 424 4 15 21 35 39 46 47 29 90 26 130 -10z m697 -1576 c129 -142 191 -340 169 -544 -18 -181 -69 -290 -133 -290 -15 0 -70 7 -124 16 -114 19 -188 15 -392 -20 -115 -20 -154 -23 -189 -15 -85 19 -138 57 -174 124 -20 37 -22 54 -22 235 0 188 1 197 26 255 14 33 33 80 42 105 16 43 21 47 99 81 226 100 256 106 491 106 l158 0 49 -53z","17":"M2838 6883 c-85 -92 -96 -228 -39 -508 54 -260 74 -447 75 -680 2 -349 -27 -565 -103 -780 -50 -139 -53 -335 -9 -525 45 -195 71 -251 133 -282 57 -30 171 -35 255 -13 91 24 252 30 403 15 208 -22 319 4 418 96 57 54 88 103 123 192 69 177 79 441 23 642 -14 47 -54 159 -90 250 -94 238 -131 410 -156 730 -17 209 -52 303 -236 630 -42 74 -86 145 -98 158 -24 26 -83 30 -126 7 -23 -11 -61 -13 -186 -10 -142 4 -159 6 -171 24 -8 10 -35 33 -61 50 -62 41 -118 43 -155 4z m126 -109 c51 -50 69 -91 105 -239 63 -257 98 -320 246 -449 l40 -34 11 -244 c7 -134 17 -260 24 -281 10 -35 14 -38 43 -35 32 3 32 3 31 58 -1 30 -6 118 -13 195 -6 77 -13 241 -16 365 -6 221 -16 360 -36 492 -6 37 -8 76 -4 86 7 25 58 47 79 35 21 -11 166 -261 232 -398 55 -113 84 -218 84 -303 0 -43 37 -324 60 -452 11 -61 59 -217 92 -297 36 -89 64 -83 -404 -83 -412 1 -562 10 -589 37 -10 10 -10 49 0 180 25 363 8 590 -79 1071 -26 140 -29 170 -24 202 9 48 51 130 68 130 7 0 29 -16 50 -36z m312 -77 c29 -25 29 -28 53 -232 6 -44 11 -118 13 -165 3 -72 1 -85 -13 -88 -22 -4 -104 118 -131 195 -28 80 -68 242 -68 274 0 32 9 37 72 38 35 1 53 -5 74 -22z m-116 -1597 c91 -6 288 -8 476 -4 176 4 332 4 346 1 75 -19 121 -350 74 -537 -43 -170 -115 -278 -219 -330 -83 -41 -137 -45 -292 -25 -158 21 -286 14 -418 -21 -105 -29 -141 -26 -187 13 -42 35 -63 81 -88 188 -62 272 -59 336 27 575 17 47 31 90 31 97 0 6 5 24 10 38 9 24 14 26 48 21 20 -3 107 -11 192 -16z","16":"M4804 6983 c-20 -14 -42 -67 -54 -128 -8 -42 -10 -154 -5 -375 13 -692 18 -610 -55 -915 -17 -71 -40 -173 -50 -225 -22 -109 -35 -147 -118 -355 -83 -208 -106 -303 -107 -441 0 -107 1 -112 37 -185 41 -83 95 -136 188 -185 49 -26 65 -29 145 -29 86 0 93 2 172 43 112 57 143 57 248 -5 102 -59 149 -73 250 -73 119 0 177 21 246 90 66 66 84 116 101 288 15 144 2 247 -43 352 -69 162 -84 263 -76 494 4 94 12 216 19 271 17 137 17 608 0 705 -22 128 -42 213 -63 270 -40 109 -161 316 -224 384 -26 28 -29 28 -93 22 -37 -4 -115 -11 -174 -14 -79 -6 -111 -12 -126 -25 -24 -22 -27 -22 -68 10 -36 27 -126 43 -150 26z m613 -184 c67 -95 148 -257 167 -334 8 -33 20 -82 26 -110 19 -75 24 -520 10 -710 -7 -88 -15 -235 -17 -327 -3 -112 -9 -170 -17 -177 -11 -9 -105 2 -341 42 -199 34 -352 29 -474 -13 -76 -27 -86 -17 -66 65 17 66 82 357 95 420 52 255 58 347 35 530 -24 196 -19 614 8 663 22 40 38 40 71 2 42 -51 57 -118 142 -645 27 -171 52 -277 84 -362 11 -30 20 -72 20 -94 0 -50 15 -79 41 -79 21 0 34 24 44 82 3 21 25 75 49 120 58 112 71 179 70 378 0 160 -17 333 -49 505 -18 99 -19 132 -2 138 21 8 51 -18 104 -94z m-237 66 c34 -17 31 -6 67 -225 24 -141 28 -194 28 -365 0 -216 -4 -252 -35 -303 -16 -26 -24 -31 -34 -23 -22 18 -58 198 -96 471 -17 119 -38 234 -57 307 -13 52 -14 67 -3 93 24 57 73 74 130 45z m30 -1774 c69 -11 166 -27 215 -35 50 -9 106 -16 126 -16 20 0 42 -6 48 -13 6 -8 22 -53 36 -101 14 -48 36 -108 49 -134 47 -93 57 -197 32 -339 -22 -121 -62 -186 -141 -226 -106 -53 -181 -41 -350 58 -56 32 -66 35 -144 35 -80 0 -88 -2 -160 -42 -63 -34 -86 -41 -131 -42 -98 0 -209 74 -259 176 -27 53 -31 72 -31 143 0 94 22 189 74 322 66 168 77 183 148 183 17 0 61 9 97 19 36 11 77 22 91 24 61 10 185 5 300 -12z","15":"M6272 7378 c-26 -13 -53 -91 -72 -211 -17 -106 -6 -257 33 -437 7 -32 12 -134 12 -245 -1 -161 -4 -206 -24 -295 -30 -135 -37 -293 -21 -438 11 -93 11 -129 1 -191 -12 -70 -25 -118 -110 -400 -52 -168 -63 -248 -65 -451 l-1 -185 36 -75 c46 -96 104 -160 187 -209 151 -87 323 -118 440 -77 130 45 310 204 363 322 40 88 54 184 42 281 -10 73 -91 321 -175 538 l-31 80 2 185 c6 403 -37 690 -161 1070 -110 340 -132 400 -195 525 -86 171 -101 191 -165 210 -59 17 -65 17 -96 3z m97 -122 c29 -31 106 -165 138 -241 29 -69 164 -472 198 -590 34 -119 56 -232 81 -410 21 -144 26 -557 8 -575 -8 -8 -33 -7 -95 6 -66 13 -110 15 -214 10 -71 -4 -150 -9 -173 -12 l-44 -6 8 78 c5 44 6 120 4 169 -3 50 -5 158 -5 240 0 130 4 167 29 275 26 111 29 142 29 280 -1 125 -6 180 -27 285 -44 219 -45 376 -2 479 17 42 34 45 65 12z m282 -1900 c42 -8 97 -23 123 -34 47 -21 66 -49 95 -144 5 -18 28 -85 51 -148 69 -193 91 -261 96 -304 6 -44 -15 -135 -46 -196 -50 -98 -168 -206 -288 -262 -56 -27 -71 -30 -140 -27 -68 4 -89 10 -172 50 -121 58 -197 126 -233 207 -42 92 -48 147 -36 290 13 148 34 244 89 401 22 63 40 116 40 118 0 12 77 36 153 47 120 18 176 18 268 2z","14":"M7554 7721 c-40 -24 -68 -93 -82 -201 -6 -47 -16 -276 -21 -510 -6 -234 -16 -562 -22 -730 -13 -323 -12 -342 31 -585 23 -128 23 -131 7 -265 -17 -132 -55 -302 -115 -510 -62 -211 -68 -347 -20 -450 44 -96 203 -231 336 -285 225 -91 475 -36 668 147 87 83 129 145 155 230 42 138 18 261 -91 460 -151 276 -183 334 -212 380 -28 45 -29 49 -19 104 27 144 4 444 -60 784 -22 116 -24 130 -69 440 -55 386 -105 568 -211 781 -69 139 -93 169 -161 203 -62 31 -74 32 -114 7z m121 -132 c20 -23 64 -97 96 -164 105 -218 154 -404 203 -780 9 -66 23 -158 31 -205 44 -261 66 -397 80 -494 19 -136 20 -420 2 -456 l-13 -25 -216 -1 c-120 -1 -229 -5 -244 -8 -41 -11 -54 8 -54 78 0 66 -19 206 -46 351 -13 71 -15 119 -10 230 8 157 22 602 35 1075 7 234 13 327 24 363 29 90 55 99 112 36z m427 -2241 c28 -19 93 -131 224 -385 89 -172 89 -173 93 -257 4 -118 -20 -170 -137 -287 -74 -73 -104 -96 -178 -131 -85 -41 -94 -43 -195 -46 -133 -5 -187 9 -289 77 -111 73 -162 122 -201 193 -31 57 -34 70 -33 138 2 79 5 91 78 343 25 87 50 184 55 216 17 106 30 140 54 146 44 10 126 13 313 11 157 -2 196 -5 216 -18z","13":"M9086 7889 c-72 -80 -76 -103 -76 -453 0 -166 -4 -348 -10 -406 -5 -58 -14 -168 -20 -245 -6 -77 -18 -221 -27 -320 -9 -107 -17 -347 -20 -594 -4 -361 -3 -419 11 -455 15 -39 15 -46 -3 -106 -62 -208 -93 -306 -126 -395 -61 -166 -75 -224 -75 -307 0 -186 109 -332 330 -443 118 -60 189 -75 343 -75 116 0 143 3 208 25 41 14 99 42 129 62 87 58 194 174 235 255 32 65 35 78 35 160 0 147 -60 356 -165 578 -70 146 -113 275 -144 430 -21 105 -41 279 -41 354 0 103 -28 507 -40 581 -5 33 -17 112 -25 175 -21 156 -82 468 -130 665 -111 463 -123 495 -205 539 -31 17 -63 26 -93 26 -42 0 -49 -4 -91 -51z m144 -65 c17 -15 39 -43 49 -63 18 -34 60 -183 96 -336 9 -38 20 -86 25 -106 6 -20 14 -58 20 -85 5 -27 16 -80 25 -119 78 -352 121 -676 135 -1010 11 -246 25 -402 45 -502 8 -40 15 -89 15 -109 l0 -36 -57 8 c-75 12 -421 11 -494 0 l-56 -8 -12 32 c-22 64 -11 653 18 985 42 465 61 813 61 1068 0 180 1 190 25 237 22 43 46 69 67 70 3 0 21 -12 38 -26z m364 -2458 c37 -8 74 -20 82 -27 7 -8 26 -48 43 -89 16 -41 57 -129 89 -195 60 -121 74 -162 118 -334 28 -108 30 -148 10 -196 -22 -53 -86 -134 -162 -204 -163 -153 -368 -189 -590 -102 -96 37 -156 75 -236 149 -71 66 -104 120 -119 193 -13 66 -3 109 70 319 27 80 71 211 96 291 25 81 53 157 64 170 29 35 127 49 311 44 85 -3 186 -11 224 -19z","12":"M10485 7516 c-11 -16 -20 -55 -23 -97 -4 -66 15 -285 39 -437 26 -168 29 -481 5 -520 -3 -5 -15 -87 -26 -183 -19 -151 -21 -218 -18 -500 l3 -326 -47 -69 c-26 -38 -59 -96 -74 -129 -36 -84 -71 -234 -78 -340 -5 -89 6 -373 23 -572 13 -155 58 -218 172 -242 80 -17 471 -14 570 5 196 37 253 123 215 325 -12 62 -16 146 -16 300 0 194 -2 223 -24 304 -55 207 -70 318 -96 720 -21 307 -35 426 -71 607 -64 326 -147 636 -221 825 -22 60 -52 136 -64 170 -13 34 -34 78 -46 98 -27 41 -94 76 -159 83 -42 4 -49 2 -64 -22z m137 -113 c45 -50 177 -404 234 -628 44 -171 100 -431 135 -620 13 -71 37 -373 44 -549 l6 -149 -38 7 c-106 20 -200 25 -315 20 l-127 -7 -6 26 c-4 14 -5 195 -3 404 4 358 6 385 31 518 33 172 34 273 7 507 -12 95 -25 209 -30 253 -13 110 -13 228 2 243 13 13 34 4 60 -25z m345 -2031 c40 -10 77 -22 82 -27 5 -6 16 -55 26 -110 9 -55 28 -145 42 -200 22 -87 27 -132 34 -355 4 -140 11 -282 14 -315 5 -50 3 -65 -14 -92 -46 -74 -137 -93 -440 -93 -210 0 -215 0 -257 25 -68 40 -79 77 -95 305 -19 266 -18 416 4 520 30 142 123 314 184 339 41 16 198 30 278 25 39 -3 103 -13 142 -22z","11":"M11965 7569 c-62 -75 -91 -172 -100 -334 -3 -60 -10 -139 -15 -175 -33 -235 -33 -236 -60 -585 -9 -128 -37 -396 -59 -570 -14 -112 -56 -290 -101 -425 -57 -174 -96 -313 -122 -444 -20 -96 -23 -141 -22 -341 0 -212 2 -235 22 -290 37 -99 63 -129 144 -170 99 -48 170 -55 563 -52 l320 3 61 31 c102 53 147 132 166 292 29 245 -38 537 -166 729 l-45 67 21 60 c15 44 22 94 26 185 6 168 0 196 -260 1249 -74 298 -171 618 -212 700 -29 57 -78 101 -111 101 -14 0 -34 -13 -50 -31z m105 -162 c30 -63 54 -136 116 -352 49 -169 51 -177 79 -300 14 -60 32 -135 40 -165 7 -30 25 -109 40 -175 35 -159 83 -363 95 -400 66 -215 93 -465 61 -577 -20 -71 -32 -76 -88 -40 -120 77 -247 112 -411 112 -62 0 -145 -5 -184 -11 -38 -6 -74 -7 -78 -2 -5 4 6 71 25 148 18 77 38 181 45 230 6 50 15 117 20 150 13 82 47 482 55 634 4 68 13 170 21 225 8 56 20 175 29 266 18 204 21 221 48 276 30 63 51 59 87 -19z m120 -2015 c244 -86 379 -223 445 -455 40 -139 48 -199 43 -334 -3 -114 -7 -135 -31 -188 -36 -77 -51 -93 -112 -120 -49 -22 -63 -23 -340 -24 -477 -2 -558 24 -612 196 -34 110 -25 404 19 598 21 95 77 288 86 297 10 10 99 35 172 49 76 14 268 3 330 -19z","21":"M13984 7521 c-72 -33 -94 -66 -141 -216 -153 -490 -254 -950 -323 -1470 -45 -346 -50 -441 -25 -501 16 -39 15 -41 -26 -95 -60 -76 -125 -231 -163 -387 -24 -97 -22 -342 4 -467 31 -145 56 -186 135 -222 37 -16 76 -18 462 -16 410 2 423 3 473 24 118 51 170 182 170 434 0 231 -40 420 -141 665 -49 119 -52 131 -59 245 -5 82 -15 147 -33 205 -38 127 -48 212 -57 470 -9 231 -24 457 -35 502 -3 13 -10 64 -15 113 -5 50 -16 144 -24 210 -9 66 -20 187 -26 268 -5 81 -16 163 -24 181 -32 76 -75 92 -152 57z m72 -102 c14 -16 21 -44 26 -112 5 -51 12 -144 17 -207 11 -132 29 -294 36 -330 18 -91 39 -330 45 -535 10 -300 20 -392 66 -578 29 -115 35 -155 28 -175 l-10 -27 -141 3 c-176 5 -304 -11 -413 -49 -130 -46 -126 -46 -139 -9 -11 32 -8 67 19 315 6 50 15 119 20 155 28 185 51 328 56 350 3 14 9 48 13 75 7 45 23 118 92 440 11 55 37 152 56 215 19 63 41 140 49 170 20 77 64 209 81 245 14 28 60 75 74 75 3 0 14 -9 25 -21z m209 -2083 c56 -37 149 -294 190 -528 19 -107 19 -275 0 -358 -8 -36 -17 -75 -20 -87 -7 -29 -61 -90 -94 -107 -34 -17 -808 -21 -859 -5 -68 22 -107 163 -107 384 1 182 19 263 97 421 81 165 186 252 350 289 91 21 407 15 443 -9z","22":"M15388 7525 c-87 -46 -89 -51 -222 -525 -115 -409 -151 -615 -161 -910 -15 -453 -40 -627 -133 -930 -50 -161 -76 -402 -71 -665 4 -156 7 -185 24 -219 39 -78 100 -98 346 -116 322 -23 419 -11 489 61 72 74 75 96 75 499 0 308 -3 367 -19 445 -23 110 -61 188 -126 260 l-50 55 0 500 c0 276 -5 611 -11 745 -8 184 -7 293 2 437 18 286 14 319 -47 367 -33 26 -38 26 -96 -4z m68 -120 c3 -14 1 -92 -6 -173 -8 -92 -10 -219 -6 -342 13 -426 18 -1372 7 -1383 -7 -7 -48 -10 -109 -8 -54 1 -136 -3 -182 -9 -113 -16 -117 -12 -101 107 6 48 15 205 21 348 10 264 25 425 55 570 17 86 103 424 110 435 3 4 11 32 19 61 8 30 22 79 31 109 9 30 26 93 39 140 24 88 38 123 64 153 22 25 50 21 58 -8z m19 -2024 c82 -36 130 -112 161 -251 20 -93 31 -575 16 -693 -12 -88 -42 -145 -95 -177 -39 -24 -136 -26 -393 -6 -148 11 -177 16 -215 37 -67 37 -72 62 -65 311 6 226 23 354 63 493 62 217 75 255 88 269 8 7 54 19 102 25 48 7 95 14 103 16 44 11 188 -3 235 -24z","23":"M16687 7901 c-54 -35 -78 -85 -133 -278 -132 -457 -184 -708 -204 -983 -28 -396 -114 -1005 -170 -1209 -6 -20 -21 -83 -34 -141 -43 -181 -64 -271 -100 -420 -51 -215 -61 -298 -46 -373 28 -133 93 -211 246 -293 149 -80 229 -98 413 -92 132 5 154 8 228 36 167 63 258 147 305 281 17 48 20 73 15 171 -6 142 -38 260 -172 635 -53 148 -52 138 -16 395 19 127 22 186 18 330 -3 153 -28 448 -42 505 -5 22 -21 358 -35 780 -14 384 -25 545 -43 587 -8 19 -30 47 -49 62 -29 21 -46 26 -94 26 -41 0 -68 -6 -87 -19z m126 -89 c8 -9 21 -31 28 -47 13 -35 48 -634 49 -860 0 -82 5 -204 10 -270 6 -66 15 -176 20 -245 6 -69 15 -152 19 -185 25 -166 5 -624 -31 -717 -13 -36 -26 -39 -111 -28 -148 19 -382 4 -473 -30 -21 -8 -31 -8 -41 3 -11 11 -11 26 2 93 64 322 114 681 135 969 17 230 35 366 76 565 35 175 155 599 194 686 34 78 87 106 123 66z m71 -2465 c16 -11 31 -41 49 -94 14 -43 48 -141 75 -218 56 -155 94 -285 112 -387 26 -141 -29 -276 -142 -349 -62 -39 -171 -79 -273 -100 -208 -41 -524 103 -614 279 -35 69 -28 133 50 437 27 103 48 189 59 242 26 118 41 153 68 159 15 3 43 11 62 17 104 32 149 36 337 33 153 -3 198 -7 217 -19z","24":"M18294 7525 c-67 -33 -81 -50 -153 -180 -158 -287 -276 -649 -341 -1045 -19 -115 -30 -348 -30 -637 l0 -281 -38 -49 c-85 -109 -142 -218 -179 -337 -125 -413 -67 -659 183 -784 190 -95 425 -92 623 8 106 53 197 138 242 227 l34 67 -1 141 c-1 99 -7 169 -22 241 -24 117 -73 303 -101 389 -18 55 -20 96 -24 510 -2 248 -10 545 -17 660 -16 258 -17 441 -7 740 l8 230 -35 54 c-53 82 -64 85 -142 46z m77 -116 c17 -22 17 -40 8 -244 -12 -242 -9 -416 15 -910 9 -181 17 -446 17 -588 2 -302 4 -296 -80 -278 -29 6 -146 11 -260 11 -181 0 -210 2 -215 16 -10 26 -7 597 4 676 5 40 17 131 25 202 26 208 89 449 180 680 102 261 233 478 278 463 6 -2 19 -14 28 -28z m-74 -2115 c53 -8 104 -19 114 -25 19 -10 53 -109 84 -244 9 -38 20 -88 25 -110 19 -83 33 -193 34 -270 1 -70 -3 -87 -28 -137 -58 -114 -192 -215 -338 -254 -81 -21 -247 -18 -329 6 -115 35 -217 125 -267 238 -28 65 -21 232 18 377 17 66 44 147 60 181 35 72 119 203 145 224 37 31 327 39 482 14z","25":"M19513 7375 c-37 -16 -55 -48 -73 -125 -6 -30 -25 -100 -42 -155 -33 -110 -45 -144 -154 -420 -107 -273 -150 -445 -174 -700 -32 -325 -85 -668 -132 -845 -10 -41 -40 -138 -66 -215 -45 -135 -46 -144 -47 -260 0 -114 2 -123 31 -185 33 -69 76 -118 192 -218 190 -163 373 -183 602 -67 151 76 218 161 246 310 38 201 -4 422 -136 730 l-52 120 14 60 c19 87 17 417 -4 580 -47 360 -46 465 12 885 16 112 12 365 -5 408 -40 95 -126 135 -212 97z m101 -104 c58 -64 60 -196 10 -563 -16 -124 -19 -534 -3 -643 36 -259 45 -430 29 -561 -14 -113 -27 -139 -65 -130 -56 14 -250 18 -359 7 -145 -15 -149 -13 -135 69 11 61 35 258 49 390 36 353 79 534 198 825 37 90 109 283 134 360 15 46 28 95 42 157 23 99 61 133 100 89z m11 -2005 c30 -20 101 -173 165 -356 50 -142 53 -356 7 -451 -75 -155 -316 -280 -479 -248 -65 13 -124 47 -227 131 -103 85 -155 153 -176 233 -22 81 -15 129 48 325 24 74 50 160 57 190 27 113 42 160 53 167 55 34 503 41 552 9z","26":"M20471 7032 c-48 -51 -173 -297 -204 -402 -54 -180 -68 -282 -68 -475 0 -133 5 -216 21 -317 44 -284 57 -437 49 -553 -7 -113 -15 -144 -69 -300 -78 -224 -98 -416 -62 -587 25 -118 59 -187 120 -251 76 -78 204 -100 328 -56 103 36 167 48 262 49 77 0 108 -5 188 -31 172 -56 267 -30 370 103 34 44 63 97 84 155 29 77 34 103 38 213 5 155 -13 255 -70 384 -94 215 -152 366 -201 531 -14 45 -29 114 -57 260 -18 90 -31 298 -25 400 5 90 14 160 45 377 14 92 12 152 -5 266 -26 171 -65 263 -114 270 -44 7 -109 -9 -148 -35 -37 -25 -38 -25 -83 -9 -26 9 -77 16 -120 16 -41 1 -93 7 -115 15 -22 8 -60 15 -84 15 -38 0 -49 -5 -80 -38z m144 -79 c10 -10 15 -26 12 -42 -2 -14 -15 -80 -28 -146 -20 -106 -23 -151 -23 -375 -1 -241 0 -258 21 -302 12 -26 38 -63 57 -83 l36 -36 0 -127 c0 -115 2 -130 20 -150 25 -26 33 -27 54 -7 13 13 14 37 9 150 -5 117 -4 137 11 160 50 77 85 212 115 445 38 292 61 421 83 465 34 65 86 85 107 39 46 -103 65 -302 41 -435 -74 -403 -38 -841 99 -1219 17 -46 31 -90 31 -98 0 -16 9 -16 -360 8 -157 10 -300 7 -444 -11 -56 -7 -82 -7 -90 1 -7 7 -12 66 -13 158 -1 81 -6 179 -12 217 -6 39 -17 117 -26 175 -52 342 -56 447 -25 634 26 151 67 274 136 405 82 155 109 191 144 191 16 0 36 -7 45 -17z m210 -17 c50 -21 58 -44 41 -118 -8 -35 -22 -133 -31 -218 -30 -278 -83 -501 -120 -504 -5 -1 -21 22 -35 49 -22 45 -25 65 -29 195 -4 151 7 261 41 440 34 176 47 192 133 156z m145 -1837 c80 -6 187 -12 238 -13 51 -2 97 -7 101 -12 12 -14 87 -193 109 -259 47 -146 37 -316 -27 -444 -48 -94 -81 -135 -140 -173 -53 -33 -98 -36 -159 -8 -58 26 -178 50 -252 50 -71 0 -178 -23 -268 -56 -37 -14 -84 -24 -116 -24 -45 0 -61 6 -107 38 -44 30 -61 52 -92 112 -47 93 -61 173 -53 312 6 120 30 220 84 352 34 84 40 92 74 103 89 29 372 39 608 22z","27":"M22960 6910 c-10 -10 -31 -37 -44 -59 -34 -54 -43 -57 -74 -28 -74 68 -121 72 -213 15 -49 -30 -54 -31 -93 -19 -132 40 -146 30 -320 -229 -59 -89 -107 -189 -128 -270 -32 -123 -49 -216 -67 -370 -12 -96 -26 -200 -31 -230 -5 -30 -12 -73 -15 -95 -7 -41 -92 -305 -139 -426 -41 -108 -65 -257 -76 -458 -5 -102 -7 -203 -3 -226 11 -77 47 -125 148 -202 66 -50 223 -134 278 -149 68 -18 182 -18 243 1 71 22 132 18 226 -12 118 -38 211 -38 295 1 75 34 135 96 169 172 73 166 47 514 -61 809 -54 147 -66 199 -72 315 -4 79 -1 127 11 190 36 174 45 286 34 383 -15 131 -4 262 32 392 42 155 54 257 41 345 -22 138 -85 206 -141 150z m-190 -166 c22 -20 40 -44 40 -54 0 -10 -12 -37 -26 -61 -14 -24 -58 -100 -98 -169 -40 -69 -79 -125 -87 -125 -11 0 -14 29 -17 165 -1 100 2 175 8 190 7 17 33 37 73 57 34 18 63 32 64 32 2 1 21 -15 43 -35z m238 14 c22 -22 13 -137 -22 -279 -46 -183 -60 -276 -52 -346 15 -133 18 -232 8 -293 -6 -36 -20 -117 -31 -180 -25 -141 -26 -185 -4 -323 11 -67 13 -111 7 -116 -14 -15 -967 -17 -972 -2 -2 6 10 48 26 94 36 99 88 295 96 357 69 594 101 701 275 935 94 125 111 141 138 127 16 -10 18 -29 19 -229 0 -120 4 -274 8 -343 7 -110 5 -136 -14 -215 -11 -49 -44 -140 -71 -201 -59 -129 -63 -177 -17 -182 25 -3 31 4 71 85 71 142 127 341 127 451 0 24 21 69 73 155 41 67 113 190 162 272 157 266 150 256 173 233z m-42 -1650 c5 -6 58 -168 72 -223 39 -151 47 -351 18 -450 -10 -33 -33 -84 -52 -113 -60 -92 -168 -124 -289 -86 -27 8 -83 21 -124 29 -70 14 -81 13 -164 -6 -124 -29 -193 -24 -289 24 -117 57 -265 174 -295 231 -13 25 -14 52 -9 153 8 139 28 308 45 370 7 25 21 48 34 55 12 7 69 15 127 19 116 7 918 4 926 -3z","28":"M24280 6771 c-50 -27 -57 -37 -162 -226 -203 -366 -267 -504 -363 -790 -71 -212 -99 -313 -110 -409 -7 -51 -14 -66 -50 -105 -64 -71 -175 -264 -212 -371 -29 -84 -33 -107 -33 -201 0 -77 5 -125 19 -170 11 -35 24 -91 30 -123 6 -33 18 -70 27 -84 20 -30 107 -69 201 -90 72 -15 73 -15 163 13 124 38 227 33 350 -15 148 -58 256 -40 322 55 38 55 76 198 87 322 13 145 -1 273 -43 408 -31 101 -43 161 -67 345 -11 89 -11 342 1 475 10 110 15 150 44 345 35 231 48 359 44 441 -5 101 -18 126 -86 170 -54 34 -109 38 -162 10z m114 -92 c36 -28 56 -70 56 -116 0 -35 -16 -166 -55 -448 -40 -285 -47 -361 -52 -515 -3 -133 0 -191 16 -300 13 -86 17 -138 10 -145 -6 -6 -24 -5 -52 3 -166 47 -250 65 -401 83 -94 12 -177 27 -184 34 -11 10 -11 25 -2 76 17 102 40 186 72 273 16 45 45 131 65 191 42 130 116 298 200 450 170 310 207 373 238 403 41 38 53 39 89 11z m-501 -1529 c251 -33 478 -102 514 -157 32 -48 64 -203 65 -308 1 -169 -46 -340 -108 -394 -46 -41 -94 -41 -199 0 -107 42 -256 51 -355 23 -94 -27 -182 -24 -252 8 -63 29 -59 22 -108 214 -35 139 -25 221 46 367 98 203 148 267 208 267 19 0 104 -9 189 -20z","48":"M1508 3735 c-134 -37 -291 -179 -339 -306 -23 -59 -25 -195 -5 -249 7 -19 48 -129 90 -245 43 -115 88 -237 101 -270 52 -132 51 -119 16 -266 -18 -74 -36 -154 -42 -179 -69 -311 -118 -454 -198 -582 -94 -147 -101 -161 -101 -211 0 -55 20 -101 52 -118 43 -23 190 15 278 71 52 33 71 32 88 -6 16 -34 71 -58 115 -50 54 10 154 80 242 171 127 131 212 285 322 585 86 236 138 369 163 420 15 30 30 69 34 85 4 17 47 111 96 210 49 99 108 232 131 295 41 109 43 121 43 225 0 98 -3 116 -26 166 -62 135 -192 219 -338 219 -30 0 -93 -12 -139 -25 -120 -35 -179 -33 -269 10 -136 65 -215 78 -314 50z m233 -121 c138 -63 200 -72 309 -44 164 42 189 45 252 26 87 -25 169 -105 199 -193 26 -80 23 -116 -27 -262 -49 -145 -203 -461 -239 -489 -27 -22 -32 -22 -387 -22 l-359 0 -22 23 c-31 30 -237 594 -237 646 0 96 121 255 241 316 110 57 145 57 270 -1z m454 -1084 c3 -5 -17 -71 -45 -147 -28 -76 -71 -194 -96 -263 -112 -307 -233 -498 -397 -628 -91 -72 -100 -76 -131 -51 -33 26 -34 62 -2 103 54 71 131 252 236 554 33 95 29 132 -14 132 -32 0 -39 -11 -71 -110 -42 -128 -142 -378 -176 -437 -83 -145 -180 -233 -294 -269 -44 -14 -57 -15 -69 -4 -24 19 -20 29 30 105 89 134 156 300 204 501 11 49 26 114 34 144 7 30 19 82 27 115 33 153 59 249 71 256 19 12 685 11 693 -1z","47":"M3851 3780 c-30 -4 -87 -25 -127 -45 -84 -43 -107 -43 -219 -1 -182 67 -373 9 -469 -143 -57 -89 -77 -254 -57 -446 15 -135 22 -167 73 -324 36 -113 40 -132 36 -200 -6 -95 -30 -165 -123 -361 -84 -178 -100 -224 -117 -335 -24 -151 -17 -288 31 -650 25 -187 34 -217 72 -249 25 -22 41 -26 89 -26 33 0 70 5 84 11 54 25 83 147 89 379 4 141 9 178 32 255 30 104 90 235 168 367 30 51 73 130 96 176 23 45 50 91 61 102 49 49 114 6 156 -101 43 -114 28 -212 -69 -454 -22 -55 -52 -134 -68 -175 -15 -41 -43 -114 -63 -163 -65 -156 -71 -313 -16 -369 25 -25 36 -28 90 -28 l62 0 72 72 c177 179 284 344 367 564 103 273 125 592 69 985 -10 65 -9 68 29 150 22 46 47 107 56 134 9 28 43 109 75 181 68 152 83 226 68 344 -21 173 -116 292 -267 335 -60 17 -212 26 -280 15z m192 -90 c83 -12 130 -35 183 -92 71 -74 111 -181 98 -267 -3 -25 -32 -107 -63 -181 -32 -74 -79 -190 -106 -258 -41 -103 -54 -126 -79 -140 -27 -15 -80 -17 -446 -19 -228 -2 -425 -1 -437 2 -15 4 -26 19 -36 53 -9 26 -27 80 -42 120 -58 161 -79 432 -42 538 28 80 69 136 131 179 57 39 60 40 145 40 74 -1 94 -5 146 -30 48 -23 74 -29 130 -29 63 0 77 4 138 38 104 59 145 65 280 46z m41 -1062 c35 -58 49 -479 20 -656 -53 -330 -178 -567 -440 -830 -28 -28 -59 -52 -68 -52 -23 0 -36 32 -36 87 1 60 10 96 53 203 169 420 217 572 217 690 -1 104 -38 230 -82 277 -47 51 -175 67 -232 30 -14 -9 -54 -74 -94 -149 -38 -73 -95 -179 -125 -235 -65 -119 -121 -258 -143 -350 -8 -36 -19 -148 -24 -249 -13 -256 -34 -320 -100 -299 -30 9 -48 52 -59 141 -6 43 -18 129 -27 189 -9 61 -18 179 -21 264 -8 225 7 288 122 526 76 158 106 239 126 342 6 35 17 67 24 73 7 6 161 11 406 13 217 1 411 3 431 5 30 1 41 -3 52 -20z","46":"M5032 3710 c-110 -39 -167 -90 -222 -199 -41 -81 -50 -130 -50 -272 0 -198 36 -372 110 -535 30 -66 31 -75 32 -204 1 -157 -9 -219 -64 -390 -73 -228 -107 -373 -139 -593 -17 -118 -21 -191 -21 -432 0 -281 7 -378 34 -429 9 -16 19 -18 75 -13 42 3 75 12 92 24 33 24 67 92 81 163 40 195 114 466 182 665 79 230 240 573 283 601 27 18 57 7 75 -26 14 -27 28 -156 39 -370 7 -117 17 -202 30 -255 11 -44 21 -96 21 -115 0 -55 -35 -178 -75 -265 -52 -113 -92 -224 -100 -276 -9 -63 26 -128 78 -148 65 -24 107 -4 212 103 72 72 100 110 137 181 25 50 51 106 56 125 57 195 79 314 121 665 29 234 35 407 21 602 l-12 171 26 64 c123 309 166 595 121 817 -41 201 -110 297 -240 332 -63 18 -190 6 -266 -25 -88 -35 -173 -35 -247 -1 -89 41 -150 55 -246 55 -64 -1 -107 -6 -144 -20z m345 -119 c131 -53 176 -54 319 -6 128 43 189 46 249 10 69 -40 120 -121 150 -236 20 -76 23 -274 5 -370 -30 -163 -117 -404 -150 -414 -9 -3 -52 4 -96 15 -232 60 -409 87 -664 100 -103 5 -195 13 -204 16 -21 8 -56 77 -84 164 -40 123 -56 229 -56 365 0 147 15 203 81 282 79 97 141 125 263 119 71 -3 102 -10 187 -45z m83 -1020 c75 -12 176 -30 225 -40 50 -11 115 -25 145 -32 69 -14 107 -34 114 -56 27 -94 36 -415 16 -583 -62 -513 -99 -693 -175 -847 -36 -73 -64 -112 -132 -183 -71 -75 -91 -90 -112 -88 -23 3 -26 8 -29 44 -2 33 9 69 54 170 74 167 93 230 100 334 5 63 2 104 -11 155 -9 39 -23 158 -30 265 -20 274 -34 400 -48 429 -17 35 -62 55 -127 55 -88 1 -105 -17 -200 -212 -147 -300 -231 -537 -332 -946 -50 -203 -67 -256 -87 -275 l-24 -25 -18 22 c-50 63 -45 499 11 857 13 82 70 303 119 455 55 173 71 264 71 394 0 76 4 116 13 125 17 19 282 8 457 -18z","45":"M6990 3706 c-68 -24 -177 -85 -341 -192 -107 -69 -129 -99 -149 -191 -12 -53 5 -201 35 -323 9 -36 23 -94 31 -129 8 -35 16 -67 19 -71 3 -5 14 -41 25 -82 19 -72 37 -134 100 -333 88 -282 164 -623 211 -945 28 -196 27 -522 -2 -680 -29 -154 -33 -215 -19 -251 33 -78 190 -90 256 -20 54 57 168 357 210 550 50 229 65 339 84 616 5 83 18 233 27 335 10 102 18 289 19 415 l2 230 36 76 c19 42 61 152 92 245 51 153 57 177 58 259 1 84 -2 95 -36 167 -39 83 -95 144 -203 225 -155 116 -312 150 -455 99z m275 -105 c152 -69 292 -213 334 -342 14 -44 1 -106 -63 -294 -60 -175 -99 -260 -131 -281 -16 -11 -68 -21 -143 -30 -64 -7 -178 -20 -252 -29 -74 -9 -164 -19 -200 -22 -65 -5 -66 -5 -79 23 -8 16 -17 43 -22 59 -4 17 -21 77 -39 135 -49 167 -90 370 -90 448 0 48 4 57 41 97 23 25 59 55 80 67 21 13 82 51 136 84 172 108 221 126 311 118 29 -2 82 -17 117 -33z m128 -1046 c33 -33 30 -247 -9 -633 -8 -78 -14 -174 -14 -214 0 -131 -42 -451 -80 -613 -37 -155 -70 -253 -124 -373 -24 -53 -47 -107 -50 -118 -18 -61 -86 -93 -121 -57 -19 18 -18 32 9 198 35 213 28 610 -14 820 -5 28 -24 122 -41 210 -49 254 -100 462 -160 649 -13 40 -16 63 -9 71 6 7 67 17 142 24 73 6 165 16 203 22 39 5 97 14 130 18 92 13 122 12 138 -4z","44":"M8471 3640 c-30 -11 -84 -37 -120 -59 -36 -21 -95 -53 -131 -71 -87 -44 -183 -113 -218 -158 -52 -66 -62 -95 -62 -179 0 -75 2 -81 51 -168 81 -143 114 -249 150 -475 6 -41 24 -133 39 -205 47 -217 49 -234 64 -400 14 -155 24 -338 46 -845 14 -321 26 -427 57 -514 33 -93 55 -116 107 -116 90 0 115 35 152 211 67 325 74 374 85 642 5 144 16 302 24 352 8 49 23 149 35 220 11 72 25 162 30 201 5 39 13 100 19 135 5 35 13 118 17 184 6 100 12 132 38 200 38 93 50 134 72 230 21 96 44 348 38 415 -21 219 -68 311 -199 386 -43 25 -61 29 -145 31 -76 3 -106 -1 -149 -17z m251 -102 c65 -34 85 -58 126 -145 26 -56 27 -64 26 -223 0 -108 -6 -195 -17 -250 -33 -171 -101 -357 -141 -386 -37 -26 -188 -18 -323 16 -192 50 -183 43 -203 155 -19 113 -50 203 -112 324 -68 134 -73 168 -29 228 45 61 102 103 276 198 190 104 213 113 284 114 41 1 66 -6 113 -31z m-372 -1074 c69 -21 114 -28 235 -33 l150 -6 -2 -30 c-4 -54 -33 -288 -47 -375 -57 -353 -74 -512 -81 -750 -2 -102 -11 -223 -20 -270 -18 -100 -52 -269 -66 -322 -29 -120 -29 -119 -52 -116 -32 4 -65 96 -77 215 -9 94 -22 359 -40 803 -12 308 -39 537 -86 738 -30 128 -31 173 -5 172 3 0 44 -12 91 -26z","43":"M9720 3757 c-30 -13 -110 -59 -177 -103 -67 -43 -150 -97 -185 -119 -117 -74 -143 -144 -135 -369 6 -161 21 -236 72 -356 15 -36 42 -103 61 -150 l33 -85 1 -305 c1 -168 5 -339 11 -380 8 -68 15 -313 37 -1400 8 -382 10 -397 64 -434 71 -50 188 25 249 159 53 118 138 393 172 560 20 94 52 247 73 340 20 94 47 220 60 280 68 314 97 532 83 640 -13 102 -10 230 6 294 9 33 33 98 54 143 75 164 123 350 150 584 23 196 7 296 -75 461 -72 144 -104 181 -196 224 -68 32 -81 34 -188 37 -102 2 -121 0 -170 -21z m260 -78 c90 -24 155 -87 224 -219 61 -117 68 -155 63 -308 -5 -156 -26 -297 -62 -425 -30 -103 -111 -283 -131 -291 -7 -3 -60 -1 -116 4 -57 6 -173 15 -258 21 -170 11 -208 21 -215 53 -2 11 -9 48 -16 81 -6 33 -33 112 -59 175 -70 168 -77 187 -94 274 -20 100 -20 218 -1 284 20 65 60 112 133 153 31 18 105 63 164 100 59 37 122 76 140 85 61 33 138 37 228 13z m-255 -1314 c266 -21 315 -27 321 -37 3 -5 8 -116 10 -246 5 -211 3 -251 -16 -362 -30 -177 -35 -199 -86 -415 -22 -92 -43 -193 -105 -490 -30 -147 -113 -409 -168 -529 -32 -71 -85 -136 -110 -136 -31 0 -41 45 -41 188 0 75 -5 223 -10 327 -6 105 -11 336 -11 515 -1 179 -8 422 -15 540 -8 118 -17 307 -21 420 -5 186 -4 207 11 223 21 20 7 20 241 2z","42":"M11132 3739 c-45 -5 -115 -18 -155 -30 -39 -11 -104 -29 -143 -40 -102 -29 -184 -78 -211 -124 -31 -55 -36 -111 -24 -249 6 -66 15 -186 21 -266 20 -273 47 -404 126 -616 33 -91 33 -92 44 -350 5 -143 17 -349 25 -459 8 -110 19 -263 25 -340 5 -77 18 -268 29 -425 11 -157 23 -352 26 -435 4 -100 11 -162 22 -186 30 -73 117 -106 164 -64 28 26 95 140 121 207 30 78 55 190 67 303 17 155 52 719 72 1150 29 640 23 595 102 787 40 96 51 142 72 293 9 61 21 144 28 185 7 42 12 168 12 285 0 177 -3 217 -18 256 -44 114 -148 145 -405 118z m258 -97 c21 -10 45 -34 60 -62 24 -42 25 -53 25 -195 0 -143 -5 -194 -39 -455 -17 -124 -46 -231 -95 -349 -17 -40 -36 -91 -41 -112 -6 -22 -21 -46 -33 -53 -29 -19 -259 -41 -331 -32 -31 4 -65 15 -76 24 -31 26 -86 174 -114 307 -26 127 -50 356 -61 586 -8 177 -2 195 87 237 187 90 532 148 618 104z m-125 -1537 c-1 -219 -20 -603 -65 -1260 -17 -249 -49 -382 -123 -520 -39 -73 -69 -85 -85 -33 -6 18 -13 91 -17 163 -12 262 -24 464 -39 650 -8 105 -20 260 -26 345 -6 85 -15 196 -20 247 -6 50 -10 138 -10 195 0 57 -5 162 -10 233 -5 72 -7 138 -4 147 4 15 23 18 137 21 73 2 161 3 197 3 l65 -1 0 -190z","41":"M12299 3756 c-2 -3 -45 -10 -94 -17 -50 -6 -127 -25 -172 -41 -180 -65 -243 -175 -243 -425 0 -154 22 -274 74 -397 77 -182 80 -196 106 -516 5 -69 14 -163 20 -210 14 -123 29 -417 35 -715 6 -289 13 -376 56 -710 11 -88 43 -162 92 -213 59 -62 102 -38 175 98 105 196 132 360 153 925 12 315 19 422 39 570 14 101 8 288 -11 347 -10 32 -9 41 10 73 36 61 78 168 100 256 19 74 23 131 33 465 l11 381 -24 44 c-38 70 -86 88 -235 89 -66 0 -123 -2 -125 -4z m243 -103 c58 -29 59 -39 49 -405 -11 -370 -19 -428 -78 -565 -23 -55 -47 -94 -71 -114 l-36 -32 -160 5 c-95 3 -170 9 -183 16 -24 13 -36 47 -53 146 -11 69 -17 88 -84 249 -44 108 -61 230 -52 371 8 115 20 148 72 206 68 76 132 98 364 130 139 19 185 17 232 -7z m-259 -1208 c114 -1 151 -5 157 -16 5 -7 14 -45 21 -83 11 -67 10 -98 -11 -296 -9 -89 -31 -448 -50 -810 -14 -288 -33 -385 -106 -537 -50 -106 -68 -116 -104 -58 -49 80 -75 362 -100 1104 -6 168 -15 336 -20 375 -41 317 -38 344 29 330 20 -4 103 -8 184 -9z","31":"M13343 3782 c-23 -9 -54 -27 -69 -40 -49 -44 -56 -79 -70 -357 -27 -538 -17 -611 116 -775 54 -69 58 -83 34 -150 -25 -71 -30 -275 -9 -385 26 -137 34 -259 44 -645 9 -318 12 -368 35 -480 28 -137 51 -213 90 -291 35 -68 93 -138 123 -145 53 -14 112 37 155 133 19 42 20 69 23 342 1 192 8 340 18 421 8 69 20 184 26 255 7 72 16 171 21 222 6 50 10 134 10 187 0 206 73 565 180 886 56 168 64 211 64 355 0 110 -4 141 -23 200 -31 91 -47 122 -79 152 -51 47 -95 62 -238 78 -77 9 -181 25 -232 36 -112 23 -164 23 -219 1z m147 -82 c39 -11 193 -35 324 -49 105 -12 141 -32 188 -104 38 -59 58 -139 58 -232 0 -88 -18 -172 -69 -328 -23 -67 -56 -178 -75 -247 -19 -69 -37 -133 -41 -143 -10 -24 -46 -31 -129 -22 -39 4 -114 10 -166 14 -110 7 -126 15 -192 93 -91 106 -112 173 -113 348 0 194 22 548 37 595 23 70 92 100 178 75z m257 -1216 c102 -8 109 -14 95 -92 -14 -72 -30 -243 -42 -437 -5 -82 -16 -215 -25 -295 -34 -322 -45 -514 -44 -715 1 -166 -2 -217 -13 -245 -18 -42 -52 -74 -71 -67 -15 6 -94 151 -108 200 -44 150 -69 371 -70 622 0 257 -13 470 -35 590 -36 199 -24 385 28 437 21 21 38 21 285 2z","32":"M14455 3716 c-57 -25 -74 -57 -102 -184 -21 -101 -24 -474 -5 -577 38 -197 87 -357 166 -538 l47 -108 -22 -87 c-29 -112 -33 -345 -7 -432 26 -87 41 -191 35 -245 -2 -27 -11 -104 -18 -170 -16 -141 -17 -414 -2 -535 12 -92 25 -157 82 -410 49 -212 64 -248 123 -280 41 -21 50 -23 84 -12 22 7 47 24 58 38 26 37 46 119 46 194 0 36 7 130 15 210 9 80 20 188 26 240 5 52 21 194 35 315 36 307 53 500 79 880 8 121 19 240 24 265 5 25 15 74 21 110 7 36 28 126 46 200 66 265 86 385 91 552 11 343 -32 432 -228 468 -35 7 -118 28 -184 47 -223 64 -260 73 -320 72 -33 0 -73 -6 -90 -13z m315 -133 c80 -25 182 -51 228 -58 112 -18 141 -37 172 -110 23 -55 25 -72 25 -215 0 -174 -9 -230 -85 -545 -26 -110 -51 -215 -55 -233 -12 -60 -18 -62 -215 -62 -155 0 -180 2 -198 18 -25 21 -87 161 -135 302 -88 259 -114 494 -83 740 15 116 37 183 70 206 31 22 103 11 276 -43z m249 -1327 c9 -11 10 -33 2 -91 -6 -42 -11 -121 -11 -176 0 -55 -5 -142 -10 -192 -6 -51 -19 -182 -30 -292 -11 -110 -24 -236 -30 -280 -18 -156 -39 -341 -45 -400 -3 -33 -10 -103 -15 -155 -6 -52 -15 -158 -21 -234 -10 -140 -26 -196 -54 -196 -25 0 -47 47 -81 178 -102 386 -130 629 -98 867 27 201 25 405 -5 510 -29 103 -38 229 -21 303 41 183 26 172 239 172 134 0 171 -3 180 -14z","33":"M15900 3807 c-127 -29 -259 -127 -313 -233 -55 -108 -62 -158 -62 -429 0 -311 11 -366 125 -614 l62 -134 9 -216 c5 -119 11 -227 14 -241 2 -14 16 -95 30 -180 23 -146 34 -223 56 -384 18 -136 60 -373 85 -481 61 -262 129 -454 246 -703 50 -105 133 -157 198 -122 27 15 61 66 71 108 5 20 4 235 -1 477 -10 443 -8 494 25 700 28 175 35 314 24 477 -20 318 -22 400 -9 517 14 137 14 134 80 324 87 251 112 354 140 558 17 126 1 191 -60 242 -17 15 -46 31 -65 36 -45 12 -82 39 -185 135 -113 105 -230 164 -340 171 -43 3 -99 -1 -130 -8z m252 -120 c64 -36 136 -94 218 -174 25 -25 77 -60 117 -79 40 -19 82 -47 94 -62 19 -24 21 -35 15 -107 -7 -85 -28 -204 -53 -295 -51 -190 -150 -458 -174 -471 -33 -17 -168 -21 -374 -11 -110 6 -207 13 -215 16 -22 9 -96 151 -126 242 -51 156 -66 363 -43 585 12 125 36 182 107 260 50 55 144 114 207 130 16 5 60 7 97 5 54 -3 78 -10 130 -39z m-24 -1295 l243 -7 7 -275 c9 -390 7 -584 -7 -670 -33 -206 -36 -257 -35 -580 0 -184 4 -398 8 -475 7 -118 6 -146 -7 -178 -31 -74 -72 -43 -142 108 -127 272 -182 445 -240 745 -46 246 -56 310 -95 630 -4 36 -18 119 -30 185 -24 131 -43 500 -27 522 6 8 22 11 46 7 20 -3 145 -9 279 -12z","34":"M17270 3751 c-165 -54 -315 -245 -366 -466 -22 -97 -12 -176 37 -297 51 -124 113 -323 128 -413 7 -38 17 -86 21 -105 22 -87 50 -298 50 -377 0 -49 -5 -139 -10 -201 -13 -145 -1 -222 57 -371 64 -164 83 -279 83 -510 0 -150 4 -199 18 -252 33 -120 98 -209 185 -255 50 -26 57 -27 87 -14 24 10 39 27 56 64 23 48 24 62 24 261 0 182 14 379 45 675 12 110 75 498 97 600 8 33 13 137 13 257 0 195 1 202 23 225 12 14 22 28 22 32 0 5 43 97 95 205 109 227 129 293 123 402 -4 60 -10 86 -31 122 -34 58 -130 140 -233 198 -43 26 -124 72 -179 103 -55 32 -122 72 -149 89 -38 25 -60 32 -110 34 -33 1 -72 -1 -86 -6z m131 -104 c61 -41 202 -124 267 -156 148 -75 255 -160 294 -235 37 -72 25 -125 -79 -341 -50 -105 -96 -204 -103 -222 -20 -54 -42 -64 -207 -100 -240 -51 -309 -59 -363 -42 -50 16 -42 -2 -99 213 -17 65 -54 174 -81 242 -58 143 -63 196 -29 297 60 181 233 367 340 367 14 0 41 -10 60 -23z m297 -1160 c34 -70 26 -242 -22 -512 -80 -440 -106 -677 -112 -1030 -3 -154 -10 -295 -16 -312 -14 -46 -42 -43 -90 9 -86 93 -99 143 -108 423 -9 244 -22 338 -66 454 -83 217 -85 235 -62 469 11 112 10 137 -10 279 -16 115 -19 160 -11 170 8 9 37 13 88 14 50 0 126 12 221 34 80 19 152 33 160 32 8 -1 21 -15 28 -30z","35":"M18697 3746 c-21 -8 -57 -26 -80 -41 -55 -36 -230 -216 -273 -280 -72 -107 -80 -241 -24 -399 66 -189 115 -464 140 -796 6 -74 13 -166 16 -205 6 -75 28 -268 44 -375 15 -109 30 -221 40 -315 24 -216 69 -457 101 -545 51 -139 132 -266 189 -295 66 -34 147 -9 180 55 36 70 43 148 24 253 -17 91 -27 171 -40 320 -14 154 27 479 101 807 96 423 105 469 105 536 0 48 8 70 64 177 64 122 104 214 190 444 71 189 64 273 -30 346 -184 143 -427 291 -519 316 -55 15 -182 13 -228 -3z m178 -80 c59 -15 87 -29 220 -109 120 -72 321 -221 336 -249 17 -32 7 -67 -76 -278 -87 -221 -178 -405 -212 -427 -32 -21 -167 -9 -313 28 -319 80 -323 82 -342 120 -9 19 -24 68 -34 109 -9 41 -32 122 -50 179 -52 158 -53 191 -9 280 27 56 58 97 123 164 105 107 169 155 236 179 62 21 59 21 121 4z m-240 -1087 c190 -56 309 -79 405 -79 48 0 71 -4 80 -15 18 -21 8 -98 -34 -280 -52 -226 -113 -535 -132 -670 -27 -190 -25 -511 5 -691 15 -90 21 -155 17 -179 -7 -37 -45 -85 -67 -85 -23 0 -88 83 -129 164 -42 86 -81 221 -99 347 -21 142 -40 285 -51 379 -6 52 -21 169 -34 260 -14 91 -29 221 -35 290 -6 69 -20 223 -32 343 -11 119 -17 222 -14 227 9 15 43 12 120 -11z","36":"M20740 3686 c-68 -21 -132 -52 -175 -86 -50 -40 -101 -40 -186 0 -171 79 -334 80 -443 3 -124 -88 -173 -239 -155 -480 11 -148 20 -196 77 -390 28 -92 52 -181 55 -198 3 -16 17 -93 31 -169 22 -119 26 -168 26 -327 0 -102 -5 -244 -10 -314 -11 -137 -2 -300 25 -448 41 -222 151 -424 317 -583 102 -97 135 -114 184 -91 44 21 74 71 74 123 0 31 -10 56 -42 105 -90 139 -118 250 -118 477 0 95 5 203 10 240 6 37 14 139 19 227 7 136 11 167 31 205 23 47 58 90 72 90 16 0 78 -109 127 -222 60 -138 110 -293 172 -532 94 -363 175 -597 240 -688 25 -35 76 -38 124 -8 61 38 69 60 77 220 4 80 10 189 14 244 7 106 -1 173 -42 336 -113 454 -194 858 -210 1050 -7 77 -6 78 45 197 89 208 116 344 107 538 -11 246 -81 388 -225 454 -82 38 -156 47 -221 27z m166 -105 c98 -45 162 -146 189 -302 20 -111 19 -168 -4 -281 -30 -146 -111 -359 -143 -370 -7 -3 -47 -1 -88 4 -121 16 -330 2 -493 -32 -170 -36 -261 -57 -303 -71 -47 -14 -62 -3 -80 60 -8 31 -35 126 -59 211 -25 85 -50 198 -56 250 -15 124 -5 288 20 345 27 61 88 124 146 151 85 40 141 32 324 -45 116 -49 191 -39 300 39 83 61 171 75 247 41z m-76 -1041 c36 -6 72 -13 81 -16 24 -7 37 -46 49 -144 16 -137 28 -209 49 -310 10 -52 26 -131 35 -175 9 -44 21 -98 26 -120 5 -22 16 -69 24 -105 8 -36 34 -141 58 -235 l43 -170 -3 -244 c-3 -253 -10 -301 -48 -301 -35 0 -149 302 -224 595 -50 195 -71 268 -117 410 -36 111 -136 334 -186 413 -24 37 -31 42 -66 42 -76 0 -155 -86 -187 -202 -8 -29 -19 -138 -24 -243 -6 -104 -14 -230 -20 -280 -14 -126 -12 -201 6 -324 20 -138 45 -223 95 -317 40 -74 44 -104 15 -104 -7 0 -58 47 -113 103 -82 87 -107 121 -155 213 -104 202 -145 390 -134 619 18 374 18 510 2 635 l-17 125 22 18 c12 9 28 17 36 17 8 0 63 12 122 26 144 34 246 53 371 69 135 16 181 17 260 5z","37":"M21754 3716 c-49 -24 -110 -62 -135 -84 -88 -78 -137 -214 -125 -344 8 -92 34 -156 118 -289 147 -236 172 -316 149 -489 -6 -47 -20 -155 -31 -240 -25 -191 -25 -237 0 -370 20 -114 42 -177 118 -345 67 -147 114 -230 238 -415 125 -188 144 -205 234 -205 113 0 155 46 154 167 l0 78 -136 277 c-75 153 -141 299 -147 325 -25 107 -8 324 32 419 26 64 78 84 135 55 51 -26 228 -305 277 -435 8 -23 21 -58 29 -78 53 -142 96 -376 96 -525 0 -103 2 -112 34 -176 48 -96 64 -107 145 -107 78 0 116 16 137 58 19 35 33 211 41 492 8 317 -21 476 -133 714 -83 175 -88 197 -88 371 -1 170 8 220 69 385 58 158 70 219 70 350 -1 113 -2 124 -31 185 -62 132 -198 228 -356 251 -69 10 -84 9 -146 -10 -45 -13 -89 -36 -127 -66 -32 -24 -61 -43 -64 -41 -3 1 -44 26 -91 53 -117 70 -161 83 -279 83 -95 0 -100 -1 -187 -44z m321 -70 c28 -13 88 -48 134 -79 110 -74 130 -75 202 -6 30 28 77 62 106 76 47 21 57 23 113 14 218 -35 356 -215 320 -418 -6 -36 -33 -133 -61 -216 -27 -84 -58 -191 -67 -240 -10 -48 -23 -92 -28 -97 -19 -19 -217 -33 -389 -26 -207 7 -455 36 -537 62 -9 3 -26 30 -37 60 -28 75 -74 163 -133 258 -92 146 -118 211 -118 292 0 59 5 81 30 131 53 106 168 193 282 212 68 12 120 5 183 -23z m-35 -1058 c119 -17 193 -21 410 -22 146 -1 279 2 297 6 48 11 63 -10 63 -87 0 -104 24 -181 110 -360 31 -64 60 -144 79 -224 30 -120 31 -130 31 -355 0 -207 -11 -411 -25 -473 -7 -30 -48 -56 -75 -48 -35 11 -80 114 -80 183 0 137 -45 386 -101 555 -61 186 -208 455 -296 543 -76 76 -246 66 -289 -17 -54 -105 -79 -348 -53 -508 13 -82 56 -186 176 -428 110 -220 121 -266 80 -307 -14 -14 -33 -26 -42 -26 -70 0 -332 400 -445 679 -86 214 -97 332 -59 626 12 88 24 184 28 213 6 46 21 71 41 72 3 0 71 -10 150 -22z","38":"M24141 3775 c-30 -14 -74 -44 -98 -65 -23 -22 -51 -40 -60 -40 -10 0 -43 12 -73 26 -87 41 -139 54 -220 54 -132 -1 -217 -63 -292 -217 -43 -87 -43 -89 -46 -213 -6 -186 3 -212 168 -513 49 -90 105 -244 160 -442 21 -77 50 -179 63 -226 50 -178 146 -364 277 -538 128 -169 203 -248 242 -253 44 -7 96 6 122 31 12 12 28 21 34 21 7 0 56 -25 110 -55 109 -60 167 -75 227 -55 48 16 75 60 75 123 0 52 -11 79 -75 177 -99 152 -167 319 -204 495 -30 147 -61 371 -61 441 0 131 48 321 113 449 29 58 38 88 72 246 30 139 31 164 7 256 -29 109 -103 204 -197 255 -131 69 -254 85 -344 43z m254 -104 c82 -38 151 -106 191 -187 23 -47 26 -62 21 -126 -8 -117 -43 -257 -90 -359 -50 -106 -85 -217 -94 -291 -3 -27 -12 -55 -19 -62 -19 -19 -682 -23 -706 -4 -9 7 -31 49 -48 93 -17 44 -65 141 -105 215 -86 158 -89 164 -110 265 -13 62 -13 88 -4 138 24 136 128 283 215 306 53 14 91 6 184 -37 77 -36 162 -51 216 -38 14 4 49 29 78 55 28 26 60 53 71 60 35 20 124 8 200 -28z m3 -1144 c7 -7 16 -67 22 -133 31 -361 124 -661 274 -889 25 -38 46 -77 46 -86 0 -19 -25 -49 -41 -49 -14 0 -122 56 -182 94 -66 42 -83 62 -101 114 -9 24 -40 95 -69 160 -129 279 -155 348 -177 464 -11 56 -26 73 -55 62 -22 -9 -20 -103 4 -195 19 -74 112 -302 169 -414 57 -115 65 -182 23 -204 -14 -8 -25 -6 -45 10 -44 34 -185 209 -257 317 -117 176 -155 272 -255 635 -18 69 -23 101 -16 110 16 19 645 23 660 4z"};
+    const ODONTO_CRONOS_ORIGINAL_BOXES = {"18":[120.1,103.9,270.4,397.2],"17":[257.8,93.8,431.3,406.7],"16":[427.5,86.0,595.7,403.0],"15":[588.5,46.8,724.5,401.7],"14":[714.4,11.4,867.3,404.6],"13":[860.0,0,1016.0,405.0],"12":[1012.1,31.8,1142.4,405.6],"11":[1134.5,26.0,1293.1,396.0],"21":[1314.2,30.4,1469.0,399.5],"22":[1465.6,30.5,1587.5,400.3],"23":[1584.5,0,1735.2,403.4],"24":[1728.8,29.6,1877.5,402.3],"25":[1868.5,44.7,2007.4,407.1],"26":[1996.2,78.5,2167.3,409.3],"27":[2161.3,89.4,2332.9,402.5],"28":[2321.0,106.1,2470.2,399.8],"48":[89.0,409.7,273.4,685.4],"47":[268.4,405.9,455.3,714.0],"46":[453.8,413.0,636.0,752.3],"45":[634.8,410.3,782.5,772.1],"44":[780.0,420.0,911.0,769.0],"43":[907.5,408.0,1051.2,800],"42":[1044.7,409.4,1169.5,800],"41":[1165.0,410.0,1282.3,769.0],"31":[1303.7,405.6,1427.4,764.0],"32":[1418.9,413.0,1542.8,800],"33":[1538.5,404.2,1683.7,800],"34":[1674.2,410.2,1820.4,766.3],"35":[1812.4,409.6,1968.5,767.9],"36":[1962.3,415.4,2143.3,756.0],"37":[2134.2,410.0,2326.5,720.5],"38":[2320.6,404.3,2497.0,687.0]};
+    const ODONTO_CRONOS_FILL_PATHS = {"18":["M154.0 299.0 L147.0 317.0 L146.0 346.0 L147.0 356.0 L155.0 367.0 L162.0 370.0 L176.0 370.0 L205.0 365.0 L229.0 368.0 L238.0 366.0 L245.0 344.0 L245.0 323.0 L237.0 300.0 L225.0 285.0 L187.0 285.0 Z","M151.0 129.0 L146.0 134.0 L146.0 153.0 L157.0 226.0 L158.0 278.0 L187.0 271.0 L216.0 270.0 L218.0 265.0 L186.0 181.0 L161.0 133.0 Z"],"17":["M294.0 291.0 L284.0 322.0 L283.0 340.0 L288.0 365.0 L296.0 379.0 L303.0 381.0 L333.0 375.0 L372.0 378.0 L382.0 375.0 L394.0 364.0 L403.0 343.0 L405.0 328.0 L404.0 311.0 L398.0 293.0 Z","M290.0 124.0 L286.0 135.0 L297.0 203.0 L296.0 275.0 L392.0 277.0 L382.0 245.0 L374.0 183.0 L347.0 131.0 L341.0 132.0 L348.0 250.0 L341.0 253.0 L335.0 244.0 L333.0 196.0 L312.0 173.0 L300.0 132.0 Z","M317.0 130.0 L315.0 131.0 L315.0 134.0 L321.0 157.0 L327.0 169.0 L329.0 170.0 L331.0 169.0 L331.0 160.0 L330.0 159.0 L328.0 136.0 L325.0 131.0 Z"],"16":["M465.0 299.0 L455.0 324.0 L452.0 350.0 L457.0 361.0 L466.0 370.0 L484.0 373.0 L497.0 366.0 L514.0 365.0 L539.0 377.0 L551.0 377.0 L563.0 369.0 L569.0 354.0 L570.0 335.0 L558.0 299.0 L508.0 291.0 L492.0 291.0 Z","M488.0 116.0 L484.0 128.0 L487.0 205.0 L472.0 280.0 L514.0 277.0 L554.0 283.0 L560.0 226.0 L555.0 151.0 L544.0 128.0 L533.0 118.0 L538.0 194.0 L526.0 229.0 L519.0 235.0 L513.0 229.0 Z","M511.0 114.0 L508.0 116.0 L506.0 122.0 L511.0 142.0 L519.0 195.0 L522.0 196.0 L524.0 195.0 L524.0 181.0 L525.0 180.0 L524.0 149.0 L518.0 116.0 L515.0 114.0 Z"],"15":["M629.0 268.0 L623.0 274.0 L614.0 304.0 L612.0 317.0 L613.0 343.0 L619.0 355.0 L629.0 364.0 L645.0 372.0 L662.0 373.0 L678.0 364.0 L693.0 348.0 L699.0 331.0 L696.0 316.0 L682.0 276.0 L677.0 270.0 L658.0 265.0 Z","M634.0 76.0 L629.0 89.0 L635.0 135.0 L635.0 169.0 L629.0 201.0 L629.0 252.0 L675.0 253.0 L678.0 242.0 L677.0 208.0 L671.0 170.0 L649.0 101.0 Z"],"14":["M759.0 266.0 L756.0 268.0 L742.0 322.0 L741.0 342.0 L752.0 358.0 L774.0 372.0 L805.0 371.0 L820.0 362.0 L836.0 344.0 L839.0 336.0 L837.0 318.0 L809.0 267.0 L797.0 265.0 Z","M762.0 40.0 L757.0 49.0 L752.0 185.0 L758.0 250.0 L804.0 251.0 L807.0 216.0 L791.0 110.0 L779.0 68.0 Z"],"13":["M910.0 265.0 L906.0 269.0 L884.0 338.0 L886.0 348.0 L899.0 364.0 L919.0 376.0 L936.0 380.0 L961.0 376.0 L983.0 358.0 L992.0 343.0 L983.0 305.0 L967.0 270.0 L963.0 266.0 L952.0 264.0 Z","M919.0 18.0 L912.0 28.0 L903.0 246.0 L906.0 251.0 L959.0 251.0 L947.0 114.0 L929.0 35.0 Z"],"12":["M1098.0 265.0 L1081.0 262.0 L1056.0 264.0 L1043.0 282.0 L1037.0 302.0 L1038.0 356.0 L1041.0 372.0 L1050.0 379.0 L1100.0 378.0 L1109.0 375.0 L1114.0 368.0 L1111.0 306.0 L1103.0 268.0 Z","M1059.0 61.0 L1057.0 75.0 L1063.0 141.0 L1057.0 186.0 L1057.0 248.0 L1099.0 251.0 L1099.0 208.0 L1091.0 157.0 L1080.0 112.0 Z"],"11":["M1170.0 265.0 L1162.0 293.0 L1158.0 322.0 L1159.0 348.0 L1165.0 362.0 L1172.0 367.0 L1192.0 370.0 L1245.0 370.0 L1255.0 367.0 L1264.0 352.0 L1265.0 325.0 L1258.0 298.0 L1250.0 284.0 L1233.0 269.0 L1213.0 261.0 L1189.0 260.0 Z","M1202.0 58.0 L1196.0 74.0 L1185.0 201.0 L1176.0 247.0 L1216.0 247.0 L1244.0 259.0 L1248.0 253.0 L1246.0 217.0 L1219.0 105.0 Z"],"21":["M1370.0 271.0 L1356.0 283.0 L1342.0 311.0 L1339.0 339.0 L1345.0 369.0 L1354.0 373.0 L1434.0 371.0 L1442.0 358.0 L1444.0 328.0 L1439.0 302.0 L1428.0 272.0 L1423.0 267.0 L1390.0 266.0 Z","M1402.0 60.0 L1391.0 82.0 L1373.0 153.0 L1360.0 233.0 L1361.0 259.0 L1386.0 252.0 L1425.0 250.0 L1417.0 213.0 L1413.0 139.0 Z"],"22":["M1504.0 266.0 L1492.0 311.0 L1491.0 364.0 L1496.0 369.0 L1504.0 371.0 L1553.0 372.0 L1561.0 362.0 L1563.0 351.0 L1562.0 295.0 L1557.0 275.0 L1548.0 264.0 L1542.0 262.0 L1523.0 261.0 Z","M1541.0 62.0 L1535.0 74.0 L1514.0 154.0 L1507.0 244.0 L1509.0 249.0 L1540.0 247.0 L1543.0 243.0 Z"],"23":["M1677.0 19.0 L1665.0 42.0 L1649.0 105.0 L1632.0 254.0 L1656.0 250.0 L1685.0 252.0 L1690.0 242.0 L1692.0 185.0 L1683.0 36.0 Z","M1626.0 271.0 L1613.0 319.0 L1609.0 339.0 L1612.0 353.0 L1628.0 368.0 L1651.0 377.0 L1667.0 378.0 L1696.0 368.0 L1707.0 355.0 L1710.0 339.0 L1704.0 314.0 L1687.0 267.0 L1649.0 265.0 Z"],"24":["M1786.0 272.0 L1780.0 276.0 L1770.0 292.0 L1763.0 311.0 L1759.0 335.0 L1761.0 349.0 L1771.0 363.0 L1784.0 371.0 L1813.0 373.0 L1827.0 369.0 L1846.0 354.0 L1852.0 343.0 L1851.0 317.0 L1842.0 280.0 L1839.0 275.0 L1829.0 272.0 Z","M1833.0 60.0 L1814.0 89.0 L1795.0 144.0 L1787.0 198.0 L1789.0 257.0 L1838.0 257.0 L1834.0 124.0 L1836.0 65.0 Z"],"25":["M1910.0 275.0 L1893.0 327.0 L1894.0 344.0 L1909.0 363.0 L1927.0 375.0 L1945.0 376.0 L1954.0 373.0 L1973.0 359.0 L1979.0 347.0 L1979.0 319.0 L1969.0 290.0 L1959.0 274.0 Z","M1958.0 74.0 L1922.0 174.0 L1911.0 253.0 L1913.0 260.0 L1958.0 260.0 L1961.0 257.0 L1963.0 226.0 L1958.0 184.0 L1958.0 143.0 L1963.0 84.0 Z"],"26":["M2033.0 297.0 L2022.0 336.0 L2024.0 360.0 L2033.0 376.0 L2041.0 381.0 L2050.0 381.0 L2072.0 374.0 L2089.0 373.0 L2119.0 380.0 L2130.0 372.0 L2140.0 352.0 L2142.0 333.0 L2139.0 318.0 L2129.0 295.0 L2059.0 291.0 L2039.0 293.0 Z","M2057.0 105.0 L2040.0 131.0 L2029.0 174.0 L2038.0 278.0 L2120.0 279.0 L2107.0 215.0 L2111.0 144.0 L2107.0 108.0 L2102.0 107.0 L2089.0 177.0 L2079.0 203.0 L2079.0 231.0 L2073.0 235.0 L2066.0 227.0 L2066.0 204.0 L2055.0 188.0 Z","M2079.0 107.0 L2075.0 108.0 L2073.0 112.0 L2067.0 148.0 L2067.0 174.0 L2068.0 180.0 L2071.0 183.0 L2073.0 182.0 L2077.0 166.0 L2082.0 124.0 L2084.0 117.0 L2084.0 110.0 Z"],"27":["M2190.0 295.0 L2185.0 345.0 L2193.0 355.0 L2208.0 366.0 L2224.0 373.0 L2258.0 370.0 L2276.0 375.0 L2289.0 374.0 L2298.0 366.0 L2304.0 351.0 L2304.0 327.0 L2295.0 292.0 L2197.0 291.0 Z","M2299.0 132.0 L2294.0 133.0 L2266.0 180.0 L2254.0 226.0 L2241.0 246.0 L2234.0 237.0 L2248.0 196.0 L2246.0 132.0 L2229.0 149.0 L2215.0 184.0 L2198.0 275.0 L2289.0 274.0 L2290.0 177.0 Z","M2272.0 125.0 L2264.0 128.0 L2261.0 131.0 L2260.0 134.0 L2260.0 156.0 L2262.0 157.0 L2264.0 156.0 L2277.0 133.0 L2277.0 129.0 Z"],"28":["M2366.0 286.0 L2358.0 297.0 L2346.0 323.0 L2345.0 337.0 L2351.0 361.0 L2361.0 367.0 L2401.0 364.0 L2424.0 371.0 L2433.0 370.0 L2440.0 359.0 L2444.0 342.0 L2444.0 323.0 L2438.0 301.0 L2427.0 295.0 L2409.0 290.0 L2376.0 285.0 Z","M2435.0 132.0 L2425.0 144.0 L2395.0 201.0 L2379.0 246.0 L2375.0 263.0 L2377.0 271.0 L2434.0 280.0 L2431.0 236.0 L2442.0 149.0 L2441.0 138.0 Z"],"48":["M140.0 445.0 L129.0 458.0 L125.0 471.0 L148.0 533.0 L221.0 533.0 L235.0 508.0 L247.0 478.0 L249.0 466.0 L243.0 452.0 L236.0 445.0 L226.0 441.0 L188.0 446.0 L162.0 436.0 L153.0 437.0 Z","M215.0 549.0 L151.0 549.0 L132.0 623.0 L115.0 656.0 L131.0 650.0 L143.0 637.0 L166.0 581.0 L173.0 574.0 L180.0 577.0 L180.0 585.0 L153.0 653.0 L161.0 651.0 L175.0 638.0 L194.0 608.0 Z"],"47":["M425.0 447.0 L416.0 437.0 L400.0 432.0 L388.0 432.0 L369.0 441.0 L355.0 441.0 L336.0 435.0 L322.0 438.0 L312.0 449.0 L307.0 467.0 L309.0 492.0 L318.0 522.0 L321.0 524.0 L406.0 522.0 L429.0 469.0 L430.0 461.0 Z","M406.0 538.0 L320.0 540.0 L294.0 614.0 L302.0 687.0 L308.0 682.0 L316.0 622.0 L353.0 558.0 L375.0 562.0 L385.0 586.0 L383.0 609.0 L358.0 686.0 L384.0 661.0 L399.0 634.0 L408.0 601.0 Z"],"46":["M494.0 449.0 L487.0 463.0 L487.0 491.0 L494.0 518.0 L499.0 526.0 L553.0 531.0 L587.0 539.0 L596.0 536.0 L608.0 496.0 L607.0 465.0 L596.0 444.0 L589.0 440.0 L580.0 440.0 L549.0 447.0 L527.0 439.0 L511.0 438.0 L501.0 442.0 Z","M504.0 542.0 L480.0 650.0 L479.0 718.0 L528.0 588.0 L539.0 578.0 L550.0 578.0 L561.0 588.0 L569.0 661.0 L555.0 722.0 L574.0 701.0 L584.0 674.0 L594.0 607.0 L592.0 557.0 L561.0 547.0 Z"],"45":["M729.0 443.0 L714.0 438.0 L701.0 440.0 L672.0 457.0 L661.0 467.0 L662.0 490.0 L675.0 536.0 L727.0 532.0 L740.0 528.0 L755.0 490.0 L757.0 474.0 L749.0 460.0 Z","M735.0 545.0 L680.0 552.0 L703.0 653.0 L705.0 696.0 L700.0 739.0 L703.0 744.0 L707.0 742.0 L721.0 709.0 L731.0 664.0 L739.0 565.0 Z"],"44":["M856.0 445.0 L817.0 465.0 L807.0 474.0 L804.0 483.0 L817.0 511.0 L822.0 535.0 L825.0 538.0 L852.0 545.0 L868.0 545.0 L874.0 537.0 L882.0 512.0 L884.0 466.0 L876.0 451.0 L865.0 445.0 Z","M828.0 554.0 L826.0 557.0 L836.0 617.0 L840.0 715.0 L846.0 737.0 L856.0 698.0 L859.0 641.0 L870.0 560.0 Z"],"43":["M980.0 433.0 L937.0 460.0 L932.0 473.0 L933.0 494.0 L951.0 548.0 L1004.0 554.0 L1011.0 544.0 L1020.0 518.0 L1024.0 472.0 L1016.0 451.0 L1007.0 439.0 L995.0 433.0 Z","M949.0 566.0 L955.0 777.0 L958.0 780.0 L966.0 769.0 L979.0 731.0 L1000.0 635.0 L1002.0 569.0 Z"],"42":["M1137.0 437.0 L1123.0 436.0 L1083.0 445.0 L1071.0 453.0 L1070.0 469.0 L1075.0 521.0 L1082.0 547.0 L1089.0 558.0 L1116.0 558.0 L1127.0 553.0 L1139.0 517.0 L1144.0 482.0 L1144.0 446.0 Z","M1122.0 572.0 L1088.0 574.0 L1100.0 765.0 L1103.0 767.0 L1113.0 746.0 L1117.0 721.0 L1123.0 622.0 Z"],"41":["M1250.0 435.0 L1234.0 435.0 L1207.0 440.0 L1201.0 443.0 L1192.0 453.0 L1189.0 466.0 L1190.0 489.0 L1202.0 522.0 L1205.0 539.0 L1208.0 542.0 L1239.0 543.0 L1246.0 536.0 L1252.0 522.0 L1255.0 506.0 L1257.0 447.0 L1255.0 438.0 Z","M1209.0 556.0 L1206.0 558.0 L1210.0 594.0 L1214.0 697.0 L1218.0 727.0 L1222.0 734.0 L1230.0 721.0 L1236.0 696.0 L1244.0 569.0 L1240.0 558.0 Z"],"31":["M1340.0 431.0 L1333.0 438.0 L1329.0 499.0 L1332.0 517.0 L1340.0 530.0 L1348.0 537.0 L1382.0 540.0 L1385.0 538.0 L1402.0 481.0 L1403.0 461.0 L1400.0 450.0 L1394.0 441.0 L1389.0 438.0 Z","M1350.0 552.0 L1345.0 557.0 L1343.0 568.0 L1348.0 613.0 L1350.0 685.0 L1356.0 717.0 L1366.0 732.0 L1370.0 726.0 L1371.0 668.0 L1381.0 555.0 Z"],"32":["M1452.0 438.0 L1449.0 440.0 L1445.0 452.0 L1443.0 486.0 L1446.0 508.0 L1456.0 541.0 L1464.0 558.0 L1468.0 561.0 L1499.0 561.0 L1503.0 556.0 L1515.0 504.0 L1516.0 463.0 L1513.0 456.0 L1507.0 451.0 Z","M1497.0 575.0 L1467.0 576.0 L1461.0 594.0 L1466.0 627.0 L1464.0 708.0 L1479.0 768.0 L1482.0 767.0 L1500.0 579.0 Z"],"33":["M1590.0 430.0 L1571.0 444.0 L1564.0 458.0 L1562.0 498.0 L1568.0 527.0 L1580.0 547.0 L1633.0 548.0 L1638.0 542.0 L1650.0 508.0 L1657.0 466.0 L1613.0 432.0 L1603.0 429.0 Z","M1584.0 561.0 L1583.0 599.0 L1600.0 707.0 L1616.0 756.0 L1629.0 779.0 L1632.0 775.0 L1631.0 675.0 L1635.0 651.0 L1634.0 564.0 Z"],"34":["M1736.0 435.0 L1725.0 438.0 L1716.0 446.0 L1705.0 462.0 L1700.0 476.0 L1701.0 488.0 L1717.0 538.0 L1723.0 543.0 L1743.0 541.0 L1773.0 533.0 L1795.0 484.0 L1793.0 474.0 L1784.0 464.0 Z","M1765.0 551.0 L1722.0 558.0 L1725.0 584.0 L1723.0 625.0 L1735.0 663.0 L1739.0 720.0 L1750.0 736.0 L1753.0 729.0 L1757.0 646.0 L1769.0 573.0 L1769.0 559.0 Z"],"35":["M1879.0 434.0 L1863.0 443.0 L1848.0 458.0 L1840.0 471.0 L1838.0 480.0 L1849.0 520.0 L1853.0 526.0 L1895.0 537.0 L1911.0 538.0 L1923.0 519.0 L1941.0 471.0 L1921.0 454.0 L1899.0 440.0 Z","M1856.0 542.0 L1856.0 580.0 L1870.0 692.0 L1879.0 723.0 L1890.0 738.0 L1895.0 732.0 L1891.0 703.0 L1892.0 645.0 L1910.0 553.0 Z"],"36":["M2095.0 447.0 L2089.0 443.0 L2078.0 442.0 L2055.0 454.0 L2045.0 455.0 L2021.0 446.0 L2009.0 445.0 L1995.0 454.0 L1989.0 466.0 L1988.0 490.0 L2002.0 544.0 L2053.0 534.0 L2095.0 532.0 L2108.0 491.0 L2106.0 468.0 Z","M2005.0 559.0 L2006.0 659.0 L2025.0 707.0 L2037.0 716.0 L2028.0 676.0 L2033.0 601.0 L2042.0 585.0 L2057.0 579.0 L2076.0 609.0 L2103.0 699.0 L2115.0 719.0 L2117.0 674.0 L2091.0 551.0 L2065.0 547.0 Z"],"37":["M2167.0 448.0 L2160.0 462.0 L2161.0 475.0 L2187.0 525.0 L2237.0 532.0 L2277.0 529.0 L2293.0 469.0 L2288.0 453.0 L2276.0 441.0 L2257.0 436.0 L2238.0 449.0 L2230.0 451.0 L2205.0 436.0 L2194.0 434.0 L2179.0 438.0 Z","M2188.0 542.0 L2183.0 608.0 L2221.0 684.0 L2235.0 693.0 L2209.0 628.0 L2207.0 598.0 L2215.0 567.0 L2233.0 561.0 L2251.0 572.0 L2273.0 611.0 L2288.0 686.0 L2297.0 693.0 L2300.0 623.0 L2278.0 547.0 Z"],"38":["M2443.0 437.0 L2422.0 431.0 L2403.0 444.0 L2387.0 442.0 L2370.0 435.0 L2360.0 438.0 L2355.0 443.0 L2345.0 463.0 L2345.0 477.0 L2370.0 532.0 L2430.0 534.0 L2439.0 531.0 L2458.0 465.0 L2455.0 450.0 Z","M2376.0 550.0 L2389.0 596.0 L2422.0 646.0 L2431.0 650.0 L2408.0 591.0 L2407.0 574.0 L2412.0 570.0 L2418.0 574.0 L2445.0 645.0 L2470.0 659.0 L2448.0 611.0 L2438.0 550.0 Z"]};
+
+    function renderOdontogramSVG(entry, opts = {}){
+      const dentitionType = normalizeDentitionType(opts.dentitionType || opts.dentition || (entry?.ficha ? getFichaDentitionType(entry.ficha, entry) : 'permanent'));
+      const selectedTeeth = sortTeethForDentition(Array.isArray(opts.selectedTeeth) ? opts.selectedTeeth.map(String) : [], dentitionType);
+      const interactive = opts.interactive !== false;
+      const selectedSet = new Set(selectedTeeth);
+      const visualStateForTooth = typeof opts.getVisualState === 'function' ? opts.getVisualState : ((tooth)=>getToothVisualState(entry, tooth));
+      const rows = getOdontoRowsForDentition(dentitionType);
+      const upper = [...rows.supDir, ...rows.supEsq].map(String);
+      const lower = [...rows.infDir, ...rows.infEsq].map(String);
+      const teeth = [...upper, ...lower];
+      const isDeciduous = dentitionType === 'deciduous';
+      const paths = isDeciduous ? ODONTO_DECIDUOUS_PATHS : ODONTO_CRONOS_ORIGINAL_PATHS;
+      const boxes = isDeciduous ? ODONTO_DECIDUOUS_BOXES : ODONTO_CRONOS_ORIGINAL_BOXES;
+      const viewBox = isDeciduous ? ODONTO_DECIDUOUS_VIEWBOX : ODONTO_CRONOS_ORIGINAL_VIEWBOX;
+
+      const toothClass = (tooth)=>{
+        const state = visualStateForTooth(tooth);
+        const classes = ['odontogramaTooth'];
+        if(state) classes.push(state);
+        if(selectedSet.has(String(tooth))) classes.push('active');
+        return classes.join(' ');
+      };
+
+      const lineMarkup = teeth.map(tooth=>{
+        const d = paths[tooth] || '';
+        return `<g class="${toothClass(tooth)}" data-tooth="${tooth}"><path class="toothLine" d="${d}"></path></g>`;
+      }).join('');
+
+      const hitMarkup = interactive ? teeth.map(tooth=>{
+        const box = boxes[tooth] || [0,0,0,0];
+        const x = Number(box[0] || 0), y = Number(box[1] || 0), w = Math.max(0, Number(box[2] || 0) - x), h = Math.max(0, Number(box[3] || 0) - y);
+        const r = isDeciduous ? 2.5 : 18;
+        return `<g class="${toothClass(tooth)}" data-tooth="${tooth}" tabindex="0" role="button" aria-label="Dente ${tooth}" onclick="CRONOS_FICHA_UI.toggleTooth('${tooth}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();CRONOS_FICHA_UI.toggleTooth('${tooth}')}"><rect class="toothHit" x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ry="${r}"></rect></g>`;
+      }).join('') : '';
+
+      const labelX = (tooth)=>{
+        const box = boxes[tooth] || [0,0,0,0];
+        return ((Number(box[0] || 0) + Number(box[2] || 0)) / 2).toFixed(1);
+      };
+      const labelMarkup = (list, y)=>list.map(tooth=>`<text class="odontoNumberText" x="${labelX(tooth)}" y="${y}">${tooth}</text>`).join('');
+      const upperLabelY = isDeciduous ? 111 : -10;
+      const lowerLabelY = isDeciduous ? 128 : 822;
+      const lineWrap = isDeciduous ? `<g>${lineMarkup}</g>` : `<g transform="translate(0,800) scale(0.100000,-0.100000)">${lineMarkup}</g>`;
+
+      return `<svg class="odontoStatusLayer ${dentitionType}" viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" preserveAspectRatio="xMidYMid meet">${lineWrap}</svg><svg class="odontoLabelLayer ${dentitionType}" viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" preserveAspectRatio="xMidYMid meet">${labelMarkup(upper, upperLabelY)}${labelMarkup(lower, lowerLabelY)}</svg>${interactive ? `<svg class="odontoClickLayer ${dentitionType}" viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-label="Camada interativa do odontograma" preserveAspectRatio="xMidYMid meet">${hitMarkup}</svg>` : ''}`;
+    }
+    function getItemVisualState(entry, item){
+      if(!item) return '';
+      // A linha deve refletir o próprio procedimento.
+      // Se outro procedimento do mesmo dente foi feito/pago, esta linha não herda a cor.
+      if(isFichaItemClinicallyDone(entry, item)) return 'done';
+      if(isFichaItemFinancialLinked(entry, item)) return 'paid';
+      const teeth = String(item.dente||'').split(',').map(s=>s.trim()).filter(Boolean);
+      if(teeth.length && teeth.some(t=>isToothAbsent(entry, t))) return 'absent';
+      return '';
+    }
+    function buildFichaHeader(entry, contact){
+      const db = loadDB();
+      const actor = currentActor();
+      const branding = getClinicBranding(db, actor);
+      const patientName = escapeHTML(contact?.name || entry?.name || 'Paciente');
+      const phone = escapeHTML(contact?.phone || entry?.phone || '—');
+      const cpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
+      const birthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
+      const city = escapeHTML(entry?.city || '—');
+      const treatment = escapeHTML(entry?.treatment || '—');
+      const clinicName = escapeHTML(getClinicDisplayName(db, actor));
+      return `
+        <div class="fichaHead">
+          <div class="cardMini">
+            <div style="display:flex; gap:10px; align-items:center">
+              ${branding?.logoDataUri ? `<img src="${branding.logoDataUri}" alt="${clinicName}" style="width:auto;height:60px;max-width:120px;object-fit:contain;border:none;background:transparent">` : ``}
+              <div>
+                <div class="muted" style="font-size:12px">Clínica</div>
+                <div style="font-size:20px; font-weight:800">${clinicName}</div>
+              </div>
+            </div>
+            <div style="font-size:18px; font-weight:800; margin-top:10px">${patientName}</div>
+            <div class="muted" style="margin-top:6px">Telefone: ${phone}</div>
+            <div class="muted">CPF: ${cpf}</div>
+            <div class="muted">Nascimento: ${birthAge}</div>
+          </div>
+          <div class="cardMini">
+            <div class="muted" style="font-size:12px">Resumo rápido</div>
+            <div style="font-size:15px; font-weight:800; margin-top:2px">Tratamento principal: ${treatment}</div>
+            <div class="muted" style="margin-top:6px">Emissão: ${fmtBR(todayISO())}</div>
+            <div class="muted">Lead: ${escapeHTML(String(entry?.id || '—'))}</div>
+          </div>
+        </div>
+      `;
+    }
+    function renderFichaApp(){
+      injectFichaStyles();
+      const state = getFichaState();
+      const box = el('fichaApp');
+      if(!box || !state) return;
+      const db = loadDB();
+      const actor = currentActor();
+      const fichaReadOnly = isFichaReadOnlyForActor(actor);
+      const entry = getEntryById(state.entryId);
+      if(!entry){ box.innerHTML = `<div class="fichaEmpty">Lead não encontrado.</div>`; return; }
+      const contact = getContactForEntry(entry);
+      const ficha = ensureFicha(entry);
+      try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao reconciliar ficha/recebimentos:", err); }
+      const selectedProc = getSelectedProc(state, db);
+      const catalogAll = getProcedureCatalog(db).filter(x=>x.ativo !== false);
+      const catalog = catalogAll;
+      const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+      const savedDentition = getFichaDentitionType(ficha, entry);
+      const activeEvaluationId = String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1');
+      if(String(state.activeEvaluationId || '') !== activeEvaluationId){
+        state.activeEvaluationId = activeEvaluationId;
+        state.activeDentitionType = savedDentition;
+        state.dentitionRequestId = '';
+      }
+      const activeDentition = normalizeDentitionType(state.activeDentitionType || savedDentition);
+      const activeDentitionTeeth = getOdontoTeethForDentition(activeDentition);
+      state.selectedTeeth = sortTeethForDentition((Array.isArray(state.selectedTeeth) ? state.selectedTeeth : []).filter(t=>activeDentitionTeeth.includes(String(t))), activeDentition);
+      if(state.selectedTooth && !activeDentitionTeeth.includes(String(state.selectedTooth))) state.selectedTooth = null;
+      const visiblePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
+      const visiblePlanIds = new Set(visiblePlan.map(item=>String(item.id)));
+      const totals = calcFichaTotals(visiblePlan || [], entry);
+      const selectedFichaItemIds = new Set((Array.isArray(state.selectedItemIds) ? state.selectedItemIds.map(String) : []).filter(id=>visiblePlanIds.has(id)));
+      state.selectedItemIds = Array.from(selectedFichaItemIds);
+      const selectedFichaItems = visiblePlan.filter(item=>selectedFichaItemIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
+      const selectedFichaTotal = selectedFichaItems.reduce((s,item)=>s + Number(item.valorFechado || 0), 0);
+      const selectedToothMeta = state.selectedTooth ? (ficha.odontograma?.[state.selectedTooth] || {}) : {};
+      const selectedToothPlan = state.selectedTooth ? visiblePlan.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(state.selectedTooth))) : [];
+      const selectedPrice = state.price !== '' ? String(state.price) : (selectedProc ? String(Number(selectedProc.valorBase||0)) : '');
+      const selectedProcLabel = selectedProc ? procLabel(selectedProc) : '';
+      const procInputValue = state.procSearch !== '' ? state.procSearch : selectedProcLabel;
+      const procMenuHTML = getProcSuggestionsHTML(catalog, state.procMenuOpen ? '' : procInputValue);
+      const selectedFaceText = selectedProc?.exigeFace ? (String(state.selectedFace || '').trim() || '—') : 'Não exige';
+      const selectedToothStatus = state.selectedTooth
+        ? (isToothAbsent(entry, state.selectedTooth) ? 'Perda dentária / ausente' : (getToothProgressStatus(entry, state.selectedTooth) === 'done' ? 'Realizado' : (getToothProgressStatus(entry, state.selectedTooth) === 'paid' ? 'Pago/Pendente' : 'Neutro')))
+        : '—';
+      const odontoRows = getOdontoRowsForDentition(activeDentition);
+      const upper = [...odontoRows.supDir, ...odontoRows.supEsq];
+      const lower = [...odontoRows.infDir, ...odontoRows.infEsq];
+      const selectedTeeth = sortTeethForDentition(Array.isArray(state.selectedTeeth) ? state.selectedTeeth.slice() : [], activeDentition);
+      const selectedTeethLabel = selectedTeeth.length ? selectedTeeth.join(', ') : 'Nenhum dente selecionado';
+      const selectedPlanCount = selectedTeeth.length
+        ? visiblePlan.filter(item=>{
+            const dentesItem = String(item.dente || '').split(',').map(s=>s.trim()).filter(Boolean);
+            return selectedTeeth.some(t=>dentesItem.includes(String(t)));
+          }).length
+        : 0;
+
+      box.innerHTML = `
+        ${buildFichaHeader(entry, contact)}
+
+        <div class="odontoFull">
+          <div class="sectionTitle">Odontograma</div>
+          <div class="dentitionToggle" role="group" aria-label="Tipo de dentição">
+            <button type="button" class="${activeDentition === 'permanent' ? 'active' : ''}" onclick="CRONOS_FICHA_UI.setDentitionType('permanent')">Dentes permanentes</button>
+            <button type="button" class="${activeDentition === 'deciduous' ? 'active' : ''}" onclick="CRONOS_FICHA_UI.setDentitionType('deciduous')">Dentes decíduos</button>
+          </div>
+          <div class="odontoGrid">
+            <div>
+              <div class="odontoRefStage">
+                ${renderOdontogramSVG(entry, { selectedTeeth, interactive: true, dentitionType: activeDentition })}
+              </div>
+              <div class="odontoLegend">
+                <span class="legendPill lp-neutral"><span class="legendDot"></span>Neutro</span>
+                <span class="legendPill lp-paid"><span class="legendDot"></span>Pago / em pagamento</span>
+                <span class="legendPill lp-done"><span class="legendDot"></span>Realizado</span>
+                <span class="legendPill lp-absent"><span class="legendDot"></span>Perda dentária / ausente</span>
+              </div>
+              <div style="margin-top:12px" class="small">Clique nos dentes para selecionar um ou vários dentes. Depois escolha o procedimento no painel ao lado. Andamento e ausência também ficam no painel, sem misturar as coisas.</div>
+
+              <div class="totalsGrid fichaTotalsUnderOdonto">
+                <div class="totalBox"><span class="label">Valor de tabela</span><div class="value" id="fichaTotalBase">${moneyBR(totals.totalBase)}</div></div>
+                <div class="totalBox"><span class="label">Valor de orçamento</span><div class="value valueHighlight" id="fichaTotalFechado">${moneyBR(totals.totalFechado)}</div></div>
+                <div class="totalBox"><span class="label">Desconto total</span><div class="value valueHighlight discount" id="fichaTotalDesconto">${moneyBR(totals.totalDesconto)}</div><div class="small" id="fichaTotalDescontoPct">${totals.descontoPct.toFixed(2)}%</div></div>
+                <div class="totalBox"><span class="label">Total realizado</span><div class="value" id="fichaTotalFeito">${moneyBR(totals.totalFeito)}</div></div>
+                <div class="totalBox"><span class="label">Total pago</span><div class="value" id="fichaTotalPago">${moneyBR(totals.totalPago)}</div></div>
+                <div class="totalBox"><span class="label">Em aberto</span><div class="value" id="fichaTotalAberto">${moneyBR(totals.emAberto)}</div></div>
+              </div>
+            </div>
+
+            <div class="odontoPanel">
+              <div style="font-size:16px; font-weight:800">Plano do tratamento</div>
+              <div class="small" style="margin:6px 0 10px">Selecione um ou vários dentes no odontograma e lance o procedimento aqui mesmo, sem descer a tela.</div>
+
+              <div class="panelMiniGrid">
+                <div><span class="muted">Dente(s)</span><b>${escapeHTML(selectedTeethLabel)}</b></div>
+                <div><span class="muted">Dentição</span><b>${dentitionLabel(activeDentition)}</b></div>
+                <div><span class="muted">Itens ligados</span><b>${selectedPlanCount}</b></div>
+              </div>
+              <div style="margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,.025)">
+                <div class="small muted">Avaliação ativa para novos procedimentos</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+                  <select id="fichaEvalSelect" style="max-width:220px" onchange="CRONOS_FICHA_UI.setActiveEvaluation(this.value)">
+                    ${ficha.avaliacoes.map(av=>`<option value="${escapeHTML(av.id)}" ${String(av.id)===String(activeEvaluation.id) ? 'selected' : ''}>${escapeHTML(av.label)} • ${fmtBR(av.date)}</option>`).join('')}
+                  </select>
+                  <button type="button" class="miniBtn" onclick="CRONOS_FICHA_UI.newEvaluation()">+ Nova avaliação</button>
+                </div>
+              </div>
+              ${selectedTeeth.length ? `<div class="toothChipRow">${selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : `<div class="small muted" style="margin-top:8px">Nenhum dente selecionado ainda.</div>`}
+
+              <label>Procedimento</label>
+              <div class="procPickerWrap">
+                <input id="fichaProcPicker" autocomplete="off" value="${escapeHTML(procInputValue)}" placeholder="Digite para filtrar o procedimento" onfocus="CRONOS_FICHA_UI.openProcMenu(false)" oninput="CRONOS_FICHA_UI.pickProcByText(this.value)">
+                <button type="button" class="procDropBtn" title="Ver procedimentos" onmousedown="event.preventDefault(); CRONOS_FICHA_UI.toggleProcMenu()">▾</button>
+                <div id="fichaProcMenu" class="procSuggestMenu ${state.procMenuOpen ? 'show' : ''}">
+                  ${procMenuHTML}
+                </div>
+              </div>
+
+              <div class="sideFormGrid">
+                <div>
+                  <label>Valor do paciente</label>
+                  <input type="number" step="0.01" value="${escapeHTML(selectedPrice)}" oninput="CRONOS_FICHA_UI.setPrice(this.value)" placeholder="0,00">
+                </div>
+                <div>
+                  <label>Valor base</label>
+                  <input type="text" disabled value="${selectedProc ? moneyBR(selectedProc.valorBase || 0) : '—'}">
+                </div>
+                <div class="full">
+                  <label>Face(s)</label>
+                  ${getFaceChipsHTML(state.selectedFace || '', !!selectedProc?.exigeFace)}
+                  <div class="small muted" style="margin-top:6px">${selectedProc?.exigeFace ? 'Clique nas faces para marcar ou desmarcar. Pode selecionar mais de uma.' : 'Este procedimento não exige face.'}</div>
+                </div>
+              </div>
+
+              <div class="sideActions fichaQuickActions">
+                <button class="btn primary fichaAddPlanBtn" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
+                <button class="btn small fichaPaidAction" onclick="CRONOS_FICHA_UI.markSelectedProgress('paid')">Marcar pago/em pagamento</button>
+                <button class="btn small fichaDoneAction" onclick="CRONOS_FICHA_UI.markSelectedProgress('done')">Marcar realizado</button>
+                <button class="btn small fichaAbsentAction" onclick="CRONOS_FICHA_UI.setAbsentForSelection()">Marcar ausente</button>
+                <button class="btn small fichaNeutralAction" onclick="CRONOS_FICHA_UI.clearSelection()">Limpar seleção</button>
+                <button class="btn small fichaNeutralAction" onclick="CRONOS_FICHA_UI.clearToothMeta()">Limpar marcação</button>
+              </div>
+              <div class="small muted" style="margin-top:10px">Pago/em pagamento e realizado são andamentos separados. Ausente é condição clínica separada.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fichaLayout">
+          <div class="fichaPlanToolbar" style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;margin:0 0 10px">
+            <div>
+              <div style="font-weight:900">Plano de tratamento • ${escapeHTML(activeEvaluation.label || 'Avaliação')} ${activeEvaluation.date ? `(${fmtBR(activeEvaluation.date)})` : ''}</div>
+              <div class="small muted">Mostrando apenas os procedimentos desta avaliação. Use os botões abaixo para alternar entre avaliações anteriores.</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${fichaEvaluationSummaryHTML(ficha)}</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+              <button id="fichaGenerateReceivingBtn" class="btn primary small" type="button" onclick="CRONOS_FICHA_UI.openReceivingForSelected()" ${selectedFichaItems.length ? '' : 'disabled'}>Gerar recebimento (${selectedFichaItems.length}) • ${moneyBR(selectedFichaTotal)}</button>
+              <button class="btn small" type="button" onclick="CRONOS_FICHA_UI.refreshPlanBaseValues()">Atualizar valores de tabela</button>
+            </div>
+          </div>
+          <div class="fichaTableWrap" data-cronos-scroll-key="ficha-table-wrap">
+            <table class="fichaTable">
+              <thead>
+                <tr>
+                  <th>Sel.</th>
+                  <th>#</th>
+                  <th>Avaliação</th>
+                  <th>Procedimento</th>
+                  <th>Dente</th>
+                  <th>Face</th>
+                  <th>Valor base</th>
+                  <th>Valor fechado</th>
+                  <th>Desconto</th>
+                  <th>Feito</th>
+                  <th>Financeiro</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${visiblePlan.length ? visiblePlan.map((item, idx)=>{
+                  const finance = getFichaItemFinancialStatus(entry, item);
+                  const available = isFichaItemAvailableForReceiving(entry, item);
+                  const checked = selectedFichaItemIds.has(String(item.id));
+                  return `
+                  <tr class="${(()=>{ const _st = getItemVisualState(entry, item); return _st==='done' ? 'fichaDone' : (_st==='paid' ? 'fichaPaid' : (_st==='absent' ? 'fichaAbsent' : '')); })()}">
+                    <td><input id="fichaSel_${escapeHTML(item.id)}" type="checkbox" ${checked ? 'checked' : ''} ${available ? '' : 'disabled'} onchange="CRONOS_FICHA_UI.toggleItemSelection('${escapeHTML(item.id)}')"></td>
+                    <td>${idx+1}</td>
+                    <td><div><b>${escapeHTML(item.avaliacaoLabel || 'Avaliação')}</b></div><div class="small muted">${fmtBR(item.avaliacaoData || '')}</div></td>
+                    <td>${escapeHTML(item.procedimento || '—')}</td>
+                    <td>${escapeHTML(item.dente || '—')}</td>
+                    <td><input id="fichaFace_${escapeHTML(item.id)}" type="text" value="${escapeHTML(item.face || '')}" placeholder="Ex: M, O/I" oninput="CRONOS_FICHA_UI.updateFace('${escapeHTML(item.id)}', this.value)"></td>
+                    <td>${moneyBR(item.valorBase || 0)}</td>
+                    <td><input id="fichaValue_${escapeHTML(item.id)}" class="fichaMoneyInput" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(Number(item.valorFechado||0)).replace('.', ','))}" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value, this)" onblur="CRONOS_FICHA_UI.formatValue('${escapeHTML(item.id)}', this)"></td>
+                    <td id="fichaDiscount_${escapeHTML(item.id)}">${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span></td>
+                    <td><button class="btn small ${item.feito ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.toggleDone('${escapeHTML(item.id)}')">${item.feito ? 'Feito' : 'Pendente'}</button></td>
+                    <td>
+                      ${fichaFinanceBadge(entry, item)}
+                      ${finance.plan ? `<div style="margin-top:6px"><button type="button" class="miniBtn" onclick="openNewFinancialInstallment('${escapeHTML(entry.id)}','${escapeHTML(finance.plan.id)}')">Abrir</button></div>` : `<div style="margin-top:6px"><button type="button" class="miniBtn" onclick="CRONOS_FICHA_UI.openReceivingForItems(['${escapeHTML(item.id)}'])">Receber</button></div>`}
+                    </td>
+                    <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="miniBtn danger" onclick="CRONOS_FICHA_UI.removeItem('${escapeHTML(item.id)}')">Excluir</button></div></td>
+                  </tr>
+                `}).join('') : `<tr><td colspan="12"><div class="fichaEmpty">Nenhum procedimento nesta avaliação ainda. É aqui que a reavaliação começa limpa, sem misturar com a anterior.</div></td></tr>`}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="fichaAddWrap" style="margin-top:14px">
+            <label>Observações da ficha</label>
+            <textarea id="fichaObsTxt" placeholder="Escreve aqui tudo que deve sair na impressão..." oninput="CRONOS_FICHA_UI.setObs(this.value)">${escapeHTML(String(ficha.observacoes || ''))}</textarea>
+            <div class="small" style="margin-top:8px">Fica salvo no Cronos e reaparece em qualquer nova impressão.</div>
+          </div>
+        </div>
+      `;
+
+      if(fichaReadOnly){
+        box.classList.add("cronosFichaReadOnly");
+        box.insertAdjacentHTML("afterbegin", `
+          <div style="margin:0 0 14px;padding:12px 14px;border-radius:14px;border:1px solid rgba(59,130,246,.25);background:rgba(59,130,246,.10)">
+            <b>Visualização comercial</b>
+            <div class="small muted" style="margin-top:4px">A CRC pode consultar e imprimir esta ficha. Alterações clínicas e financeiras ficam bloqueadas.</div>
+          </div>
+        `);
+        box.querySelectorAll("input, textarea, select").forEach(node=>{
+          node.disabled = true;
+          node.setAttribute("aria-disabled", "true");
+        });
+        box.querySelectorAll(".fichaQuickActions button, .fichaPlanToolbar button, .miniBtn.danger").forEach(node=>node.style.display = "none");
+        box.querySelectorAll("button").forEach(node=>{
+          const label = String(node.textContent || "").toLowerCase();
+          if(label.includes("receber") || label.includes("abrir") || label.includes("feito") || label.includes("pendente") || label.includes("nova avaliação")){
+            node.style.display = "none";
+          }
+        });
+      }else{
+        box.classList.remove("cronosFichaReadOnly");
+      }
+    }
+
+    function guardFichaMutationForCRC(){
+      if(isFichaReadOnlyForActor(currentActor())) return denyCRCFichaEdit();
+      return true;
+    }
+
+    window.CRONOS_FICHA_UI = {
+      setSearch(v){ const s = getFichaState(); if(!s) return; s.procSearch = v; renderFichaApp(); __cronosRefocusInput('fichaProcSearch', v); },
+      pickProcByText(v){
+        const s = getFichaState(); if(!s) return;
+        const typed = String(v||'');
+        s.procSearch = typed;
+        s.procMenuOpen = true;
+
+        const db = loadDB();
+        const current = getProcedureCatalog(db).find(x=>x.id===s.selectedProcId) || null;
+        if(current && procLabel(current) !== typed){
+          s.selectedProcId = '';
+          s.selectedFace = '';
+          s.price = '';
+        }
+
+        const menu = el('fichaProcMenu');
+        if(menu){
+          const catalog = getProcedureCatalog(db).filter(x=>x.ativo !== false);
+          menu.innerHTML = getProcSuggestionsHTML(catalog, typed);
+          menu.classList.add('show');
+        }
+      },
+      openProcMenu(showAll=false){
+        const s = getFichaState(); if(!s) return;
+        s.procMenuOpen = true;
+        const db = loadDB();
+        const catalog = getProcedureCatalog(db).filter(x=>x.ativo !== false);
+        const menu = el('fichaProcMenu');
+        if(menu){
+          menu.innerHTML = getProcSuggestionsHTML(catalog, showAll ? '' : (s.procSearch || ''));
+          menu.classList.add('show');
+        }else{
+          renderFichaApp();
+        }
+        setTimeout(()=>{ try{ el('fichaProcPicker')?.focus(); }catch(_){} }, 0);
+      },
+      closeProcMenu(){
+        const s = getFichaState(); if(!s) return;
+        s.procMenuOpen = false;
+        const menu = el('fichaProcMenu');
+        if(menu) menu.classList.remove('show');
+      },
+      toggleProcMenu(){
+        const s = getFichaState(); if(!s) return;
+        if(s.procMenuOpen){
+          this.closeProcMenu();
+        }else{
+          this.openProcMenu(true);
+        }
+      },
+      selectProc(id){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const item = getProcedureCatalog(db).find(x=>x.id===id) || null;
+        s.selectedProcId = id || '';
+        s.procSearch = item ? procLabel(item) : '';
+        s.procMenuOpen = false;
+        s.selectedFace = '';
+        s.price = item ? String(Number(item.valorBase || 0)) : '';
+        renderFichaApp();
+      },
+      async setDentitionType(type){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+        const next = normalizeDentitionType(type);
+        const saved = normalizeDentitionType(activeEvaluation.dentitionType || ficha.dentitionType || 'permanent');
+        const visual = normalizeDentitionType(s.activeDentitionType || saved);
+        if(visual === next && saved === next){
+          s.activeEvaluationId = String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1');
+          s.activeDentitionType = next;
+          renderFichaApp();
+          return;
+        }
+        const requestId = `${Date.now()}_${Math.random()}`;
+        s.dentitionRequestId = requestId;
+        s.activeEvaluationId = String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1');
+        s.activeDentitionType = next;
+        activeEvaluation.dentitionType = next;
+        ficha.dentitionType = next;
+        resetFichaTransientSelection(s);
+        try{
+          DB = normalizeDBShape(db || DB || freshDB());
+          window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+          window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+          safeSetLocalDB(DB);
+          if(typeof captureV2Snapshots === 'function') captureV2Snapshots(DB);
+        }catch(_){ }
+        renderFichaApp();
+        const ok = await confirmFichaMutation(db, entry, before, 'Odontograma atualizado ✅', `Dentição: ${dentitionLabel(next)}.`);
+        if(!ok && s.dentitionRequestId === requestId){
+          const currentEntry = getEntryById(s.entryId);
+          const currentFicha = currentEntry ? ensureFicha(currentEntry) : null;
+          s.activeDentitionType = currentFicha ? getFichaDentitionType(currentFicha, currentEntry) : 'permanent';
+          s.activeEvaluationId = currentFicha ? String(currentFicha.activeEvaluationId || 'eval_1') : 'eval_1';
+          s.dentitionRequestId = '';
+          renderFichaApp();
+        }
+      },
+      toggleTooth(tooth){
+        const s = getFichaState(); if(!s) return;
+        tooth = String(tooth || '');
+        if(!tooth) return;
+        const idx = s.selectedTeeth.indexOf(tooth);
+        if(idx >= 0) s.selectedTeeth.splice(idx,1); else s.selectedTeeth.push(tooth);
+        s.selectedTooth = tooth;
+        s.selectedTeeth = sortTeethForDentition(s.selectedTeeth, getFichaDentitionType(ensureFicha(getEntryById(s.entryId) || {}), getEntryById(s.entryId)));
+        renderFichaApp();
+      },
+      setTeethFromSelect(node){
+        const s = getFichaState(); if(!s || !node) return;
+        s.selectedTeeth = Array.from(node.selectedOptions || []).map(opt=>String(opt.value||'')).filter(Boolean);
+        s.selectedTeeth = sortTeethForDentition(s.selectedTeeth, getFichaDentitionType(ensureFicha(getEntryById(s.entryId) || {}), getEntryById(s.entryId)));
+        renderFichaApp();
+      },
+      setFace(v){ const s = getFichaState(); if(!s) return; s.selectedFace = v || ''; },
+      setFaceFromSelect(node){
+        const s = getFichaState(); if(!s || !node) return;
+        const values = Array.from(node.selectedOptions || []).map(opt=>String(opt.value||'')).filter(Boolean);
+        s.selectedFace = values.join(', ');
+      },
+      toggleFaceChip(face){
+        const s = getFichaState(); if(!s) return;
+        const value = String(face || '').trim();
+        if(!value){
+          s.selectedFace = '';
+          renderFichaApp();
+          return;
+        }
+        const selected = String(s.selectedFace || '').split(',').map(x=>x.trim()).filter(Boolean);
+        const idx = selected.indexOf(value);
+        if(idx >= 0) selected.splice(idx, 1);
+        else selected.push(value);
+        s.selectedFace = selected.join(', ');
+        renderFichaApp();
+      },
+      setPrice(v){ const s = getFichaState(); if(!s) return; s.price = v; },
+      setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; ensureFicha(entry).observacoes = String(v || ''); saveFichaMutation(db, entry); },
+      async addToPlan(){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return toast('Lead não encontrado.');
+        const ficha = ensureFicha(entry);
+        const proc = getProcedureCatalog(db).find(x=>x.id===s.selectedProcId);
+        if(!proc) return toast('Procedimento', 'Escolhe um procedimento antes.');
+        const valorBase = Number(proc.valorBase || 0);
+        const valorFechado = parseMoneyInput(s.price !== '' ? s.price : valorBase);
+        const face = proc.exigeFace ? String(s.selectedFace || '') : '';
+        const teeth = Array.isArray(s.selectedTeeth) ? s.selectedTeeth.slice() : [];
+        const evalInfo = getActiveFichaEvaluation(ficha, entry);
+        const dentitionType = getFichaDentitionType(ficha, entry);
+        if(proc.exigeDente && !teeth.length){
+          return toast('Dente', 'Seleciona pelo menos um dente para esse procedimento.');
+        }
+        if(proc.exigeDente && proc.cobraPorDente){
+          teeth.forEach(tooth=>{
+            ficha.plano.push({
+              id: uid('plan'),
+              procedimentoId: proc.id,
+              procedimento: proc.nome,
+              dente: tooth,
+              face,
+              valorBase,
+              valorFechado,
+              feito:false,
+              pago:false,
+              observacao:'',
+              avaliacaoId: evalInfo.id,
+              avaliacaoLabel: evalInfo.label,
+              avaliacaoData: evalInfo.date,
+              dentitionType,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              financialPlanId:'',
+              recebimentoId:''
+            });
+          });
+        }else{
+          ficha.plano.push({
+            id: uid('plan'),
+            procedimentoId: proc.id,
+            procedimento: proc.nome,
+            dente: proc.exigeDente ? teeth.join(', ') : '',
+            face,
+            valorBase,
+            valorFechado,
+            feito:false,
+            pago:false,
+            observacao:'',
+            avaliacaoId: evalInfo.id,
+            avaliacaoLabel: evalInfo.label,
+            avaliacaoData: evalInfo.date,
+            dentitionType,
+            createdAt: new Date().toISOString(),
+            financialPlanId:'',
+            recebimentoId:''
+          });
+        }
+
+        const ok = await confirmFichaMutation(db, entry, before, 'Item adicionado ✅', proc.nome);
+        if(!ok) return;
+
+        s.selectedTeeth = [];
+        s.selectedTooth = null;
+        s.selectedFace = '';
+        s.selectedProcId = '';
+        s.procSearch = '';
+        s.procMenuOpen = false;
+        s.price = '';
+
+        renderFichaApp();
+        try{ renderLeadsTable(filteredEntries()); }catch(_){ }
+      },
+      refreshPlanBaseValues(){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return toast('Ficha', 'Lead não encontrado.');
+        const ficha = ensureFicha(entry);
+        const catalog = getProcedureCatalog(db);
+
+        if(!Array.isArray(ficha.plano) || !ficha.plano.length){
+          return toast('Plano vazio', 'Nenhum procedimento para atualizar.');
+        }
+
+        if(!confirm(
+          'Atualizar os valores de tabela deste plano?\n\n' +
+          'Isso atualiza apenas o Valor de tabela/Valor base conforme o cadastro atual de procedimentos.\n' +
+          'O Valor de orçamento do paciente será mantido.'
+        )) return;
+
+        let updated = 0;
+        let unchanged = 0;
+        let notFound = 0;
+
+        ficha.plano.forEach(item=>{
+          const current = catalog.find(proc=>String(proc.id || '') === String(item.procedimentoId || ''))
+            || catalog.find(proc=>String(proc.nome || '').trim().toLowerCase() === String(item.procedimento || '').trim().toLowerCase());
+
+          if(!current){
+            notFound++;
+            return;
+          }
+
+          const oldBase = Number(item.valorBase || 0);
+          const newBase = Number(current.valorBase || 0);
+
+          item.procedimentoId = current.id || item.procedimentoId || '';
+          item.procedimento = current.nome || item.procedimento || '';
+
+          if(oldBase !== newBase){
+            item.valorBase = newBase;
+            updated++;
+          }else{
+            unchanged++;
+          }
+        });
+
+        saveFichaMutation(db, entry);
+        renderFichaApp();
+        try{ renderLeadsTable(filteredEntries()); }catch(_){}
+
+        const msg = `${updated} atualizado(s) • ${unchanged} sem mudança${notFound ? ` • ${notFound} não encontrado(s)` : ''}`;
+        toast('Valores de tabela atualizados ✅', msg);
+      },
+      updateValue(itemId, v, node=null){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const item = ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId));
+        if(!item) return;
+
+        const raw = String(v ?? '').trim();
+        const oldDigits = String(item.valorFechado ?? '').replace(/\D/g, '');
+        const newDigits = raw.replace(/\D/g, '');
+        const isEditing = !!node && document.activeElement === node;
+
+        // Evita salvar estado intermediário quando o usuário apaga um dígito para substituir.
+        // Ex.: 130 -> apaga o 3 -> 10 -> digita 2 -> 120. Antes, o Cronos salvava o 10.
+        if(isEditing && raw !== '' && oldDigits && newDigits.length < oldDigits.length){
+          node.dataset.cronosPendingValue = raw;
+          return;
+        }
+
+        item.valorFechado = parseMoneyInput(raw);
+        if(node) delete node.dataset.cronosPendingValue;
+        markFichaMutation(entry, item);
+        saveDB(db, { immediate:true });
+        refreshFichaLiveFinancialSummary(entry, itemId);
+        __scheduleFichaLeadsFinancialRefresh();
+      },
+      formatValue(itemId, node=null){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const item = ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId));
+        if(!item) return;
+        if(node && node.dataset && node.dataset.cronosPendingValue != null){
+          item.valorFechado = parseMoneyInput(node.value);
+          delete node.dataset.cronosPendingValue;
+          markFichaMutation(entry, item);
+          saveDB(db, { immediate:true });
+          __scheduleFichaLeadsFinancialRefresh();
+        }
+        if(node) node.value = String(Number(item.valorFechado || 0)).replace('.', ',');
+        refreshFichaLiveFinancialSummary(entry, itemId);
+      },
+      updateFace(itemId, v){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const item = ensureFicha(entry).plano.find(x=>x.id===itemId);
+        if(!item) return;
+        item.face = String(v || '');
+        markFichaMutation(entry, item);
+        saveDB(db, { immediate:true });
+      },
+      async toggleDone(itemId){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const item = ensureFicha(entry).plano.find(x=>x.id===itemId);
+        if(!item) return;
+        item.feito = !item.feito;
+        markFichaMutation(entry, item);
+        renderFichaApp();
+        await confirmFichaMutation(db, entry, before, item.feito ? 'Procedimento realizado ✅' : 'Procedimento reaberto', item.procedimento || '');
+      },
+      togglePaid(itemId){
+        const s = getFichaState(); if(!s) return;
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const item = ensureFicha(entry).plano.find(x=>x.id===itemId);
+        if(!item) return;
+        const plan = getFinancialPlanForFichaItem(entry, item);
+        if(plan) return openNewFinancialInstallment(entry.id, plan.id);
+        this.openReceivingForItems([itemId]);
+      },
+      toggleItemSelection(itemId){
+        const s = getFichaState(); if(!s) return;
+        const id = String(itemId || '');
+        s.selectedItemIds = Array.isArray(s.selectedItemIds) ? s.selectedItemIds : [];
+        const idx = s.selectedItemIds.indexOf(id);
+        if(idx >= 0) s.selectedItemIds.splice(idx,1); else s.selectedItemIds.push(id);
+        __cronosRenderFichaPreservingScroll({focusId:`fichaSel_${itemId}`});
+      },
+      openReceivingForItems(itemIds){
+        const s = getFichaState(); if(!s) return;
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const ids = Array.from(new Set((itemIds||[]).map(String).filter(Boolean)));
+        const items = ficha.plano.filter(item=>ids.includes(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
+        if(!items.length) return toast('Recebimento', 'Selecione procedimento(s) sem recebimento vinculado.');
+        const total = items.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
+        window.__fichaReceivingDraft = { entryId: String(entry.id), itemIds: items.map(i=>String(i.id)) };
+        openModal({
+          title:'Gerar recebimento da ficha',
+          sub:`${items.length} procedimento(s) • ${moneyBR(total)}`,
+          bodyHTML:`
+            <div style="display:grid;gap:12px">
+              <div class="card" style="box-shadow:none">
+                <div style="font-weight:900;margin-bottom:8px">Procedimentos selecionados</div>
+                <div style="display:grid;gap:6px">
+                  ${items.map(item=>`<div class="chip">${escapeHTML(item.avaliacaoLabel || 'Avaliação')} • ${escapeHTML(item.procedimento || '—')} • <b>${moneyBR(item.valorFechado || 0)}</b></div>`).join('')}
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">
+                <div>
+                  <label>Tipo</label>
+                  <select id="fr_type" onchange="document.getElementById('fr_count_wrap').style.display=this.value==='parcelado'?'block':'none';document.getElementById('fr_record_wrap').style.display=this.value==='avista'?'block':'none'">
+                    <option value="parcelado" selected>Em pagamento / Parcelado</option>
+                    <option value="avista">À vista</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Forma de pagamento</label>
+                  <select id="fr_method">
+                    <option>Carnê/Boleto</option>
+                    <option>Pix</option>
+                    <option>Dinheiro</option>
+                    <option>Cartão de crédito</option>
+                    <option>Cartão de débito</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Data do 1º vencimento / pagamento</label>
+                  <input id="fr_date" type="date" value="${todayISO()}">
+                </div>
+                <div id="fr_count_wrap">
+                  <label>Parcelas</label>
+                  <input id="fr_count" type="number" min="1" step="1" value="1">
+                </div>
+              </div>
+              <div id="fr_record_wrap" style="display:none;border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.035)">
+                <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;margin:0">
+                  <input id="fr_record_paid" type="checkbox" style="width:18px;height:18px;margin-top:2px">
+                  <span>
+                    <b>Registrar como recebido agora</b><br>
+                    <span class="muted small">Use apenas quando o dinheiro já entrou. Se deixar desmarcado, o Cronos cria a cobrança/plano, marca como em pagamento e não lança no gráfico.</span>
+                  </span>
+                </label>
+              </div>
+              <div>
+                <label>Observação</label>
+                <textarea id="fr_obs" rows="2" placeholder="Opcional"></textarea>
+              </div>
+            </div>
+          `,
+          footHTML:`<button class="btn" onclick="closeModal()">Cancelar</button><button class="btn ok" onclick="CRONOS_FICHA_UI.confirmReceiving()">Criar cobrança</button>`,
+          maxWidth:'min(96vw, 860px)'
+        });
+      },
+      openReceivingForSelected(){
+        const s = getFichaState(); if(!s) return;
+        this.openReceivingForItems(s.selectedItemIds || []);
+      },
+      confirmReceiving(){
+        const draft = window.__fichaReceivingDraft || {};
+        const plan = createFichaReceiving(draft.entryId, draft.itemIds, {
+          type: val('fr_type') || 'parcelado',
+          method: val('fr_method') || '',
+          date: val('fr_date') || todayISO(),
+          count: val('fr_count') || '1',
+          obs: val('fr_obs') || '',
+          recordPaidNow: !!el('fr_record_paid')?.checked
+        });
+        if(!plan) return;
+        closeModal();
+        const s = getFichaState();
+        if(s){ s.selectedItemIds = []; }
+        renderFichaApp();
+        try{ renderInstallmentsView(); }catch(_){}
+        try{ renderDashboard(); }catch(_){}
+        const alreadyReceived = plan?.receivedNow === true;
+        toast(alreadyReceived ? 'Recebimento registrado ✅' : 'Cobrança criada ✅', `${moneyBR(plan.amount)} • ${plan.payments.length} lançamento(s)${alreadyReceived ? '' : ' pendente(s)'}`);
+      },
+      setActiveEvaluation(evalId){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        if(ficha.avaliacoes.some(a=>String(a.id)===String(evalId))){
+          ficha.activeEvaluationId = String(evalId);
+          const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+          s.activeEvaluationId = String(activeEvaluation?.id || ficha.activeEvaluationId || 'eval_1');
+          s.activeDentitionType = getFichaDentitionType(ficha, entry);
+          s.dentitionRequestId = '';
+          resetFichaTransientSelection(s);
+          saveFichaMutation(db, entry);
+        }
+        renderFichaApp();
+      },
+      newEvaluation(){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const date = prompt('Data da nova avaliação (AAAA-MM-DD):', todayISO());
+        if(!date) return;
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Data inválida', 'Use o formato AAAA-MM-DD.');
+        const av = { id: uid('eval'), label: nextFichaEvaluationLabel(ficha), date, dentitionType:getFichaDentitionType(ficha, entry), createdAt:new Date().toISOString() };
+        ficha.avaliacoes.push(av);
+        ficha.activeEvaluationId = av.id;
+        s.activeEvaluationId = String(av.id);
+        s.activeDentitionType = normalizeDentitionType(av.dentitionType || getFichaDentitionType(ficha, entry));
+        s.dentitionRequestId = '';
+        resetFichaTransientSelection(s);
+        saveFichaMutation(db, entry);
+        renderFichaApp();
+        toast('Nova avaliação criada ✅', `${av.label} • ${fmtBR(date)}`);
+      },
+      async removeItem(itemId){
+        if(!confirm('Excluir este item do plano?')) return;
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        ficha.plano = ficha.plano.filter(x=>x.id!==itemId);
+        renderFichaApp();
+        const ok = await confirmFichaMutation(db, entry, before, 'Procedimento excluído', 'Alteração salva na nuvem.');
+        if(ok){ try{ renderLeadsTable(filteredEntries()); }catch(_){ } }
+      },
+      pickTooth(tooth){ const s = getFichaState(); if(!s) return; s.selectedTooth = tooth; renderFichaApp(); },
+      async cycleToothStatus(tooth){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const key = String(tooth);
+        const meta = ficha.odontograma[key] || {};
+        const cur = String(meta.status || '');
+        let next = 'paid';
+        if(cur === 'paid' || cur === 'pago' || cur === 'closed' || cur === 'plan') next = 'done';
+        else if(cur === 'done' || cur === 'realizado') next = '';
+        meta.status = next;
+        if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
+        else ficha.odontograma[key] = meta;
+        s.selectedTooth = key;
+        renderFichaApp();
+        await confirmFichaMutation(db, entry, before, 'Odontograma salvo ✅', 'A cor foi confirmada na nuvem.');
+      },
+      toggleAbsent(tooth){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const key = String(tooth || s.selectedTooth || '');
+        if(!key) return;
+        const meta = ficha.odontograma[key] || {};
+        meta.absent = !(meta.absent === true || meta.status === 'absent' || meta.condition === 'absent');
+        if(meta.status === 'absent') meta.status = '';
+        meta.condition = meta.absent ? 'absent' : '';
+        if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
+        else ficha.odontograma[key] = meta;
+        s.selectedTooth = key;
+        saveFichaMutation(db, entry);
+        renderFichaApp();
+      },
+      useSelectedToothForPlan(){
+        const s = getFichaState(); if(!s || !s.selectedTooth) return;
+        const tooth = String(s.selectedTooth);
+        if(!s.selectedTeeth.includes(tooth)) s.selectedTeeth.push(tooth);
+        s.selectedTeeth = sortTeethForDentition(s.selectedTeeth, getFichaDentitionType(ensureFicha(getEntryById(s.entryId) || {}), getEntryById(s.entryId)));
+        renderFichaApp();
+      },
+      clearSelection(){
+        const s = getFichaState(); if(!s) return;
+        s.selectedTeeth = [];
+        s.selectedTooth = null;
+        s.selectedFace = '';
+        s.selectedProcId = '';
+        s.price = '';
+        renderFichaApp();
+      },
+      selectedTeethOrLast(){
+        const s = getFichaState(); if(!s) return [];
+        const teeth = Array.isArray(s.selectedTeeth) ? s.selectedTeeth.slice() : [];
+        if(!teeth.length && s.selectedTooth) teeth.push(String(s.selectedTooth));
+        return [...new Set(teeth.map(String).filter(Boolean))];
+      },
+      async markSelectedProgress(status){
+        const s = getFichaState(); if(!s) return;
+        const teeth = this.selectedTeethOrLast();
+        if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        teeth.forEach(tooth=>{
+          const key = String(tooth);
+          const meta = ficha.odontograma[key] || {};
+          meta.status = status || '';
+          if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
+          else ficha.odontograma[key] = meta;
+        });
+        // A marcação conclui esta seleção. Assim o próximo clique em outro dente
+        // não reaplica o novo status nos dentes que já estavam coloridos.
+        s.selectedTeeth = [];
+        s.selectedTooth = null;
+        renderFichaApp();
+        const label = status === 'done' ? 'Realizado' : 'Pago/Pendente';
+        await confirmFichaMutation(db, entry, before, `${label} salvo ✅`, `${teeth.length} dente(s) atualizado(s).`);
+      },
+      async setAbsentForSelection(){
+        const s = getFichaState(); if(!s) return;
+        const teeth = this.selectedTeethOrLast();
+        if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const allAbsent = teeth.every(tooth=>isToothAbsent(entry, tooth));
+        teeth.forEach(tooth=>{
+          const key = String(tooth);
+          const meta = ficha.odontograma[key] || {};
+          meta.absent = !allAbsent;
+          meta.condition = meta.absent ? 'absent' : '';
+          if(meta.status === 'absent') meta.status = '';
+          if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
+          else ficha.odontograma[key] = meta;
+        });
+        s.selectedTeeth = [];
+        s.selectedTooth = null;
+        renderFichaApp();
+        await confirmFichaMutation(db, entry, before, allAbsent ? 'Ausência removida' : 'Dente ausente salvo ✅', 'Alteração confirmada na nuvem.');
+      },
+      saveToothMeta(){
+        const s = getFichaState(); if(!s || !s.selectedTooth) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const old = ficha.odontograma[s.selectedTooth] || {};
+        ficha.odontograma[s.selectedTooth] = {
+          ...old,
+          status: String(el('odontoStatusSel')?.value || old.status || ''),
+          note: String(el('odontoNoteTxt')?.value || old.note || '').trim(),
+          absent: old.absent === true,
+          condition: old.condition || ''
+        };
+        if(!ficha.odontograma[s.selectedTooth].status && !ficha.odontograma[s.selectedTooth].note && !ficha.odontograma[s.selectedTooth].absent && !ficha.odontograma[s.selectedTooth].condition){
+          delete ficha.odontograma[s.selectedTooth];
+        }
+        saveDB(db);
+        renderFichaApp();
+        toast('Odontograma salvo.');
+      },
+      async clearToothMeta(){
+        const s = getFichaState(); if(!s) return;
+        const teeth = this.selectedTeethOrLast();
+        if(!teeth.length) return toast('Odontograma', 'Seleciona pelo menos um dente.');
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        teeth.forEach(tooth=>{ delete ficha.odontograma[String(tooth)]; });
+        s.selectedTeeth = [];
+        s.selectedTooth = null;
+        renderFichaApp();
+        await confirmFichaMutation(db, entry, before, 'Marcação removida', 'Alteração salva na nuvem.');
+      }
+    };
+
+    [
+      "setObs", "setDentitionType", "addToPlan", "refreshPlanBaseValues", "updateValue", "formatValue",
+      "updateFace", "toggleDone", "togglePaid", "openReceivingForItems",
+      "openReceivingForSelected", "confirmReceiving", "setActiveEvaluation",
+      "newEvaluation", "removeItem", "cycleToothStatus", "toggleAbsent",
+      "markSelectedProgress", "setAbsentForSelection", "saveToothMeta",
+      "clearToothMeta"
+    ].forEach(methodName=>{
+      const original = window.CRONOS_FICHA_UI?.[methodName];
+      if(typeof original !== "function") return;
+      window.CRONOS_FICHA_UI[methodName] = function(){
+        if(!guardFichaMutationForCRC()) return false;
+        return original.apply(this, arguments);
+      };
+    });
+
+    if(!window.__CRONOS_PROC_MENU_OUTSIDE_BOUND__){
+      window.__CRONOS_PROC_MENU_OUTSIDE_BOUND__ = true;
+      document.addEventListener('mousedown', function(ev){
+        try{
+          const wrap = ev.target?.closest?.('.procPickerWrap');
+          if(wrap) return;
+          if(window.CRONOS_FICHA_UI?.closeProcMenu){
+            window.CRONOS_FICHA_UI.closeProcMenu();
+          }
+        }catch(_){}
+      }, true);
+      document.addEventListener('keydown', function(ev){
+        try{
+          if(ev.key === 'Escape' && window.CRONOS_FICHA_UI?.closeProcMenu){
+            window.CRONOS_FICHA_UI.closeProcMenu();
+          }
+        }catch(_){}
+      });
+    }
+
+    window.__cronosRenderFichaApp = renderFichaApp;
+
+    window.openFicha = function(entryId){
+      ensureProcedureCatalogSeeded();
+      const st = setupFichaState(entryId);
+      if(!st) return toast('Ficha', 'Lead não encontrado.');
+      const entry = getEntryById(entryId);
+      const contact = getContactForEntry(entry);
+      openModal({
+        title:'Ficha do paciente',
+        sub:`${contact?.name || entry?.name || 'Lead'} • ${isFichaReadOnlyForActor(currentActor()) ? 'visualização comercial / impressão' : 'plano de tratamento, valores e odontograma'}`,
+        bodyHTML:'<div id="fichaApp" style="width:100%"></div>',
+        footHTML:`<button class="btn" onclick="printFicha('${escapeHTML(String(entryId))}')">🖨️ Imprimir ficha</button><button class="btn" onclick="closeModal()">Fechar</button>`,
+        onMount: renderFichaApp,
+        maxWidth:'min(99vw, 1880px)',
+        width:'min(99vw, 1880px)',
+        modalClass:'modalFichaWide'
+      });
+    };
+
+    window.CRONOS_OPEN_FICHA_BTN = function(ev, entryId){
+      try{
+        if(ev){
+          ev.preventDefault?.();
+          ev.stopPropagation?.();
+        }
+      }catch(_){}
+      if(!entryId) return false;
+      window.openFicha && window.openFicha(entryId);
+      return false;
+    };
+
+    if(!window.__CRONOS_FICHA_BUTTON_DELEGATE_BOUND__){
+      window.__CRONOS_FICHA_BUTTON_DELEGATE_BOUND__ = true;
+      document.addEventListener('click', function(ev){
+        const btn = ev.target?.closest?.('[data-ficha-entry]');
+        if(!btn) return;
+        const id = btn.getAttribute('data-ficha-entry');
+        if(!id) return;
+        if(document.getElementById('fichaApp')) return;
+        window.openFicha && window.openFicha(id);
+      }, true);
+    }
+
+    window.printFicha = function(entryId){
+      const entry = getEntryById(entryId);
+      if(!entry) return toast('Ficha', 'Lead não encontrado.');
+      const db = loadDB();
+      const actor = currentActor();
+      const contact = getContactForEntry(entry);
+      const ficha = ensureFicha(entry);
+      const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
+      const printablePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
+      const totals = calcFichaTotals(printablePlan, entry);
+      const branding = getClinicBranding(db, actor);
+      const clinicName = escapeHTML(getClinicDisplayName(db, actor));
+      const patientName = escapeHTML(contact?.name || entry?.name || 'Paciente');
+      const patientPhone = escapeHTML(contact?.phone || entry?.phone || '—');
+      const patientCpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
+      const patientBirthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
+      const patientTreatment = escapeHTML(entry?.treatment || '—');
+      const patientEvaluation = escapeHTML(`${activeEvaluation?.label || 'Avaliação'}${activeEvaluation?.date ? ` • ${fmtBR(activeEvaluation.date)}` : ''}`);
+      const obs = escapeHTML(String(ficha?.observacoes || entry?.obs || '').trim() || '');
+      const activeDentition = getFichaDentitionType(ficha, entry);
+      const printRows = getOdontoRowsForDentition(activeDentition);
+      const upper = [...printRows.supDir, ...printRows.supEsq];
+      const lower = [...printRows.infDir, ...printRows.infEsq];
+      function getPrintToothVisualState(tooth){
+        if(isToothAbsent(entry, tooth)) return 'absent';
+        const meta = getToothMeta(entry, tooth);
+        const manualStatus = String(meta?.status || '').toLowerCase();
+        if(manualStatus === 'done' || manualStatus === 'realizado') return 'done';
+        if(manualStatus === 'paid' || manualStatus === 'pago' || manualStatus === 'closed' || manualStatus === 'plan') return 'paid';
+        const planForTooth = printablePlan.filter(item=>String(item.dente || '').split(',').map(x=>x.trim()).filter(Boolean).includes(String(tooth)));
+        if(planForTooth.length){
+          if(planForTooth.every(item=>isFichaItemClinicallyDone(entry, item))) return 'done';
+          if(planForTooth.some(item=>item.pago || isFichaItemFinancialLinked(entry, item))) return 'paid';
+        }
+        return '';
+      }
+      function overlayBoxes(list, y){
+        return list.map((tooth, i)=>`<div class="box ${getPrintToothVisualState(tooth)}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%">${tooth}</div>`).join('');
+      }
+
+      const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha - ${patientName}</title>
+        <style>
+          :root{--print-line:rgba(17,24,39,.42);--print-line-soft:rgba(17,24,39,.18)}
+          body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0}
+          .sheet{border:1px solid var(--print-line-soft);padding:22px 24px 28px}
+          .head{display:grid;grid-template-columns:120px 1fr 220px;gap:16px;align-items:center;border-bottom:1.5px solid var(--print-line);padding-bottom:14px}
+          .logo{width:140px;height:84px;display:flex;align-items:center;justify-content:flex-start;text-align:center;font-size:12px;font-weight:700}
+          .logo img{width:auto;height:76px;max-width:140px;display:block;object-fit:contain}
+          .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:#444;letter-spacing:.08em}
+          .meta{text-align:right;font-size:12px;line-height:1.7}
+          .patient{margin-top:12px;display:grid;grid-template-columns:1.35fr .9fr .9fr 1fr;gap:10px}
+          .field{border:1px solid var(--print-line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
+          .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px}
+          .boxWrap{border:1.25px solid var(--print-line);padding:12px 12px 10px}
+          .odonto{position:relative;width:100%;aspect-ratio:1536/560;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#fff;box-sizing:border-box}.odonto .odontoStatusLayer,.odonto .odontoLabelLayer{position:absolute;inset:0;width:100%;height:100%;display:block;user-select:none}.odonto .odontoStatusLayer{z-index:2;pointer-events:none;overflow:visible}.odonto .odontoLabelLayer{z-index:4;pointer-events:none;overflow:visible}.odontoStatusLayer .toothLine{fill:#6b7280;stroke:none;shape-rendering:geometricPrecision}.odontoStatusLayer .odontogramaTooth.paid .toothLine,.odontoStatusLayer .odontogramaTooth.plan .toothLine,.odontoStatusLayer .odontogramaTooth.closed .toothLine{fill:#ca8a04}.odontoStatusLayer .odontogramaTooth.done .toothLine{fill:#16a34a}.odontoStatusLayer .odontogramaTooth.absent .toothLine{fill:#dc2626}.odontoLabelLayer .odontoNumberText{fill:#111827;font-size:38px;font-weight:900;text-anchor:middle;dominant-baseline:middle;letter-spacing:.2px}.odontoLabelLayer.deciduous .odontoNumberText{font-size:10px;font-weight:900}.odontoStatusLayer.deciduous,.odontoLabelLayer.deciduous{transform:scale(.78);transform-origin:50% 50%}.odonto.printDeciduous{width:72%;margin-left:auto;margin-right:auto;aspect-ratio:384.53/233.56}.odonto.printDeciduous .odontoStatusLayer.deciduous,.odonto.printDeciduous .odontoLabelLayer.deciduous{transform:scale(.96);transform-origin:50% 50%}
+.legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:#555}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;padding:5px 9px;border-radius:999px}
+          .chip{width:10px;height:10px;border-radius:999px;display:inline-block}.cp1{background:#ffd400}.cp2{background:#16a34a}.cp3{background:#dc2626}
+          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--print-line);padding:6px 7px;vertical-align:top}th{background:#f7f8fa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
+          .summary{border-top:1.25px solid var(--print-line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr);gap:0}.sum{box-sizing:border-box;border:1px solid var(--print-line);padding:8px 9px;min-height:62px;background:#fff}.sum + .sum{margin-left:-1px}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}.printNumHighlight{display:inline-block;border-radius:999px;padding:5px 12px;background:#dbeafe;box-shadow:inset 0 0 0 1px #93c5fd}.printNumHighlight.closed{background:#dbeafe;box-shadow:inset 0 0 0 1px #93c5fd}.printNumHighlight.discount{background:#dcfce7;box-shadow:inset 0 0 0 1px #86efac}
+          .obs{margin-top:14px;border:1.25px solid var(--print-line);padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
+          .foot{margin-top:16px;font-size:11px;color:#333}
+          @media print{body{padding:0}.sheet{border:none}tr.done td{background:#bbf7d0 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.paid td,tr.closed td{background:#fef08a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.absent td{background:#fecaca !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.printNumHighlight,.printNumHighlight.closed,.printNumHighlight.discount{-webkit-print-color-adjust:exact;print-color-adjust:exact}.odontoPaintLayer .odontogramaTooth.paid .cls-2,.odontoPaintLayer .odontogramaTooth.plan .cls-2,.odontoPaintLayer .odontogramaTooth.closed .cls-2,.odontoPaintLayer .odontogramaTooth.done .cls-2,.odontoPaintLayer .odontogramaTooth.absent .cls-2{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+        </style></head><body>
+        <div class="sheet">
+          <div class="head">
+            <div class="logo">${branding?.logoDataUri ? `<img src="${branding.logoDataUri}" alt="${clinicName}">` : `${clinicName}`}</div>
+            <div class="title"><h2>FICHA DE AVALIAÇÃO</h2><p>PLANO DE TRATAMENTO / ODONTOGRAMA</p></div>
+            <div class="meta">Data: ${fmtBR(todayISO())}<br>Lead: ${escapeHTML(String(entry.id || '—'))}<br>Tratamento: ${patientTreatment}<br>Avaliação: ${patientEvaluation}</div>
+          </div>
+          <div class="patient">
+            <div class="field"><span class="lbl">Paciente</span><span class="val">${patientName}</span></div>
+            <div class="field"><span class="lbl">Telefone</span><span class="val">${patientPhone}</span></div>
+            <div class="field"><span class="lbl">CPF</span><span class="val">${patientCpf}</span></div>
+            <div class="field"><span class="lbl">Nascimento</span><span class="val">${patientBirthAge}</span></div>
+          </div>
+
+          <div class="boxWrap" style="margin-top:16px">
+            <div class="sectionTitle">Odontograma • ${dentitionLabel(activeDentition)}</div>
+            <div class="odonto ${activeDentition === 'deciduous' ? 'printDeciduous' : ''}">${renderOdontogramSVG(entry, { selectedTeeth: [], interactive: false, getVisualState: getPrintToothVisualState, dentitionType: activeDentition })}</div>
+            <div class="legend"><span><i class="chip" style="background:#6b7280"></i>Neutro</span><span><i class="chip cp1"></i>Pago / Pendente</span><span><i class="chip cp2"></i>Realizado</span><span><i class="chip cp3"></i>Perda dentária / ausente</span></div>
+          </div>
+
+          <div style="border:1.25px solid var(--print-line);display:flex;flex-direction:column;margin-top:16px">
+            <table>
+              <thead><tr><th>Nº</th><th>Procedimento</th><th>Dente</th><th>Face</th><th>Tabela</th><th>Fechado</th><th>Pago</th></tr></thead>
+              <tbody>${printablePlan.length ? printablePlan.map((item, idx)=>`<tr class="${getItemVisualState(entry, item)}"><td class="center">${idx+1}</td><td>${escapeHTML(item.procedimento || '')}</td><td class="center">${escapeHTML(item.dente || '—')}</td><td class="center">${escapeHTML(item.face || '—')}</td><td class="right">${moneyBR(item.valorBase || 0)}</td><td class="right">${moneyBR(item.valorFechado || 0)}</td><td class="right">${isFichaItemFinancialPaid(entry, item) ? moneyBR(item.valorFechado || 0) : moneyBR(0)}</td></tr>`).join('') : `<tr><td colspan="7">Nenhum item cadastrado nesta avaliação.</td></tr>`}</tbody>
+            </table>
+            <div class="summary">
+              <div class="sum"><div class="lbl">Valor tabela</div><div class="val">${moneyBR(totals.totalBase)}</div></div>
+              <div class="sum"><div class="lbl">Valor fechado</div><div class="val"><span class="printNumHighlight closed">${moneyBR(totals.totalFechado)}</span></div></div>
+              <div class="sum"><div class="lbl">Desconto</div><div class="val"><span class="printNumHighlight discount">${moneyBR(totals.totalDesconto)}</span></div></div>
+              <div class="sum"><div class="lbl">Desconto %</div><div class="val"><span class="printNumHighlight discount">${totals.descontoPct.toFixed(2)}%</span></div></div>
+              <div class="sum"><div class="lbl">Valor pago</div><div class="val">${moneyBR(totals.totalPago)}</div></div>
+            </div>
+          </div>
+
+          <div class="obs"><div class="sectionTitle">Observações</div><div class="obsText">${obs || '—'}</div></div>
+          <div class="foot"><div>Documento gerado pelo Cronos</div></div>
+        </div>
+        </body></html>`;
+
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(iframe);
+
+      const doc = iframe.contentWindow.document;
+      doc.open();
+      doc.write(html);
+      doc.close();
+
+      let printed = false;
+      const triggerPrint = ()=>{
+        if(printed) return;
+        printed = true;
+        try{
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
+        }catch(e){
+          console.error('printFicha/iframe', e);
+          toast('Impressão', 'Não foi possível abrir a impressão da ficha.');
+        }
+      };
+      const cleanup = ()=> setTimeout(()=>{ try{ iframe.remove(); }catch(_){ } }, 800);
+
+      iframe.onload = ()=>{
+        setTimeout(triggerPrint, 600);
+      };
+      try{ iframe.contentWindow.onafterprint = cleanup; }catch(_){}
+      setTimeout(triggerPrint, 1200);
+      setTimeout(cleanup, 5000);
+    };
+
+    function enhanceLeadCardsWithFichaButtons(){
+      qsa('#leadsCards .leadCard').forEach(card=>{
+        const row = card.querySelector('.leadActionsRow');
+        if(!row || row.querySelector('.btnFicha')) return;
+        const refBtn = row.querySelector('button[onclick*="openLeadEntry"]');
+        if(!refBtn) return;
+        const m = String(refBtn.getAttribute('onclick') || '').match(/openLeadEntry\('([^']+)'\)/);
+        if(!m || !m[1]) return;
+        const btn = document.createElement('button');
+        btn.className = 'iconBtn btnFicha cronos-action-ficha';
+        btn.title = 'Ficha';
+        btn.innerHTML = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>`;
+        btn.onclick = ()=>openFicha(m[1]);
+        row.insertBefore(btn, row.firstChild);
+      });
+    }
+
+    const __origRenderSettings_ficha = typeof renderSettings === 'function' ? renderSettings : null;
+    if(__origRenderSettings_ficha){
+      renderSettings = function(){
+        const out = __origRenderSettings_ficha.apply(this, arguments);
+        try{ injectBrandingSettingsCard(); }catch(e){ console.error('Branding/settings', e); }
+        try{ injectProcedureSettingsCard(); }catch(e){ console.error('Procedimentos/settings', e); }
+        return out;
+      };
+    }
+    const __origRenderLeadsTable_ficha = typeof renderLeadsTable === 'function' ? renderLeadsTable : null;
+    if(__origRenderLeadsTable_ficha){
+      renderLeadsTable = function(){
+        const out = __origRenderLeadsTable_ficha.apply(this, arguments);
+        try{ enhanceLeadCardsWithFichaButtons(); }catch(e){ console.error('Ficha/leads', e); }
+        return out;
+      };
+    }
+
+    injectFichaStyles();
+    ensureProcedureCatalogSeeded();
+    setTimeout(()=>{
+      try{ injectBrandingSettingsCard(); }catch(_){ }
+      try{ injectProcedureSettingsCard(); }catch(_){ }
+      try{ enhanceLeadCardsWithFichaButtons(); }catch(_){ }
+    }, 50);
+  }catch(err){
+    console.error('Falha ao iniciar módulo de ficha/prontuário:', err);
+  }
+})();
+
+
+/* V24 — corrige contador lateral de Tarefas após F5/login: sincroniza tarefas automáticas antes de calcular a badge. */

@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
+  <meta name="robots" content="noindex, nofollow" />
+  <link href="../assets/brand/favicon.png?v=4" rel="icon" type="image/png"/>
+  <!-- CRONOS_SUPERADMIN_V40_IMPORT_CSV_FIX -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cronos — Superadmin Operacional</title>
@@ -301,8 +304,480 @@
     .boot-spinner{width:42px;height:42px;border-radius:999px;border:3px solid rgba(255,255,255,.12);border-top-color:var(--primary);margin:0 auto 16px;animation:bootSpin .9s linear infinite}
     @keyframes bootSpin{to{transform:rotate(360deg)}}
 
+
+    /* ===== Superadmin v34: navegação lateral ===== */
+    .app.superadmin-app{
+      max-width:none;
+      padding:0;
+      min-height:100vh;
+    }
+    .super-shell{
+      min-height:100vh;
+      display:grid;
+      grid-template-columns:280px minmax(0,1fr);
+    }
+    .super-sidebar{
+      position:sticky;
+      top:0;
+      height:100vh;
+      padding:18px 14px;
+      border-right:1px solid var(--line);
+      background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02)),rgba(8,13,22,.96);
+      overflow:auto;
+    }
+    .super-brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      padding:12px 10px 16px;
+      margin-bottom:8px;
+      border-bottom:1px solid var(--line);
+    }
+    .super-mark{
+      width:42px;height:42px;border-radius:16px;
+      display:grid;place-items:center;
+      background:linear-gradient(135deg,var(--primary),#2ee59d);
+      font-weight:950;color:#fff;
+      box-shadow:0 14px 30px rgba(124,92,255,.22);
+    }
+    .super-brand strong{display:block;font-size:16px;line-height:1.1}
+    .super-brand span{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+    .super-nav{
+      display:grid;
+      gap:8px;
+      margin-top:14px;
+    }
+    .super-nav button{
+      width:100%;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:12px 12px;
+      border-radius:14px;
+      border:1px solid transparent;
+      background:transparent;
+      color:var(--muted);
+      cursor:pointer;
+      font-weight:850;
+      text-align:left;
+      transition:.18s ease;
+    }
+    .super-nav button:hover{
+      color:var(--text);
+      background:rgba(255,255,255,.055);
+      border-color:var(--line);
+    }
+    .super-nav button.active{
+      color:#fff;
+      background:linear-gradient(135deg,rgba(124,92,255,.30),rgba(46,229,157,.13));
+      border-color:rgba(124,92,255,.55);
+      box-shadow:0 12px 28px rgba(0,0,0,.22);
+    }
+    .super-nav small{
+      font-size:11px;
+      color:inherit;
+      opacity:.75;
+      font-weight:900;
+    }
+    .super-main{
+      min-width:0;
+      padding:22px;
+      max-width:1520px;
+      width:100%;
+      margin:0 auto;
+    }
+    .super-view{display:block}
+    .super-view.hidden{display:none!important}
+    .super-section-head{
+      display:flex;
+      justify-content:space-between;
+      gap:16px;
+      align-items:flex-start;
+      flex-wrap:wrap;
+      margin-bottom:16px;
+    }
+    .super-section-head h2{
+      margin:0 0 6px;
+      font-size:28px;
+      letter-spacing:-.03em;
+      line-height:1.05;
+    }
+    .super-section-head p{
+      margin:0;
+      color:var(--muted);
+      font-size:14px;
+      max-width:760px;
+      line-height:1.45;
+    }
+    .placeholder-grid{
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:14px;
+    }
+    .placeholder-card{
+      padding:16px;
+    }
+    .placeholder-card h3{
+      margin:0 0 8px;
+      font-size:17px;
+    }
+    .placeholder-card p{
+      margin:0;
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.45;
+    }
+    .super-form-grid{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:14px;
+    }
+    .super-form-grid .full{grid-column:1/-1}
+    .support-preview{
+      margin-top:14px;
+      padding:14px;
+      border-radius:14px;
+      border:1px dashed rgba(255,255,255,.14);
+      color:var(--muted);
+      line-height:1.5;
+    }
+    .finance-mini-grid{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:14px;
+      margin-bottom:16px;
+    }
+    .finance-mini-card{padding:15px}
+    .finance-mini-card small{display:block;color:var(--muted);font-size:12px;margin-bottom:7px}
+    .finance-mini-card strong{font-size:24px;letter-spacing:-.03em}
+    @media(max-width:1050px){
+      .super-shell{grid-template-columns:1fr}
+      .super-sidebar{position:static;height:auto}
+      .super-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .super-main{padding:16px}
+      .placeholder-grid,.finance-mini-grid{grid-template-columns:1fr 1fr}
+    }
+    @media(max-width:700px){
+      .super-nav{grid-template-columns:1fr}
+      .super-form-grid,.placeholder-grid,.finance-mini-grid{grid-template-columns:1fr}
+    }
+
+
+    /* ===== Superadmin v37: Dashboard com KPIs clicáveis + gráfico ===== */
+    .stat{
+      cursor:pointer;
+      transition:.18s ease;
+      position:relative;
+      overflow:hidden;
+    }
+    .stat:hover{
+      transform:translateY(-2px);
+      border-color:rgba(124,92,255,.45);
+    }
+    .stat.active{
+      border-color:rgba(124,92,255,.75);
+      box-shadow:0 18px 44px rgba(124,92,255,.18);
+      background:linear-gradient(180deg,rgba(124,92,255,.14),rgba(255,255,255,.035));
+    }
+    .stat.active::after{
+      content:"";
+      position:absolute;
+      left:14px;
+      right:14px;
+      bottom:0;
+      height:3px;
+      border-radius:999px 999px 0 0;
+      background:linear-gradient(90deg,var(--primary),#2ee59d);
+    }
+    .super-dashboard-panel{
+      padding:16px;
+      margin-top:16px;
+    }
+    .super-dashboard-grid{
+      display:grid;
+      grid-template-columns:minmax(420px,1.2fr) minmax(280px,.8fr);
+      gap:16px;
+      align-items:stretch;
+    }
+    .super-chart-card,.super-kpi-detail{
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:16px;
+      background:rgba(255,255,255,.025);
+      padding:15px;
+      min-height:260px;
+    }
+    .super-card-title{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:12px;
+    }
+    .super-card-title h3{
+      margin:0;
+      font-size:18px;
+      letter-spacing:-.02em;
+    }
+    .super-card-title p{
+      margin:4px 0 0;
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.35;
+    }
+    .super-kpi-pill{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.09);
+      background:rgba(255,255,255,.05);
+      color:#dbeafe;
+      font-size:12px;
+      font-weight:900;
+      white-space:nowrap;
+    }
+    .super-kpi-chart{
+      width:100%;
+      height:210px;
+      display:block;
+      overflow:visible;
+    }
+    .super-kpi-list{
+      display:grid;
+      gap:9px;
+      margin-top:12px;
+      max-height:210px;
+      overflow:auto;
+      padding-right:4px;
+    }
+    .super-kpi-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      padding:10px 11px;
+      border-radius:13px;
+      border:1px solid rgba(255,255,255,.07);
+      background:rgba(255,255,255,.035);
+    }
+    .super-kpi-row strong{
+      display:block;
+      font-size:13px;
+      line-height:1.2;
+    }
+    .super-kpi-row span{
+      display:block;
+      color:var(--muted);
+      font-size:12px;
+      margin-top:3px;
+    }
+    .super-kpi-empty{
+      color:var(--muted);
+      border:1px dashed rgba(255,255,255,.13);
+      border-radius:14px;
+      padding:14px;
+      line-height:1.45;
+    }
+    @media(max-width:980px){
+      .super-dashboard-grid{grid-template-columns:1fr}
+    }
+
+
+    /* ===== Superadmin v38: Financeiro autoexplicativo + KPIs clicáveis ===== */
+    .finance-card-clickable{
+      cursor:pointer;
+      transition:.18s ease;
+      position:relative;
+      overflow:hidden;
+    }
+    .finance-card-clickable:hover{
+      transform:translateY(-2px);
+      border-color:rgba(46,229,157,.42);
+    }
+    .finance-card-clickable.active{
+      border-color:rgba(46,229,157,.72);
+      box-shadow:0 18px 44px rgba(46,229,157,.12);
+      background:linear-gradient(180deg,rgba(46,229,157,.12),rgba(255,255,255,.035));
+    }
+    .finance-card-clickable.active::after{
+      content:"";
+      position:absolute;
+      left:14px;
+      right:14px;
+      bottom:0;
+      height:3px;
+      border-radius:999px 999px 0 0;
+      background:linear-gradient(90deg,#2ee59d,#38bdf8);
+    }
+    .finance-mini-card p{
+      margin:7px 0 0;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.35;
+    }
+    .finance-dashboard-panel{
+      padding:16px;
+      margin-top:16px;
+    }
+    .finance-dashboard-grid{
+      display:grid;
+      grid-template-columns:minmax(420px,1.15fr) minmax(280px,.85fr);
+      gap:16px;
+      align-items:stretch;
+    }
+    .finance-chart-card,.finance-detail-card{
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:16px;
+      background:rgba(255,255,255,.025);
+      padding:15px;
+      min-height:280px;
+    }
+    .finance-chart{
+      width:100%;
+      height:230px;
+      display:block;
+      overflow:visible;
+    }
+    .finance-detail-value{
+      font-size:30px;
+      font-weight:950;
+      letter-spacing:-.04em;
+      margin:8px 0 6px;
+    }
+    .finance-detail-text{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.45;
+      margin:0 0 12px;
+    }
+    .finance-list{
+      display:grid;
+      gap:9px;
+      max-height:185px;
+      overflow:auto;
+      padding-right:4px;
+      margin-top:12px;
+    }
+    .finance-row{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      border:1px solid rgba(255,255,255,.07);
+      background:rgba(255,255,255,.035);
+      border-radius:13px;
+      padding:10px 11px;
+    }
+    .finance-row strong{
+      display:block;
+      font-size:13px;
+      line-height:1.2;
+    }
+    .finance-row span{
+      display:block;
+      color:var(--muted);
+      font-size:12px;
+      margin-top:3px;
+    }
+    .finance-empty{
+      color:var(--muted);
+      border:1px dashed rgba(255,255,255,.13);
+      border-radius:14px;
+      padding:14px;
+      line-height:1.45;
+    }
+    .finance-mini-note{
+      margin-top:14px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+    }
+    @media(max-width:980px){
+      .finance-dashboard-grid{grid-template-columns:1fr}
+    }
+
+
+    /* ===== Superadmin v39: busca customizada de clínica + retry módulos ===== */
+    .clinic-search-wrap{
+      position:relative;
+      z-index:20;
+    }
+    .clinic-search-results{
+      position:absolute;
+      left:0;
+      right:0;
+      top:calc(100% + 8px);
+      z-index:80;
+      display:none;
+      max-height:260px;
+      overflow:auto;
+      padding:8px;
+      border-radius:16px;
+      border:1px solid rgba(255,255,255,.12);
+      background:linear-gradient(180deg,rgba(18,25,39,.98),rgba(12,18,30,.98));
+      box-shadow:0 24px 60px rgba(0,0,0,.42);
+      backdrop-filter:blur(14px);
+    }
+    .clinic-search-results.show{display:grid;gap:7px}
+    .clinic-search-option{
+      width:100%;
+      border:1px solid rgba(255,255,255,.07);
+      background:rgba(255,255,255,.045);
+      color:var(--text);
+      border-radius:13px;
+      padding:10px 12px;
+      cursor:pointer;
+      text-align:left;
+      transition:.16s ease;
+    }
+    .clinic-search-option:hover,
+    .clinic-search-option.active{
+      border-color:rgba(46,229,157,.45);
+      background:linear-gradient(135deg,rgba(46,229,157,.16),rgba(96,165,250,.10));
+      transform:translateY(-1px);
+    }
+    .clinic-search-option strong{
+      display:block;
+      font-size:14px;
+      line-height:1.2;
+    }
+    .clinic-search-option span{
+      display:block;
+      margin-top:4px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.25;
+    }
+    .clinic-search-empty{
+      padding:12px;
+      color:var(--muted);
+      border:1px dashed rgba(255,255,255,.12);
+      border-radius:13px;
+      font-size:13px;
+      line-height:1.35;
+    }
+    .feature-message.loading{
+      border-style:solid;
+      background:rgba(96,165,250,.08);
+    }
+    .feature-message.loading::before{
+      content:"";
+      display:inline-block;
+      width:12px;
+      height:12px;
+      margin-right:8px;
+      border-radius:999px;
+      border:2px solid rgba(255,255,255,.25);
+      border-top-color:#60a5fa;
+      vertical-align:-2px;
+      animation:bootSpin .8s linear infinite;
+    }
+
 </style>
-</head>
+  <link rel="canonical" href="https://cronosodonto.com/superadmin/" />
+
 <body>
   <div id="bootOverlay" class="boot-shell">
     <div class="card boot-card">
@@ -359,8 +834,30 @@
     </div>
   </section>
 
-  <div id="panelApp" class="app hidden">
-    <div class="topbar">
+  <div id="panelApp" class="app superadmin-app hidden">
+    <div class="super-shell">
+      <aside class="super-sidebar">
+        <div class="super-brand">
+          <div class="super-mark">C</div>
+          <div>
+            <strong>Superadmin</strong>
+            <span>Controle central do Cronos</span>
+          </div>
+        </div>
+        <nav class="super-nav" id="superNav">
+          <button type="button" class="active" data-super-view="dashboard"><span>Dashboard</span><small>visão</small></button>
+          <button type="button" data-super-view="clinics"><span>Clínicas</span><small>clientes</small></button>
+          <button type="button" data-super-view="plans"><span>Planos e Módulos</span><small>acesso</small></button>
+          <button type="button" data-super-view="finance"><span>Financeiro</span><small>receita</small></button>
+          <button type="button" data-super-view="support"><span>Suporte</span><small>WhatsApp</small></button>
+          <button type="button" data-super-view="logs"><span>Logs</span><small>auditoria</small></button>
+          <button type="button" data-super-view="settings"><span>Configurações</span><small>global</small></button>
+        </nav>
+      </aside>
+
+      <main class="super-main">
+        <section class="super-view" data-super-panel="dashboard">
+          <div class="topbar">
       <div class="title">
         <h1>Superadmin</h1>
         <p>Controle de clínicas, validade, suporte, superadmins e dados administrativos.</p>
@@ -374,10 +871,18 @@
         <button class="btn btn-primary" id="btnCreateClinic">Criar clínica</button>
       </div>
     </div>
+          <div class="grid-stats" id="statsGrid"></div>
+          <div class="card super-dashboard-panel" id="superDashboardPanel"></div>
+        </section>
 
-    <div class="grid-stats" id="statsGrid"></div>
-
-    <div class="card">
+        <section class="super-view hidden" data-super-panel="clinics">
+          <div class="super-section-head">
+            <div>
+              <h2>Clínicas</h2>
+              <p>Cadastre, filtre, edite, bloqueie, renove validade e acompanhe usuários por clínica.</p>
+            </div>
+          </div>
+          <div class="card">
       <div class="toolbar">
         <input class="input" id="searchInput" placeholder="Buscar clínica, slug, master, documento ou telefone..." />
         <select class="select" id="statusFilter">
@@ -422,6 +927,154 @@
           <button class="btn btn-ghost" id="btnClinicNext" type="button">Próxima</button>
         </div>
       </div>
+    </div>
+        </section>
+
+        <section class="super-view hidden" data-super-panel="plans">
+          <div class="super-section-head">
+            <div>
+              <h2>Planos e Módulos</h2>
+              <p>Atualize o padrão global de módulos e configure recursos liberados, bloqueados ou ocultos por clínica.</p>
+            </div>
+          </div>
+          <div id="superPlansMount"></div>
+        </section>
+
+        <section class="super-view hidden" data-super-panel="finance">
+          <div class="super-section-head">
+            <div>
+              <h2>Financeiro do Cronos</h2>
+              <p>Resumo interno da receita do próprio Cronos: recebido por mês, acumulado anual, taxas, líquido estimado e MRR. Os cards são explicativos para qualquer pessoa entender sem precisar chamar o suporte emocional do Alex.</p>
+            </div>
+          </div>
+
+          <div class="finance-mini-grid" id="financeKpiGrid">
+            <div class="card finance-mini-card finance-card-clickable active" data-finance-kpi="month">
+              <small>Recebido este mês</small>
+              <strong id="saFinMonth">R$ 0,00</strong>
+              <p>Soma dos pagamentos registrados dentro do mês atual.</p>
+            </div>
+            <div class="card finance-mini-card finance-card-clickable" data-finance-kpi="year">
+              <small>Recebido no ano</small>
+              <strong id="saFinYear">R$ 0,00</strong>
+              <p>Total acumulado dos pagamentos registrados no ano selecionado.</p>
+            </div>
+            <div class="card finance-mini-card finance-card-clickable" data-finance-kpi="fees">
+              <small>Taxas estimadas</small>
+              <strong id="saFinFees">R$ 0,00</strong>
+              <p>Estimativa de descontos por cartão, boleto, intermediador ou taxa fixa.</p>
+            </div>
+            <div class="card finance-mini-card finance-card-clickable" data-finance-kpi="net">
+              <small>Líquido estimado</small>
+              <strong id="saFinNet">R$ 0,00</strong>
+              <p>Valor estimado após descontar as taxas configuradas.</p>
+            </div>
+            <div class="card finance-mini-card finance-card-clickable" data-finance-kpi="mrr">
+              <small>MRR estimado</small>
+              <strong id="saFinMrr">R$ 0,00</strong>
+              <p>Receita recorrente mensal estimada dos clientes ativos.</p>
+            </div>
+          </div>
+
+          <div class="card finance-dashboard-panel" id="financeDashboardPanel"></div>
+
+          <div class="card placeholder-card" style="margin-top:16px">
+            <h3>Próximo passo</h3>
+            <p>Na próxima etapa, essa área ganha registro real de pagamentos por clínica, forma de pagamento, taxa aplicada, histórico e filtros por ano. Por enquanto, o painel já está preparado para exibir esses dados quando eles vierem do Supabase.</p>
+          </div>
+        </section>
+
+        <section class="super-view hidden" data-super-panel="support">
+          <div class="super-section-head">
+            <div>
+              <h2>Suporte e renovação</h2>
+              <p>Configure o WhatsApp oficial que aparecerá para as clínicas nas telas de acesso expirado, bloqueio e módulos indisponíveis. O contato é salvo na nuvem.</p>
+            </div>
+          </div>
+          <div class="card" style="padding:16px">
+            <div class="super-form-grid">
+              <div class="field">
+                <label for="saSupportName">Nome do suporte/empresa</label>
+                <input class="input" id="saSupportName" placeholder="Ex.: Cronos Odonto" />
+              </div>
+              <div class="field">
+                <label for="saSupportWhatsapp">WhatsApp de suporte</label>
+                <input class="input" id="saSupportWhatsapp" placeholder="Ex.: 55989XXXXXXXX" />
+              </div>
+              <div class="field full">
+                <label for="saExpiredMessage">Mensagem para acesso expirado</label>
+                <textarea class="textarea" id="saExpiredMessage" rows="3">Olá! O acesso da clínica [CLINICA] ao Cronos expirou e quero regularizar a renovação.</textarea>
+              </div>
+              <div class="field full">
+                <label for="saBlockedMessage">Mensagem para recurso bloqueado</label>
+                <textarea class="textarea" id="saBlockedMessage" rows="3">Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].</textarea>
+              </div>
+            </div>
+            <div class="feature-save-actions">
+              <button class="btn btn-ghost" id="btnPreviewSupportWhats" type="button">Pré-visualizar link</button>
+              <button class="btn btn-primary" id="btnSaveSupportSettings" type="button">Salvar contato</button>
+            </div>
+            <div class="support-preview" id="supportPreview">Preencha o WhatsApp para gerar a prévia.</div>
+          </div>
+        </section>
+
+        <section class="super-view hidden" data-super-panel="logs">
+          <div class="super-section-head">
+            <div>
+              <h2>Logs</h2>
+              <p>Área reservada para auditoria de alterações sensíveis: plano, validade, módulos, bloqueios, pagamentos, suporte e impersonação.</p>
+            </div>
+          </div>
+          <div class="placeholder-grid">
+            <div class="card placeholder-card"><h3>Alterações de clínica</h3><p>Quem alterou validade, plano, status ou master.</p></div>
+            <div class="card placeholder-card"><h3>Módulos</h3><p>Quem liberou, bloqueou ou ocultou recursos.</p></div>
+            <div class="card placeholder-card"><h3>Financeiro</h3><p>Quem registrou pagamento, taxa ou ajuste manual.</p></div>
+          </div>
+        </section>
+<section class="super-view hidden" data-super-panel="settings">
+          <div class="super-section-head">
+            <div>
+              <h2>Configurações globais</h2>
+              <p>Central de configurações do Superadmin: dados, contingência, taxas, identidade do Cronos e regras administrativas.</p>
+            </div>
+          </div>
+
+          <div class="card" style="padding:16px;margin-bottom:16px">
+            <div class="section-intro">
+              <strong>Dados e recuperação</strong>
+              <div class="helper">Exporte planilha organizada, faça backups, restaure dados e execute ações de contingência por clínica.</div>
+            </div>
+            <div class="super-form-grid" style="margin-top:14px">
+              <div class="field clinic-search-wrap">
+                <label for="configExportClinicSearch">Clínica</label>
+                <input class="input" id="configExportClinicSearch" placeholder="Digite nome, slug ou e-mail master..." autocomplete="off" spellcheck="false" />
+                <input type="hidden" id="configExportClinic" />
+                <div id="configExportClinicResults" class="clinic-search-results" role="listbox"></div>
+                <div class="helper">Digite para encontrar a clínica mais rápido. Nada de descer 300 nomes no braço, porque ninguém nasceu planilha.</div>
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <div class="row-actions">
+                  <button class="btn btn-info" id="btnConfigExportClinicData" type="button" data-export-format="xlsx">Baixar Excel (.xlsx)</button>
+                  <button class="btn btn-ghost" id="btnConfigExportClinicCsv" type="button" data-export-format="csv">CSV técnico</button>
+                  <button class="btn btn-success" id="btnConfigCreateClinicBackup" type="button">Criar backup</button>
+                  <button class="btn btn-ghost" id="btnConfigListClinicBackups" type="button">Ver backups</button>
+                  <button class="btn btn-warning" id="btnConfigImportClinicCsv" type="button">Importar CSV</button>
+                  <button class="btn btn-danger" id="btnConfigClearClinicData" type="button">Limpar/Zerar clínica</button>
+                </div>
+              </div>
+            </div>
+            <div class="support-preview" id="configExportPreview">Selecione uma clínica para exportar planilha, gerar backup ou restaurar dados.</div>
+            <div id="configBackupList" class="backup-list" style="margin-top:14px"></div>
+          </div>
+
+          <div class="placeholder-grid">
+            <div class="card placeholder-card"><h3>Taxas de pagamento</h3><p>Pix, cartão, boleto, taxa fixa e valor líquido estimado. Essa área será ligada ao financeiro interno.</p></div>
+            <div class="card placeholder-card"><h3>Marca do Cronos</h3><p>Nome do produto, logo e textos globais usados no painel.</p></div>
+            <div class="card placeholder-card"><h3>Regras padrão</h3><p>Limites, validade, avisos e comportamento global.</p></div>
+          </div>
+        </section>
+      </main>
     </div>
   </div>
 
@@ -725,8 +1378,14 @@
         getClinicDetails: "get-clinic-details",
         updateClinicSettings: "update-clinic-settings",
         openSupportAccess: "open-support-access",
+        getRenewalContact: "get-renewal-contact",
+        saveRenewalContact: "save-renewal-contact",
         exportClinicCsv: "export-clinic-csv",
         importClinicCsv: "import-clinic-csv",
+        createClinicBackup: "create-clinic-backup",
+        listClinicBackups: "list-clinic-backups",
+        restoreClinicBackup: "restore-clinic-backup",
+        clearClinicData: "clear-clinic-data",
         resetMasterPassword: "reset-master-password",
         deleteClinic: "delete-clinic"
       }
@@ -744,6 +1403,8 @@
     const importInput = document.createElement('input');
     importInput.type = 'file';
     importInput.accept = '.csv,text/csv';
+    importInput.style.display = 'none';
+    document.body.appendChild(importInput);
 
     const state = {
       clinics: [],
@@ -1054,18 +1715,7 @@
       next.disabled = pagination.page >= pagination.totalPages;
     }
 
-    function renderStats() {
-      if (!state.hasLoadedClinics && state.loadingClinics) {
-        document.getElementById("statsGrid").innerHTML = `
-          <div class="card stat"><small>Total</small><strong>—</strong></div>
-          <div class="card stat"><small>Ativas</small><strong>—</strong></div>
-          <div class="card stat"><small>Agendadas</small><strong>—</strong></div>
-          <div class="card stat"><small>Bloqueadas / Vencidas</small><strong>—</strong></div>
-          <div class="card stat"><small>Acima do limite</small><strong>—</strong></div>
-        `;
-        return;
-      }
-
+    function getSuperDashboardKpis(){
       const total = state.clinics.length;
       let active = 0, blocked = 0, expired = 0, scheduled = 0, over = 0;
       for (const clinic of state.clinics) {
@@ -1076,14 +1726,143 @@
         if (s === "scheduled") scheduled++;
         if (limitState(clinic) === "over") over++;
       }
+      return [
+        { key:"total", label:"Total", value:total, hint:"Todas as clínicas cadastradas" },
+        { key:"active", label:"Ativas", value:active, hint:"Clínicas com acesso em dia" },
+        { key:"scheduled", label:"Agendadas", value:scheduled, hint:"Clínicas com início programado" },
+        { key:"blockedExpired", label:"Bloqueadas / Vencidas", value:blocked + expired, hint:"Precisam de atenção ou renovação" },
+        { key:"over", label:"Acima do limite", value:over, hint:"Clínicas acima do limite de usuários" }
+      ];
+    }
 
-      document.getElementById("statsGrid").innerHTML = `
-        <div class="card stat"><small>Total</small><strong>${total}</strong></div>
-        <div class="card stat"><small>Ativas</small><strong>${active}</strong></div>
-        <div class="card stat"><small>Agendadas</small><strong>${scheduled}</strong></div>
-        <div class="card stat"><small>Bloqueadas / Vencidas</small><strong>${blocked + expired}</strong></div>
-        <div class="card stat"><small>Acima do limite</small><strong>${over}</strong></div>
-      `;
+    function clinicsForSuperKpi(key){
+      return (state.clinics || []).filter((clinic)=>{
+        const status = getComputedStatus(clinic);
+        if(key === "active") return status === "active";
+        if(key === "scheduled") return status === "scheduled";
+        if(key === "blockedExpired") return status === "blocked" || status === "expired";
+        if(key === "over") return limitState(clinic) === "over";
+        return true;
+      });
+    }
+
+    function renderSuperDashboardChart(selectedKey){
+      const panel = document.getElementById("superDashboardPanel");
+      if(!panel) return;
+
+      if (!state.hasLoadedClinics && state.loadingClinics) {
+        panel.innerHTML = `
+          <div class="super-dashboard-grid">
+            <div class="super-chart-card">
+              <div class="super-card-title"><div><h3>Mapa rápido das KPIs</h3><p>Carregando dados das clínicas...</p></div></div>
+              <div class="super-kpi-empty">Aguarde o carregamento do Superadmin.</div>
+            </div>
+            <div class="super-kpi-detail"><div class="super-kpi-empty">Nada para mostrar ainda.</div></div>
+          </div>`;
+        return;
+      }
+
+      const kpis = getSuperDashboardKpis();
+      const activeKey = selectedKey || state.superDashboardKpi || "total";
+      state.superDashboardKpi = activeKey;
+      document.querySelectorAll("#statsGrid .stat").forEach(card => {
+        card.classList.toggle("active", card.dataset.kpi === activeKey);
+      });
+
+      const max = Math.max(1, ...kpis.map(k=>Number(k.value)||0));
+      const width = 620, height = 190, padX = 42, padY = 24;
+      const step = (width - padX*2) / Math.max(1, kpis.length - 1);
+      const points = kpis.map((k,i)=>{
+        const x = padX + i*step;
+        const y = height - padY - ((Number(k.value)||0) / max) * (height - padY*2);
+        return { ...k, x, y };
+      });
+      const polyline = points.map(p=>`${p.x},${p.y}`).join(" ");
+      const area = `${padX},${height-padY} ${polyline} ${padX + (points.length-1)*step},${height-padY}`;
+      const selected = kpis.find(k=>k.key===activeKey) || kpis[0];
+      const selectedClinics = clinicsForSuperKpi(activeKey).slice(0,8);
+
+      const svg = `
+        <svg class="super-kpi-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Gráfico das KPIs do Superadmin">
+          <defs>
+            <linearGradient id="superKpiLine" x1="0" x2="1">
+              <stop offset="0%" stop-color="#7c5cff"/>
+              <stop offset="100%" stop-color="#2ee59d"/>
+            </linearGradient>
+            <linearGradient id="superKpiArea" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stop-color="#7c5cff" stop-opacity=".26"/>
+              <stop offset="100%" stop-color="#2ee59d" stop-opacity=".02"/>
+            </linearGradient>
+          </defs>
+          <polygon points="${area}" fill="url(#superKpiArea)"></polygon>
+          <polyline points="${polyline}" fill="none" stroke="url(#superKpiLine)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+          ${points.map(p=>`
+            <g>
+              <line x1="${p.x}" y1="${height-padY}" x2="${p.x}" y2="${p.y}" stroke="rgba(255,255,255,.10)" stroke-width="2"/>
+              <circle cx="${p.x}" cy="${p.y}" r="${p.key===activeKey?8:6}" fill="${p.key===activeKey?'#2ee59d':'#7c5cff'}" stroke="rgba(255,255,255,.85)" stroke-width="2"/>
+              <text x="${p.x}" y="${p.y-14}" text-anchor="middle" fill="#eef2ff" font-size="16" font-weight="900">${p.value}</text>
+              <text x="${p.x}" y="${height-4}" text-anchor="middle" fill="#9aa6bd" font-size="11" font-weight="800">${escapeHtml(p.label).replace("Bloqueadas / Vencidas","Bloq./Venc.")}</text>
+            </g>
+          `).join("")}
+        </svg>`;
+
+      panel.innerHTML = `
+        <div class="super-dashboard-grid">
+          <div class="super-chart-card">
+            <div class="super-card-title">
+              <div>
+                <h3>Mapa rápido das KPIs</h3>
+                <p>Clique nos cards de cima para destacar uma métrica e ver as clínicas relacionadas.</p>
+              </div>
+              <span class="super-kpi-pill">${escapeHtml(selected.label)}</span>
+            </div>
+            ${svg}
+          </div>
+          <div class="super-kpi-detail">
+            <div class="super-card-title">
+              <div>
+                <h3>${escapeHtml(selected.label)}</h3>
+                <p>${escapeHtml(selected.hint)}</p>
+              </div>
+              <span class="super-kpi-pill">${selected.value}</span>
+            </div>
+            <div class="super-kpi-list">
+              ${selectedClinics.length ? selectedClinics.map(clinic=>`
+                <div class="super-kpi-row">
+                  <div>
+                    <strong>${escapeHtml(clinic.name || "Sem nome")}</strong>
+                    <span>${escapeHtml(clinic.slug || "sem slug")} • ${escapeHtml(periodLabel(clinic))}</span>
+                  </div>
+                  <span class="${badgeClass(getComputedStatus(clinic))}">${escapeHtml(STATUS_LABELS[getComputedStatus(clinic)] || getComputedStatus(clinic))}</span>
+                </div>
+              `).join("") : `<div class="super-kpi-empty">Nenhuma clínica nessa métrica. O silêncio administrativo, nesse caso, é uma boa notícia.</div>`}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function renderStats() {
+      if (!state.hasLoadedClinics && state.loadingClinics) {
+        document.getElementById("statsGrid").innerHTML = `
+          <div class="card stat"><small>Total</small><strong>—</strong></div>
+          <div class="card stat"><small>Ativas</small><strong>—</strong></div>
+          <div class="card stat"><small>Agendadas</small><strong>—</strong></div>
+          <div class="card stat"><small>Bloqueadas / Vencidas</small><strong>—</strong></div>
+          <div class="card stat"><small>Acima do limite</small><strong>—</strong></div>
+        `;
+        renderSuperDashboardChart(state.superDashboardKpi || "total");
+        return;
+      }
+
+      const kpis = getSuperDashboardKpis();
+      const activeKey = state.superDashboardKpi || "total";
+      document.getElementById("statsGrid").innerHTML = kpis.map(kpi => `
+        <div class="card stat ${kpi.key === activeKey ? "active" : ""}" data-kpi="${kpi.key}">
+          <small>${escapeHtml(kpi.label)}</small>
+          <strong>${kpi.value}</strong>
+        </div>
+      `).join("");
+      renderSuperDashboardChart(activeKey);
     }
 
     function renderTable() {
@@ -1569,9 +2348,13 @@
           <div class="section-body">
             <div class="row-actions">
               <button class="btn btn-success" id="btnExportCsv">Exportar CSV</button>
+              <button class="btn btn-info" id="btnDetailCreateBackup">Criar backup</button>
+              <button class="btn btn-ghost" id="btnDetailListBackups">Ver backups</button>
               <button class="btn btn-warning" id="btnImportCsv">Importar CSV</button>
+              <button class="btn btn-danger" id="btnDetailClearClinicData">Limpar/Zerar dados</button>
             </div>
-            <div class="helper">A ideia aqui é tirar exportação/importação do Cronos do cliente e centralizar no superadmin. Bem mais sensato.</div>
+            <div id="detailBackupList" class="backup-list"></div>
+            <div class="helper">Atalho rápido desta clínica. Antes de importar ou zerar, o backend também cria backup automático.</div>
             <div class="helper">Exclusão é só pra casos extremos. O fluxo normal continua sendo bloquear/desativar.</div>
           </div>
         </details>
@@ -1741,28 +2524,321 @@
       }
     }
 
-    function handleImportCsv(button) {
-      importInput.onchange = async () => {
-        const file = importInput.files?.[0];
-        importInput.value = "";
-        if (!file) return;
 
-        try {
-          const text = await file.text();
-          await withButtonLoading(button, "Importando...", async () => {
-            await callEdgeFunction(CONFIG.endpoints.importClinicCsv, {
-              clinic_id: state.selectedClinicId,
-              filename: file.name,
-              csv_content: text
-            });
-            toast("CSV importado com sucesso.", "success", 3600);
-          });
-        } catch (err) {
-          console.error(err);
-          toast(err?.message || "Falha ao importar CSV.", "error", 4200);
-        }
+    function ensureBackupEndpoints(){
+      CONFIG.endpoints.createClinicBackup = CONFIG.endpoints.createClinicBackup || 'create-clinic-backup';
+      CONFIG.endpoints.listClinicBackups = CONFIG.endpoints.listClinicBackups || 'list-clinic-backups';
+      CONFIG.endpoints.restoreClinicBackup = CONFIG.endpoints.restoreClinicBackup || 'restore-clinic-backup';
+      CONFIG.endpoints.clearClinicData = CONFIG.endpoints.clearClinicData || 'clear-clinic-data';
+      CONFIG.endpoints.exportClinicData = CONFIG.endpoints.exportClinicData || 'export-clinic-data';
+    }
+
+    function backupTypeLabel(type){
+      const map = {
+        manual: 'Manual',
+        before_import: 'Antes da importação',
+        before_clear: 'Antes de limpar/zerar',
+        before_restore: 'Antes da restauração',
+        auto: 'Automático'
       };
-      importInput.click();
+      return map[type] || type || 'Backup';
+    }
+
+    function formatBackupDate(value){
+      if(!value) return '—';
+      try{
+        return new Date(value).toLocaleString('pt-BR');
+      }catch(_){
+        return String(value);
+      }
+    }
+
+    function backupDownloadJson(data, filename){
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || 'backup-cronos.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    async function createBackupForClinic(button, clinicId, clinicName, backupType = 'manual', note = ''){
+      ensureBackupEndpoints();
+      if(!clinicId){
+        toast('Selecione uma clínica antes de criar backup.', 'error', 3000);
+        return null;
+      }
+      return withButtonLoading(button, 'Criando backup...', async () => {
+        const data = await callEdgeFunction(CONFIG.endpoints.createClinicBackup, {
+          clinic_id: clinicId,
+          backup_type: backupType,
+          note
+        });
+        toast(`Backup criado para ${clinicName || 'a clínica'}.`, 'success', 3200);
+        return data;
+      });
+    }
+
+    function renderBackupList(targetId, backups, clinicName = ''){
+      const target = document.getElementById(targetId);
+      if(!target) return;
+      const rows = Array.isArray(backups) ? backups : [];
+      if(!rows.length){
+        target.innerHTML = `<div class="empty">Nenhum backup encontrado para ${escapeHtml(clinicName || 'esta clínica')}.</div>`;
+        return;
+      }
+      target.innerHTML = `
+        <div class="table-wrap" style="margin-top:12px">
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Tipo</th>
+                <th>Clínica</th>
+                <th>Observação</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(row => `
+                <tr>
+                  <td>${escapeHtml(formatBackupDate(row.created_at))}</td>
+                  <td>${escapeHtml(backupTypeLabel(row.backup_type))}</td>
+                  <td>${escapeHtml(row.clinic_name || clinicName || '—')}</td>
+                  <td>${escapeHtml(row.note || row.created_by_email || '—')}</td>
+                  <td>
+                    <div class="row-actions">
+                      <button class="btn btn-warning" type="button" data-restore-backup-id="${escapeHtml(row.id)}" data-backup-clinic-name="${escapeHtml(row.clinic_name || clinicName || '')}">Restaurar</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="helper">Restaurar cria automaticamente um backup do estado atual antes de voltar o backup escolhido.</div>`;
+    }
+
+    async function listBackupsForClinic(button, clinicId, targetId, clinicName = ''){
+      ensureBackupEndpoints();
+      if(!clinicId){
+        toast('Selecione uma clínica antes de listar backups.', 'error', 3000);
+        return;
+      }
+      await withButtonLoading(button, 'Carregando...', async () => {
+        const data = await callEdgeFunction(CONFIG.endpoints.listClinicBackups, {
+          clinic_id: clinicId,
+          limit: 30
+        });
+        renderBackupList(targetId, data?.backups || [], clinicName);
+        toast('Backups carregados.', 'success', 2200);
+      });
+    }
+
+    async function restoreBackup(button, backupId, clinicName = ''){
+      ensureBackupEndpoints();
+      if(!backupId) return;
+      const phrase = 'RESTAURAR BACKUP';
+      const typed = prompt(`Restaurar backup${clinicName ? ` de ${clinicName}` : ''}?\n\nEssa ação substituirá os dados atuais da clínica pelos dados do backup escolhido.\nUm backup do estado atual será criado antes.\n\nDigite ${phrase} para confirmar:`);
+      if(String(typed || '').trim().toUpperCase() !== phrase) {
+        toast('Restauração cancelada.', 'info', 2200);
+        return;
+      }
+      await withButtonLoading(button, 'Restaurando...', async () => {
+        await callEdgeFunction(CONFIG.endpoints.restoreClinicBackup, {
+          backup_id: backupId
+        });
+        toast('Backup restaurado com sucesso.', 'success', 3600);
+        try{ await loadClinics(); }catch(_){}
+        if(state.selectedClinicId){
+          try{ await openClinicDetails(state.selectedClinicId); }catch(_){}
+        }
+      });
+    }
+
+    async function clearClinicDataForClinic(button, clinicId, clinicName = ''){
+      ensureBackupEndpoints();
+      if(!clinicId){
+        toast('Selecione uma clínica antes de limpar dados.', 'error', 3000);
+        return;
+      }
+      const phrase = `ZERAR ${String(clinicName || 'CLINICA').toUpperCase()}`;
+      const typed = prompt(
+        `Você está prestes a limpar/zerar os dados da clínica ${clinicName || clinicId}.\n\n` +
+        `Um backup automático será criado antes da limpeza.\n` +
+        `Essa ação remove leads, contatos, tarefas e recebimentos da clínica.\n\n` +
+        `Digite exatamente: ${phrase}`
+      );
+      if(String(typed || '').trim().toUpperCase() !== phrase){
+        toast('Limpeza cancelada.', 'info', 2200);
+        return;
+      }
+      await withButtonLoading(button, 'Zerando...', async () => {
+        await callEdgeFunction(CONFIG.endpoints.clearClinicData, {
+          clinic_id: clinicId,
+          confirm: phrase
+        });
+        toast('Dados da clínica zerados com backup automático criado.', 'success', 4200);
+        try{ await loadClinics(); }catch(_){}
+        if(state.selectedClinicId === clinicId){
+          try{ await openClinicDetails(clinicId); }catch(_){}
+        }
+      });
+    }
+
+    function getConfigSelectedClinic(){
+      refreshConfigClinicSelect();
+      return resolveConfigExportClinic();
+    }
+
+    function detectCsvDelimiter(line) {
+      const candidates = [';', ',', '\t'];
+      let best = ';', bestCount = -1;
+      for (const candidate of candidates) {
+        let count = 0, inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i], next = line[i + 1];
+          if (char === '"' && next === '"') { i++; continue; }
+          if (char === '"') inQuotes = !inQuotes;
+          else if (!inQuotes && char === candidate) count++;
+        }
+        if (count > bestCount) { best = candidate; bestCount = count; }
+      }
+      return best;
+    }
+
+    function parseCsvText(text) {
+      const content = String(text || '').replace(/^\uFEFF/, '');
+      const firstLine = content.split(/\r?\n/).find(line => line.trim()) || '';
+      const delimiter = detectCsvDelimiter(firstLine);
+      const rows = [];
+      let row = [], field = '', inQuotes = false;
+
+      for (let i = 0; i < content.length; i++) {
+        const char = content[i], next = content[i + 1];
+
+        if (char === '"' && next === '"') {
+          field += '"';
+          i++;
+          continue;
+        }
+
+        if (char === '"') {
+          inQuotes = !inQuotes;
+          continue;
+        }
+
+        if (!inQuotes && char === delimiter) {
+          row.push(field);
+          field = '';
+          continue;
+        }
+
+        if (!inQuotes && (char === '\n' || char === '\r')) {
+          if (char === '\r' && next === '\n') i++;
+          row.push(field);
+          if (row.some(value => String(value).trim() !== '')) rows.push(row);
+          row = [];
+          field = '';
+          continue;
+        }
+
+        field += char;
+      }
+
+      row.push(field);
+      if (row.some(value => String(value).trim() !== '')) rows.push(row);
+
+      if (!rows.length) return { delimiter, headers: [], rows: [], objects: [] };
+
+      const headers = rows[0].map(header => String(header || '').trim());
+      const dataRows = rows.slice(1).filter(r => r.some(value => String(value || '').trim() !== ''));
+      const objects = dataRows.map(r => {
+        const obj = {};
+        headers.forEach((header, index) => {
+          if (!header) return;
+          obj[header] = r[index] == null ? '' : String(r[index]).trim();
+        });
+        return obj;
+      });
+
+      return { delimiter, headers, rows: dataRows, objects };
+    }
+
+    function selectCsvFile() {
+      return new Promise((resolve) => {
+        importInput.value = "";
+        importInput.onchange = () => {
+          const file = importInput.files?.[0] || null;
+          importInput.value = "";
+          resolve(file);
+        };
+        importInput.click();
+      });
+    }
+
+    async function importCsvForClinic(button, clinicId, sourceLabel = 'clínica selecionada') {
+      if (!clinicId) {
+        toast("Nenhuma clínica selecionada para importar.", "error", 3200);
+        return;
+      }
+
+      const file = await selectCsvFile();
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const parsed = parseCsvText(text);
+
+        if (!parsed.headers.length || !parsed.rows.length) {
+          toast("O CSV foi lido, mas não encontrei linhas úteis para importar.", "error", 4200);
+          return;
+        }
+
+        const previewHeaders = parsed.headers.slice(0, 6).join(", ");
+        const ok = confirm(
+          `Importar CSV para ${sourceLabel}?\n\n` +
+          `Arquivo: ${file.name}\n` +
+          `Linhas encontradas: ${parsed.rows.length}\n` +
+          `Colunas: ${previewHeaders}${parsed.headers.length > 6 ? "..." : ""}\n\n` +
+          `Confirma a importação?`
+        );
+
+        if (!ok) return;
+
+        await withButtonLoading(button, "Importando...", async () => {
+          const data = await callEdgeFunction(CONFIG.endpoints.importClinicCsv, {
+            clinic_id: clinicId,
+            filename: file.name,
+            csv_content: text,
+            csv: text,
+            content: text,
+            delimiter: parsed.delimiter,
+            headers: parsed.headers,
+            rows: parsed.objects,
+            row_count: parsed.rows.length
+          });
+
+          const imported = data?.imported ?? data?.inserted ?? data?.created ?? data?.rows_imported ?? parsed.rows.length;
+          const updated = data?.updated ?? data?.rows_updated ?? 0;
+          const skipped = data?.skipped ?? data?.ignored ?? 0;
+
+          toast(`CSV lido e enviado. Importados: ${imported}${updated ? ` • Atualizados: ${updated}` : ""}${skipped ? ` • Ignorados: ${skipped}` : ""}.`, "success", 5200);
+
+          try { await loadClinics(); } catch (_) {}
+        });
+      } catch (err) {
+        console.error(err);
+        toast(err?.message || "Falha ao importar CSV.", "error", 5200);
+      }
+    }
+
+    function handleImportCsv(button) {
+      const clinicName = state.selectedClinicDetails?.clinic?.name || "clínica selecionada";
+      return importCsvForClinic(button, state.selectedClinicId, clinicName);
     }
 
     async function handleResetMasterPassword(button) {
@@ -2187,11 +3263,16 @@
 <script>
 (function(){
   const FEATURE_META = [
-    { key: 'dashboard', label: 'Dashboard', description: 'Visão geral da clínica.' },
+    { key: 'dashboard', label: 'Dashboard', description: 'Visão geral operacional e gerencial.' },
+    { key: 'todayCronos', label: 'Hoje no Cronos', description: 'Rotina do dia, alertas e pendências imediatas.' },
+    { key: 'performance', label: 'Performance', description: 'Comparativo mensal, meta e evolução histórica.' },
     { key: 'leads', label: 'Leads', description: 'Cadastro e listagem de leads.' },
     { key: 'kanban', label: 'Funil', description: 'Kanban do andamento comercial.' },
     { key: 'tasks', label: 'Tarefas', description: 'Pendências e lembretes da equipe.' },
-    { key: 'installments', label: 'Parcelamentos', description: 'Parcelas, cobrança e previsões.' },
+    { key: 'installments', label: 'Recebimentos', description: 'Valores recebidos, em aberto, parcelas e cobrança.' },
+    { key: 'creditSimulator', label: 'Simulador de Crédito', description: 'Simulação de prestação, entrada, juros e proposta.' },
+    { key: 'riskAnalysis', label: 'Análise de Risco', description: 'Score interno para boleto próprio e parcelamento interno.' },
+    { key: 'flows', label: 'Fluxos Assistidos', description: 'Fluxos orientados para execução e atendimento.' },
     { key: 'users', label: 'Usuários', description: 'Usuários internos da clínica.' },
     { key: 'settings', label: 'Configurações', description: 'Parâmetros e preferências da clínica.' }
   ];
@@ -2290,8 +3371,10 @@
 
   function ensureGlobalFeaturePanel(){
     if(document.getElementById('globalFeatureCard')) return;
+    const mount = document.getElementById('superPlansMount');
     const statsGrid = document.getElementById('statsGrid');
-    if(!statsGrid || !statsGrid.parentNode) return;
+    const host = mount || (statsGrid && statsGrid.parentNode);
+    if(!host) return;
 
     const card = document.createElement('div');
     card.className = 'card section-gap';
@@ -2309,7 +3392,12 @@
         </div>
       </div>`;
 
-    statsGrid.parentNode.insertBefore(card, statsGrid.nextSibling);
+    if(mount){
+      mount.innerHTML = '';
+      mount.appendChild(card);
+    }else{
+      statsGrid.parentNode.insertBefore(card, statsGrid.nextSibling);
+    }
 
     document.getElementById('btnRefreshGlobalFeatures')?.addEventListener('click', async (e) => {
       const button = e.currentTarget;
@@ -2352,6 +3440,7 @@
       const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, {});
       const rows = mergeFeatureRows(data?.features);
       globalFeatureDraft = Object.fromEntries(rows.map((row) => [row.key, row.global.visibility_mode]));
+      target.dataset.retryAttempts = '0';
       target.innerHTML = rows.map(globalFeatureCard).join('');
       target.querySelectorAll('select[data-feature-scope="global"]').forEach((select) => {
         select.addEventListener('change', (event) => {
@@ -2361,8 +3450,45 @@
       });
     }catch(error){
       console.error(error);
-      target.innerHTML = `<div class="feature-message">Não foi possível carregar os módulos globais agora. O restante do painel continua funcionando.</div>`;
+      const attempts = Number(target.dataset.retryAttempts || '0');
+      if(attempts < 2){
+        target.dataset.retryAttempts = String(attempts + 1);
+        target.innerHTML = `<div class="feature-message loading">Carregando módulos globais... tentativa automática ${attempts + 2}/3.</div>`;
+        setTimeout(() => loadGlobalFeatures(), 750 + attempts * 550);
+        return;
+      }
+      target.dataset.retryAttempts = '0';
+      target.innerHTML = `<div class="feature-message">Não foi possível carregar os módulos globais agora. Tente novamente no botão “Atualizar módulos”.</div>`;
     }
+  }
+
+  const COMMERCIAL_PLAN_PRESETS = {
+    pro: {
+      label:'Plano Pro', price:300,
+      features:{dashboard:'enabled',todayCronos:'enabled',performance:'locked',leads:'enabled',kanban:'enabled',tasks:'enabled',installments:'enabled',creditSimulator:'locked',riskAnalysis:'locked',users:'enabled',settings:'enabled'}
+    },
+    elite: {
+      label:'Plano Elite', price:600,
+      features:{dashboard:'enabled',todayCronos:'enabled',performance:'enabled',leads:'enabled',kanban:'enabled',tasks:'enabled',installments:'enabled',creditSimulator:'enabled',riskAnalysis:'enabled',users:'enabled',settings:'enabled'}
+    }
+  };
+
+  async function applyCommercialPlanPreset(planKey, button){
+    const clinicId = state.selectedClinicId;
+    const plan = COMMERCIAL_PLAN_PRESETS[planKey];
+    if(!clinicId || !plan) return;
+    if(!confirm(`Aplicar ${plan.label} (R$ ${plan.price}/mês) nesta clínica?`)) return;
+    await withButtonLoading(button, 'Aplicando...', async () => {
+      for(const [featureKey, mode] of Object.entries(plan.features)){
+        await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, {
+          scope:'clinic', clinic_id:clinicId, feature_key:featureKey, mode, enabled:mode === 'enabled'
+        });
+      }
+      await loadClinicFeatureAccess(clinicId);
+      const hint = document.getElementById('commercialPlanPresetHint');
+      if(hint) hint.textContent = `${plan.label} aplicado • R$ ${plan.price}/mês. Ajustes manuais posteriores deixam a configuração personalizada.`;
+      toast(`${plan.label} aplicado.`, 'success', 3000);
+    });
   }
 
   function ensureClinicFeatureSection(){
@@ -2378,6 +3504,15 @@
       <summary>Módulos laterais da clínica</summary>
       <div class="section-body">
         <div class="helper">Use “Usar padrão global” para herdar o que foi definido no topo do superadmin.</div>
+        <div style="margin:0 0 16px;padding:14px;border:1px solid rgba(59,130,246,.28);background:rgba(59,130,246,.08);border-radius:16px">
+          <div style="font-weight:900;font-size:16px">Plano comercial da clínica</div>
+          <div class="helper" style="margin-top:6px">Aplique a matriz padrão e, se necessário, ajuste módulos individualmente logo abaixo.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+            <button class="btn btn-primary" id="btnApplyCommercialPlanPro" type="button">Aplicar Pro • R$ 300</button>
+            <button class="btn btn-primary" id="btnApplyCommercialPlanElite" type="button">Aplicar Elite • R$ 600</button>
+          </div>
+          <div id="commercialPlanPresetHint" class="helper" style="margin-top:10px">No Pro, Performance e Simulador ficam bloqueados com opção de upgrade. No Elite, ambos são liberados.</div>
+        </div>
         <div id="detailFeatureAccessBody" class="feature-access-grid"></div>
         <div class="feature-save-actions">
           <button class="btn btn-ghost" id="btnRefreshClinicFeatures" type="button">Atualizar módulos</button>
@@ -2395,6 +3530,13 @@
     }else{
       detailRoot.appendChild(section);
     }
+
+    document.getElementById('btnApplyCommercialPlanPro')?.addEventListener('click', async (e) => {
+      await applyCommercialPlanPreset('pro', e.currentTarget);
+    });
+    document.getElementById('btnApplyCommercialPlanElite')?.addEventListener('click', async (e) => {
+      await applyCommercialPlanPreset('elite', e.currentTarget);
+    });
 
     document.getElementById('btnRefreshClinicFeatures')?.addEventListener('click', async (e) => {
       const button = e.currentTarget;
@@ -2431,6 +3573,8 @@
     return section;
   }
 
+  window.loadGlobalFeatures = loadGlobalFeatures;
+
   async function loadClinicFeatureAccess(clinicId){
     ensureFeatureEndpoints();
     const section = ensureClinicFeatureSection();
@@ -2454,55 +3598,87 @@
     }
   }
 
-  async function handleExportClinicData(button){
+  function base64ToUint8Array(base64){
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for(let i=0; i<len; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function downloadExportPayload(data, fallbackName = 'cronos-export'){
+    if(data?.url){
+      window.open(data.url, '_blank');
+      return true;
+    }
+
+    if(data?.base64){
+      const bytes = base64ToUint8Array(data.base64);
+      const blob = new Blob([bytes], { type: data.mime || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = data.filename || fallbackName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return true;
+    }
+
+    if(typeof data?.content === 'string'){
+      const blob = new Blob([data.content], { type: data.mime || 'text/plain;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = data.filename || fallbackName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return true;
+    }
+
+    if(data?.data && typeof data.data === 'object'){
+      const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = data?.filename || fallbackName.replace(/\.[^.]+$/, '') + '.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return true;
+    }
+
+    return false;
+  }
+
+  async function handleExportClinicData(button, format = 'xlsx'){
     ensureFeatureEndpoints();
     if(!state.selectedClinicId){
       toast('Nenhuma clínica selecionada.', 'error', 2800);
       return;
     }
+
+    const exportFormat = String(format || button?.dataset?.exportFormat || 'xlsx').toLowerCase();
+    const loadingLabel = exportFormat === 'csv' ? 'Gerando CSV...' : exportFormat === 'json' ? 'Gerando backup...' : 'Gerando Excel...';
+
     try{
-      await withButtonLoading(button, 'Preparando...', async () => {
+      await withButtonLoading(button, loadingLabel, async () => {
         const data = await callEdgeFunction(CONFIG.endpoints.exportClinicData, {
-          clinic_id: state.selectedClinicId
+          clinic_id: state.selectedClinicId,
+          format: exportFormat
         });
 
-        if(data?.url){
-          window.open(data.url, '_blank');
-          toast('Download iniciado.', 'success', 2600);
+        if(downloadExportPayload(data, `clinica-${state.selectedClinicId}.${exportFormat === 'csv' ? 'csv' : exportFormat === 'json' ? 'json' : 'xlsx'}`)){
+          const label = exportFormat === 'csv' ? 'CSV técnico exportado.' : exportFormat === 'json' ? 'Backup JSON exportado.' : 'Planilha Excel exportada.';
+          toast(label, 'success', 2800);
           return;
         }
 
-        if(data?.data && typeof data.data === 'object'){
-          const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = data?.filename || `clinica-${state.selectedClinicId}-backup.json`;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          URL.revokeObjectURL(url);
-          toast('Backup da clínica exportado.', 'success', 2600);
-          return;
-        }
-
-        const content = data?.json || data?.content || null;
-        if(content){
-          const serialized = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-          const blob = new Blob([serialized], { type: 'application/json;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = data?.filename || `clinica-${state.selectedClinicId}-backup.json`;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          URL.revokeObjectURL(url);
-          toast('Backup da clínica exportado.', 'success', 2600);
-          return;
-        }
-
-        throw new Error('A função não retornou dados exportáveis.');
+        throw new Error('A função não retornou arquivo exportável.');
       });
     }catch(error){
       console.error(error);
@@ -2511,29 +3687,8 @@
   }
 
   function injectClinicContingencyExtras(){
-    const dataSection = Array.from(document.querySelectorAll('#detailContent details.section')).find((node) => {
-      const summary = node.querySelector('summary');
-      return summary && summary.textContent.trim() === 'Dados e contingência';
-    });
-    if(!dataSection) return;
-    const body = dataSection.querySelector('.section-body');
-    if(!body || body.querySelector('#btnExportClinicData')) return;
-
-    const row = body.querySelector('.row-actions');
-    if(row){
-      const button = document.createElement('button');
-      button.className = 'btn btn-info';
-      button.id = 'btnExportClinicData';
-      button.type = 'button';
-      button.textContent = 'Baixar dados da clínica';
-      row.appendChild(button);
-      button.addEventListener('click', () => handleExportClinicData(button));
-    }
-
-    const helper = document.createElement('div');
-    helper.className = 'helper';
-    helper.textContent = 'Use essa opção quando a clínica pedir um arquivo com dados preenchidos no sistema, como nome e contato dos leads.';
-    body.appendChild(helper);
+    // v35: a exportação/backup saiu do detalhe da clínica e foi para Configurações.
+    // Mantemos a função por compatibilidade com o hook antigo, mas ela não injeta mais botão aqui.
   }
 
   const __featureAccess_originalRenderDetailModal = renderDetailModal;
@@ -2549,15 +3704,712 @@
     ensureFeatureEndpoints();
     const result = await __featureAccess_originalInit.apply(this, arguments);
     ensureGlobalFeaturePanel();
-    await loadGlobalFeatures();
     return result;
   };
 
   ensureFeatureEndpoints();
-  setTimeout(() => {
-    ensureGlobalFeaturePanel();
-    loadGlobalFeatures().catch((error) => console.error('Falha ao carregar módulos globais:', error));
-  }, 120);
+  setTimeout(() => { ensureGlobalFeaturePanel(); }, 120);
+})();
+</script>
+
+
+<script>
+(function(){
+  const SUPPORT_KEY = 'cronos_superadmin_support_settings_v1';
+
+  function moneyBR(v){
+    return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+  }
+
+  function setSuperView(view){
+    view = view || 'dashboard';
+    document.querySelectorAll('[data-super-view]').forEach(btn=>{
+      btn.classList.toggle('active', btn.dataset.superView === view);
+    });
+    document.querySelectorAll('[data-super-panel]').forEach(panel=>{
+      panel.classList.toggle('hidden', panel.dataset.superPanel !== view);
+    });
+    try{
+      if(view === 'plans' && typeof window.loadGlobalFeatures === 'function'){
+        const body = document.getElementById('globalFeatureBody');
+        if(body && !body.querySelector('select')) body.innerHTML = '<div class="feature-message loading">Carregando módulos globais...</div>';
+        setTimeout(()=>window.loadGlobalFeatures(), 120);
+      }
+    if(view === 'finance') setTimeout(()=>renderFinanceDashboard(state.financeKpi || 'month'), 0);
+    if(view === 'settings') setTimeout(refreshConfigClinicSelect, 0);
+    if(view === 'support') setTimeout(()=>loadSupportSettingsCloud(true), 0);
+    }catch(_){}
+  }
+
+  function loadSupportSettings(){
+    try{
+      const raw = localStorage.getItem(SUPPORT_KEY);
+      return raw ? JSON.parse(raw) : {};
+    }catch(_){ return {}; }
+  }
+
+  function saveSupportSettings(data){
+    localStorage.setItem(SUPPORT_KEY, JSON.stringify(data || {}));
+  }
+
+  function normalizeCloudSupportSettings(row){
+    return {
+      name: row?.support_name || 'Cronos Odonto',
+      whatsapp: String(row?.whatsapp || '').replace(/\D/g, ''),
+      expiredMessage: row?.expired_message || 'Olá! O acesso da clínica [CLINICA] ao Cronos expirou e quero regularizar a renovação.',
+      blockedMessage: row?.blocked_message || 'Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].'
+    };
+  }
+
+  async function loadSupportSettingsCloud(showError=false){
+    try{
+      const response = await callEdgeFunction(CONFIG.endpoints.getRenewalContact, {});
+      const data = normalizeCloudSupportSettings(response?.settings || {});
+      saveSupportSettings(data);
+      refreshSupportUI();
+      return data;
+    }catch(error){
+      if(showError){ try{ toast(error.message || 'Não foi possível carregar o contato de suporte.', 'error', 3600); }catch(_){} }
+      return null;
+    }
+  }
+
+  async function saveSupportSettingsCloud(data){
+    const payload = {
+      support_name: data.name || 'Cronos Odonto',
+      whatsapp: String(data.whatsapp || '').replace(/\D/g, ''),
+      expired_message: data.expiredMessage || '',
+      blocked_message: data.blockedMessage || ''
+    };
+    const response = await callEdgeFunction(CONFIG.endpoints.saveRenewalContact, payload);
+    const saved = normalizeCloudSupportSettings(response?.settings || payload);
+    saveSupportSettings(saved);
+    refreshSupportUI();
+    return saved;
+  }
+
+  function onlyDigits(v){ return String(v||'').replace(/\D/g,''); }
+
+  function buildWhatsLink(type='expired'){
+    const data = loadSupportSettings();
+    const phone = onlyDigits(data.whatsapp);
+    if(!phone) return '';
+    const clinic = 'Nome da clínica';
+    const feature = 'Performance';
+    const template = type === 'blocked'
+      ? (data.blockedMessage || 'Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].')
+      : (data.expiredMessage || 'Olá! O acesso da clínica [CLINICA] ao Cronos expirou e quero regularizar a renovação.');
+    const msg = template.replaceAll('[CLINICA]', clinic).replaceAll('[RECURSO]', feature);
+    return `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+  }
+
+  function refreshSupportUI(){
+    const data = loadSupportSettings();
+    const name = document.getElementById('saSupportName');
+    const phone = document.getElementById('saSupportWhatsapp');
+    const expired = document.getElementById('saExpiredMessage');
+    const blocked = document.getElementById('saBlockedMessage');
+    if(name) name.value = data.name || 'Cronos Odonto';
+    if(phone) phone.value = data.whatsapp || '';
+    if(expired && data.expiredMessage) expired.value = data.expiredMessage;
+    if(blocked && data.blockedMessage) blocked.value = data.blockedMessage;
+    const preview = document.getElementById('supportPreview');
+    if(preview){
+      const link = buildWhatsLink('expired');
+      preview.innerHTML = link
+        ? `Prévia de renovação:<br><a href="${link}" target="_blank" style="color:#9fd5ff;font-weight:800">${link}</a>`
+        : 'Preencha o WhatsApp para gerar a prévia.';
+    }
+  }
+
+
+  function getClinicSearchRows(){
+    const clinics = Array.isArray(window.state?.clinics) ? window.state.clinics : (Array.isArray(state?.clinics) ? state.clinics : []);
+    return clinics.map((clinic)=>{
+      const id = clinic.id || clinic.clinic_id || '';
+      const name = clinic.name || clinic.clinic_name || clinic.display_name || clinic.slug || id;
+      const slug = clinic.slug || clinic.clinic_slug || '';
+      const master = clinic.master_email || clinic.masterEmail || clinic.email || '';
+      const documentNumber = clinic.document_number || clinic.document || '';
+      const phone = clinic.owner_phone || clinic.phone || '';
+      const label = [name, slug ? `@${slug}` : '', master ? `• ${master}` : ''].filter(Boolean).join(' ');
+      return { id:String(id), name:String(name), slug:String(slug), master:String(master), documentNumber:String(documentNumber), phone:String(phone), label:String(label) };
+    }).filter(row=>row.id);
+  }
+
+  function escapeOpt(value){
+    return String(value||'').replace(/[&<>"']/g,(m)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+
+  function refreshConfigClinicSelect(){
+    const input = document.getElementById('configExportClinicSearch');
+    const hidden = document.getElementById('configExportClinic');
+    const results = document.getElementById('configExportClinicResults');
+    const preview = document.getElementById('configExportPreview');
+    if(!input || !hidden || !results) return;
+
+    const rows = getClinicSearchRows();
+    window.__CONFIG_EXPORT_CLINIC_ROWS__ = rows;
+
+    const currentId = hidden.value;
+    if(currentId){
+      const selected = rows.find(row=>row.id === currentId);
+      if(selected && !input.value) input.value = selected.label;
+    }
+
+    renderConfigClinicResults(false);
+
+    if(preview && !rows.length){
+      preview.textContent = 'Nenhuma clínica carregada ainda. Clique em Atualizar ou aguarde o carregamento do painel.';
+    }
+  }
+
+  function filterConfigClinicRows(){
+    const input = document.getElementById('configExportClinicSearch');
+    const rows = window.__CONFIG_EXPORT_CLINIC_ROWS__ || getClinicSearchRows();
+    const typed = String(input?.value || '').trim().toLowerCase();
+
+    if(!typed) return rows.slice(0,8);
+
+    return rows.filter(row=>{
+      return row.name.toLowerCase().includes(typed)
+        || row.slug.toLowerCase().includes(typed)
+        || row.master.toLowerCase().includes(typed)
+        || row.documentNumber.toLowerCase().includes(typed)
+        || row.phone.toLowerCase().includes(typed)
+        || row.label.toLowerCase().includes(typed);
+    }).slice(0,8);
+  }
+
+  function renderConfigClinicResults(show=true){
+    const results = document.getElementById('configExportClinicResults');
+    if(!results) return;
+    const rows = filterConfigClinicRows();
+
+    if(!show){
+      results.classList.remove('show');
+      results.innerHTML = '';
+      return;
+    }
+
+    if(!rows.length){
+      results.innerHTML = `<div class="clinic-search-empty">Nenhuma clínica encontrada com esse termo.</div>`;
+      results.classList.add('show');
+      return;
+    }
+
+    results.innerHTML = rows.map(row=>`
+      <button type="button" class="clinic-search-option" data-config-clinic-id="${escapeOpt(row.id)}">
+        <strong>${escapeOpt(row.name)}</strong>
+        <span>${escapeOpt([row.slug ? '@'+row.slug : '', row.master].filter(Boolean).join(' • '))}</span>
+      </button>
+    `).join('');
+    results.classList.add('show');
+  }
+
+  function selectConfigExportClinic(row){
+    const input = document.getElementById('configExportClinicSearch');
+    const hidden = document.getElementById('configExportClinic');
+    const preview = document.getElementById('configExportPreview');
+    const results = document.getElementById('configExportClinicResults');
+    if(!row) return;
+    if(input) input.value = row.label;
+    if(hidden) hidden.value = row.id;
+    if(results) results.classList.remove('show');
+    if(preview) preview.textContent = `Clínica selecionada: ${row.name}`;
+  }
+
+  function resolveConfigExportClinic(){
+    const input = document.getElementById('configExportClinicSearch');
+    const hidden = document.getElementById('configExportClinic');
+    const rows = window.__CONFIG_EXPORT_CLINIC_ROWS__ || getClinicSearchRows();
+    const typed = String(input?.value || '').trim().toLowerCase();
+
+    if(hidden?.value){
+      const byHidden = rows.find(row=>row.id === hidden.value);
+      if(byHidden && (!typed || byHidden.label.toLowerCase() === typed)) return byHidden;
+    }
+
+    if(!typed) return null;
+
+    return rows.find(row=>row.label.toLowerCase() === typed)
+      || rows.find(row=>row.name.toLowerCase() === typed || row.slug.toLowerCase() === typed || row.master.toLowerCase() === typed)
+      || rows.find(row=>row.name.toLowerCase().includes(typed) || row.slug.toLowerCase().includes(typed) || row.master.toLowerCase().includes(typed));
+  }
+
+  async function exportClinicFromSettings(button, format){
+    refreshConfigClinicSelect();
+
+    const input = document.getElementById('configExportClinicSearch');
+    const hidden = document.getElementById('configExportClinic');
+    const preview = document.getElementById('configExportPreview');
+    const selected = resolveConfigExportClinic();
+
+    if(!selected){
+      if(hidden) hidden.value = '';
+      if(preview) preview.textContent = 'Digite e selecione uma clínica válida antes de baixar os dados.';
+      renderConfigClinicResults(true);
+      try{ if(typeof toast === 'function') toast('Selecione uma clínica válida.', 'error', 2600); }catch(_){}
+      return;
+    }
+
+    if(hidden) hidden.value = selected.id;
+    if(input) input.value = selected.label;
+
+    const oldSelected = state.selectedClinicId;
+    state.selectedClinicId = selected.id;
+    try{
+      const exportFormat = String(format || button?.dataset?.exportFormat || 'xlsx').toLowerCase();
+      if(typeof handleExportClinicData === 'function'){
+        await handleExportClinicData(button, exportFormat);
+        if(preview) preview.textContent = exportFormat === 'csv'
+          ? `CSV técnico exportado para: ${selected.name}.`
+          : `Planilha Excel exportada para: ${selected.name}.`;
+      }else{
+        throw new Error('Função de exportação não encontrada no painel.');
+      }
+    }catch(error){
+      console.error(error);
+      if(preview) preview.textContent = error?.message || 'Falha ao exportar dados da clínica.';
+      try{ if(typeof toast === 'function') toast(error?.message || 'Falha ao exportar dados.', 'error', 3600); }catch(_){}
+    }finally{
+      state.selectedClinicId = oldSelected;
+    }
+  }
+
+
+
+
+  async function importClinicFromSettings(button){
+    refreshConfigClinicSelect();
+
+    const input = document.getElementById('configExportClinicSearch');
+    const hidden = document.getElementById('configExportClinic');
+    const preview = document.getElementById('configExportPreview');
+    const selected = resolveConfigExportClinic();
+
+    if(!selected){
+      if(hidden) hidden.value = '';
+      if(preview) preview.textContent = 'Digite e selecione uma clínica válida antes de importar o CSV.';
+      renderConfigClinicResults(true);
+      try{ if(typeof toast === 'function') toast('Selecione uma clínica válida.', 'error', 2600); }catch(_){}
+      return;
+    }
+
+    if(hidden) hidden.value = selected.id;
+    if(input) input.value = selected.label;
+
+    const oldSelected = state.selectedClinicId;
+    state.selectedClinicId = selected.id;
+    try{
+      await importCsvForClinic(button, selected.id, selected.name);
+      if(preview) preview.textContent = `Importação enviada para: ${selected.name}.`;
+    }finally{
+      state.selectedClinicId = oldSelected;
+    }
+  }
+
+  const MONTH_LABELS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  function toNumber(v){
+    const s = String(v ?? '').trim();
+    if(!s) return 0;
+    if(typeof v === 'number') return isFinite(v) ? v : 0;
+    const n = Number(s.replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''));
+    return isFinite(n) ? n : 0;
+  }
+
+  function parsePaymentDate(v){
+    if(!v) return null;
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function getClinicName(clinic){
+    return clinic?.name || clinic?.clinic_name || clinic?.display_name || clinic?.slug || 'Clínica';
+  }
+
+  function extractFinancePayments(){
+    const clinics = Array.isArray(state?.clinics) ? state.clinics : [];
+    const payments = [];
+
+    for(const clinic of clinics){
+      const possibleLists = [
+        clinic.payments,
+        clinic.payment_history,
+        clinic.billing_payments,
+        clinic.financial_payments,
+        clinic.cronos_payments
+      ].filter(Array.isArray);
+
+      for(const list of possibleLists){
+        for(const item of list){
+          const gross = toNumber(item.gross_amount ?? item.amount ?? item.value ?? item.valor ?? item.total);
+          const fee = toNumber(item.fee_amount ?? item.fee ?? item.taxa ?? item.tax_amount);
+          const net = toNumber(item.net_amount ?? item.net ?? item.liquid ?? item.liquido ?? (gross - fee));
+          const date = parsePaymentDate(item.paid_at ?? item.payment_date ?? item.date ?? item.created_at);
+          const status = String(item.status || 'pago').toLowerCase();
+          if(gross && date && !['cancelado','canceled','estornado','refunded'].includes(status)){
+            payments.push({ clinic, gross, fee, net, date, status, method:item.method || item.payment_method || item.forma || '—' });
+          }
+        }
+      }
+
+      // Fallback futuro: se a clínica trouxer valor mensal/anual direto, usamos apenas para MRR, não como pagamento recebido.
+    }
+
+    return payments;
+  }
+
+  function estimateMrr(){
+    const clinics = Array.isArray(state?.clinics) ? state.clinics : [];
+    return clinics.reduce((sum, clinic)=>{
+      const status = getComputedStatus(clinic);
+      if(status !== 'active') return sum;
+      const billingType = String(clinic.billing_type || clinic.billing_cycle || clinic.charge_type || clinic.plan_cycle || '').toLowerCase();
+      const monthly = toNumber(clinic.monthly_value ?? clinic.plan_monthly_value ?? clinic.subscription_value ?? clinic.plan_value_monthly);
+      const annual = toNumber(clinic.annual_value ?? clinic.plan_annual_value ?? clinic.yearly_value ?? clinic.plan_value_annual);
+      const plan = toNumber(clinic.plan_value ?? clinic.price ?? clinic.valor_plano);
+      if(monthly) return sum + monthly;
+      if(annual) return sum + (annual / 12);
+      if(billingType.includes('anual') || billingType.includes('year')) return sum + (plan ? plan / 12 : 0);
+      return sum + (plan || 0);
+    },0);
+  }
+
+  function getFinanceSummary(){
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const payments = extractFinancePayments();
+    const monthPayments = payments.filter(p=>p.date.getFullYear()===year && p.date.getMonth()===month);
+    const yearPayments = payments.filter(p=>p.date.getFullYear()===year);
+    const monthly = Array.from({length:12},(_,idx)=>({
+      label:MONTH_LABELS[idx],
+      gross:0,
+      fee:0,
+      net:0,
+      count:0
+    }));
+
+    for(const p of yearPayments){
+      const idx = p.date.getMonth();
+      monthly[idx].gross += p.gross;
+      monthly[idx].fee += p.fee;
+      monthly[idx].net += p.net;
+      monthly[idx].count += 1;
+    }
+
+    const grossMonth = monthPayments.reduce((s,p)=>s+p.gross,0);
+    const grossYear = yearPayments.reduce((s,p)=>s+p.gross,0);
+    const feeYear = yearPayments.reduce((s,p)=>s+p.fee,0);
+    const netYear = yearPayments.reduce((s,p)=>s+p.net,0);
+    const mrr = estimateMrr();
+
+    return { year, month, payments, monthPayments, yearPayments, monthly, grossMonth, grossYear, feeYear, netYear, mrr };
+  }
+
+  function financeKpiMeta(summary){
+    return {
+      month:{
+        label:'Recebido este mês',
+        value:summary.grossMonth,
+        text:'Mostra quanto entrou no mês atual somando pagamentos registrados. É visão de caixa do mês, não previsão.',
+        list:summary.monthPayments
+      },
+      year:{
+        label:'Recebido no ano',
+        value:summary.grossYear,
+        text:'Soma tudo que foi registrado como pago no ano atual. Exemplo: janeiro + fevereiro + março, mês a mês.',
+        list:summary.yearPayments.slice().sort((a,b)=>b.date-a.date)
+      },
+      fees:{
+        label:'Taxas estimadas',
+        value:summary.feeYear,
+        text:'Soma estimada das taxas de pagamento no ano. Serve para diferenciar valor bruto de valor líquido.',
+        list:summary.yearPayments.filter(p=>p.fee>0).slice().sort((a,b)=>b.fee-a.fee)
+      },
+      net:{
+        label:'Líquido estimado',
+        value:summary.netYear,
+        text:'Valor estimado que sobra após descontar taxas. Não substitui banco nem contabilidade; é leitura rápida.',
+        list:summary.yearPayments.slice().sort((a,b)=>b.date-a.date)
+      },
+      mrr:{
+        label:'MRR estimado',
+        value:summary.mrr,
+        text:'Monthly Recurring Revenue: receita recorrente mensal estimada dos clientes ativos. Plano anual entra dividido por 12.',
+        list:[]
+      }
+    };
+  }
+
+  function renderFinanceDashboard(selectedKey){
+    const panel = document.getElementById('financeDashboardPanel');
+    if(!panel) return;
+    const summary = getFinanceSummary();
+    const meta = financeKpiMeta(summary);
+    const activeKey = selectedKey || state.financeKpi || 'month';
+    state.financeKpi = activeKey;
+    const active = meta[activeKey] || meta.month;
+
+    const monthEl = document.getElementById('saFinMonth');
+    const yearEl = document.getElementById('saFinYear');
+    const feesEl = document.getElementById('saFinFees');
+    const netEl = document.getElementById('saFinNet');
+    const mrrEl = document.getElementById('saFinMrr');
+    if(monthEl) monthEl.textContent = moneyBR(summary.grossMonth);
+    if(yearEl) yearEl.textContent = moneyBR(summary.grossYear);
+    if(feesEl) feesEl.textContent = moneyBR(summary.feeYear);
+    if(netEl) netEl.textContent = moneyBR(summary.netYear);
+    if(mrrEl) mrrEl.textContent = moneyBR(summary.mrr);
+
+    document.querySelectorAll('#financeKpiGrid .finance-card-clickable').forEach(card=>{
+      card.classList.toggle('active', card.dataset.financeKpi === activeKey);
+    });
+
+    const max = Math.max(1, ...summary.monthly.map(m=>m.gross));
+    const width = 720, height = 220, padX = 36, padY = 24;
+    const barGap = 10;
+    const barW = (width - padX*2 - barGap*11) / 12;
+    const bars = summary.monthly.map((m,i)=>{
+      const h = Math.max(3, (m.gross / max) * (height - padY*2));
+      const x = padX + i*(barW+barGap);
+      const y = height - padY - h;
+      return {...m,x,y,h,idx:i};
+    });
+
+    const chart = `
+      <svg class="finance-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Recebido mês a mês">
+        <defs>
+          <linearGradient id="financeBarGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="#2ee59d"/>
+            <stop offset="100%" stop-color="#38bdf8"/>
+          </linearGradient>
+        </defs>
+        <line x1="${padX}" y1="${height-padY}" x2="${width-padX}" y2="${height-padY}" stroke="rgba(255,255,255,.16)" stroke-width="2"/>
+        ${bars.map(b=>`
+          <g>
+            <rect x="${b.x}" y="${b.y}" width="${barW}" height="${b.h}" rx="8" fill="url(#financeBarGrad)" opacity="${b.gross?'.95':'.22'}"></rect>
+            <text x="${b.x+barW/2}" y="${b.y-7}" text-anchor="middle" fill="#eef2ff" font-size="12" font-weight="900">${b.gross ? moneyBR(b.gross).replace('R$','') : '0'}</text>
+            <text x="${b.x+barW/2}" y="${height-4}" text-anchor="middle" fill="#9aa6bd" font-size="11" font-weight="800">${b.label}</text>
+          </g>
+        `).join('')}
+      </svg>`;
+
+    const list = active.list || [];
+    panel.innerHTML = `
+      <div class="finance-dashboard-grid">
+        <div class="finance-chart-card">
+          <div class="super-card-title">
+            <div>
+              <h3>Recebido mês a mês — ${summary.year}</h3>
+              <p>Quando os pagamentos forem registrados, o gráfico mostra quanto entrou em cada mês e o acumulado anual é calculado automaticamente.</p>
+            </div>
+            <span class="super-kpi-pill">${escapeHtml(active.label)}</span>
+          </div>
+          ${chart}
+          <div class="finance-mini-note">Leitura financeira interna do Cronos. Não confundir com saldo bancário real, porque banco inclui taxas, despesas, impostos e outras movimentações.</div>
+        </div>
+        <div class="finance-detail-card">
+          <div class="super-card-title">
+            <div>
+              <h3>${escapeHtml(active.label)}</h3>
+              <p>${escapeHtml(active.text)}</p>
+            </div>
+          </div>
+          <div class="finance-detail-value">${moneyBR(active.value)}</div>
+          <p class="finance-detail-text">${activeKey === 'mrr' ? 'Esse número ajuda a entender a força recorrente do negócio, mesmo quando clientes pagam anual.' : 'Clique em outro KPI para mudar a explicação e o recorte exibido aqui.'}</p>
+          <div class="finance-list">
+            ${list.length ? list.slice(0,8).map(p=>`
+              <div class="finance-row">
+                <div>
+                  <strong>${escapeHtml(getClinicName(p.clinic))}</strong>
+                  <span>${p.date.toLocaleDateString('pt-BR')} • ${escapeHtml(p.method || '—')}</span>
+                </div>
+                <div style="text-align:right">
+                  <strong>${moneyBR(p.gross)}</strong>
+                  <span>${p.fee ? `taxa ${moneyBR(p.fee)}` : 'sem taxa'}</span>
+                </div>
+              </div>
+            `).join('') : `<div class="finance-empty">Ainda não há pagamentos reais registrados para esse recorte. A estrutura está pronta; falta o caixa começar a falar com o painel.</div>`}
+          </div>
+        </div>
+      </div>`;
+  }
+
+
+  function bindSuperadminShell(){
+    if(window.__SUPERADMIN_V34_BOUND__) return;
+    window.__SUPERADMIN_V34_BOUND__ = true;
+
+    document.addEventListener('click', (ev)=>{
+      const btn = ev.target.closest?.('[data-super-view]');
+      if(!btn) return;
+      ev.preventDefault();
+      setSuperView(btn.dataset.superView);
+    });
+
+    document.addEventListener('click', (ev)=>{
+      const card = ev.target.closest?.('#statsGrid .stat[data-kpi]');
+      if(!card) return;
+      state.superDashboardKpi = card.dataset.kpi || 'total';
+      try{ renderSuperDashboardChart(state.superDashboardKpi); }catch(_){}
+    });
+
+    document.addEventListener('click', (ev)=>{
+      const card = ev.target.closest?.('#financeKpiGrid .finance-card-clickable[data-finance-kpi]');
+      if(!card) return;
+      state.financeKpi = card.dataset.financeKpi || 'month';
+      try{ renderFinanceDashboard(state.financeKpi); }catch(_){}
+    });
+
+    document.addEventListener('click', async (ev)=>{
+      const save = ev.target.closest?.('#btnSaveSupportSettings');
+      if(save){
+        const data = {
+          name: document.getElementById('saSupportName')?.value || 'Cronos Odonto',
+          whatsapp: onlyDigits(document.getElementById('saSupportWhatsapp')?.value || ''),
+          expiredMessage: document.getElementById('saExpiredMessage')?.value || '',
+          blockedMessage: document.getElementById('saBlockedMessage')?.value || ''
+        };
+        try{
+          await withButtonLoading(save, 'Salvando...', ()=>saveSupportSettingsCloud(data));
+          if(typeof toast === 'function') toast('Contato salvo na nuvem ✅', 'success', 2800);
+        }catch(error){
+          if(typeof toast === 'function') toast(error.message || 'Não foi possível salvar o contato.', 'error', 4200);
+        }
+      }
+
+      const preview = ev.target.closest?.('#btnPreviewSupportWhats');
+      if(preview){
+        const data = {
+          name: document.getElementById('saSupportName')?.value || 'Cronos Odonto',
+          whatsapp: onlyDigits(document.getElementById('saSupportWhatsapp')?.value || ''),
+          expiredMessage: document.getElementById('saExpiredMessage')?.value || '',
+          blockedMessage: document.getElementById('saBlockedMessage')?.value || ''
+        };
+        saveSupportSettings(data);
+        refreshSupportUI();
+        const link = buildWhatsLink('expired');
+        if(link) window.open(link, '_blank');
+      }
+
+      const exportBtn = ev.target.closest?.('#btnConfigExportClinicData, #btnConfigExportClinicCsv');
+      if(exportBtn){
+        exportClinicFromSettings(exportBtn, exportBtn.dataset?.exportFormat || 'xlsx');
+      }
+
+      const importBtn = ev.target.closest?.('#btnConfigImportClinicCsv');
+      if(importBtn){
+        importClinicFromSettings(importBtn);
+      }
+    });
+
+    refreshSupportUI();
+
+    document.addEventListener('input', (ev)=>{
+      const input = ev.target.closest?.('#configExportClinicSearch');
+      if(!input) return;
+      const hidden = document.getElementById('configExportClinic');
+      const preview = document.getElementById('configExportPreview');
+      if(hidden) hidden.value = '';
+      if(preview) preview.textContent = 'Digite e selecione uma clínica da lista para exportar os dados.';
+      renderConfigClinicResults(true);
+    });
+
+    document.addEventListener('focusin', (ev)=>{
+      const input = ev.target.closest?.('#configExportClinicSearch');
+      if(!input) return;
+      refreshConfigClinicSelect();
+      renderConfigClinicResults(true);
+    });
+
+    document.addEventListener('click', (ev)=>{
+      const option = ev.target.closest?.('.clinic-search-option[data-config-clinic-id]');
+      if(option){
+        const rows = window.__CONFIG_EXPORT_CLINIC_ROWS__ || getClinicSearchRows();
+        const selected = rows.find(row=>row.id === option.dataset.configClinicId);
+        selectConfigExportClinic(selected);
+        return;
+      }
+
+      if(!ev.target.closest?.('.clinic-search-wrap')){
+        const results = document.getElementById('configExportClinicResults');
+        if(results) results.classList.remove('show');
+      }
+    });
+
+
+    document.addEventListener('click', async (ev)=>{
+      const createConfig = ev.target.closest?.('#btnConfigCreateClinicBackup');
+      if(createConfig){
+        const selected = getConfigSelectedClinic();
+        if(!selected){ toast('Selecione uma clínica válida.', 'error', 2600); return; }
+        await createBackupForClinic(createConfig, selected.id, selected.name, 'manual', 'Backup manual pelo Superadmin');
+        await listBackupsForClinic(createConfig, selected.id, 'configBackupList', selected.name);
+        return;
+      }
+
+      const listConfig = ev.target.closest?.('#btnConfigListClinicBackups');
+      if(listConfig){
+        const selected = getConfigSelectedClinic();
+        if(!selected){ toast('Selecione uma clínica válida.', 'error', 2600); return; }
+        await listBackupsForClinic(listConfig, selected.id, 'configBackupList', selected.name);
+        return;
+      }
+
+      const clearConfig = ev.target.closest?.('#btnConfigClearClinicData');
+      if(clearConfig){
+        const selected = getConfigSelectedClinic();
+        if(!selected){ toast('Selecione uma clínica válida.', 'error', 2600); return; }
+        await clearClinicDataForClinic(clearConfig, selected.id, selected.name);
+        return;
+      }
+
+      const detailCreate = ev.target.closest?.('#btnDetailCreateBackup');
+      if(detailCreate){
+        const clinicName = state.selectedClinicDetails?.clinic?.name || 'clínica selecionada';
+        await createBackupForClinic(detailCreate, state.selectedClinicId, clinicName, 'manual', 'Backup manual pelo detalhe da clínica');
+        await listBackupsForClinic(detailCreate, state.selectedClinicId, 'detailBackupList', clinicName);
+        return;
+      }
+
+      const detailList = ev.target.closest?.('#btnDetailListBackups');
+      if(detailList){
+        const clinicName = state.selectedClinicDetails?.clinic?.name || 'clínica selecionada';
+        await listBackupsForClinic(detailList, state.selectedClinicId, 'detailBackupList', clinicName);
+        return;
+      }
+
+      const detailClear = ev.target.closest?.('#btnDetailClearClinicData');
+      if(detailClear){
+        const clinicName = state.selectedClinicDetails?.clinic?.name || 'clínica selecionada';
+        await clearClinicDataForClinic(detailClear, state.selectedClinicId, clinicName);
+        return;
+      }
+
+      const restoreBtn = ev.target.closest?.('[data-restore-backup-id]');
+      if(restoreBtn){
+        await restoreBackup(restoreBtn, restoreBtn.dataset.restoreBackupId, restoreBtn.dataset.backupClinicName || '');
+        return;
+      }
+    });
+
+    setSuperView('dashboard');
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', bindSuperadminShell);
+  }else{
+    bindSuperadminShell();
+  }
+
+  window.SUPERADMIN_SUPPORT_SETTINGS = {
+    load: loadSupportSettings,
+    save: saveSupportSettings,
+    link: buildWhatsLink
+  };
 })();
 </script>
 
