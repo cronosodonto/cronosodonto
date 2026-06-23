@@ -9879,8 +9879,11 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
     .filter(t=>String(t||"")!=="Campanha")
   );
 
+  const duplicateNoticeHTML = cronosDuplicateLeadNoticeHTML(c);
+
   return `
     <div class="twoCol">
+      ${duplicateNoticeHTML}
       <div class="suggest">
         <label>Nome *</label>
         <input id="lf_name" ${ro?"disabled":""} value="${escapeHTML(c.name||"")}" placeholder="Ex: Jorge" autocomplete="off"/>
@@ -9904,9 +9907,9 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
       </div>
 
       <div>
-        <label>Data do 1º contato *</label>
+        <label>Data do 1º contato</label>
         <input id="lf_first" type="date" ${ro?"disabled":""} value="${escapeHTML(e.firstContactAt || "")}"/>
-        <div class="help muted" style="font-size:12px">Data real da primeira mensagem/contato do lead.</div>
+        <div class="help muted" style="font-size:12px">Opcional. Use quando houver primeira mensagem, ligação ou contato registrado.</div>
       </div>
 
       <div>
@@ -10039,6 +10042,314 @@ function buildSuggestList(actor, typedName, typedPhone){
       </div>
     `;
   }).join("");
+}
+
+
+
+function cronosValueFilled(v){
+  if(v === null || v === undefined) return false;
+  if(Array.isArray(v)) return v.length > 0;
+  if(typeof v === "object") return Object.keys(v || {}).length > 0;
+  return String(v).trim() !== "";
+}
+
+function cronosCloneSafe(obj){
+  try{ return JSON.parse(JSON.stringify(obj || {})); }catch(_){ return obj || {}; }
+}
+
+function cronosFichaHasContent(entryOrFicha){
+  const ficha = entryOrFicha?.ficha ? entryOrFicha.ficha : entryOrFicha;
+  if(!ficha || typeof ficha !== "object") return false;
+  if(Array.isArray(ficha.plano) && ficha.plano.length) return true;
+  if(Array.isArray(ficha.avaliacoes) && ficha.avaliacoes.some(a=>{
+    const copy = { ...(a || {}) };
+    delete copy.id; delete copy.label; delete copy.date; delete copy.createdAt; delete copy.updatedAt;
+    return Object.values(copy).some(cronosValueFilled);
+  })) return true;
+  if(ficha.odontograma && typeof ficha.odontograma === "object" && Object.keys(ficha.odontograma).length) return true;
+  return false;
+}
+
+function cronosContactCompletenessScore(c){
+  if(!c) return 0;
+  let score = 0;
+  ["name","phone","cpf","birthDate","firstSeenAt","lastSeenAt","email","city","address","notes"].forEach(k=>{ if(cronosValueFilled(c[k])) score += 1; });
+  if(String(c.cpf || "").replace(/\D/g, "").length >= 11) score += 3;
+  return score;
+}
+
+function cronosEntryCompletenessScore(e){
+  if(!e) return 0;
+  let score = 0;
+  [
+    "status","origin","originOther","treatment","treatmentOther","city","firstContactAt","apptDate","apptTime",
+    "callAttempts","callResult","notes","valueBudget","valueEstimated","valuePaid","valueClosed","lastPaymentDate"
+  ].forEach(k=>{ if(cronosValueFilled(e[k])) score += 1; });
+  if(Array.isArray(e.tags) && e.tags.length) score += e.tags.length;
+  if(Array.isArray(e.statusLog) && e.statusLog.length) score += Math.min(e.statusLog.length, 5);
+  if(cronosFichaHasContent(e)) score += 30;
+  if(Array.isArray(e.financialPlans) && e.financialPlans.length) score += 12;
+  if(e.installPlan || (Array.isArray(e.installments) && e.installments.length)) score += 8;
+  return score;
+}
+
+function cronosFirstFilled(prefer, fallback){
+  return cronosValueFilled(prefer) ? prefer : fallback;
+}
+
+function cronosMergeUniqueArray(a, b){
+  const seen = new Set();
+  const out = [];
+  (Array.isArray(a) ? a : []).concat(Array.isArray(b) ? b : []).forEach(item=>{
+    const key = (item && typeof item === "object") ? (item.id ? `id:${item.id}` : JSON.stringify(item)) : String(item);
+    if(seen.has(key)) return;
+    seen.add(key);
+    out.push(item);
+  });
+  return out;
+}
+
+function cronosMergeFichaSafe(primaryFicha, secondaryFicha){
+  const primary = cronosCloneSafe(primaryFicha || {});
+  const secondary = cronosCloneSafe(secondaryFicha || {});
+  if(!cronosFichaHasContent(primary) && cronosFichaHasContent(secondary)) return secondary;
+  if(cronosFichaHasContent(primary) && !cronosFichaHasContent(secondary)) return primary;
+  if(!cronosFichaHasContent(primary) && !cronosFichaHasContent(secondary)) return primary || secondary || null;
+
+  primary.plano = cronosMergeUniqueArray(primary.plano, secondary.plano);
+  primary.avaliacoes = cronosMergeUniqueArray(primary.avaliacoes, secondary.avaliacoes);
+  primary.odontograma = { ...(secondary.odontograma || {}), ...(primary.odontograma || {}) };
+  primary.activeEvaluationId = primary.activeEvaluationId || secondary.activeEvaluationId || primary.avaliacoes?.[0]?.id || "";
+  primary.updatedAt = [primary.updatedAt, secondary.updatedAt, new Date().toISOString()].filter(Boolean).sort().pop();
+  return primary;
+}
+
+function cronosMergeFinancialPlansSafe(primaryPlans, secondaryPlans){
+  const plans = cronosMergeUniqueArray(primaryPlans, secondaryPlans).map(plan=>cronosCloneSafe(plan));
+  return plans;
+}
+
+function cronosMergeEntryIntoTarget(db, targetEntry, sourceEntry, primaryContactId, actor){
+  if(!targetEntry || !sourceEntry || String(targetEntry.id) === String(sourceEntry.id)) return targetEntry;
+  const targetScore = cronosEntryCompletenessScore(targetEntry);
+  const sourceScore = cronosEntryCompletenessScore(sourceEntry);
+  const preferred = sourceScore > targetScore ? sourceEntry : targetEntry;
+  const fallback = sourceScore > targetScore ? targetEntry : sourceEntry;
+  const now = new Date().toISOString();
+
+  const fields = [
+    "status","origin","originOther","treatment","treatmentOther","city","firstContactAt","apptDate","apptTime",
+    "callAttempts","callResult","valueBudget","valueEstimated","valuePaid","valueClosed","valuePaidGross","valueClosedGross","lastPaymentDate"
+  ];
+  fields.forEach(k=>{ targetEntry[k] = cronosFirstFilled(preferred[k], fallback[k]); });
+
+  if(cronosValueFilled(preferred.notes) && cronosValueFilled(fallback.notes) && String(preferred.notes).trim() !== String(fallback.notes).trim()){
+    targetEntry.notes = `${preferred.notes}\n\n--- Observação mesclada ---\n${fallback.notes}`;
+  }else{
+    targetEntry.notes = cronosFirstFilled(preferred.notes, fallback.notes) || "";
+  }
+
+  targetEntry.tags = cronosMergeUniqueArray(preferred.tags, fallback.tags);
+  targetEntry.statusLog = cronosMergeUniqueArray(preferred.statusLog, fallback.statusLog)
+    .sort((a,b)=>String(a?.at||"").localeCompare(String(b?.at||"")));
+  targetEntry.ficha = cronosMergeFichaSafe(preferred.ficha, fallback.ficha);
+  targetEntry.financialPlans = cronosMergeFinancialPlansSafe(preferred.financialPlans, fallback.financialPlans);
+  if(!targetEntry.installPlan && sourceEntry.installPlan) targetEntry.installPlan = cronosCloneSafe(sourceEntry.installPlan);
+  if((!Array.isArray(targetEntry.installments) || !targetEntry.installments.length) && Array.isArray(sourceEntry.installments) && sourceEntry.installments.length){
+    targetEntry.installments = cronosCloneSafe(sourceEntry.installments);
+  }
+
+  targetEntry.contactId = primaryContactId;
+  targetEntry.updatedAt = now;
+  targetEntry.lastUpdateAt = now;
+  targetEntry.updatedBy = cronosActorLabel(actor || currentActor?.());
+  try{ syncFichaFinancialLinks(targetEntry); }catch(_){ }
+
+  const sourceId = String(sourceEntry.id || "");
+  const targetId = String(targetEntry.id || "");
+  (db.payments || []).forEach(p=>{
+    if(String(p.entryId || "") === sourceId) p.entryId = targetId;
+    if(String(p.contactId || "") === String(sourceEntry.contactId || "")) p.contactId = primaryContactId;
+  });
+  (db.tasks || []).forEach(t=>{
+    if(String(t.entryId || "") === sourceId) t.entryId = targetId;
+    if(String(t.leadId || "") === sourceId) t.leadId = targetId;
+    if(String(t.contactId || "") === String(sourceEntry.contactId || "")) t.contactId = primaryContactId;
+  });
+
+  db.entries = (db.entries || []).filter(e=>String(e.id || "") !== sourceId);
+  return targetEntry;
+}
+
+function cronosMergeDuplicateContactsInternal(currentContactId, duplicateContactId, options={}){
+  const actor = currentActor && currentActor();
+  if(!actor?.perms?.edit){ toast("Sem permissão", "Seu nível não permite mesclar cadastros."); return null; }
+  const db = loadDB();
+  const a = (db.contacts || []).find(c=>String(c.id || "") === String(currentContactId || ""));
+  const b = (db.contacts || []).find(c=>String(c.id || "") === String(duplicateContactId || ""));
+  if(!a || !b || String(a.id) === String(b.id)){
+    toast("Mesclagem indisponível", "Não foi possível localizar os dois cadastros.");
+    return null;
+  }
+  if(String(a.masterId || "") !== String(actor.masterId || "") || String(b.masterId || "") !== String(actor.masterId || "")){
+    toast("Mesclagem bloqueada", "Os cadastros não pertencem à mesma clínica.");
+    return null;
+  }
+
+  const aEntries = (db.entries || []).filter(e=>String(e.contactId || "") === String(a.id || ""));
+  const bEntries = (db.entries || []).filter(e=>String(e.contactId || "") === String(b.id || ""));
+  const aScore = cronosContactCompletenessScore(a) + aEntries.reduce((sum,e)=>sum + cronosEntryCompletenessScore(e), 0);
+  const bScore = cronosContactCompletenessScore(b) + bEntries.reduce((sum,e)=>sum + cronosEntryCompletenessScore(e), 0);
+  const primary = aScore >= bScore ? a : b;
+  const secondary = primary.id === a.id ? b : a;
+  const primaryId = String(primary.id);
+  const secondaryId = String(secondary.id);
+  const now = new Date().toISOString();
+
+  const ok = options.skipConfirm === true || confirm(
+    "Mesclar estes dois cadastros?\n\n" +
+    "O Cronos vai manter o cadastro mais completo, preservar fichas, recebimentos, parcelas e histórico.\n" +
+    "Nada será apagado da ficha: se um cadastro tiver ficha e o outro não, a ficha será preservada.\n\n" +
+    "Cadastro principal sugerido: " + (primary.name || "Sem nome") + "\n" +
+    "Cadastro que será unido: " + (secondary.name || "Sem nome") + "\n\n" +
+    "OK = Mesclar agora\nCancelar = voltar sem alterar"
+  );
+  if(!ok) return null;
+
+  const before = { primary: cronosCloneSafe(primary), secondary: cronosCloneSafe(secondary) };
+  ["name","phone","cpf","birthDate","firstSeenAt","lastSeenAt","email","city","address","notes"].forEach(k=>{
+    primary[k] = cronosFirstFilled(primary[k], secondary[k]);
+  });
+  primary.updatedAt = now;
+  primary.lastUpdateAt = now;
+
+  const primaryEntries = (db.entries || []).filter(e=>String(e.contactId || "") === primaryId);
+  const secondaryEntries = (db.entries || []).filter(e=>String(e.contactId || "") === secondaryId);
+
+  secondaryEntries.forEach(src=>{
+    const sameMonth = primaryEntries.find(e=>String(e.monthKey || "") === String(src.monthKey || ""));
+    if(sameMonth){
+      cronosMergeEntryIntoTarget(db, sameMonth, src, primaryId, actor);
+    }else{
+      src.contactId = primaryId;
+      src.updatedAt = now;
+      src.lastUpdateAt = now;
+      src.updatedBy = cronosActorLabel(actor);
+      try{ syncFichaFinancialLinks(src); }catch(_){ }
+      primaryEntries.push(src);
+    }
+  });
+
+  (db.entries || []).forEach(e=>{ if(String(e.contactId || "") === secondaryId) e.contactId = primaryId; });
+  (db.payments || []).forEach(p=>{ if(String(p.contactId || "") === secondaryId) p.contactId = primaryId; });
+  (db.tasks || []).forEach(t=>{ if(String(t.contactId || "") === secondaryId) t.contactId = primaryId; });
+  db.contacts = (db.contacts || []).filter(c=>String(c.id || "") !== secondaryId);
+
+  cronosAuditAction(db, {
+    action:"contacts_merged",
+    entityType:"contact",
+    entityId:primaryId,
+    contactId:primaryId,
+    details:`Cadastros mesclados: ${primary.name || "Sem nome"}`,
+    before,
+    after:{ primary: cronosCloneSafe(primary), removedContactId: secondaryId }
+  });
+
+  saveDB(db, { immediate:true });
+  try{ closeModal({ force:true }); }catch(_){ }
+  try{ renderAll(); }catch(_){ }
+  toast("Cadastros mesclados ✅", `${primary.name || "Paciente"} manteve ficha, recebimentos e histórico.`);
+  const latest = (db.entries || [])
+    .filter(e=>String(e.contactId || "") === primaryId)
+    .sort((x,y)=>String(y.lastUpdateAt || y.monthKey || "").localeCompare(String(x.lastUpdateAt || x.monthKey || "")))[0];
+  if(latest?.id){ setTimeout(()=>{ try{ openLeadEntry(latest.id); }catch(_){ } }, 150); }
+  return { primaryId, removedContactId: secondaryId };
+}
+
+window.cronosMesclarCadastrosDuplicados = function(currentContactId, duplicateContactId){
+  return cronosMergeDuplicateContactsInternal(currentContactId, duplicateContactId);
+};
+
+function cronosNormalizePersonName(v){
+  return String(v || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function cronosFindDuplicateContact({masterId, name, phone, cpf, birthDate, excludeContactId=""} = {}){
+  const db = loadDB();
+  const currentNameKey = cronosNormalizePersonName(name);
+  const currentPhone = normPhone(phone || "");
+  const currentCpf = String(cpf || "").replace(/\D/g, "");
+  const currentBirth = String(birthDate || "").trim();
+  const excludeId = String(excludeContactId || "").trim();
+  const sameMasterContacts = (db.contacts || []).filter(c=>
+    c.masterId === masterId && String(c.id || "") !== excludeId
+  );
+
+  const byCpf = currentCpf && currentCpf.length >= 11
+    ? sameMasterContacts.find(c=>String(c.cpf || "").replace(/\D/g, "") === currentCpf)
+    : null;
+
+  const byNamePhone = currentNameKey && currentPhone
+    ? sameMasterContacts.find(c=>
+        cronosNormalizePersonName(c.name) === currentNameKey &&
+        String(c.phone || "") === String(currentPhone || "")
+      )
+    : null;
+
+  const byNameBirth = currentNameKey && currentBirth
+    ? sameMasterContacts.find(c=>
+        cronosNormalizePersonName(c.name) === currentNameKey &&
+        String(c.birthDate || "") === currentBirth
+      )
+    : null;
+
+  const contact = byCpf || byNamePhone || byNameBirth || null;
+  if(!contact) return null;
+  const reason = byCpf
+    ? "mesmo CPF"
+    : (byNameBirth ? "mesmo nome e data de nascimento" : "mesmo nome e telefone");
+  const entries = (db.entries || []).filter(e=>String(e.contactId || "") === String(contact.id || ""))
+    .sort((a,b)=>String(b.monthKey||"").localeCompare(String(a.monthKey||"")));
+  return { contact, reason, entries };
+}
+
+function cronosDuplicateLeadNoticeHTML(contact){
+  const actor = currentActor();
+  if(!actor || !contact) return "";
+  const duplicate = cronosFindDuplicateContact({
+    masterId: actor.masterId,
+    name: contact.name || "",
+    phone: contact.phone || "",
+    cpf: contact.cpf || "",
+    birthDate: contact.birthDate || "",
+    excludeContactId: contact.id || ""
+  });
+  if(!duplicate) return "";
+  const c = duplicate.contact || {};
+  const last = duplicate.entries && duplicate.entries[0];
+  const lastTxt = last ? `${monthLabel(last.monthKey)} • ${last.status || "Sem status"}` : "Sem histórico de mês";
+  return `
+    <div class="cronosDuplicateNotice" style="grid-column:1/-1;border:1px solid rgba(245,158,11,.38);background:rgba(245,158,11,.12);border-radius:16px;padding:12px 14px;margin-bottom:2px;color:var(--text)">
+      <div style="font-weight:900;margin-bottom:4px">Possível cadastro duplicado</div>
+      <div class="muted" style="font-size:12px;line-height:1.45">
+        Encontramos outro cadastro com ${escapeHTML(duplicate.reason)}: <b>${escapeHTML(c.name || "Sem nome")}</b>
+        ${c.phone ? ` • ${escapeHTML(formatPhoneBR(c.phone))}` : ``}
+        ${c.cpf ? ` • CPF ${escapeHTML(formatCPF(c.cpf))}` : ``}<br/>
+        Último registro encontrado: ${escapeHTML(lastTxt)}. Mesmo telefone pode ser familiar, mas CPF/nome repetido merece conferência.
+      </div>
+      ${contact?.id && c?.id ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button type="button" class="btn primary" style="padding:9px 12px" onclick="cronosMesclarCadastrosDuplicados('${escapeHTML(contact.id)}','${escapeHTML(c.id)}')">Mesclar cadastros</button>
+          <span class="muted" style="font-size:12px;align-self:center">Preserva ficha, recebimentos, parcelas e histórico.</span>
+        </div>
+      ` : ``}
+    </div>
+  `;
 }
 
 function openNewLead(){
@@ -10500,7 +10811,6 @@ function wireLeadModal(actor, editingEntryId, isNew){
     if(!name || !phone) return toast("Nome e telefone são obrigatórios");
 
     const firstContactInput = val("lf_first", "").trim();
-    if(!firstContactInput) return toast("Data do 1º contato obrigatória", "Informe a data real da primeira mensagem/contato do lead.");
 
     let monthKey = (val("lf_month","") || monthKeyFromDate(firstContactInput) || val("fMonth", todayISO().slice(0,7))).trim();
     if(!monthKey || monthKey === "all") monthKey = monthKeyFromDate(firstContactInput) || todayISO().slice(0,7);
@@ -10530,62 +10840,51 @@ function wireLeadModal(actor, editingEntryId, isNew){
       existingIndex = db.contacts.findIndex(c=>String(c.id)===String(selectedId) && c.masterId===actor.masterId);
     }
 
-    const normalizePersonName = (v)=> String(v || "")
-      .trim()
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ");
+    const currentContactId = String(editingEntryRef?.contactId || selectedId || "").trim();
+    const duplicateInfo = cronosFindDuplicateContact({
+      masterId: actor.masterId,
+      name,
+      phone,
+      cpf: contactDraft.cpf,
+      birthDate: contactDraft.birthDate,
+      excludeContactId: currentContactId
+    });
+    const duplicateContact = duplicateInfo?.contact || null;
 
-    const sameMasterContacts = db.contacts.filter(c=> c.masterId === actor.masterId);
-    const currentNameKey = normalizePersonName(name);
-    const currentCpf = String(contactDraft.cpf || "").replace(/\D/g, "");
-    const currentBirth = String(contactDraft.birthDate || "").trim();
+    if(duplicateContact){
+      const motivo = duplicateInfo.reason || "dados semelhantes";
+      if(isNew && !selectedId){
+        const abrirExistente = confirm(
+          "Encontramos um cadastro possivelmente igual (" + motivo + ").\n\n" +
+          "Paciente: " + (duplicateContact.name || "Sem nome") + "\n" +
+          "Telefone: " + (formatPhoneBR(duplicateContact.phone || "") || "—") + "\n" +
+          (duplicateContact.cpf ? "CPF: " + formatCPF(duplicateContact.cpf || "") + "\n" : "") +
+          "\nOK = abrir o cadastro existente.\n" +
+          "Cancelar = voltar ao formulário sem salvar."
+        );
 
-    const duplicateByCpf = currentCpf && currentCpf.length >= 11
-      ? sameMasterContacts.find(c=>
-          String(c.id || "") !== String(selectedId || "") &&
-          String(c.cpf || "").replace(/\D/g, "") === currentCpf
-        )
-      : null;
-
-    const duplicateByNamePhone = currentNameKey && phone
-      ? sameMasterContacts.find(c=>
-          String(c.id || "") !== String(selectedId || "") &&
-          normalizePersonName(c.name) === currentNameKey &&
-          String(c.phone || "") === String(phone || "")
-        )
-      : null;
-
-    const duplicateByNameBirth = currentNameKey && currentBirth
-      ? sameMasterContacts.find(c=>
-          String(c.id || "") !== String(selectedId || "") &&
-          normalizePersonName(c.name) === currentNameKey &&
-          String(c.birthDate || "") === currentBirth
-        )
-      : null;
-
-    const duplicateContact = duplicateByCpf || duplicateByNamePhone || duplicateByNameBirth;
-
-    if(isNew && !selectedId && duplicateContact){
-      const motivo = duplicateByCpf
-        ? "mesmo CPF"
-        : (duplicateByNameBirth ? "mesmo nome e data de nascimento" : "mesmo nome e telefone");
-
-      const abrirExistente = confirm(
-        "Encontramos um cadastro possivelmente igual (" + motivo + ").\n\n" +
-        "Paciente: " + (duplicateContact.name || "Sem nome") + "\n" +
-        "Telefone: " + (formatPhoneBR(duplicateContact.phone || "") || "—") + "\n\n" +
-        "OK = abrir o cadastro existente.\n" +
-        "Cancelar = voltar ao formulário sem salvar."
-      );
-
-      if(abrirExistente){
-        loadExistingContactIntoModal(duplicateContact.id, actor, isNew);
-      }else{
-        toast("Cadastro mantido aberto", "Revise nome, CPF ou data antes de salvar como outro paciente.");
+        if(abrirExistente){
+          loadExistingContactIntoModal(duplicateContact.id, actor, isNew);
+        }else{
+          toast("Cadastro mantido aberto", "Revise nome, CPF ou data antes de salvar como outro paciente.");
+        }
+        return;
       }
-      return;
+
+      if(editingEntryId){
+        const salvarMesmoAssim = confirm(
+          "Atenção: existe outro cadastro com " + motivo + ".\n\n" +
+          "Outro cadastro: " + (duplicateContact.name || "Sem nome") + "\n" +
+          "Telefone: " + (formatPhoneBR(duplicateContact.phone || "") || "—") + "\n" +
+          (duplicateContact.cpf ? "CPF: " + formatCPF(duplicateContact.cpf || "") + "\n" : "") +
+          "\nOK = salvar ESTE lead mesmo assim.\n" +
+          "Cancelar = voltar para revisar antes de salvar."
+        );
+        if(!salvarMesmoAssim){
+          toast("Salvamento interrompido", "Confira se este cadastro é duplicado ou se são pacientes diferentes.");
+          return;
+        }
+      }
     }
 
     if(editingEntryRef && existingIndex >= 0){
@@ -10961,7 +11260,7 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   if(el("lf_phone")) el("lf_phone").dataset.contactId = String(c.id || "");
 
   if(latest){
-    setIf("lf_first", latest.firstContactAt || c.firstSeenAt || todayISO());
+    setIf("lf_first", latest.firstContactAt || c.firstSeenAt || "");
     setIf("lf_month", latest.monthKey || monthKey || "");
     setIf("lf_status", latest.status || "");
     setIf("lf_origin", latest.origin || "");
@@ -10995,7 +11294,7 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
       tagListEl.innerHTML = uniq.map((t,i)=>`<span class="tagPill" data-i="${i}">${escapeHTML(t)}<button type="button" class="tagRemove" data-i="${i}" aria-label="Remover tag">×</button></span>`).join("");
     }
   }else{
-    setIf("lf_first", c.firstSeenAt || todayISO());
+    setIf("lf_first", c.firstSeenAt || "");
     const campaignChk = el("lf_campaign");
     if(campaignChk) campaignChk.checked = false;
   }
