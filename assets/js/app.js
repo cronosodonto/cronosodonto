@@ -9631,7 +9631,134 @@ function setActiveView(view){
 }
 
 /* -------- Modal helpers -------- */
+const CRONOS_MODAL_GUARD = {
+  type: "",
+  baseline: "",
+  dirty: false,
+  blockOutside: false,
+  confirmOnDirty: false,
+  armed: false,
+  lastPulseAt: 0
+};
+
+function cronosModalSnapshot(){
+  try{
+    const body = el("modalBody");
+    if(!body) return "";
+    const fields = Array.from(body.querySelectorAll("input, select, textarea"));
+    return JSON.stringify(fields.map((node, index)=>{
+      const type = String(node.type || node.tagName || "").toLowerCase();
+      return {
+        k: node.id || node.name || String(index),
+        type,
+        value: (type === "checkbox" || type === "radio") ? !!node.checked : String(node.value ?? ""),
+        tags: node.dataset && node.dataset.tags ? String(node.dataset.tags || "") : ""
+      };
+    }));
+  }catch(_){ return ""; }
+}
+
+function cronosModalDetectType(modalClass=""){
+  try{
+    const body = el("modalBody");
+    const root = document.querySelector("#modalBg > .modal");
+    if(/(^|\s)modalFichaWide(\s|$)/.test(String(modalClass || "")) || body?.querySelector?.("#fichaApp") || root?.classList?.contains?.("modalFichaWide")) return "ficha";
+    if(body?.querySelector?.("#btnSaveLead, #lf_name, #lf_phone, #lf_month")) return "lead";
+    if(body?.querySelector?.("input, select, textarea")) return "form";
+  }catch(_){ }
+  return "generic";
+}
+
+function cronosModalIsDirty(){
+  try{
+    if(!CRONOS_MODAL_GUARD.armed) return false;
+    const current = cronosModalSnapshot();
+    const dirty = !!CRONOS_MODAL_GUARD.baseline && current !== CRONOS_MODAL_GUARD.baseline;
+    CRONOS_MODAL_GUARD.dirty = dirty;
+    return dirty;
+  }catch(_){ return !!CRONOS_MODAL_GUARD.dirty; }
+}
+
+function cronosModalPulse(message=""){
+  try{
+    const root = document.querySelector("#modalBg > .modal");
+    if(root){
+      root.classList.remove("cronos-modal-pulse");
+      void root.offsetWidth;
+      root.classList.add("cronos-modal-pulse");
+    }
+    const now = Date.now();
+    if(message && now - (CRONOS_MODAL_GUARD.lastPulseAt || 0) > 1100){
+      CRONOS_MODAL_GUARD.lastPulseAt = now;
+      if(typeof toast === "function") toast("Continue pelo modal", message);
+    }
+  }catch(_){ }
+}
+
+function cronosArmModalGuard(modalClass=""){
+  try{
+    const type = cronosModalDetectType(modalClass);
+    CRONOS_MODAL_GUARD.type = type;
+    CRONOS_MODAL_GUARD.baseline = cronosModalSnapshot();
+    CRONOS_MODAL_GUARD.dirty = false;
+    CRONOS_MODAL_GUARD.armed = true;
+    CRONOS_MODAL_GUARD.lastPulseAt = 0;
+    // Ficha e formulários não fecham ao clicar fora. Evita perder cadastro por clique acidental.
+    CRONOS_MODAL_GUARD.blockOutside = (type === "ficha" || type === "lead" || type === "form");
+    // Confirmação explícita quando houver formulário editável com dados alterados.
+    CRONOS_MODAL_GUARD.confirmOnDirty = (type === "lead" || type === "form");
+
+    const body = el("modalBody");
+    if(body){
+      body.oninput = ()=>{ CRONOS_MODAL_GUARD.dirty = cronosModalIsDirty(); };
+      body.onchange = ()=>{ CRONOS_MODAL_GUARD.dirty = cronosModalIsDirty(); };
+      body.onclick = ()=>{ setTimeout(()=>{ CRONOS_MODAL_GUARD.dirty = cronosModalIsDirty(); }, 0); };
+    }
+  }catch(_){ }
+}
+
+function cronosResetModalGuard(){
+  try{
+    const body = el("modalBody");
+    if(body){ body.oninput = null; body.onchange = null; body.onclick = null; }
+  }catch(_){ }
+  CRONOS_MODAL_GUARD.type = "";
+  CRONOS_MODAL_GUARD.baseline = "";
+  CRONOS_MODAL_GUARD.dirty = false;
+  CRONOS_MODAL_GUARD.blockOutside = false;
+  CRONOS_MODAL_GUARD.confirmOnDirty = false;
+  CRONOS_MODAL_GUARD.armed = false;
+  CRONOS_MODAL_GUARD.lastPulseAt = 0;
+}
+
+function cronosCanCloseModal(source="button", force=false){
+  if(force) return true;
+  const modalBg = el("modalBg");
+  if(!modalBg || !modalBg.classList.contains("show")) return true;
+
+  const type = CRONOS_MODAL_GUARD.type || cronosModalDetectType();
+
+  if(source === "outside" && CRONOS_MODAL_GUARD.blockOutside){
+    const msg = type === "lead"
+      ? "Use Salvar, Cancelar ou o X para não perder os dados preenchidos."
+      : (type === "ficha" ? "A ficha não fecha por clique fora. Use o botão Fechar quando terminar." : "Use os botões do modal para concluir ou cancelar.");
+    cronosModalPulse(msg);
+    return false;
+  }
+
+  if(CRONOS_MODAL_GUARD.confirmOnDirty && cronosModalIsDirty()){
+    const ok = confirm("Existem alterações não salvas neste modal. Deseja descartar e fechar mesmo assim?");
+    if(!ok){
+      cronosModalPulse("Alterações mantidas. Salve ou descarte conscientemente.");
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWidth=null, width=null, modalClass=""}){
+  cronosResetModalGuard();
   el("modalTitle").textContent = title;
   el("modalSub").textContent = sub;
   el("modalBody").innerHTML = bodyHTML;
@@ -9658,8 +9785,12 @@ function openModal({title, sub="", bodyHTML="", footHTML="", onMount=null, maxWi
     document.body.classList.remove("cronos-ficha-scrolling");
   }catch(_){ }
   if(typeof onMount==="function") onMount();
+  setTimeout(()=>cronosArmModalGuard(modalClass), 0);
 }
-function closeModal(){
+function closeModal(options){
+  const force = options === true || (options && typeof options === "object" && options.force === true);
+  const source = typeof options === "string" ? options : ((options && typeof options === "object" && options.source) || "button");
+  if(!cronosCanCloseModal(source, force)) return false;
   el("modalBg").classList.remove("show");
   el("modalBg").setAttribute("aria-hidden","true");
   const __modalRoot = document.querySelector('#modalBg > .modal');
@@ -9672,9 +9803,19 @@ function closeModal(){
     document.documentElement.classList.remove("cronos-ficha-open", "cronos-ficha-scrolling");
     document.body.classList.remove("cronos-ficha-open", "cronos-ficha-scrolling");
   }catch(_){ }
+  cronosResetModalGuard();
+  return true;
 }
-el("modalClose").addEventListener("click", closeModal);
-el("modalBg").addEventListener("click", (e)=>{ if(e.target===el("modalBg")) closeModal(); });
+el("modalClose").addEventListener("click", ()=>closeModal("x"));
+el("modalBg").addEventListener("click", (e)=>{ if(e.target===el("modalBg")) closeModal("outside"); });
+window.addEventListener("beforeunload", (event)=>{
+  try{
+    if(el("modalBg")?.classList.contains("show") && CRONOS_MODAL_GUARD.confirmOnDirty && cronosModalIsDirty()){
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  }catch(_){ }
+});
 
 /* Cronos — sinaliza rolagem da Ficha sem interferir no turbo das telas principais. */
 (function(){
@@ -10481,7 +10622,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
     if(isNew && existingThisMonth){
       saveDB(db);
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
-      closeModal();
+      closeModal({ force:true });
       openLeadEntry(existingThisMonth.id);
       return;
     }
@@ -10702,7 +10843,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
     }
 
     const cloudPromise = saveDB(db, { immediate:true });
-    closeModal();
+    closeModal({ force:true });
     ensureMonthOptions(); // in case new month
     const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
     toast("Lead salvo ✅", `${name} • ${savedMonthLabel} • sincronizando na nuvem...`);
@@ -10742,7 +10883,7 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
 
   const targetEntry = existing || latest;
   if(targetEntry){
-    closeModal();
+    closeModal({ force:true });
     openLeadEntry(targetEntry.id);
     return;
   }
