@@ -9904,14 +9904,15 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
       </div>
 
       <div>
-        <label>Data do 1º contato (mês)</label>
+        <label>Data do 1º contato *</label>
         <input id="lf_first" type="date" ${ro?"disabled":""} value="${escapeHTML(e.firstContactAt || "")}"/>
+        <div class="help muted" style="font-size:12px">Data real da primeira mensagem/contato do lead.</div>
       </div>
 
       <div>
-        <label>Mês/Ano</label>
+        <label>Mês de referência</label>
         <input id="lf_month" type="month" ${ro?"disabled":""} value="${escapeHTML(e.monthKey || ((val("fMonth") && val("fMonth")!=="all") ? val("fMonth") : todayISO().slice(0,7)))}" class="mono"/>
-        <div class="help muted" style="font-size:12px">Agora é editável. Use para corrigir leads salvos no mês errado.</div>
+        <div class="help muted" style="font-size:12px">Usado nos relatórios. O Cronos sugere pela data do 1º contato, mas você pode alterar.</div>
       </div>
 
       <div>
@@ -10046,7 +10047,7 @@ function openNewLead(){
   if(!actor.perms.edit || !canAccessView("leads", actor)) return toast("Sem permissão", "Seu nível não pode criar leads.");
   let monthKey = val("fMonth", todayISO().slice(0,7));
   if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
-  const entry = { monthKey, firstContactAt: todayISO(), status:"", origin:"", treatment:"", tags:[] };
+  const entry = { monthKey, firstContactAt: "", status:"", origin:"", treatment:"", tags:[] };
   const contact = { name:"", phone:"", cpf:"", birthDate:"", firstSeenAt:"", lastSeenAt:"" };
 
   openModal({
@@ -10381,9 +10382,26 @@ function wireLeadModal(actor, editingEntryId, isNew){
   cpfInp?.addEventListener("input", ()=> applyMaskedValue(cpfInp, formatCPFInput));
 
   if(firstInp && monthInp){
+    const initialFirstMonth = firstInp.value ? monthKeyFromDate(firstInp.value) : "";
+    const initialMonth = monthInp.value || "";
+    let monthEditedByUser = false;
+
+    monthInp.addEventListener("input", ()=>{ monthEditedByUser = true; });
+    monthInp.addEventListener("change", ()=>{ monthEditedByUser = true; });
+
     firstInp.addEventListener("change", ()=>{
-      const mk = monthKeyFromDate(firstInp.value);
-      if(mk && (!monthInp.value || isNew)) monthInp.value = mk;
+      const mk = firstInp.value ? monthKeyFromDate(firstInp.value) : "";
+      if(!mk) return;
+
+      const currentMonth = monthInp.value || "";
+      const canSuggestMonth = !monthEditedByUser && (
+        isNew ||
+        !currentMonth ||
+        currentMonth === initialFirstMonth ||
+        currentMonth === initialMonth
+      );
+
+      if(canSuggestMonth) monthInp.value = mk;
     });
   }
 
@@ -10481,9 +10499,12 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const phone = normPhone(val("lf_phone"));
     if(!name || !phone) return toast("Nome e telefone são obrigatórios");
 
-    let monthKey = (val("lf_month","") || val("fMonth", todayISO().slice(0,7))).trim();
-    if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
-    if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês inválido", "Use YYYY-MM (ex: 2026-01)");
+    const firstContactInput = val("lf_first", "").trim();
+    if(!firstContactInput) return toast("Data do 1º contato obrigatória", "Informe a data real da primeira mensagem/contato do lead.");
+
+    let monthKey = (val("lf_month","") || monthKeyFromDate(firstContactInput) || val("fMonth", todayISO().slice(0,7))).trim();
+    if(!monthKey || monthKey === "all") monthKey = monthKeyFromDate(firstContactInput) || todayISO().slice(0,7);
+    if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês de referência inválido", "Use YYYY-MM (ex: 2026-01)");
 
     const now = new Date().toISOString();
 
@@ -10495,8 +10516,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
       phone,
       cpf: String(val("lf_cpf") || "").replace(/\D/g, ""),
       birthDate: val("lf_birth") || "",
-      firstSeenAt: val("lf_first") || todayISO(),
-      lastSeenAt: val("lf_first") || todayISO()
+      firstSeenAt: firstContactInput,
+      lastSeenAt: firstContactInput
     };
 
     let existingIndex = -1;
@@ -10583,7 +10604,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const treatment = val("lf_treatment");
     const treatmentOther = treatment==="Outros" ? val("lf_treatOther").trim() : "";
     const city = val("lf_city").trim();
-    const firstContactAt = val("lf_first") || todayISO();
+    const firstContactAt = firstContactInput;
     const apptDate = val("lf_apptDate") || "";
     const apptTime = val("lf_apptTime") || "";
     const callAttempts = val("lf_calls") || "";
