@@ -43,6 +43,6 @@ A página inicial foi redesenhada com foco comercial/institucional, removendo te
 
 
 
-## Ajuste de favicon
+## Ajuste de favicon e sitemap
 - Sitemap XML removido da versão publicada.
 - Favicon adicionado na raiz do site (`/favicon.ico`, `/favicon-48x48.png`, `/favicon-192x192.png`, `/apple-touch-icon.png`) para facilitar o reconhecimento pelo Google.
