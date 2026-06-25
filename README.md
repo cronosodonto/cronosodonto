@@ -13,7 +13,7 @@ Criado para organizar a rotina da clínica com mais clareza, controle e intelig�
 - A aplicação original foi movida para `/app/`.
 - A rota `/login/` redireciona para `/app/` e está marcada como `noindex`.
 - As áreas internas `/app/` e `/superadmin/` foram marcadas com `noindex, nofollow`.
-- Foram adicionados `robots.txt`, `sitemap.xml`, favicon, logo oficial extraída do sistema original, imagem Open Graph com a marca oficial e dados estruturados JSON-LD.
+- Foram adicionados `robots.txt`, favicon, logo oficial extraída do sistema original, imagem Open Graph com a marca oficial e dados estruturados JSON-LD.
 - Após publicar, verificar o domínio no Google Search Console e solicitar indexação da home.
 
 
@@ -39,5 +39,10 @@ Observação de marca:
 
 ## Atualização da landing pública
 
-A página inicial foi redesenhada com foco comercial/institucional, removendo textos visíveis sobre SEO/Google. O SEO técnico continua presente no código por meio de metatags, canonical, Open Graph, JSON-LD, robots.txt e sitemap.xml.
+A página inicial foi redesenhada com foco comercial/institucional, removendo textos visíveis sobre SEO/Google. O SEO técnico continua presente no código por meio de metatags, canonical, Open Graph, JSON-LD, robots.txt e favicon na raiz do site.
 
+
+
+## Ajuste de favicon e sitemap
+- Sitemap XML removido da versão publicada.
+- Favicon adicionado na raiz do site (`/favicon.ico`, `/favicon-48x48.png`, `/favicon-192x192.png`, `/apple-touch-icon.png`) para facilitar o reconhecimento pelo Google.
