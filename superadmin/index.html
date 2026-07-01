@@ -1366,7 +1366,7 @@
       supabaseUrl: "https://nsqpslierpulanxvsxaw.supabase.co",
       anonKey: "sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ",
       loginLink: "https://cronosodonto.com/superadmin/",
-      clinicLink: "https://cronosodonto.com/",
+      clinicLink: "https://cronosodonto.com/app/",
       endpoints: {
         listClinics: "list-clinics",
         createClinic: "create-clinic",
@@ -1504,6 +1504,42 @@
         .trim()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '');
+    }
+
+    function isoDateInput(offsetDays = 0) {
+      const d = new Date();
+      d.setDate(d.getDate() + Number(offsetDays || 0));
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    function clinicAppUrl(rawUrl = "", fallbackToken = "") {
+      const base = new URL(CONFIG.clinicLink || "/app/", window.location.origin);
+      const appPath = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
+      let url;
+      try {
+        url = rawUrl ? new URL(rawUrl, window.location.origin) : new URL(base.href);
+      } catch (_) {
+        url = new URL(base.href);
+      }
+
+      const token = url.searchParams.get("support_token") || fallbackToken || "";
+      const cronosHost = /(^|\.)cronosodonto\.com$/i.test(url.hostname);
+      const sameOrigin = url.origin === window.location.origin || cronosHost;
+
+      // Depois que a raiz virou landing page, qualquer link interno de suporte
+      // precisa entrar direto no app. Mantém querystring/token e evita cair na página informativa.
+      if (sameOrigin && (url.pathname === "/" || url.pathname === "" || token)) {
+        url.pathname = appPath;
+      }
+      if (token) url.searchParams.set("support_token", token);
+      return url.href;
+    }
+
+    function normalizeEmail(value) {
+      return String(value || "").trim().toLowerCase();
     }
 
     function generateTemporaryPassword() {
@@ -2408,13 +2444,16 @@
           clinic_id: state.selectedClinicId
         });
 
-        if (data?.url) {
-          window.open(data.url, "_blank");
+        const token = data?.support_token || data?.supportToken || data?.token || "";
+        const supportUrl = (data?.url || token) ? clinicAppUrl(data?.url || "", token) : "";
+
+        if (supportUrl) {
+          window.open(supportUrl, "_blank");
           toast("Clínica aberta em modo suporte.", "success");
           return;
         }
 
-        toast("A ação de suporte foi registrada, mas a URL ainda depende do backend.", "info", 3600);
+        toast("A ação de suporte foi registrada, mas o backend não retornou URL/token de acesso.", "error", 4200);
       });
     }
 
@@ -2427,19 +2466,38 @@
       }
 
       await withButtonLoading(button, "Salvando...", async () => {
+        const masterName = document.getElementById("detail_master_name").value.trim();
+        const masterEmail = normalizeEmail(document.getElementById("detail_master_email").value);
+        const startIso = start ? `${start}T00:00:00` : null;
+        const endIso = end ? `${end}T23:59:59` : null;
+        const clinicPatch = {
+          name: document.getElementById("detail_name").value.trim(),
+          slug: document.getElementById("detail_slug").value.trim(),
+          master_name: masterName,
+          masterName,
+          master_email: masterEmail,
+          masterEmail,
+          owner_email: masterEmail,
+          email_master: masterEmail,
+          status: document.getElementById("detail_status").value,
+          access_starts_at: startIso,
+          access_start_at: startIso,
+          accessStartsAt: startIso,
+          access_ends_at: endIso,
+          access_end_at: endIso,
+          accessEndsAt: endIso,
+          valid_until: endIso,
+          expires_at: endIso,
+          validade: endIso,
+          included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
+          extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
+        };
         await callEdgeFunction(CONFIG.endpoints.updateClinicSettings, {
           clinic_id: state.selectedClinicId,
-          clinic: {
-            name: document.getElementById("detail_name").value.trim(),
-            slug: document.getElementById("detail_slug").value.trim(),
-            master_name: document.getElementById("detail_master_name").value.trim(),
-            master_email: document.getElementById("detail_master_email").value.trim(),
-            status: document.getElementById("detail_status").value,
-            access_starts_at: start ? `${start}T00:00:00` : null,
-            access_ends_at: end ? `${end}T23:59:59` : null,
-            included_internal_users: Number(document.getElementById("detail_included_internal_users").value || 0),
-            extra_user_price: Number(document.getElementById("detail_extra_user_price").value || 0)
-          },
+          clinicId: state.selectedClinicId,
+          clinic: clinicPatch,
+          clinic_patch: clinicPatch,
+          master: { name: masterName, email: masterEmail },
           private: {
             document_type: document.getElementById("detail_document_type").value || null,
             document_number: document.getElementById("detail_document_number").value.trim() || null,
@@ -2785,11 +2843,11 @@
     async function importCsvForClinic(button, clinicId, sourceLabel = 'clínica selecionada') {
       if (!clinicId) {
         toast("Nenhuma clínica selecionada para importar.", "error", 3200);
-        return;
+        return null;
       }
 
       const file = await selectCsvFile();
-      if (!file) return;
+      if (!file) return null;
 
       try {
         const text = await file.text();
@@ -2797,23 +2855,34 @@
 
         if (!parsed.headers.length || !parsed.rows.length) {
           toast("O CSV foi lido, mas não encontrei linhas úteis para importar.", "error", 4200);
-          return;
+          return null;
         }
 
         const previewHeaders = parsed.headers.slice(0, 6).join(", ");
         const ok = confirm(
-          `Importar CSV para ${sourceLabel}?\n\n` +
-          `Arquivo: ${file.name}\n` +
-          `Linhas encontradas: ${parsed.rows.length}\n` +
-          `Colunas: ${previewHeaders}${parsed.headers.length > 6 ? "..." : ""}\n\n` +
+          `Importar CSV para ${sourceLabel}?
+
+` +
+          `Arquivo: ${file.name}
+` +
+          `Linhas encontradas: ${parsed.rows.length}
+` +
+          `Colunas: ${previewHeaders}${parsed.headers.length > 6 ? "..." : ""}
+
+` +
           `Confirma a importação?`
         );
 
-        if (!ok) return;
+        if (!ok) return null;
 
+        let summary = null;
         await withButtonLoading(button, "Importando...", async () => {
           const data = await callEdgeFunction(CONFIG.endpoints.importClinicCsv, {
             clinic_id: clinicId,
+            clinicId,
+            clinic: { id: clinicId },
+            target: "contacts",
+            mode: "contacts",
             filename: file.name,
             csv_content: text,
             csv: text,
@@ -2821,20 +2890,56 @@
             delimiter: parsed.delimiter,
             headers: parsed.headers,
             rows: parsed.objects,
-            row_count: parsed.rows.length
+            contacts: parsed.objects,
+            records: parsed.objects,
+            items: parsed.objects,
+            row_count: parsed.rows.length,
+            rows_count: parsed.rows.length,
+            total_rows: parsed.rows.length
           });
 
-          const imported = data?.imported ?? data?.inserted ?? data?.created ?? data?.rows_imported ?? parsed.rows.length;
-          const updated = data?.updated ?? data?.rows_updated ?? 0;
-          const skipped = data?.skipped ?? data?.ignored ?? 0;
+          const countKeys = ["imported", "inserted", "created", "rows_imported", "updated", "rows_updated", "skipped", "ignored", "failed", "errors_count"];
+          const hasExplicitCount = countKeys.some(key => data?.[key] !== undefined && data?.[key] !== null && data?.[key] !== "");
+          const confirmed = data?.ok === true || data?.success === true || data?.confirmed === true || hasExplicitCount;
 
-          toast(`CSV lido e enviado. Importados: ${imported}${updated ? ` • Atualizados: ${updated}` : ""}${skipped ? ` • Ignorados: ${skipped}` : ""}.`, "success", 5200);
+          if (!confirmed) {
+            throw new Error("O backend recebeu o CSV, mas não confirmou quantos registros foram gravados. Importação não será marcada como concluída para evitar falso sucesso.");
+          }
+
+          const imported = Number(data?.imported ?? data?.inserted ?? data?.created ?? data?.rows_imported ?? 0) || 0;
+          const updated = Number(data?.updated ?? data?.rows_updated ?? 0) || 0;
+          const skipped = Number(data?.skipped ?? data?.ignored ?? 0) || 0;
+          const failed = Number(data?.failed ?? data?.errors_count ?? 0) || 0;
+          const totalWritten = imported + updated;
+
+          if (hasExplicitCount && parsed.rows.length > 0 && totalWritten <= 0 && skipped <= 0 && failed <= 0) {
+            throw new Error("O backend respondeu sem registros gravados. Nada foi importado para a clínica selecionada.");
+          }
+
+          summary = { imported, updated, skipped, failed, total: parsed.rows.length, raw: data };
+          const parts = [`Lidos: ${parsed.rows.length}`];
+          if (hasExplicitCount) {
+            parts.push(`Gravados: ${totalWritten}`);
+            if (imported) parts.push(`Novos: ${imported}`);
+            if (updated) parts.push(`Atualizados: ${updated}`);
+            if (skipped) parts.push(`Ignorados: ${skipped}`);
+            if (failed) parts.push(`Falhas: ${failed}`);
+          } else {
+            parts.push("Confirmado pelo backend");
+          }
+
+          toast(`Importação concluída. ${parts.join(" • ")}.`, failed ? "info" : "success", 6200);
 
           try { await loadClinics(); } catch (_) {}
+          if (state.selectedClinicId === clinicId) {
+            try { await loadClinicDetails(clinicId); } catch (_) {}
+          }
         });
+        return summary;
       } catch (err) {
         console.error(err);
-        toast(err?.message || "Falha ao importar CSV.", "error", 5200);
+        toast(err?.message || "Falha ao importar CSV.", "error", 6200);
+        return null;
       }
     }
 
@@ -3078,28 +3183,87 @@
           return;
         }
 
+        const clinicNameValue = String(fd.get("clinic_name") || "").trim();
+        const clinicSlugValue = String(fd.get("clinic_slug") || "").trim() || slugify(clinicNameValue);
+        const masterNameValue = String(fd.get("master_name") || "").trim();
+        const masterEmailValue = normalizeEmail(fd.get("master_email"));
+        const masterPasswordValue = String(fd.get("master_password") || "").trim();
+        const statusValue = String(fd.get("status") || "active").trim();
+        const startIso = accessStartsAt ? `${accessStartsAt}T00:00:00` : null;
+        const endIso = accessEndsAt ? `${accessEndsAt}T23:59:59` : null;
+        const includedUsersValue = Number(String(fd.get("included_internal_users") || "5").trim() || 5);
+        const extraUserPriceValue = Number(String(fd.get("extra_user_price") || "0").trim() || 0);
+        const privatePayload = {
+          document_type: String(fd.get("document_type") || "").trim() || null,
+          document_number: String(fd.get("document_number") || "").trim() || null,
+          owner_phone: String(fd.get("owner_phone") || "").trim() || null,
+          owner_name: String(fd.get("owner_name") || "").trim() || null,
+          notes: String(fd.get("notes") || "").trim() || null
+        };
+
+        const clinicPayload = {
+          name: clinicNameValue,
+          slug: clinicSlugValue,
+          master_name: masterNameValue,
+          masterName: masterNameValue,
+          master_email: masterEmailValue,
+          masterEmail: masterEmailValue,
+          owner_email: masterEmailValue,
+          email_master: masterEmailValue,
+          status: statusValue,
+          access_starts_at: startIso,
+          access_start_at: startIso,
+          accessStartsAt: startIso,
+          access_ends_at: endIso,
+          access_end_at: endIso,
+          accessEndsAt: endIso,
+          valid_until: endIso,
+          expires_at: endIso,
+          validade: endIso,
+          included_internal_users: includedUsersValue,
+          extra_user_price: extraUserPriceValue
+        };
+
         const payload = {
-          clinic_name: String(fd.get("clinic_name") || "").trim(),
-          clinic_slug: String(fd.get("clinic_slug") || "").trim() || slugify(String(fd.get("clinic_name") || "").trim()),
-          master_name: String(fd.get("master_name") || "").trim(),
-          master_email: String(fd.get("master_email") || "").trim(),
-          master_password: String(fd.get("master_password") || "").trim(),
-          status: String(fd.get("status") || "active").trim(),
-          access_starts_at: accessStartsAt ? `${accessStartsAt}T00:00:00` : null,
-          access_ends_at: accessEndsAt ? `${accessEndsAt}T23:59:59` : null,
-          included_internal_users: Number(String(fd.get("included_internal_users") || "5").trim() || 5),
-          extra_user_price: Number(String(fd.get("extra_user_price") || "0").trim() || 0),
-          private: {
-            document_type: String(fd.get("document_type") || "").trim() || null,
-            document_number: String(fd.get("document_number") || "").trim() || null,
-            owner_phone: String(fd.get("owner_phone") || "").trim() || null,
-            owner_name: String(fd.get("owner_name") || "").trim() || null,
-            notes: String(fd.get("notes") || "").trim() || null
-          }
+          clinic_name: clinicNameValue,
+          clinicName: clinicNameValue,
+          name: clinicNameValue,
+          clinic_slug: clinicSlugValue,
+          clinicSlug: clinicSlugValue,
+          slug: clinicSlugValue,
+          master_name: masterNameValue,
+          masterName: masterNameValue,
+          master_email: masterEmailValue,
+          masterEmail: masterEmailValue,
+          owner_email: masterEmailValue,
+          email_master: masterEmailValue,
+          master_password: masterPasswordValue,
+          masterPassword: masterPasswordValue,
+          password: masterPasswordValue,
+          status: statusValue,
+          access_starts_at: startIso,
+          access_start_at: startIso,
+          accessStartsAt: startIso,
+          access_ends_at: endIso,
+          access_end_at: endIso,
+          accessEndsAt: endIso,
+          valid_until: endIso,
+          expires_at: endIso,
+          validade: endIso,
+          included_internal_users: includedUsersValue,
+          extra_user_price: extraUserPriceValue,
+          clinic: clinicPayload,
+          master: { name: masterNameValue, email: masterEmailValue, password: masterPasswordValue, role: "MASTER" },
+          private: privatePayload
         };
 
         if (!payload.clinic_name || !payload.master_name || !payload.master_email || !payload.master_password) {
           toast("Preenche os campos obrigatórios antes de criar a clínica.", "error", 3600);
+          return;
+        }
+
+        if (["active", "trial"].includes(payload.status) && !payload.access_ends_at) {
+          toast("Informe o fim do acesso. Clínica ativa/teste não deve nascer vitalícia por acidente.", "error", 4200);
           return;
         }
 
@@ -3193,6 +3357,10 @@
       if (!document.getElementById("master_password").value.trim()) {
         document.getElementById("master_password").value = generateTemporaryPassword();
       }
+      const startInput = document.getElementById("access_starts_at");
+      const endInput = document.getElementById("access_ends_at");
+      if (startInput && !startInput.value) startInput.value = isoDateInput(0);
+      if (endInput && !endInput.value) endInput.value = isoDateInput(365);
     }
     function closeCreateModal() { document.getElementById("clinicModal").classList.remove("show"); }
     function openSuperadminModal() {
@@ -4004,8 +4172,10 @@
     const oldSelected = state.selectedClinicId;
     state.selectedClinicId = selected.id;
     try{
-      await importCsvForClinic(button, selected.id, selected.name);
-      if(preview) preview.textContent = `Importação enviada para: ${selected.name}.`;
+      const summary = await importCsvForClinic(button, selected.id, selected.name);
+      if(preview) preview.textContent = summary
+        ? `Importação concluída para ${selected.name}: ${summary.total} lidos, ${summary.imported + summary.updated} gravados${summary.skipped ? `, ${summary.skipped} ignorados` : ''}${summary.failed ? `, ${summary.failed} falhas` : ''}.`
+        : `Importação não confirmada para: ${selected.name}.`;
     }finally{
       state.selectedClinicId = oldSelected;
     }

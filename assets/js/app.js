@@ -11544,7 +11544,27 @@ async function callClinicUserManagerEdge(payload={}){
 }
 
 async function createClinicUserViaEdge({ name, username, email, password, role }){
-  return callClinicUserManagerEdge({ action:"create", name, username, email, password, role });
+  const actor = currentActor ? currentActor() : null;
+  const clinicId = String(CLOUD_CLINIC_ID || CLOUD_ROW_ID || "").trim();
+  const masterEmail = String(CLOUD_CLINIC_OWNER_EMAIL || CLOUD_OWNER_EMAIL || actor?.email || "").trim().toLowerCase();
+
+  // Envia também os vínculos explícitos. A Edge ainda deve validar pelo JWT/RLS,
+  // mas isso evita falha quando o backend não consegue inferir a clínica pelo e-mail do master.
+  return callClinicUserManagerEdge({
+    action:"create",
+    clinic_id: clinicId,
+    clinicId,
+    master_email: masterEmail,
+    masterEmail,
+    owner_email: masterEmail,
+    ownerEmail: masterEmail,
+    actor_email: actor?.email || masterEmail,
+    name,
+    username,
+    email,
+    password,
+    role
+  });
 }
 
 function openNewUser(){
