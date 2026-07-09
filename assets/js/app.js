@@ -6021,6 +6021,10 @@ function normalizeDBShape(db){
 }
 
 function isClinicSourceV2(kind){
+  // CRONOS V119 — modo resgate: contatos e leads voltam a ser lidos do clinic_state.data.
+  // Motivo: as tabelas V2 podem ficar incompletas/desalinhadas após sync entre navegadores,
+  // enquanto o clinic_state restaurado contém a base íntegra (contacts/entries/tasks/payments).
+  if(kind === "contacts" || kind === "entries") return false;
   const key = kind === "contacts" ? "contacts_source" : "leads_source";
   return String(CLOUD_DATA_SOURCES?.[key] || "legacy_json") === "tables_v2";
 }
