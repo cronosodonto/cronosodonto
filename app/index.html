@@ -14,11 +14,29 @@
 <meta property="og:description" content="Software criado para organizar a rotina comercial e operacional de clínicas odontológicas com mais clareza, controle e inteligência."/>
 <meta property="og:type" content="website"/>
 <meta property="og:url" content="https://cronosodonto.com"/>
-<meta name="theme-color" content="#0f172a"/>
+<meta name="theme-color" content="#08142a"/>
 <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-<link href="../assets/css/app.css?build=performance-visual-v1" rel="stylesheet"/>
+<link href="../assets/css/app.css?build=v105-recebimentos-claro-alinhado" rel="stylesheet"/>
+
+<style id="cronos-v101-leads-footer-darkref">
+html.light #view-leads .leadsPaginationModern,
+:root.light #view-leads .leadsPaginationModern,
+body.light #view-leads .leadsPaginationModern{background:linear-gradient(180deg, rgba(255,255,255,.72), rgba(247,252,255,.92))!important;border:1px solid rgba(148,163,184,.14)!important;box-shadow:0 10px 24px rgba(15,23,42,.045)!important;}
+html.light #view-leads .leadsListPanel,
+:root.light #view-leads .leadsListPanel,
+body.light #view-leads .leadsListPanel{background:radial-gradient(720px 220px at 14% 0%, rgba(59,130,246,.10), transparent 70%),radial-gradient(620px 240px at 100% 100%, rgba(20,184,166,.08), transparent 72%),linear-gradient(180deg,#f7fbff 0%, #eef9f6 100%)!important;border:1px solid rgba(148,163,184,.16)!important;}
+html.light #view-leads .leadsPaginationInfo,
+html.light #view-leads .leadsPageSize,
+html.light #view-leads .leadsPageTotal,
+:root.light #view-leads .leadsPaginationInfo,
+:root.light #view-leads .leadsPageSize,
+:root.light #view-leads .leadsPageTotal,
+body.light #view-leads .leadsPaginationInfo,
+body.light #view-leads .leadsPageSize,
+body.light #view-leads .leadsPageTotal{color:#475569!important;}
+</style>
 </head>
 
 
@@ -668,7 +686,7 @@
 <div class="card">
 <h3 style="margin:0 0 10px">KPIs</h3>
 <div class="kpis">
-<div class="kpi" data-kpi="total">
+<div class="kpi kpiWithIcon kpiIconTotal" data-kpi="total"><div class="kpiVisualIcon kpiVisualIcon-total" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></div>
 <div class="kpiHead">
 <div class="label labelInfoWrap">Total (filtro) <button type="button" class="cronosInfo" data-tip="Quantidade de leads dentro do mês e filtros selecionados." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar Total">i</button></div>
 <div class="kpiPct" id="kpiTotalPct">100%</div>
@@ -676,7 +694,7 @@
 <div class="value" id="kpiTotal">0</div>
 <div class="hint" id="kpiTotalHint">Leads do mês/critério</div>
 </div>
-<div class="kpi" data-kpi="pos">
+<div class="kpi kpiWithIcon kpiIconPos" data-kpi="pos"><div class="kpiVisualIcon kpiVisualIcon-pos" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg></div>
 <div class="kpiHead">
 <div class="label labelInfoWrap">Positivos - Em andamento <button type="button" class="cronosInfo" data-tip="Leads em status positivos do funil, como Agendado, Fechou, Remarcou e Conversando." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar positivos">i</button></div>
 <div class="kpiPct" id="kpiPositivePct">0%</div>
@@ -684,7 +702,7 @@
 <div class="value" id="kpiPositive">0</div>
 <div class="hint" id="kpiPositiveHint">Agendado/ Fechou/ Remarcou/ Conversando</div>
 </div>
-<div class="kpi" data-kpi="bad">
+<div class="kpi kpiWithIcon kpiIconBad" data-kpi="bad"><div class="kpiVisualIcon kpiVisualIcon-bad" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></div>
 <div class="kpiHead">
 <div class="label labelInfoWrap">Desqualificados <button type="button" class="cronosInfo" data-tip="Leads sem potencial no filtro atual, como número incorreto, sem interesse, achou caro ou similares." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar desqualificados">i</button></div>
 <div class="kpiPct" id="kpiDQPct">0%</div>
@@ -692,7 +710,7 @@
 <div class="value" id="kpiDQ">0</div>
 <div class="hint" id="kpiDQHint">Incorreto/sem interesse etc.</div>
 </div>
-<div class="kpi" data-kpi="sched">
+<div class="kpi kpiWithIcon kpiIconSched" data-kpi="sched"><div class="kpiVisualIcon kpiVisualIcon-sched" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="3"></rect><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path></svg></div>
 <div class="kpiHead">
 <div class="label labelInfoWrap">Agendados <button type="button" class="cronosInfo" data-tip="Leads marcados como Agendado ou Remarcou no filtro atual." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar agendados">i</button></div>
 <div class="kpiPct" id="kpiApptPct">0%</div>
@@ -700,17 +718,17 @@
 <div class="value" id="kpiAppt">0</div>
 <div class="hint">Agendado / Remarcou</div>
 </div>
-<div class="kpi">
+<div class="kpi kpiWithIcon kpiIconTicket"><div class="kpiVisualIcon kpiVisualIcon-ticket" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a3 3 0 0 0 0 6v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2a3 3 0 0 0 0-6V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2Z"></path><path d="M13 8h-2.5a2 2 0 0 0 0 4H13a2 2 0 0 1 0 4h-3"></path><path d="M12 7v10"></path></svg></div>
 <div class="label labelInfoWrap">Ticket médio (orçado) <button type="button" class="cronosInfo" data-tip="Média dos orçamentos preenchidos nos leads do filtro atual. Não é caixa recebido." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar ticket médio">i</button></div>
 <div class="value mono" id="kpiBudgetAvg">R$ 0,00</div>
 <div class="hint">Média do orçamento no filtro</div>
 </div>
-<div class="kpi">
+<div class="kpi kpiWithIcon kpiIconBudget"><div class="kpiVisualIcon kpiVisualIcon-budget" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M9 13h6"></path><path d="M9 17h4"></path></svg></div>
 <div class="label labelInfoWrap">Valor orçado <button type="button" class="cronosInfo" data-tip="Soma do campo Orçamento total dos leads no filtro. Representa potencial/valor orçado, não necessariamente dinheiro recebido." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar valor orçado">i</button></div>
 <div class="value mono" id="kpiBudgetTotal">R$ 0,00</div>
 <div class="hint">Soma do “Orçamento total” no filtro</div>
 </div>
-<div class="kpi">
+<div class="kpi kpiWithIcon kpiIconReceived"><div class="kpiVisualIcon kpiVisualIcon-received" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="15" rx="3"></rect><path d="M16 10h5"></path><path d="M16 14h.01"></path><path d="M7 11.5 9.5 14 14 9.5"></path></svg></div>
 <div class="kpiHead">
 <div class="label labelInfoWrap">R$ Recebido <button type="button" class="cronosInfo" data-tip="Soma das baixas e pagamentos realizados no período selecionado, incluindo parcelas, à vista, cartão e antecipações. Esse valor vem de Recebimentos/baixas, não apenas do status Fechados no funil." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar recebido">i</button></div>
 <div class="kpiPct" id="kpiReceivedPct">0%</div>
@@ -718,7 +736,7 @@
 <div class="value mono" id="kpiClosedValue">R$ 0,00</div>
 <div class="hint" id="kpiReceivedHint">Recebido no período selecionado</div>
 </div>
-<div class="kpi">
+<div class="kpi kpiWithIcon kpiIconOpen"><div class="kpiVisualIcon kpiVisualIcon-open" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v5h5"></path><path d="M12 11v4"></path><path d="M12 18h.01"></path></svg></div>
 <div class="kpiHead">
 <div class="label labelInfoWrap">R$ em aberto <button type="button" class="cronosInfo" data-tip="Diferença entre o valor orçado no filtro e o valor recebido no período selecionado. É uma visão gerencial do filtro atual." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar aberto">i</button></div>
 <div class="kpiPct" id="kpiOpenPct">0%</div>
@@ -728,22 +746,42 @@
 </div>
 </div>
 </div>
-<div class="card" style="margin-top:12px">
-<h3>Gráficos</h3>
-<div class="grid cols2" style="margin-top:10px">
-<div>
-<div class="muted" style="font-size:12px; margin-bottom:6px"><span id="lineChartTitleText">Receita (R$) por dia</span> <span class="chart-inline-value" id="lineChartValue"></span> <span class="muted" id="lineChartHint">(bruto/orçado por dia • recebido por dia)</span></div>
-<canvas id="chartRevenueLine" style="width:100%; height:260px"></canvas>
+<div class="card dashboardChartsShell" style="margin-top:12px">
+<div class="dashSectionHeader">
+  <div>
+    <h3>Gráficos</h3>
+    <p class="muted">Leitura visual do período selecionado, com receita e status dos leads.</p>
+  </div>
 </div>
-<div>
-<div class="muted" style="font-size:12px; margin-bottom:6px">Leads por status (top 6)</div>
-<canvas id="chartStatusBars" style="width:100%; height:260px"></canvas>
-</div>
+<div class="dashboardChartsGrid">
+<section class="dashboardChartCard dashboardChartMain">
+  <div class="chartPanelHead">
+    <div class="chartPanelIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 16l5-5 4 3 7-8"></path><path d="M14 6h6v6"></path></svg></div>
+    <div>
+      <h4><span id="lineChartTitleText">Receita (R$) por dia</span> <span class="chart-inline-value" id="lineChartValue"></span></h4>
+      <p id="lineChartHint">(bruto/orçado por dia • recebido por dia)</p>
+    </div>
+  </div>
+  <canvas id="chartRevenueLine" class="cronosChartCanvas mainChartCanvas"></canvas>
+</section>
+<section class="dashboardChartCard dashboardChartSide">
+  <div class="chartPanelHead compact">
+    <div class="chartPanelIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19V9"></path><path d="M12 19V5"></path><path d="M19 19v-7"></path><path d="M3 19h18"></path></svg></div>
+    <div>
+      <h4>Leads por status</h4>
+      <p>Top 6 status do filtro atual.</p>
+    </div>
+  </div>
+  <canvas id="chartStatusBars" class="cronosChartCanvas statusChartCanvas"></canvas>
+</section>
 </div>
 </div>
 <div class="dashSplit" style="margin-top:12px">
 <div class="card" id="dashStatusCard">
 <h3 class="sectionTitleInfo">Resumo por Status <button type="button" class="cronosInfo" data-tip="Resumo baseado no status atual dos leads no funil. Os valores daqui são orçados/em aberto por status e podem ser diferentes do R$ Recebido, que vem das baixas financeiras do período." onclick="CRONOS_SHOW_TIP(this); event.stopPropagation(); return false;" aria-label="Explicar resumo por status">i</button></h3>
+<div class="statusDonutPanel" aria-label="Distribuição visual por status">
+  <canvas id="chartStatusDonut" class="statusDonutCanvas"></canvas>
+</div>
 <div class="tableWrap noX" style="margin-top:10px">
 <div aria-label="Resumo por Status" class="statusGrid" id="dashByStatusGrid" role="table">
 <div class="sgHead">Status</div>
@@ -771,11 +809,12 @@
 <button class="btn primary cronosNewLeadBtn" id="btnNewLeadList"><span class="cronosPlusIcon" aria-hidden="true">+</span><span>Novo lead</span></button>
 </div>
 </div>
-<div class="card">
+<div class="leadsSummaryGrid" id="leadsSummaryCards"></div>
+<div class="card leadsListPanel">
 <div class="leadsCardsWrap" style="margin-top:10px">
 <div class="leadsCards" id="leadsCards"></div>
 </div>
-<div id="leadsPagination" style="margin-top:15px; display:flex; gap:10px; align-items:center;"></div>
+<div id="leadsPagination" class="leadsPaginationModern"></div>
 </div></section>
 <!-- Funil comercial -->
 <section class="hidden" id="view-kanban">
@@ -788,139 +827,317 @@
 <button class="btn primary cronosNewLeadBtn" id="btnNewLeadKanban"><span class="cronosPlusIcon" aria-hidden="true">+</span><span>Novo lead</span></button>
 </div>
 </div>
-<div class="card">
-<div class="muted" style="font-size:13px; margin-top:-4px">
-      Dica: use os filtros (mês, busca, origem, tratamento...) no topo — o Kanban respeita o filtro atual.
-    </div>
-<div class="kanbanWrap" id="kanbanBoard" style="margin-top:12px"></div>
+<div class="kanbanSummaryGrid" id="kanbanSummaryCards"></div>
+<div class="card kanbanPanel">
+<div class="kanbanPanelHead">
+  <div>
+    <strong>Mapa comercial do funil</strong>
+    <div class="muted" style="font-size:13px; margin-top:3px">Use os filtros no topo. O Kanban respeita o filtro atual e mostra onde as oportunidades estão paradas.</div>
+  </div>
+  <div class="kanbanHint">Arraste os cards entre etapas</div>
+</div>
+<div class="kanbanTopScroll" id="kanbanTopScroll" aria-label="Rolagem horizontal do funil"><div id="kanbanTopScrollInner"></div></div>
+<div class="kanbanScrollArea" id="kanbanScrollArea">
+  <div class="kanbanWrap" id="kanbanBoard"></div>
+</div>
 </div>
 </section>
 <!-- Tarefas -->
 <section class="hidden" id="view-tasks">
-<div class="topbar">
-<div class="titleBlock">
-<h2>✓ Tarefas</h2>
-<p>Controle de follow-up: atrasos, próximos passos e ações.</p>
-</div>
-<div class="actions" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end">
-<div style="min-width:170px">
-<label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Mês</label>
-<input class="input" id="taskMonth" type="month"/>
-</div>
-<div class="grow" style="min-width:220px">
-<label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Busca</label>
-<input class="input" id="taskSearch" placeholder="Nome ou telefone..."/>
-</div>
-<div style="min-width:180px">
-<label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Filtro</label>
-<select class="input" id="taskFilter">
-<option value="Todos">Todos</option>
-<option value="PendentesEAtraso">Pendentes e em atraso</option>
-<option value="Atrasado">Atrasado</option>
-<option value="Pendente">Pendente</option>
-<option value="Feito">Feito</option>
-</select>
-</div>
-<button class="btn primary" id="btnNewTask">➕ Nova tarefa</button>
-</div>
-</div>
-<div class="card">
-<div class="tableWrap">
-<table class="tasksTable">
-<thead>
-<tr>
-<th>Status</th>
-<th>Tarefa</th>
-<th>Lead</th>
-<th class="nowrap">Vencimento</th>
-<th>Obs</th>
-<th class="nowrap">Ação</th>
-</tr>
-</thead>
-<tbody id="tasksTbody"></tbody>
-</table>
-</div>
-</div>
+  <div class="tasksHero">
+    <div class="tasksHeroTitle">
+      <div class="tasksTitleIcon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.2 4.2L19 7"></path></svg>
+      </div>
+      <div>
+        <h2>Tarefas</h2>
+        <p>Controle de follow-up, atrasos, próximos passos e ações do dia.</p>
+      </div>
+    </div>
+    <div class="tasksFilterRow">
+      <div class="tasksField">
+        <label>Mês</label>
+        <input class="input" id="taskMonth" type="month"/>
+      </div>
+      <div class="tasksField grow">
+        <label>Busca</label>
+        <input class="input" id="taskSearch" placeholder="Nome, telefone ou lead..."/>
+      </div>
+      <div class="tasksField">
+        <label>Status</label>
+        <select class="input" id="taskFilter">
+          <option value="Todos">Todos</option>
+          <option value="PendentesEAtraso">Pendentes e em atraso</option>
+          <option value="Atrasado">Atrasado</option>
+          <option value="Pendente">Pendente</option>
+          <option value="Feito">Feito</option>
+        </select>
+      </div>
+      <button class="btn primary tasksNewBtn" id="btnNewTask">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+        <span>Nova tarefa</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="tasksSummaryGrid" id="tasksSummaryCards"></div>
+
+  <div class="tasksWorkspace">
+    <div class="tasksListPanel">
+      <div class="tasksListHead">
+        <div>
+          <strong>Tarefas</strong>
+          <span id="tasksListCount">0</span>
+        </div>
+        <div class="tasksSortHint">Ordenar por: <b>Data de vencimento</b></div>
+      </div>
+      <div class="tasksCardsList" id="tasksCardsList"></div>
+    </div>
+
+    <aside class="tasksSidePanel">
+      <div class="tasksSideCard" id="tasksFocusPanel"></div>
+      <div class="tasksSideCard" id="tasksQuickPanel"></div>
+      <div class="tasksSideCard" id="tasksNextDuePanel"></div>
+    </aside>
+  </div>
 </section>
 <!-- Recebimentos -->
-<section class="hidden" id="view-installments">
-<div class="topbar">
-<div class="titleBlock">
-<h2>⇄ Parcelamentos</h2>
-<p>Controle de previsão do mês, atrasos e baixas por paciente.</p>
-</div>
-<div class="actions" style="display:flex; gap:10px; flex-wrap:wrap">
-<div style="min-width:170px">
-<label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Mês</label>
-<input class="input" id="instMonth" type="month"/>
-</div>
-<div class="grow" style="min-width:220px">
-<label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Busca</label>
-<input class="input" id="instSearch" placeholder="Nome ou telefone..."/>
-</div>
-<div style="min-width:180px">
-<label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Filtro</label>
-<select class="input" id="instFilter">
-<option value="all">Todos do mês</option>
-<option value="paid">Pagas</option>
-<option value="dueMonth">Pendentes</option>
-<option value="late">Atrasadas</option>
-<option value="open">Futuro</option>
-</select>
-</div>
-<button class="btn" data-label="Atualizar" id="btnInstRefresh">Atualizar</button>
-</div>
-</div>
-<div class="kpiGrid">
-<div class="kpi">
-<div class="muted">Recebido no mês</div>
-<div class="kpiVal" id="kpiInstMonth">R$ 0,00</div>
-<div class="muted" id="kpiInstMonthN">0 baixa(s)</div>
-</div>
-<div class="kpi">
-<div class="muted">Atrasado</div>
-<div class="kpiVal" id="kpiInstLate">R$ 0,00</div>
-<div class="muted" id="kpiInstLateN">0 parcelas</div>
-</div>
-<div class="kpi">
-<div class="muted">Futuro</div>
-<div class="kpiVal" id="kpiInstFuture">R$ 0,00</div>
-<div class="muted" id="kpiInstFutureN">0 parcelas</div>
-</div>
-</div>
-<div class="card">
-<div id="instList"></div>
-</div>
+<section class="hidden receivablesV36" id="view-installments">
+  <div class="topbar receivablesHero">
+    <div class="titleBlock receivablesTitleBlock">
+      <div class="moduleIcon moneyIcon" aria-hidden="true">$</div>
+      <div>
+        <h2>Recebimentos</h2>
+        <p>Controle de previsão do mês, atrasos, cobranças e baixas por paciente.</p>
+      </div>
+    </div>
+    <div class="actions receivablesFilters">
+      <div style="min-width:170px">
+        <label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Mês</label>
+        <input class="input" id="instMonth" type="month"/>
+      </div>
+      <div class="grow" style="min-width:260px">
+        <label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Buscar paciente ou telefone</label>
+        <input class="input" id="instSearch" placeholder="Nome ou telefone..."/>
+      </div>
+      <div style="min-width:210px">
+        <label class="muted" style="font-size:12px; display:block; margin-bottom:6px">Filtro rápido</label>
+        <select class="input" id="instFilter">
+          <option value="all">Todos do mês</option>
+          <option value="late">Atrasados acumulados</option>
+          <option value="soon">Próximos 7 dias</option>
+          <option value="dueMonth">Pendentes do mês</option>
+          <option value="paid">Recebidos do mês</option>
+          <option value="open">Futuros do mês</option>
+        </select>
+      </div>
+      <button class="btn" data-label="Atualizar" id="btnInstRefresh">Atualizar</button>
+    </div>
+  </div>
+
+  <div class="kpiGrid receivablesKpiGrid">
+    <div class="kpi receivableKpi is-received">
+      <div class="kpiMiniIcon" aria-hidden="true">✓</div>
+      <div class="muted">Recebido no mês</div>
+      <div class="kpiVal" id="kpiInstMonth">R$ 0,00</div>
+      <div class="muted" id="kpiInstMonthN">0 baixa(s)</div>
+    </div>
+    <div class="kpi receivableKpi is-late">
+      <div class="kpiMiniIcon" aria-hidden="true">!</div>
+      <div class="muted">Atrasado acumulado</div>
+      <div class="kpiVal" id="kpiInstLate">R$ 0,00</div>
+      <div class="muted" id="kpiInstLateN">0 parcelas</div>
+    </div>
+    <div class="kpi receivableKpi is-soon">
+      <div class="kpiMiniIcon" aria-hidden="true">◷</div>
+      <div class="muted">Próximos 7 dias</div>
+      <div class="kpiVal" id="kpiInstSoon">R$ 0,00</div>
+      <div class="muted" id="kpiInstSoonN">0 parcelas</div>
+    </div>
+    <div class="kpi receivableKpi is-future">
+      <div class="kpiMiniIcon" aria-hidden="true">▣</div>
+      <div class="muted">Futuro previsto geral</div>
+      <div class="kpiVal" id="kpiInstFuture">R$ 0,00</div>
+      <div class="muted" id="kpiInstFutureN">0 parcelas</div>
+    </div>
+  </div>
+
+  <div class="receivablesQuickTabs" id="instQuickTabs">
+    <button type="button" data-inst-filter="all">Todos do mês</button>
+    <button type="button" data-inst-filter="late">Atrasados acumulados</button>
+    <button type="button" data-inst-filter="soon">Próximos 7 dias</button>
+    <button type="button" data-inst-filter="dueMonth">Pendentes do mês</button>
+    <button type="button" data-inst-filter="paid">Recebidos do mês</button>
+    <button type="button" data-inst-filter="open">Futuros do mês</button>
+  </div>
+
+  <div class="receivablesRuleHint" id="instRuleHint">
+    <strong>Regra:</strong> abas “do mês” respeitam o mês selecionado. “Atrasados acumulados” e “Próximos 7 dias” mostram a situação atual, independente do mês.
+  </div>
+
+  <div class="card receivablesListCard">
+    <div id="instList"></div>
+  </div>
 </section>
+
 <!-- Usuários -->
-<section class="hidden" id="view-users">
-<div class="topbar">
-<div class="titleBlock">
-<h2>⊙ Usuários</h2>
-<p>Masters podem gerenciar usuários. Apenas o Master principal pode criar ou alterar outros Masters.</p>
-</div>
-<div class="actions">
-<button class="btn primary" id="btnNewUser">➕ Novo usuário</button>
-</div>
-</div>
-<div class="card">
-<div class="tableWrap">
-<table style="min-width: 900px">
-<thead>
-<tr>
-<th>Usuário</th>
-<th>Login</th>
-<th>Nível</th>
-<th>Master</th>
-<th>Criado</th>
-<th class="nowrap">Ações</th>
-</tr>
-</thead>
-<tbody id="usersTbody"></tbody>
-</table>
-</div>
-</div>
+<section class="hidden usersV40" id="view-users">
+  <div class="topbar usersHeroV40">
+    <div class="titleBlock usersTitleV40">
+      <div class="moduleIcon usersIconV40" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9.5" cy="7" r="3"></circle>
+          <path d="M20 21v-2a4 4 0 0 0-3-3.87"></path>
+          <path d="M14.5 4.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+      </div>
+      <div>
+        <h2>Equipe e acessos</h2>
+        <p>Gerencie usuários, permissões e aprovações da clínica.</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn primary userNewBtnV40" id="btnNewUser">Novo usuário</button>
+    </div>
+  </div>
+
+  <div class="kpiGrid usersKpiGridV40">
+    <div class="kpi usersKpiV40">
+      <div class="usersKpiIconV40 is-total" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="8.5" cy="7" r="3"></circle>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+          <path d="M16.5 4.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+      </div>
+      <div class="kpiVal" id="usersKpiTotal">0</div>
+      <div class="muted">Usuários</div>
+      <div class="muted usersKpiSubV40">Total cadastrado</div>
+    </div>
+    <div class="kpi usersKpiV40">
+      <div class="usersKpiIconV40 is-masters" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l7 3v6c0 4.97-3.06 8.72-7 9.95C8.06 20.72 5 16.97 5 12V6l7-3z"></path>
+          <path d="M9 12l2 2 4-4"></path>
+        </svg>
+      </div>
+      <div class="kpiVal" id="usersKpiMasters">0</div>
+      <div class="muted">Masters</div>
+      <div class="muted usersKpiSubV40">Acesso total</div>
+    </div>
+    <div class="kpi usersKpiV40">
+      <div class="usersKpiIconV40 is-gerentes" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="7" width="18" height="12" rx="2"></rect>
+          <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          <path d="M3 12h18"></path>
+        </svg>
+      </div>
+      <div class="kpiVal" id="usersKpiGerentes">0</div>
+      <div class="muted">Gerentes</div>
+      <div class="muted usersKpiSubV40">Gestão da clínica</div>
+    </div>
+    <div class="kpi usersKpiV40">
+      <div class="usersKpiIconV40 is-secretarias" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="6" y="4" width="12" height="16" rx="2"></rect>
+          <path d="M9 8h6"></path>
+          <path d="M9 12h6"></path>
+          <path d="M9 16h4"></path>
+        </svg>
+      </div>
+      <div class="kpiVal" id="usersKpiSecretarias">0</div>
+      <div class="muted">Secretarias</div>
+      <div class="muted usersKpiSubV40">Acesso administrativo</div>
+    </div>
+    <div class="kpi usersKpiV40">
+      <div class="usersKpiIconV40 is-crc" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 5h16"></path>
+          <path d="M6 3v4"></path>
+          <path d="M18 3v4"></path>
+          <rect x="3" y="7" width="18" height="13" rx="3"></rect>
+          <path d="M8 12h8"></path>
+          <path d="M8 16h5"></path>
+        </svg>
+      </div>
+      <div class="kpiVal" id="usersKpiCrc">0</div>
+      <div class="muted">CRCs</div>
+      <div class="muted usersKpiSubV40">Relacionamento e conversão</div>
+    </div>
+    <div class="kpi usersKpiV40">
+      <div class="usersKpiIconV40 is-dentistas" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3c3.5 0 6 1.76 6 5.38 0 2.21-.65 3.27-1.31 4.31-.58.93-1.19 1.89-1.55 3.61-.26 1.23-.62 2.7-1.56 2.7-.78 0-1.08-.72-1.58-1.92-.26-.61-.5-1.18-.83-1.18s-.57.57-.83 1.18C9.84 18.28 9.54 19 8.76 19c-.94 0-1.3-1.47-1.56-2.7-.36-1.72-.97-2.68-1.55-3.61C4.99 11.65 4.34 10.59 4.34 8.38 4.34 4.76 6.84 3 10.34 3c.62 0 1.13.13 1.66.34.53-.21 1.04-.34 1.66-.34z"></path>
+        </svg>
+      </div>
+      <div class="kpiVal" id="usersKpiDentistas">0</div>
+      <div class="muted">Dentistas</div>
+      <div class="muted usersKpiSubV40">Atendimento clínico</div>
+    </div>
+    <div class="kpi usersKpiV40 is-pending">
+      <div class="usersKpiIconV40 is-pending" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M12 7v5l3 2"></path>
+        </svg>
+      </div>
+      <div class="kpiVal" id="usersKpiPending">0</div>
+      <div class="muted">Pendentes</div>
+      <div class="muted usersKpiSubV40">Aguardando aprovação</div>
+    </div>
+  </div>
+
+  <div class="card usersPanelV40">
+    <div class="usersFiltersV40">
+      <div class="usersSearchV40">
+        <label>Busca</label>
+        <input class="input" id="usersSearch" placeholder="Buscar nome, login ou e-mail"/>
+      </div>
+      <div>
+        <label>Perfil</label>
+        <select class="input" id="usersRoleFilter">
+          <option value="all">Todos</option>
+          <option value="MASTER">Master</option>
+          <option value="GERENTE">Gerente</option>
+          <option value="SECRETARIA">Secretaria</option>
+          <option value="CRC">CRC</option>
+          <option value="DENTISTA">Dentista</option>
+        </select>
+      </div>
+      <div>
+        <label>Status</label>
+        <select class="input" id="usersStatusFilter">
+          <option value="all">Todos</option>
+          <option value="active">Ativos</option>
+          <option value="pending">Aguardando aprovação</option>
+          <option value="inactive">Bloqueados</option>
+        </select>
+      </div>
+      <button class="btn usersRefreshBtnV40" id="btnUsersRefresh">Atualizar</button>
+    </div>
+
+    <div class="tableWrap usersTableWrapV40">
+      <table class="usersTableV40">
+        <thead>
+          <tr>
+            <th>Usuário</th>
+            <th>Login / e-mail</th>
+            <th>Perfil</th>
+            <th>Status</th>
+            <th>Criado em</th>
+            <th class="nowrap">Ações</th>
+          </tr>
+        </thead>
+        <tbody id="usersTbody"></tbody>
+      </table>
+    </div>
+    <div class="usersEmptyV40 hidden" id="usersEmpty">Nenhum usuário encontrado com os filtros atuais.</div>
+  </div>
 </section>
+
 <!-- Configurações -->
 <section class="hidden" id="view-settings">
 <div class="topbar">
@@ -1025,16 +1242,16 @@
 
 
 
-<script src="../assets/js/app.js?build=performance-visual-v1"></script>
-<script src="../assets/js/hoje_no_cronos.js?build=performance-visual-v1"></script>
+<script src="../assets/js/app.js?build=v82-hoje-conteudo-atualizando"></script>
+<script src="../assets/js/hoje_no_cronos.js?build=v82-hoje-conteudo-atualizando"></script>
 <script src="../assets/js/cronos_fluxos.js?build=public"></script>
-<script src="../assets/js/simulador_credito.js?build=public"></script>
-<script src="../assets/js/performance.js?build=public"></script>
+<script src="../assets/js/simulador_credito.js?build=v82-hoje-conteudo-atualizando"></script>
+<script src="../assets/js/performance.js?build=performance-v11"></script>
 
 <style>
   /* Ajustes visuais do Cronos */
   :root {
-    --wa-green-dark: #2ee59d;
+    --wa-green-dark: #2ee6a6;
     --wa-green-dark-2: #16c784;
     --wa-green-light: #16a34a;
     --wa-green-light-2: #15803d;
@@ -4027,9 +4244,9 @@
   }
 
   #view-todayCronos .todayKpi.active{
-    border-color:var(--tc-primary-line, rgba(124,92,255,.6)) !important;
-    background:rgba(124,92,255,.14) !important;
-    box-shadow:0 8px 20px rgba(124,92,255,.15) !important;
+    border-color:var(--tc-primary-line, rgba(22,119,255,.6)) !important;
+    background:rgba(22,119,255,.14) !important;
+    box-shadow:0 8px 20px rgba(22,119,255,.15) !important;
   }
 
   html.light #view-todayCronos .todayKpi.active,
@@ -4041,8 +4258,8 @@
   }
 
   #view-todayCronos .todayKpi.active b{
-    border-color:var(--tc-primary-line, rgba(124,92,255,.6)) !important;
-    background:rgba(124,92,255,.16) !important;
+    border-color:var(--tc-primary-line, rgba(22,119,255,.6)) !important;
+    background:rgba(22,119,255,.16) !important;
   }
 </style>
 <script>
@@ -4387,25 +4604,25 @@
   body:not(.light) .sidebar .nav button.active{
     color:#fff !important;
     -webkit-text-fill-color:#fff !important;
-    border-color: rgba(168,85,247,.72) !important;
+    border-color: rgba(25,198,255,.72) !important;
     background:
       radial-gradient(circle at 14% 18%, rgba(255,255,255,.22), transparent 28%),
-      linear-gradient(135deg, rgba(124,58,237,.72) 0%, rgba(147,51,234,.58) 46%, rgba(79,70,229,.48) 100%),
-      rgba(30,27,75,.58) !important;
+      linear-gradient(135deg, rgba(22,119,255,.72) 0%, rgba(25,198,255,.58) 46%, rgba(46,230,166,.48) 100%),
+      rgba(8,22,48,.58) !important;
     box-shadow:
-      0 16px 34px rgba(124,58,237,.30),
-      0 8px 22px rgba(168,85,247,.16),
+      0 16px 34px rgba(22,119,255,.30),
+      0 8px 22px rgba(25,198,255,.16),
       inset 0 0 0 1px rgba(255,255,255,.12) !important;
   }
 
   :root:not(.light) .sidebar .nav button.active:hover,
   html:not(.light) .sidebar .nav button.active:hover,
   body:not(.light) .sidebar .nav button.active:hover{
-    border-color: rgba(216,180,254,.82) !important;
+    border-color: rgba(46,230,166,.82) !important;
     background:
       radial-gradient(circle at 14% 18%, rgba(255,255,255,.26), transparent 30%),
-      linear-gradient(135deg, rgba(139,92,246,.78) 0%, rgba(168,85,247,.64) 48%, rgba(99,102,241,.54) 100%),
-      rgba(30,27,75,.62) !important;
+      linear-gradient(135deg, rgba(22,119,255,.78) 0%, rgba(25,198,255,.64) 48%, rgba(99,102,241,.54) 100%),
+      rgba(8,22,48,.62) !important;
   }
 
   :root:not(.light) .sidebar .nav button.active .pill,
@@ -4424,7 +4641,7 @@
   :root:not(.light) .sidebar .nav button:not(.active):hover,
   html:not(.light) .sidebar .nav button:not(.active):hover,
   body:not(.light) .sidebar .nav button:not(.active):hover{
-    border-color: rgba(168,85,247,.34) !important;
+    border-color: rgba(25,198,255,.34) !important;
     background: rgba(255,255,255,.055) !important;
   }
 </style>
@@ -4454,28 +4671,28 @@
   :root:not(.light) .sidebar .nav button.active,
   html:not(.light) .sidebar .nav button.active,
   body:not(.light) .sidebar .nav button.active{
-    color:#f8f7ff !important;
-    -webkit-text-fill-color:#f8f7ff !important;
-    border-color:rgba(168,85,247,.46) !important;
+    color:#f4fbff !important;
+    -webkit-text-fill-color:#f4fbff !important;
+    border-color:rgba(25,198,255,.46) !important;
     background:
-      linear-gradient(135deg, rgba(88,28,135,.52) 0%, rgba(109,40,217,.40) 48%, rgba(67,56,202,.34) 100%),
+      linear-gradient(135deg, rgba(22,119,255,.52) 0%, rgba(25,198,255,.40) 48%, rgba(46,230,166,.34) 100%),
       rgba(17,24,39,.52) !important;
     box-shadow:
-      0 10px 22px rgba(88,28,135,.16),
-      0 4px 12px rgba(79,70,229,.10),
+      0 10px 22px rgba(22,119,255,.16),
+      0 4px 12px rgba(46,230,166,.10),
       inset 0 0 0 1px rgba(255,255,255,.075) !important;
   }
 
   :root:not(.light) .sidebar .nav button.active:hover,
   html:not(.light) .sidebar .nav button.active:hover,
   body:not(.light) .sidebar .nav button.active:hover{
-    border-color:rgba(196,181,253,.58) !important;
+    border-color:rgba(25,198,255,.58) !important;
     background:
-      linear-gradient(135deg, rgba(88,28,135,.58) 0%, rgba(109,40,217,.45) 48%, rgba(67,56,202,.38) 100%),
+      linear-gradient(135deg, rgba(22,119,255,.58) 0%, rgba(25,198,255,.45) 48%, rgba(46,230,166,.38) 100%),
       rgba(17,24,39,.56) !important;
     box-shadow:
-      0 12px 24px rgba(88,28,135,.18),
-      0 5px 14px rgba(79,70,229,.11),
+      0 12px 24px rgba(22,119,255,.18),
+      0 5px 14px rgba(46,230,166,.11),
       inset 0 0 0 1px rgba(255,255,255,.085) !important;
   }
 
@@ -4485,8 +4702,8 @@
   html:not(.light) .sidebar .nav #navHojeCronos.active .todayNavBadge,
   body:not(.light) .sidebar .nav button.active .pill,
   body:not(.light) .sidebar .nav #navHojeCronos.active .todayNavBadge{
-    color:#f8f7ff !important;
-    -webkit-text-fill-color:#f8f7ff !important;
+    color:#f4fbff !important;
+    -webkit-text-fill-color:#f4fbff !important;
     background:rgba(255,255,255,.12) !important;
     border-color:rgba(255,255,255,.18) !important;
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.055) !important;
@@ -4496,19 +4713,19 @@
   :root:not(.light) #view-todayCronos .todayKpi.active,
   html:not(.light) #view-todayCronos .todayKpi.active,
   body:not(.light) #view-todayCronos .todayKpi.active{
-    border-color:rgba(168,85,247,.42) !important;
+    border-color:rgba(25,198,255,.42) !important;
     background:
-      linear-gradient(135deg, rgba(88,28,135,.24), rgba(67,56,202,.18)),
+      linear-gradient(135deg, rgba(22,119,255,.24), rgba(46,230,166,.18)),
       rgba(255,255,255,.035) !important;
     box-shadow:
-      0 8px 18px rgba(88,28,135,.12),
+      0 8px 18px rgba(22,119,255,.12),
       inset 0 0 0 1px rgba(255,255,255,.045) !important;
   }
 
   :root:not(.light) #view-todayCronos .todayKpi.active b,
   html:not(.light) #view-todayCronos .todayKpi.active b,
   body:not(.light) #view-todayCronos .todayKpi.active b{
-    border-color:rgba(196,181,253,.34) !important;
+    border-color:rgba(25,198,255,.34) !important;
     background:rgba(255,255,255,.09) !important;
     box-shadow:none !important;
   }
@@ -4549,11 +4766,11 @@
     margin:auto !important;
     padding:20px 22px !important;
     border-radius:24px 24px 24px 10px !important;
-    border:1px solid rgba(196,181,253,.30) !important;
+    border:1px solid rgba(25,198,255,.30) !important;
     border-style:solid !important;
     background:
       radial-gradient(circle at 18% 0%, rgba(255,255,255,.10), transparent 36%),
-      linear-gradient(135deg, rgba(88,28,135,.15), rgba(67,56,202,.10)),
+      linear-gradient(135deg, rgba(22,119,255,.15), rgba(46,230,166,.10)),
       rgba(255,255,255,.045) !important;
     color:rgba(241,245,249,.86) !important;
     text-align:center !important;
@@ -4571,7 +4788,7 @@
     position:absolute !important;
     display:block !important;
     border-radius:999px !important;
-    border:1px solid rgba(196,181,253,.24) !important;
+    border:1px solid rgba(25,198,255,.24) !important;
     background:rgba(255,255,255,.045) !important;
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.03) !important;
   }
@@ -4647,6 +4864,97 @@
 })();
 </script>
 
+<style id="cronos-theme-refresh-final">
+/* Tema refresh final — identidade azul + ciano + verde */
+:root:not(.light){
+  --bg:#060d1f !important;
+  --panel:#0b1730 !important;
+  --panel2:#0f1d3d !important;
+  --card:#0f1d3d !important;
+  --brand:#1677ff !important;
+  --brand2:#19c6ff !important;
+  --brand3:#2ee6a6 !important;
+  --accent:#19c6ff !important;
+  --line:rgba(183,212,255,.12) !important;
+}
+:root:not(.light) .sidebar .brand,
+:root:not(.light) html .sidebar .brand,
+:root:not(.light) body .sidebar .brand{
+  background:linear-gradient(135deg, rgba(22,119,255,.18) 0%, rgba(25,198,255,.12) 56%, rgba(46,230,166,.10) 100%) !important;
+  border-color:rgba(183,212,255,.14) !important;
+}
+:root:not(.light) .sidebar .nav button.active,
+:root:not(.light) .sidebar .nav button.active:hover,
+:root:not(.light) .todayNavBtn.active,
+:root:not(.light) #btnNewLeadSide,
+:root:not(.light) #btnRefreshNow,
+:root:not(.light) .btn.primary,
+:root:not(.light) .btnGradient,
+:root:not(.light) .todayBtn.primary{
+  color:#fff !important;
+  -webkit-text-fill-color:#fff !important;
+  background:linear-gradient(135deg,#1677ff 0%,#19c6ff 52%,#2ee6a6 100%) !important;
+  border-color:rgba(64,182,255,.34) !important;
+  box-shadow:0 16px 34px rgba(22,119,255,.22),0 10px 24px rgba(25,198,255,.16),inset 0 1px 0 rgba(255,255,255,.16) !important;
+}
+:root:not(.light) .sidebar .nav button.active .pill,
+:root:not(.light) .sidebar .nav button.active .todayNavBadge{color:#fff !important;-webkit-text-fill-color:#fff !important;}
+:root:not(.light) .statusSummaryCard.is-active,
+:root:not(.light) .todayKpi.active,
+:root:not(.light) .todayFilterChip.active,
+:root:not(.light) .simMonthBtn.active,
+:root:not(.light) .perfPeriodBtn.active{
+  border-color:rgba(22,119,255,.52) !important;
+  background:rgba(22,119,255,.14) !important;
+  box-shadow:0 12px 28px rgba(22,119,255,.16) !important;
+}
+</style>
+
+
+<style id="cronos-final-no-purple-buttons">
+/* Garantia final: nenhum botão ativo do menu no dark fica roxo */
+:root:not(.light) .sidebar .nav button.active,
+html:not(.light) .sidebar .nav button.active,
+body:not(.light) .sidebar .nav button.active,
+:root:not(.light) .todayNavBtn.active,
+html:not(.light) .todayNavBtn.active,
+body:not(.light) .todayNavBtn.active{
+  color:#fff !important;
+  -webkit-text-fill-color:#fff !important;
+  border-color:rgba(25,198,255,.56) !important;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(255,255,255,.18), transparent 28%),
+    linear-gradient(135deg, rgba(22,119,255,.62) 0%, rgba(25,198,255,.42) 52%, rgba(46,230,166,.32) 100%),
+    rgba(8,22,48,.62) !important;
+  box-shadow:
+    0 14px 30px rgba(22,119,255,.20),
+    0 8px 20px rgba(25,198,255,.13),
+    0 4px 14px rgba(46,230,166,.08),
+    inset 0 0 0 1px rgba(255,255,255,.10) !important;
+}
+:root:not(.light) .sidebar .nav button.active:hover,
+html:not(.light) .sidebar .nav button.active:hover,
+body:not(.light) .sidebar .nav button.active:hover{
+  border-color:rgba(46,230,166,.58) !important;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(255,255,255,.22), transparent 30%),
+    linear-gradient(135deg, rgba(22,119,255,.70) 0%, rgba(25,198,255,.48) 52%, rgba(46,230,166,.36) 100%),
+    rgba(8,22,48,.68) !important;
+}
+:root:not(.light) .sidebar .nav button.active .pill,
+:root:not(.light) .sidebar .nav #navHojeCronos.active .todayNavBadge,
+html:not(.light) .sidebar .nav button.active .pill,
+html:not(.light) .sidebar .nav #navHojeCronos.active .todayNavBadge,
+body:not(.light) .sidebar .nav button.active .pill,
+body:not(.light) .sidebar .nav #navHojeCronos.active .todayNavBadge{
+  color:#fff !important;
+  -webkit-text-fill-color:#fff !important;
+  background:rgba(255,255,255,.16) !important;
+  border-color:rgba(255,255,255,.24) !important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.07) !important;
+}
+</style>
+
 </body>
 </html>
 <!-- update -->
@@ -4690,11 +4998,11 @@
   :root:not(.light) .sidebar .nav button.active:hover,
   body:not(.light) .sidebar .nav button.active,
   body:not(.light) .sidebar .nav button.active:hover{
-    color:#f8f7ff !important;
-    -webkit-text-fill-color:#f8f7ff !important;
-    border-color:rgba(196,181,253,.50) !important;
-    background:linear-gradient(135deg,rgba(88,28,135,.48) 0%,rgba(109,40,217,.38) 48%,rgba(49,46,129,.34) 100%),rgba(15,23,42,.58) !important;
-    box-shadow:0 9px 18px rgba(88,28,135,.13),inset 0 0 0 1px rgba(255,255,255,.07) !important;
+    color:#f4fbff !important;
+    -webkit-text-fill-color:#f4fbff !important;
+    border-color:rgba(25,198,255,.50) !important;
+    background:linear-gradient(135deg,rgba(22,119,255,.48) 0%,rgba(25,198,255,.38) 48%,rgba(46,230,166,.34) 100%),rgba(15,23,42,.58) !important;
+    box-shadow:0 9px 18px rgba(22,119,255,.13),inset 0 0 0 1px rgba(255,255,255,.07) !important;
   }
   html:not(.light) .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
   :root:not(.light) .sidebar .nav #navHojeCronos:not(.active) .todayNavBadge,
@@ -4758,18 +5066,18 @@
   body:not(.light) #view-dashboard .kpis .kpi.kpiActive:hover,
   body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"],
   body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"]:hover{
-    color:#f8f7ff !important;
-    -webkit-text-fill-color:#f8f7ff !important;
-    border-color:rgba(196,181,253,.62) !important;
-    background:linear-gradient(135deg,rgba(88,28,135,.54) 0%,rgba(109,40,217,.42) 50%,rgba(49,46,129,.38) 100%),rgba(17,24,39,.66) !important;
-    box-shadow:0 12px 26px rgba(88,28,135,.17),0 4px 12px rgba(79,70,229,.09),inset 0 0 0 1px rgba(255,255,255,.08) !important;
+    color:#f4fbff !important;
+    -webkit-text-fill-color:#f4fbff !important;
+    border-color:rgba(25,198,255,.62) !important;
+    background:linear-gradient(135deg,rgba(22,119,255,.54) 0%,rgba(25,198,255,.42) 50%,rgba(46,230,166,.38) 100%),rgba(17,24,39,.66) !important;
+    box-shadow:0 12px 26px rgba(22,119,255,.17),0 4px 12px rgba(46,230,166,.09),inset 0 0 0 1px rgba(255,255,255,.08) !important;
     outline:0 !important;
   }
   html:not(.light) #view-dashboard .kpis .kpi.kpiActive .label, html:not(.light) #view-dashboard .kpis .kpi.kpiActive .hint, html:not(.light) #view-dashboard .kpis .kpi.kpiActive .value, html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .label, html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .value,
   :root:not(.light) #view-dashboard .kpis .kpi.kpiActive .label, :root:not(.light) #view-dashboard .kpis .kpi.kpiActive .hint, :root:not(.light) #view-dashboard .kpis .kpi.kpiActive .value, :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .label, :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, :root:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .value,
   body:not(.light) #view-dashboard .kpis .kpi.kpiActive .label, body:not(.light) #view-dashboard .kpis .kpi.kpiActive .hint, body:not(.light) #view-dashboard .kpis .kpi.kpiActive .value, body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .label, body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .hint, body:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .value{
-    color:#f8f7ff !important;
-    -webkit-text-fill-color:#f8f7ff !important;
+    color:#f4fbff !important;
+    -webkit-text-fill-color:#f4fbff !important;
   }
   html:not(.light) #view-dashboard .kpis .kpi.kpiActive .kpiPct,
   html:not(.light) #view-dashboard .kpis .kpi[aria-pressed="true"] .kpiPct,
@@ -5157,8 +5465,8 @@ html:not(.light).cronos-theme-switching .sidebar .nav button.active .pill,
 html:not(.light).cronos-theme-switching .sidebar .nav #navHojeCronos.active .todayNavBadge,
 body:not(.light).cronos-theme-switching .sidebar .nav button.active .pill,
 body:not(.light).cronos-theme-switching .sidebar .nav #navHojeCronos.active .todayNavBadge{
-  color:#f8f7ff !important;
-  -webkit-text-fill-color:#f8f7ff !important;
+  color:#f4fbff !important;
+  -webkit-text-fill-color:#f4fbff !important;
   background:rgba(255,255,255,.18) !important;
   border-color:rgba(255,255,255,.24) !important;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.06) !important;
@@ -5174,4 +5482,2653 @@ body:not(.light).cronos-theme-switching .sidebar .nav #navHojeCronos:not(.active
   border-color:rgba(148,163,184,.20) !important;
   box-shadow:none !important;
 }
+</style>
+
+<style id="cronos-theme-polish-v2">
+
+/* === CRONOS THEME POLISH V2 — botões discretos + modais no tema azul === */
+:root:not(.light){
+  --modal-bg:#08142a;
+  --modal-surface:#0b1730;
+  --modal-surface-2:#0f1d3d;
+}
+
+/* Ações rápidas da sidebar: menos gritantes, mais hierarquia */
+:root:not(.light) .sideFooter #btnNewLeadSide,
+html:not(.light) .sideFooter #btnNewLeadSide,
+body:not(.light) .sideFooter #btnNewLeadSide{
+  color:#eef6ff !important;
+  -webkit-text-fill-color:#eef6ff !important;
+  border-color:rgba(25,198,255,.42) !important;
+  background:
+    linear-gradient(135deg, rgba(22,119,255,.28) 0%, rgba(25,198,255,.18) 58%, rgba(46,230,166,.12) 100%),
+    rgba(12,28,58,.54) !important;
+  box-shadow:0 8px 18px rgba(22,119,255,.11), inset 0 0 0 1px rgba(255,255,255,.06) !important;
+}
+:root:not(.light) .sideFooter #btnRefreshNow,
+html:not(.light) .sideFooter #btnRefreshNow,
+body:not(.light) .sideFooter #btnRefreshNow{
+  color:#cfe5ff !important;
+  -webkit-text-fill-color:#cfe5ff !important;
+  border-color:rgba(183,212,255,.20) !important;
+  background:rgba(15,29,61,.42) !important;
+  box-shadow:none !important;
+}
+:root:not(.light) .sideFooter #btnNewLeadSide:hover,
+html:not(.light) .sideFooter #btnNewLeadSide:hover,
+body:not(.light) .sideFooter #btnNewLeadSide:hover{
+  border-color:rgba(25,198,255,.56) !important;
+  background:
+    linear-gradient(135deg, rgba(22,119,255,.34) 0%, rgba(25,198,255,.24) 58%, rgba(46,230,166,.16) 100%),
+    rgba(12,28,58,.64) !important;
+  box-shadow:0 10px 22px rgba(22,119,255,.14), inset 0 0 0 1px rgba(255,255,255,.07) !important;
+}
+:root:not(.light) .sideFooter #btnRefreshNow:hover,
+html:not(.light) .sideFooter #btnRefreshNow:hover,
+body:not(.light) .sideFooter #btnRefreshNow:hover{
+  border-color:rgba(25,198,255,.34) !important;
+  background:rgba(22,119,255,.12) !important;
+}
+
+/* Top/lista Novo Lead continua importante, mas sem parecer sirene */
+:root:not(.light) #btnNewLeadTop,
+:root:not(.light) #btnNewLeadList,
+:root:not(.light) #btnNewLeadKanban,
+html:not(.light) #btnNewLeadTop,
+html:not(.light) #btnNewLeadList,
+html:not(.light) #btnNewLeadKanban,
+body:not(.light) #btnNewLeadTop,
+body:not(.light) #btnNewLeadList,
+body:not(.light) #btnNewLeadKanban{
+  border-color:rgba(25,198,255,.42) !important;
+  background:
+    linear-gradient(135deg, rgba(22,119,255,.32) 0%, rgba(25,198,255,.22) 58%, rgba(46,230,166,.14) 100%),
+    rgba(12,28,58,.58) !important;
+  box-shadow:0 10px 24px rgba(22,119,255,.13), inset 0 0 0 1px rgba(255,255,255,.07) !important;
+}
+
+/* Modais no mesmo universo azul/ciano/verde do sistema */
+:root:not(.light) .modalBg,
+html:not(.light) .modalBg,
+body:not(.light) .modalBg{
+  background:
+    radial-gradient(900px 520px at 50% 10%, rgba(22,119,255,.16), transparent 60%),
+    radial-gradient(640px 420px at 88% 6%, rgba(46,230,166,.10), transparent 58%),
+    rgba(3, 8, 20, .84) !important;
+  backdrop-filter: blur(10px) saturate(.92) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(.92) !important;
+}
+:root:not(.light) .modal,
+html:not(.light) .modal,
+body:not(.light) .modal,
+:root:not(.light) .modalInner,
+html:not(.light) .modalInner,
+body:not(.light) .modalInner,
+:root:not(.light) .accessNotice,
+html:not(.light) .accessNotice,
+body:not(.light) .accessNotice{
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.045), transparent 48%),
+    radial-gradient(720px 360px at 18% 0%, rgba(22,119,255,.16), transparent 62%),
+    radial-gradient(620px 320px at 88% 4%, rgba(46,230,166,.10), transparent 60%),
+    var(--modal-surface-2) !important;
+  border-color:rgba(183,212,255,.14) !important;
+  box-shadow:0 24px 80px rgba(0,0,0,.52), 0 0 0 1px rgba(25,198,255,.035) inset !important;
+  color:#eef6ff !important;
+}
+:root:not(.light) .modalHead,
+html:not(.light) .modalHead,
+body:not(.light) .modalHead,
+:root:not(.light) .modalHeader,
+html:not(.light) .modalHeader,
+body:not(.light) .modalHeader,
+:root:not(.light) .accessNoticeHead,
+html:not(.light) .accessNoticeHead,
+body:not(.light) .accessNoticeHead{
+  border-color:rgba(183,212,255,.12) !important;
+}
+:root:not(.light) .modalFoot,
+html:not(.light) .modalFoot,
+body:not(.light) .modalFoot{
+  border-top-color:rgba(183,212,255,.12) !important;
+}
+:root:not(.light) .modal input,
+:root:not(.light) .modal select,
+:root:not(.light) .modal textarea,
+:root:not(.light) .modalInner input,
+:root:not(.light) .modalInner select,
+:root:not(.light) .modalInner textarea,
+html:not(.light) .modal input,
+html:not(.light) .modal select,
+html:not(.light) .modal textarea,
+body:not(.light) .modal input,
+body:not(.light) .modal select,
+body:not(.light) .modal textarea{
+  background:rgba(8,20,42,.62) !important;
+  border-color:rgba(183,212,255,.14) !important;
+  color:#eef6ff !important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.025) !important;
+}
+:root:not(.light) .modal input:focus,
+:root:not(.light) .modal select:focus,
+:root:not(.light) .modal textarea:focus,
+html:not(.light) .modal input:focus,
+html:not(.light) .modal select:focus,
+html:not(.light) .modal textarea:focus,
+body:not(.light) .modal input:focus,
+body:not(.light) .modal select:focus,
+body:not(.light) .modal textarea:focus{
+  border-color:rgba(25,198,255,.48) !important;
+  box-shadow:0 0 0 3px rgba(25,198,255,.10), inset 0 0 0 1px rgba(255,255,255,.035) !important;
+}
+:root:not(.light) .modal .card,
+:root:not(.light) .modal .kpi,
+:root:not(.light) .modal .chip,
+:root:not(.light) .modal .tableWrap,
+:root:not(.light) .modal table,
+:root:not(.light) .modal .suggestBox,
+html:not(.light) .modal .card,
+html:not(.light) .modal .kpi,
+html:not(.light) .modal .chip,
+html:not(.light) .modal .tableWrap,
+html:not(.light) .modal table,
+html:not(.light) .modal .suggestBox,
+body:not(.light) .modal .card,
+body:not(.light) .modal .kpi,
+body:not(.light) .modal .chip,
+body:not(.light) .modal .tableWrap,
+body:not(.light) .modal table,
+body:not(.light) .modal .suggestBox{
+  background:rgba(8,20,42,.42) !important;
+  border-color:rgba(183,212,255,.12) !important;
+}
+:root:not(.light) .modal th,
+html:not(.light) .modal th,
+body:not(.light) .modal th{
+  background:rgba(11,23,48,.88) !important;
+  color:#9cb3d9 !important;
+}
+:root:not(.light) .modal .x,
+:root:not(.light) .modal .btn:not(.primary):not(.ok):not(.danger),
+:root:not(.light) .accessNotice .btn:not(.primary):not(.ok):not(.danger),
+html:not(.light) .modal .x,
+html:not(.light) .modal .btn:not(.primary):not(.ok):not(.danger),
+body:not(.light) .modal .x,
+body:not(.light) .modal .btn:not(.primary):not(.ok):not(.danger){
+  background:rgba(15,29,61,.48) !important;
+  border-color:rgba(183,212,255,.16) !important;
+  color:#cfe5ff !important;
+}
+:root:not(.light) .modal .x:hover,
+:root:not(.light) .modal .btn:not(.primary):not(.ok):not(.danger):hover,
+:root:not(.light) .accessNotice .btn:not(.primary):not(.ok):not(.danger):hover,
+html:not(.light) .modal .x:hover,
+html:not(.light) .modal .btn:not(.primary):not(.ok):not(.danger):hover,
+body:not(.light) .modal .x:hover,
+body:not(.light) .modal .btn:not(.primary):not(.ok):not(.danger):hover{
+  background:rgba(22,119,255,.13) !important;
+  border-color:rgba(25,198,255,.34) !important;
+}
+
+</style>
+
+<style id="cronos-v85-leads-claro-refinado">
+/* === CRONOS V85 — Leads modo claro refinado === */
+/* Objetivo: aproximar o modo claro da hierarquia/presença do modo escuro, sem mudar layout. */
+
+html.light #view-leads,
+:root.light #view-leads,
+body.light #view-leads{
+  --lead-light-text:#07152f;
+  --lead-light-muted:#40516d;
+  --lead-light-line:rgba(37,99,235,.16);
+  --lead-light-line-strong:rgba(37,99,235,.26);
+  --lead-light-card:#ffffff;
+  --lead-light-soft:#f3f9ff;
+}
+
+/* Topo da tela */
+html.light #view-leads .titleBlock h2,
+:root.light #view-leads .titleBlock h2,
+body.light #view-leads .titleBlock h2{
+  color:#07152f!important;
+  letter-spacing:-.025em!important;
+}
+
+html.light #view-leads .titleBlock p,
+:root.light #view-leads .titleBlock p,
+body.light #view-leads .titleBlock p{
+  color:#344768!important;
+  opacity:1!important;
+}
+
+/* KPIs superiores dos Leads */
+html.light #view-leads .leadsSummaryGrid .card,
+:root.light #view-leads .leadsSummaryGrid .card,
+body.light #view-leads .leadsSummaryGrid .card{
+  background:
+    radial-gradient(240px 90px at 16% 0%, rgba(37,99,235,.095), transparent 68%),
+    linear-gradient(180deg, rgba(255,255,255,.96), rgba(248,252,255,.92))!important;
+  border:1px solid rgba(37,99,235,.13)!important;
+  box-shadow:
+    0 16px 34px rgba(15,23,42,.075),
+    0 8px 18px rgba(37,99,235,.055),
+    inset 0 0 0 1px rgba(255,255,255,.70)!important;
+}
+
+/* Painel/lista */
+html.light #view-leads .leadsListPanel,
+:root.light #view-leads .leadsListPanel,
+body.light #view-leads .leadsListPanel{
+  background:transparent!important;
+  border-color:transparent!important;
+  box-shadow:none!important;
+  padding-left:0!important;
+  padding-right:0!important;
+}
+
+/* Card principal do lead */
+html.light #view-leads .leadCardV2,
+:root.light #view-leads .leadCardV2,
+body.light #view-leads .leadCardV2{
+  background:
+    radial-gradient(620px 180px at 25% -18%, rgba(37,99,235,.09), transparent 70%),
+    radial-gradient(520px 170px at 92% 0%, rgba(20,184,166,.075), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.985), rgba(247,251,255,.955))!important;
+  border:1px solid rgba(37,99,235,.18)!important;
+  box-shadow:
+    0 16px 34px rgba(15,23,42,.105),
+    0 8px 18px rgba(37,99,235,.06),
+    inset 0 0 0 1px rgba(255,255,255,.82)!important;
+  color:var(--lead-light-text)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+
+html.light #view-leads .leadCardV2:hover,
+:root.light #view-leads .leadCardV2:hover,
+body.light #view-leads .leadCardV2:hover{
+  border-color:rgba(37,99,235,.30)!important;
+  box-shadow:
+    0 20px 46px rgba(15,23,42,.135),
+    0 10px 24px rgba(37,99,235,.095),
+    inset 0 0 0 1px rgba(255,255,255,.90)!important;
+}
+
+/* Faixa lateral continua forte, porque ajuda a leitura */
+html.light #view-leads .leadCardV2 .leadAccent,
+:root.light #view-leads .leadCardV2 .leadAccent,
+body.light #view-leads .leadCardV2 .leadAccent{
+  width:4px!important;
+  opacity:1!important;
+  filter:saturate(1.15)!important;
+}
+
+/* Identidade do paciente */
+html.light #view-leads .leadAvatar,
+:root.light #view-leads .leadAvatar,
+body.light #view-leads .leadAvatar{
+  color:#1d4ed8!important;
+  background:
+    radial-gradient(circle at 30% 12%, rgba(255,255,255,.88), transparent 52%),
+    linear-gradient(135deg, rgba(37,99,235,.14), rgba(14,165,233,.08))!important;
+  border:1px solid rgba(37,99,235,.18)!important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.76),
+    0 8px 18px rgba(37,99,235,.08)!important;
+}
+
+html.light #view-leads .leadIdentity .name,
+:root.light #view-leads .leadIdentity .name,
+body.light #view-leads .leadIdentity .name{
+  color:#07152f!important;
+  text-shadow:none!important;
+}
+
+html.light #view-leads .leadPhone,
+:root.light #view-leads .leadPhone,
+body.light #view-leads .leadPhone{
+  color:#51627c!important;
+}
+
+html.light #view-leads .leadPhone svg,
+:root.light #view-leads .leadPhone svg,
+body.light #view-leads .leadPhone svg{
+  color:#2563eb!important;
+}
+
+/* Chips/status do lead */
+html.light #view-leads .leadChip,
+:root.light #view-leads .leadChip,
+body.light #view-leads .leadChip{
+  background:#f8fbff!important;
+  border-color:rgba(37,99,235,.14)!important;
+  color:#21314f!important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.68)!important;
+}
+
+html.light #view-leads .leadChip.status,
+:root.light #view-leads .leadChip.status,
+body.light #view-leads .leadChip.status{
+  background:#ecfdf5!important;
+  border-color:rgba(5,150,105,.22)!important;
+  color:#047857!important;
+}
+
+html.light #view-leads .leadChip.priority.hot,
+:root.light #view-leads .leadChip.priority.hot,
+body.light #view-leads .leadChip.priority.hot{
+  background:#fff1f2!important;
+  border-color:rgba(225,29,72,.20)!important;
+  color:#be123c!important;
+}
+
+html.light #view-leads .leadChip.priority.warm,
+:root.light #view-leads .leadChip.priority.warm,
+body.light #view-leads .leadChip.priority.warm{
+  background:#fffbeb!important;
+  border-color:rgba(217,119,6,.22)!important;
+  color:#b45309!important;
+}
+
+html.light #view-leads .leadChip.campaign,
+:root.light #view-leads .leadChip.campaign,
+body.light #view-leads .leadChip.campaign{
+  background:#fff7ed!important;
+  border-color:rgba(249,115,22,.20)!important;
+  color:#c2410c!important;
+}
+
+/* Blocos internos: Tratamento / Próximo agendamento / Origem */
+html.light #view-leads .leadInfoGrid,
+:root.light #view-leads .leadInfoGrid,
+body.light #view-leads .leadInfoGrid{
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.98), rgba(245,250,255,.92))!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:
+    0 8px 18px rgba(15,23,42,.045),
+    inset 0 0 0 1px rgba(255,255,255,.74)!important;
+}
+
+html.light #view-leads .leadInfoItem,
+:root.light #view-leads .leadInfoItem,
+body.light #view-leads .leadInfoItem{
+  border-color:rgba(37,99,235,.10)!important;
+}
+
+html.light #view-leads .leadInfoItem:nth-child(1),
+html.light #view-leads .leadInfoItem:nth-child(3),
+:root.light #view-leads .leadInfoItem:nth-child(1),
+:root.light #view-leads .leadInfoItem:nth-child(3),
+body.light #view-leads .leadInfoItem:nth-child(1),
+body.light #view-leads .leadInfoItem:nth-child(3){
+  border-right-color:rgba(37,99,235,.10)!important;
+}
+
+html.light #view-leads .leadInfoIcon,
+:root.light #view-leads .leadInfoIcon,
+body.light #view-leads .leadInfoIcon{
+  color:#2563eb!important;
+  background:linear-gradient(135deg, rgba(37,99,235,.12), rgba(14,165,233,.08))!important;
+  border-color:rgba(37,99,235,.18)!important;
+}
+
+html.light #view-leads .leadInfoItem small,
+html.light #view-leads .leadMoneyBox small,
+:root.light #view-leads .leadInfoItem small,
+:root.light #view-leads .leadMoneyBox small,
+body.light #view-leads .leadInfoItem small,
+body.light #view-leads .leadMoneyBox small{
+  color:#344768!important;
+  opacity:1!important;
+}
+
+html.light #view-leads .leadInfoItem strong,
+:root.light #view-leads .leadInfoItem strong,
+body.light #view-leads .leadInfoItem strong{
+  color:#07152f!important;
+  font-weight:900!important;
+}
+
+/* Valores */
+html.light #view-leads .leadMoneyBox,
+:root.light #view-leads .leadMoneyBox,
+body.light #view-leads .leadMoneyBox{
+  background:
+    radial-gradient(190px 80px at 18% 0%, rgba(37,99,235,.08), transparent 70%),
+    linear-gradient(180deg, rgba(255,255,255,.98), rgba(245,250,255,.93))!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:
+    0 8px 18px rgba(15,23,42,.045),
+    inset 0 0 0 1px rgba(255,255,255,.74)!important;
+}
+
+html.light #view-leads .leadPaid,
+:root.light #view-leads .leadPaid,
+body.light #view-leads .leadPaid{
+  color:#10213f!important;
+}
+
+html.light #view-leads .leadOpen.ok,
+:root.light #view-leads .leadOpen.ok,
+body.light #view-leads .leadOpen.ok{
+  color:#059669!important;
+}
+
+html.light #view-leads .leadOpen.danger,
+:root.light #view-leads .leadOpen.danger,
+body.light #view-leads .leadOpen.danger{
+  color:#e11d48!important;
+}
+
+/* Botões principais */
+html.light #view-leads .leadPrimaryBtn,
+:root.light #view-leads .leadPrimaryBtn,
+body.light #view-leads .leadPrimaryBtn{
+  color:#ffffff!important;
+  background:linear-gradient(135deg,#2563eb 0%,#0ea5e9 56%,#14b8a6 100%)!important;
+  border-color:rgba(37,99,235,.34)!important;
+  box-shadow:
+    0 14px 28px rgba(37,99,235,.22),
+    0 8px 16px rgba(20,184,166,.12),
+    inset 0 0 0 1px rgba(255,255,255,.20)!important;
+}
+
+html.light #view-leads .leadWhatsBtn,
+:root.light #view-leads .leadWhatsBtn,
+body.light #view-leads .leadWhatsBtn{
+  color:#ffffff!important;
+  background:linear-gradient(135deg,#16a34a 0%,#22c55e 100%)!important;
+  border-color:rgba(22,163,74,.42)!important;
+  box-shadow:
+    0 14px 28px rgba(22,163,74,.20),
+    inset 0 0 0 1px rgba(255,255,255,.18)!important;
+}
+
+/* Botões secundários: legíveis, mas ainda secundários */
+html.light #view-leads .leadActionSmall,
+:root.light #view-leads .leadActionSmall,
+body.light #view-leads .leadActionSmall{
+  background:linear-gradient(180deg,#ffffff,#f5f9ff)!important;
+  border:1px solid rgba(37,99,235,.20)!important;
+  color:#1d4ed8!important;
+  box-shadow:
+    0 7px 14px rgba(15,23,42,.045),
+    inset 0 0 0 1px rgba(255,255,255,.76)!important;
+}
+
+html.light #view-leads .leadActionSmall:hover,
+:root.light #view-leads .leadActionSmall:hover,
+body.light #view-leads .leadActionSmall:hover{
+  border-color:rgba(37,99,235,.32)!important;
+  background:linear-gradient(180deg,#ffffff,#eef6ff)!important;
+  box-shadow:
+    0 10px 20px rgba(37,99,235,.08),
+    inset 0 0 0 1px rgba(255,255,255,.82)!important;
+}
+
+html.light #view-leads .leadActionSmall.campaignToggle,
+:root.light #view-leads .leadActionSmall.campaignToggle,
+body.light #view-leads .leadActionSmall.campaignToggle{
+  color:#d97706!important;
+  border-color:rgba(245,158,11,.26)!important;
+  background:linear-gradient(180deg,#fffdf7,#fff7ed)!important;
+}
+
+html.light #view-leads .leadActionSmall.campaignToggle.active,
+:root.light #view-leads .leadActionSmall.campaignToggle.active,
+body.light #view-leads .leadActionSmall.campaignToggle.active{
+  color:#ffffff!important;
+  background:linear-gradient(135deg,#f59e0b,#f97316)!important;
+  border-color:rgba(249,115,22,.38)!important;
+}
+
+html.light #view-leads .leadActionSmall.leadFlowSmall,
+:root.light #view-leads .leadActionSmall.leadFlowSmall,
+body.light #view-leads .leadActionSmall.leadFlowSmall{
+  color:#0891b2!important;
+  border-color:rgba(8,145,178,.25)!important;
+  background:linear-gradient(180deg,#f8feff,#ecfeff)!important;
+}
+
+html.light #view-leads .leadActionSmall.danger,
+:root.light #view-leads .leadActionSmall.danger,
+body.light #view-leads .leadActionSmall.danger{
+  color:#e11d48!important;
+  border-color:rgba(225,29,72,.24)!important;
+  background:linear-gradient(180deg,#ffffff,#fff1f2)!important;
+}
+
+/* Ícones internos dos botões */
+html.light #view-leads .leadActionSmall svg,
+:root.light #view-leads .leadActionSmall svg,
+body.light #view-leads .leadActionSmall svg{
+  stroke:currentColor!important;
+  color:currentColor!important;
+}
+
+/* Paginação */
+html.light #view-leads .leadsPaginationModern,
+:root.light #view-leads .leadsPaginationModern,
+body.light #view-leads .leadsPaginationModern{
+  background:transparent!important;
+}
+
+html.light #view-leads .leadsPaginationModern button,
+:root.light #view-leads .leadsPaginationModern button,
+body.light #view-leads .leadsPaginationModern button{
+  background:#ffffff!important;
+  border-color:rgba(37,99,235,.18)!important;
+  color:#1d4ed8!important;
+}
+
+html.light #view-leads .leadsPaginationModern button.active,
+:root.light #view-leads .leadsPaginationModern button.active,
+body.light #view-leads .leadsPaginationModern button.active{
+  background:linear-gradient(135deg,#2563eb,#14b8a6)!important;
+  color:#ffffff!important;
+  border-color:rgba(37,99,235,.32)!important;
+}
+</style>
+
+<style id="cronos-v86-prontuario-light-fix">
+/* === CRONOS V86 — prontuário claro + contenção de overflow === */
+
+/* segurança de layout do modal */
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalBody,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaApp,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoFull,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaLayout,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoGrid,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoGrid > div,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTableWrap,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaAddWrap{
+  min-width:0!important;
+  box-sizing:border-box!important;
+}
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalBody{
+  padding-bottom:132px!important;
+  overflow:auto!important;
+  overscroll-behavior:contain;
+}
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoFull,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaLayout,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaAddWrap,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTableWrap{
+  position:relative!important;
+  isolation:isolate;
+}
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoGrid{
+  align-items:start!important;
+}
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoRefStage{
+  width:100%!important;
+  max-width:100%!important;
+  overflow:hidden!important;
+  isolation:isolate;
+  position:relative!important;
+}
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoRefStage svg{
+  max-width:100%!important;
+}
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions{
+  max-width:100%!important;
+}
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot,
+body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot > *{
+  position:relative;
+  z-index:25;
+}
+
+/* modo claro do prontuário */
+html.light body.cronos-ficha-open #modalBg,
+body.light.cronos-ficha-open #modalBg,
+:root.light body.cronos-ficha-open #modalBg{
+  background:rgba(15,23,42,.22)!important;
+  backdrop-filter:blur(6px)!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide{
+  border-radius:26px!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  background:
+    radial-gradient(1200px 420px at 14% 0%, rgba(37,99,235,.10), transparent 72%),
+    radial-gradient(900px 480px at 100% 18%, rgba(20,184,166,.06), transparent 70%),
+    linear-gradient(180deg,#f8fbff 0%, #eef6ff 100%)!important;
+  box-shadow:0 34px 90px rgba(15,23,42,.18), inset 0 1px 0 rgba(255,255,255,.9)!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalHead,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalHead,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalHead{
+  border-bottom:1px solid rgba(37,99,235,.12)!important;
+  background:linear-gradient(90deg,rgba(37,99,235,.07),rgba(14,165,233,.04),transparent)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalTitle,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalTitle,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalTitle{
+  color:#07152f!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalSub,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalSub,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalSub{
+  color:#45556f!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .x,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .x,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .x{
+  background:rgba(255,255,255,.82)!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  color:#0f172a!important;
+  box-shadow:0 10px 22px rgba(15,23,42,.08)!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalBody,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalBody,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalBody{
+  color:#07152f!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPatientHeroV55,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaAddWrap,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTableWrap,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalBox,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid > div,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPatientHeroV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaAddWrap,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTableWrap,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalBox,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid > div,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPatientHeroV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaAddWrap,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTableWrap,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalBox,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid > div,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle{
+  background:linear-gradient(180deg, rgba(255,255,255,.94), rgba(246,250,255,.92))!important;
+  border:1px solid rgba(37,99,235,.14)!important;
+  box-shadow:0 14px 30px rgba(15,23,42,.08), inset 0 1px 0 rgba(255,255,255,.88)!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .sectionTitle,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPanelTitleV55,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaSectionTitleV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .sectionTitle,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPanelTitleV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaSectionTitleV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .sectionTitle,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPanelTitleV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaSectionTitleV55{
+  color:#07152f!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientTitleRowV55 h3,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 strong,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientTitleRowV55 h3,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 strong,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientTitleRowV55 h3,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 strong{
+  color:#07152f!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientMetaGridV55,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 small,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 em,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .small,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .muted,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientMetaGridV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 small,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 em,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .small,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .muted,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientMetaGridV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 small,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTopCardV55 em,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .small,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .muted{
+  color:#4b5b74!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientMetaGridV55 b,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientMetaGridV55 b,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientMetaGridV55 b{
+  color:#07152f!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientStatusV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientStatusV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .patientStatusV55{
+  color:#1d4ed8!important;
+  background:rgba(37,99,235,.10)!important;
+  border-color:rgba(37,99,235,.18)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .topCardIconV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .topCardIconV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .topCardIconV55{
+  background:rgba(37,99,235,.10)!important;
+  border-color:rgba(37,99,235,.16)!important;
+  color:#2563eb!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .purpleIconV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .purpleIconV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .purpleIconV55{
+  background:rgba(124,58,237,.10)!important;
+  border-color:rgba(124,58,237,.16)!important;
+  color:#7c3aed!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .neutralIconV55,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .neutralIconV55,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .neutralIconV55{
+  background:rgba(14,165,233,.10)!important;
+  border-color:rgba(14,165,233,.16)!important;
+  color:#0284c7!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoRefStage,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoRefStage,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoRefStage{
+  background:#ffffff!important;
+  border:1px solid rgba(37,99,235,.14)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoLabelLayer .odontoNumberText,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoLabelLayer .odontoNumberText,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoLabelLayer .odontoNumberText{
+  fill:#0f172a!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .toothLine,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .toothLine,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .toothLine{
+  fill:#64748b!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .legendPill,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .legendPill,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .legendPill{
+  background:#ffffff!important;
+  border-color:rgba(37,99,235,.14)!important;
+  color:#32445f!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide label,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide label,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide label{
+  color:#0f172a!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide input,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide select,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide textarea,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide input,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide select,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide textarea,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide input,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide select,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide textarea{
+  background:#ffffff!important;
+  color:#07152f!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.85)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide input:disabled,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide select:disabled,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide input:disabled,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide select:disabled,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide input:disabled,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide select:disabled{
+  color:#5d6b80!important;
+  background:#f6f9fd!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable{
+  background:#ffffff!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable th,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable th,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable th{
+  background:#f2f7fd!important;
+  color:#4b5b74!important;
+  border-bottom:1px solid rgba(37,99,235,.12)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable td,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable td,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaTable td{
+  color:#07152f!important;
+  border-bottom:1px solid rgba(37,99,235,.10)!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .btn:not(.primary),
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .miniBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .btn:not(.primary),
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .miniBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .btn:not(.primary),
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .miniBtn{
+  background:linear-gradient(180deg,#ffffff,#f4f8fd)!important;
+  color:#1d4ed8!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:0 8px 18px rgba(15,23,42,.05), inset 0 1px 0 rgba(255,255,255,.86)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .btn.primary,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .btn.primary,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .btn.primary{
+  color:#ffffff!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot{
+  background:linear-gradient(180deg, rgba(248,251,255,.92), rgba(239,246,255,.98))!important;
+  border-top:1px solid rgba(37,99,235,.12)!important;
+  box-shadow:0 -12px 24px rgba(15,23,42,.06)!important;
+}
+
+@media (max-width: 1500px){
+  body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoRefStage{aspect-ratio:1536/690!important}
+}
+@media (max-width: 1280px){
+  body.cronos-ficha-open #modalBg > .modal.modalFichaWide #modalBody{padding-bottom:148px!important}
+  body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoRefStage{aspect-ratio:1536/670!important}
+}
+@media (max-width: 900px){
+  body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoRefStage{aspect-ratio:1536/640!important}
+}
+</style>
+
+<style id="cronos-v87-prontuario-botoes-destaque">
+/* === CRONOS V87 — destaque dos botões do prontuário no modo claro === */
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle{
+  background:rgba(37,99,235,.05)!important;
+  border-color:rgba(37,99,235,.14)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle button,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle button,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle button{
+  color:#24415e!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle button.active,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle button.active,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .dentitionToggle button.active{
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 55%, #14b8a6 100%)!important;
+  color:#ffffff!important;
+  border:0!important;
+  box-shadow:0 12px 26px rgba(14,165,233,.18), inset 0 1px 0 rgba(255,255,255,.22)!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaAddPlanBtn,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.primary.fichaAddPlanBtn,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide button.fichaAddPlanBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaAddPlanBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.primary.fichaAddPlanBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide button.fichaAddPlanBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaAddPlanBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.primary.fichaAddPlanBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide button.fichaAddPlanBtn{
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  color:#ffffff!important;
+  border:1px solid rgba(37,99,235,.14)!important;
+  box-shadow:0 14px 30px rgba(14,165,233,.18), inset 0 1px 0 rgba(255,255,255,.20)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide button.fichaAddPlanBtn:hover,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide button.fichaAddPlanBtn:hover,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide button.fichaAddPlanBtn:hover{
+  filter:brightness(1.02)!important;
+  transform:translateY(-1px);
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn{
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  color:#ffffff!important;
+  border:1px solid rgba(37,99,235,.14)!important;
+  box-shadow:0 14px 28px rgba(14,165,233,.16), inset 0 1px 0 rgba(255,255,255,.20)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled{
+  background:linear-gradient(135deg,rgba(22,119,255,.32),rgba(14,165,233,.26),rgba(20,184,166,.24))!important;
+  color:rgba(255,255,255,.92)!important;
+  border-color:rgba(37,99,235,.12)!important;
+  opacity:.72!important;
+  box-shadow:none!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary),
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary),
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary){
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  color:#ffffff!important;
+  border:1px solid rgba(37,99,235,.14)!important;
+  box-shadow:0 14px 28px rgba(14,165,233,.14), inset 0 1px 0 rgba(255,255,255,.20)!important;
+}
+</style>
+
+<style id="cronos-v88-prontuario-claro-botoes-fix">
+/* === CRONOS V88 — prontuário claro: botões sólidos + labels legíveis === */
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox .label,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox .label,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox .label{
+  color:#60728a!important;
+  font-weight:800!important;
+  letter-spacing:.01em;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.small,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.small,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.small{
+  box-shadow:0 8px 18px rgba(15,23,42,.06), inset 0 1px 0 rgba(255,255,255,.16)!important;
+  font-weight:800!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaPaidAction,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaPaidAction,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaPaidAction{
+  background:#f59e0b!important;
+  background-image:none!important;
+  border:1px solid #d97706!important;
+  color:#fffaf0!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaDoneAction,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaDoneAction,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaDoneAction{
+  background:#22c55e!important;
+  background-image:none!important;
+  border:1px solid #16a34a!important;
+  color:#f0fdf4!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaAbsentAction,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaAbsentAction,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaAbsentAction{
+  background:#ec4899!important;
+  background-image:none!important;
+  border:1px solid #db2777!important;
+  color:#fff1f7!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaNeutralAction,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaNeutralAction,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaNeutralAction{
+  background:#eef3f9!important;
+  background-image:none!important;
+  border:1px solid #d5e1f0!important;
+  color:#37506f!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn{
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  color:#ffffff!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:0 12px 24px rgba(14,165,233,.14), inset 0 1px 0 rgba(255,255,255,.18)!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled{
+  background:linear-gradient(135deg,#74aefc 0%, #67c3f3 55%, #73d7c8 100%)!important;
+  color:#ffffff!important;
+  border:1px solid rgba(37,99,235,.14)!important;
+  opacity:.92!important;
+  box-shadow:none!important;
+  filter:saturate(.9)!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary),
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary),
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary){
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  color:#ffffff!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:0 12px 24px rgba(14,165,233,.14), inset 0 1px 0 rgba(255,255,255,.18)!important;
+}
+</style>
+
+<style id="cronos-v89-prontuario-botoes-ajuste-final">
+/* === CRONOS V89 — prontuário claro: vermelho correto + ações principais alinhadas === */
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaAbsentAction,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaAbsentAction,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaAbsentAction{
+  background:#dc2626!important;
+  background-image:none!important;
+  border:1px solid #b91c1c!important;
+  color:#fff5f5!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox:last-child .value,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox:last-child .value,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox:last-child .value,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaTotalAberto,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaTotalAberto,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaTotalAberto{
+  color:#dc2626!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary),
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary),
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 > div:last-child > .btn.small:not(.primary),
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPrintBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPrintBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPrintBtn{
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  color:#ffffff!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:0 12px 24px rgba(14,165,233,.14), inset 0 1px 0 rgba(255,255,255,.18)!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn:disabled{
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  color:#eaf6ff!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  opacity:.72!important;
+  filter:saturate(.92)!important;
+  box-shadow:none!important;
+}
+
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPrintBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPrintBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPrintBtn{
+  min-width:200px!important;
+  font-weight:800!important;
+}
+</style>
+
+<style id="cronos-v90-prontuario-print-botao-destaque">
+/* === CRONOS V90 — botão inteiro de imprimir em destaque no prontuário claro === */
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot .fichaPrintBtn,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot .fichaPrintBtn,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot .fichaPrintBtn,
+html.light #modalBg > .modal.modalFichaWide #modalFoot .fichaPrintBtn,
+body.light #modalBg > .modal.modalFichaWide #modalFoot .fichaPrintBtn,
+:root.light #modalBg > .modal.modalFichaWide #modalFoot .fichaPrintBtn{
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  min-width:220px!important;
+  min-height:46px!important;
+  padding:12px 20px!important;
+  border-radius:14px!important;
+  background:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  background-image:linear-gradient(135deg,#1677ff 0%, #0ea5e9 58%, #14b8a6 100%)!important;
+  color:#ffffff!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:0 12px 24px rgba(14,165,233,.14), inset 0 1px 0 rgba(255,255,255,.18)!important;
+  font-weight:800!important;
+  line-height:1.1!important;
+  white-space:nowrap!important;
+  text-decoration:none!important;
+  overflow:visible!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot .fichaPrintBtn:hover,
+body.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot .fichaPrintBtn:hover,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .modalFoot .fichaPrintBtn:hover,
+html.light #modalBg > .modal.modalFichaWide #modalFoot .fichaPrintBtn:hover,
+body.light #modalBg > .modal.modalFichaWide #modalFoot .fichaPrintBtn:hover,
+:root.light #modalBg > .modal.modalFichaWide #modalFoot .fichaPrintBtn:hover{
+  filter:brightness(1.03)!important;
+  transform:translateY(-1px)!important;
+}
+</style>
+
+<style id="cronos-v91-leads-claro-botoes-kpis">
+/* === CRONOS V91 — Leads claro: botões secundários + KPIs com mais presença === */
+
+html.light #view-leads .leadsSummaryGrid .card,
+:root.light #view-leads .leadsSummaryGrid .card,
+body.light #view-leads .leadsSummaryGrid .card{
+  background:
+    radial-gradient(260px 100px at 18% -8%, rgba(37,99,235,.135), transparent 70%),
+    linear-gradient(180deg, #ffffff 0%, #f4f9ff 100%)!important;
+  border:1px solid rgba(37,99,235,.18)!important;
+  box-shadow:
+    0 16px 32px rgba(15,23,42,.095),
+    0 7px 18px rgba(37,99,235,.07),
+    inset 0 0 0 1px rgba(255,255,255,.86)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+
+html.light #view-leads .leadsSummaryGrid .card .icon,
+html.light #view-leads .leadsSummaryGrid .card .kpiIcon,
+html.light #view-leads .leadsSummaryGrid .card [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid .card .icon,
+:root.light #view-leads .leadsSummaryGrid .card .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid .card [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid .card .icon,
+body.light #view-leads .leadsSummaryGrid .card .kpiIcon,
+body.light #view-leads .leadsSummaryGrid .card [class*="Icon"]{
+  opacity:1!important;
+  filter:saturate(1.18) contrast(1.08)!important;
+}
+
+html.light #view-leads .leadsSummaryGrid .card:nth-child(1),
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(1),
+body.light #view-leads .leadsSummaryGrid .card:nth-child(1){
+  background:radial-gradient(240px 96px at 16% -8%, rgba(37,99,235,.16), transparent 70%),linear-gradient(180deg,#ffffff,#f3f8ff)!important;
+}
+html.light #view-leads .leadsSummaryGrid .card:nth-child(1) .icon,
+html.light #view-leads .leadsSummaryGrid .card:nth-child(1) .kpiIcon,
+html.light #view-leads .leadsSummaryGrid .card:nth-child(1) [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(1) .icon,
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(1) .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(1) [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid .card:nth-child(1) .icon,
+body.light #view-leads .leadsSummaryGrid .card:nth-child(1) .kpiIcon,
+body.light #view-leads .leadsSummaryGrid .card:nth-child(1) [class*="Icon"]{
+  background:rgba(37,99,235,.14)!important;
+  border-color:rgba(37,99,235,.24)!important;
+  color:#2563eb!important;
+}
+
+html.light #view-leads .leadsSummaryGrid .card:nth-child(2),
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(2),
+body.light #view-leads .leadsSummaryGrid .card:nth-child(2){
+  background:radial-gradient(240px 96px at 16% -8%, rgba(244,63,94,.15), transparent 70%),linear-gradient(180deg,#ffffff,#fff5f7)!important;
+}
+html.light #view-leads .leadsSummaryGrid .card:nth-child(2) .icon,
+html.light #view-leads .leadsSummaryGrid .card:nth-child(2) .kpiIcon,
+html.light #view-leads .leadsSummaryGrid .card:nth-child(2) [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(2) .icon,
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(2) .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(2) [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid .card:nth-child(2) .icon,
+body.light #view-leads .leadsSummaryGrid .card:nth-child(2) .kpiIcon,
+body.light #view-leads .leadsSummaryGrid .card:nth-child(2) [class*="Icon"]{
+  background:rgba(244,63,94,.15)!important;
+  border-color:rgba(244,63,94,.25)!important;
+  color:#e11d48!important;
+}
+
+html.light #view-leads .leadsSummaryGrid .card:nth-child(3),
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(3),
+body.light #view-leads .leadsSummaryGrid .card:nth-child(3){
+  background:radial-gradient(240px 96px at 16% -8%, rgba(245,158,11,.18), transparent 70%),linear-gradient(180deg,#ffffff,#fff8eb)!important;
+}
+html.light #view-leads .leadsSummaryGrid .card:nth-child(3) .icon,
+html.light #view-leads .leadsSummaryGrid .card:nth-child(3) .kpiIcon,
+html.light #view-leads .leadsSummaryGrid .card:nth-child(3) [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(3) .icon,
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(3) .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(3) [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid .card:nth-child(3) .icon,
+body.light #view-leads .leadsSummaryGrid .card:nth-child(3) .kpiIcon,
+body.light #view-leads .leadsSummaryGrid .card:nth-child(3) [class*="Icon"]{
+  background:rgba(245,158,11,.18)!important;
+  border-color:rgba(245,158,11,.30)!important;
+  color:#d97706!important;
+}
+
+html.light #view-leads .leadsSummaryGrid .card:nth-child(4),
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(4),
+body.light #view-leads .leadsSummaryGrid .card:nth-child(4){
+  background:radial-gradient(240px 96px at 16% -8%, rgba(34,197,94,.16), transparent 70%),linear-gradient(180deg,#ffffff,#f1fdf6)!important;
+}
+html.light #view-leads .leadsSummaryGrid .card:nth-child(4) .icon,
+html.light #view-leads .leadsSummaryGrid .card:nth-child(4) .kpiIcon,
+html.light #view-leads .leadsSummaryGrid .card:nth-child(4) [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(4) .icon,
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(4) .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid .card:nth-child(4) [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid .card:nth-child(4) .icon,
+body.light #view-leads .leadsSummaryGrid .card:nth-child(4) .kpiIcon,
+body.light #view-leads .leadsSummaryGrid .card:nth-child(4) [class*="Icon"]{
+  background:rgba(34,197,94,.16)!important;
+  border-color:rgba(34,197,94,.28)!important;
+  color:#16a34a!important;
+}
+
+/* Botões secundários dos cards de Lead: cor suave preenchida */
+html.light #view-leads .leadActionSmall,
+:root.light #view-leads .leadActionSmall,
+body.light #view-leads .leadActionSmall{
+  border-width:1px!important;
+  box-shadow:0 7px 15px rgba(15,23,42,.045), inset 0 1px 0 rgba(255,255,255,.62)!important;
+  opacity:1!important;
+  filter:saturate(1.05)!important;
+  font-weight:800!important;
+}
+
+html.light #view-leads .leadActionSmall:not(.campaignToggle):not(.leadFlowSmall):not(.danger),
+:root.light #view-leads .leadActionSmall:not(.campaignToggle):not(.leadFlowSmall):not(.danger),
+body.light #view-leads .leadActionSmall:not(.campaignToggle):not(.leadFlowSmall):not(.danger){
+  background:linear-gradient(180deg,#eaf3ff,#dcecff)!important;
+  border-color:rgba(37,99,235,.26)!important;
+  color:#1d4ed8!important;
+}
+
+html.light #view-leads .leadActionSmall.campaignToggle,
+:root.light #view-leads .leadActionSmall.campaignToggle,
+body.light #view-leads .leadActionSmall.campaignToggle{
+  background:linear-gradient(180deg,#fff1dc,#ffe4bf)!important;
+  border-color:rgba(217,119,6,.32)!important;
+  color:#b45309!important;
+}
+
+html.light #view-leads .leadActionSmall.campaignToggle.active,
+:root.light #view-leads .leadActionSmall.campaignToggle.active,
+body.light #view-leads .leadActionSmall.campaignToggle.active{
+  background:linear-gradient(135deg,#f59e0b,#f97316)!important;
+  border-color:rgba(217,119,6,.34)!important;
+  color:#ffffff!important;
+}
+
+html.light #view-leads .leadActionSmall.leadFlowSmall,
+:root.light #view-leads .leadActionSmall.leadFlowSmall,
+body.light #view-leads .leadActionSmall.leadFlowSmall{
+  background:linear-gradient(180deg,#dffaff,#c9f3fb)!important;
+  border-color:rgba(8,145,178,.32)!important;
+  color:#0e7490!important;
+}
+
+html.light #view-leads .leadActionSmall.danger,
+:root.light #view-leads .leadActionSmall.danger,
+body.light #view-leads .leadActionSmall.danger{
+  background:linear-gradient(180deg,#ffe7eb,#ffd6de)!important;
+  border-color:rgba(220,38,38,.28)!important;
+  color:#b91c1c!important;
+}
+
+html.light #view-leads .leadActionSmall:hover,
+:root.light #view-leads .leadActionSmall:hover,
+body.light #view-leads .leadActionSmall:hover{
+  transform:translateY(-1px)!important;
+  box-shadow:0 10px 20px rgba(15,23,42,.07), inset 0 1px 0 rgba(255,255,255,.70)!important;
+  filter:saturate(1.13) brightness(1.01)!important;
+}
+
+html.light #view-leads .leadActionSmall svg,
+:root.light #view-leads .leadActionSmall svg,
+body.light #view-leads .leadActionSmall svg{
+  color:currentColor!important;
+  stroke:currentColor!important;
+  opacity:1!important;
+}
+</style>
+
+<style id="cronos-v93-leads-kpis-claro-reforcadas">
+/* === CRONOS V93 — Leads: KPIs do modo claro reforçadas === */
+/* Corrige o efeito "vidro fosco pálido" das KPIs superiores no modo claro. */
+
+html.light #view-leads .kpiGrid .kpi,
+html.light #view-leads .kpiGrid .card,
+html.light #view-leads .leadsSummaryGrid .card,
+html.light #view-leads .leadKpi,
+html.light #view-leads .leadStatCard,
+:root.light #view-leads .kpiGrid .kpi,
+:root.light #view-leads .kpiGrid .card,
+:root.light #view-leads .leadsSummaryGrid .card,
+:root.light #view-leads .leadKpi,
+:root.light #view-leads .leadStatCard,
+body.light #view-leads .kpiGrid .kpi,
+body.light #view-leads .kpiGrid .card,
+body.light #view-leads .leadsSummaryGrid .card,
+body.light #view-leads .leadKpi,
+body.light #view-leads .leadStatCard{
+  border-width:1px!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+  opacity:1!important;
+  box-shadow:
+    0 16px 30px rgba(15,23,42,.105),
+    0 7px 16px rgba(37,99,235,.07),
+    inset 0 0 0 1px rgba(255,255,255,.82)!important;
+}
+
+/* Card 1 — Total / filtrados */
+html.light #view-leads .kpiGrid > *:nth-child(1),
+html.light #view-leads .leadsSummaryGrid > *:nth-child(1),
+:root.light #view-leads .kpiGrid > *:nth-child(1),
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(1),
+body.light #view-leads .kpiGrid > *:nth-child(1),
+body.light #view-leads .leadsSummaryGrid > *:nth-child(1){
+  background:
+    radial-gradient(260px 110px at 16% -10%, rgba(37,99,235,.26), transparent 68%),
+    linear-gradient(180deg,#ffffff 0%,#eaf3ff 100%)!important;
+  border-color:rgba(37,99,235,.24)!important;
+}
+
+/* Card 2 — Quentes */
+html.light #view-leads .kpiGrid > *:nth-child(2),
+html.light #view-leads .leadsSummaryGrid > *:nth-child(2),
+:root.light #view-leads .kpiGrid > *:nth-child(2),
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(2),
+body.light #view-leads .kpiGrid > *:nth-child(2),
+body.light #view-leads .leadsSummaryGrid > *:nth-child(2){
+  background:
+    radial-gradient(260px 110px at 16% -10%, rgba(244,63,94,.25), transparent 68%),
+    linear-gradient(180deg,#ffffff 0%,#ffe9ee 100%)!important;
+  border-color:rgba(244,63,94,.24)!important;
+}
+
+/* Card 3 — Em aberto */
+html.light #view-leads .kpiGrid > *:nth-child(3),
+html.light #view-leads .leadsSummaryGrid > *:nth-child(3),
+:root.light #view-leads .kpiGrid > *:nth-child(3),
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(3),
+body.light #view-leads .kpiGrid > *:nth-child(3),
+body.light #view-leads .leadsSummaryGrid > *:nth-child(3){
+  background:
+    radial-gradient(260px 110px at 16% -10%, rgba(245,158,11,.30), transparent 68%),
+    linear-gradient(180deg,#ffffff 0%,#fff1d6 100%)!important;
+  border-color:rgba(245,158,11,.28)!important;
+}
+
+/* Card 4 — Compareceram */
+html.light #view-leads .kpiGrid > *:nth-child(4),
+html.light #view-leads .leadsSummaryGrid > *:nth-child(4),
+:root.light #view-leads .kpiGrid > *:nth-child(4),
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(4),
+body.light #view-leads .kpiGrid > *:nth-child(4),
+body.light #view-leads .leadsSummaryGrid > *:nth-child(4){
+  background:
+    radial-gradient(260px 110px at 16% -10%, rgba(34,197,94,.27), transparent 68%),
+    linear-gradient(180deg,#ffffff 0%,#e7faef 100%)!important;
+  border-color:rgba(34,197,94,.25)!important;
+}
+
+/* Ícones das KPIs — alvo genérico + classes usadas no sistema */
+html.light #view-leads .kpiGrid > * .icon,
+html.light #view-leads .kpiGrid > * .kpiIcon,
+html.light #view-leads .kpiGrid > * [class*="Icon"],
+html.light #view-leads .leadsSummaryGrid > * .icon,
+html.light #view-leads .leadsSummaryGrid > * .kpiIcon,
+html.light #view-leads .leadsSummaryGrid > * [class*="Icon"],
+html.light #view-leads .leadStatIcon,
+html.light #view-leads .leadKpiIcon,
+:root.light #view-leads .kpiGrid > * .icon,
+:root.light #view-leads .kpiGrid > * .kpiIcon,
+:root.light #view-leads .kpiGrid > * [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid > * .icon,
+:root.light #view-leads .leadsSummaryGrid > * .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid > * [class*="Icon"],
+:root.light #view-leads .leadStatIcon,
+:root.light #view-leads .leadKpiIcon,
+body.light #view-leads .kpiGrid > * .icon,
+body.light #view-leads .kpiGrid > * .kpiIcon,
+body.light #view-leads .kpiGrid > * [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid > * .icon,
+body.light #view-leads .leadsSummaryGrid > * .kpiIcon,
+body.light #view-leads .leadsSummaryGrid > * [class*="Icon"],
+body.light #view-leads .leadStatIcon,
+body.light #view-leads .leadKpiIcon{
+  opacity:1!important;
+  filter:saturate(1.22) contrast(1.12)!important;
+  box-shadow:
+    0 8px 16px rgba(15,23,42,.07),
+    inset 0 1px 0 rgba(255,255,255,.74)!important;
+}
+
+/* Ícones por posição */
+html.light #view-leads .kpiGrid > *:nth-child(1) .icon,
+html.light #view-leads .kpiGrid > *:nth-child(1) .kpiIcon,
+html.light #view-leads .kpiGrid > *:nth-child(1) [class*="Icon"],
+html.light #view-leads .leadsSummaryGrid > *:nth-child(1) .icon,
+html.light #view-leads .leadsSummaryGrid > *:nth-child(1) .kpiIcon,
+html.light #view-leads .leadsSummaryGrid > *:nth-child(1) [class*="Icon"],
+:root.light #view-leads .kpiGrid > *:nth-child(1) .icon,
+:root.light #view-leads .kpiGrid > *:nth-child(1) .kpiIcon,
+:root.light #view-leads .kpiGrid > *:nth-child(1) [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(1) .icon,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(1) .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(1) [class*="Icon"],
+body.light #view-leads .kpiGrid > *:nth-child(1) .icon,
+body.light #view-leads .kpiGrid > *:nth-child(1) .kpiIcon,
+body.light #view-leads .kpiGrid > *:nth-child(1) [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid > *:nth-child(1) .icon,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(1) .kpiIcon,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(1) [class*="Icon"]{
+  background:#dbeafe!important;
+  border-color:#93c5fd!important;
+  color:#1d4ed8!important;
+}
+
+html.light #view-leads .kpiGrid > *:nth-child(2) .icon,
+html.light #view-leads .kpiGrid > *:nth-child(2) .kpiIcon,
+html.light #view-leads .kpiGrid > *:nth-child(2) [class*="Icon"],
+html.light #view-leads .leadsSummaryGrid > *:nth-child(2) .icon,
+html.light #view-leads .leadsSummaryGrid > *:nth-child(2) .kpiIcon,
+html.light #view-leads .leadsSummaryGrid > *:nth-child(2) [class*="Icon"],
+:root.light #view-leads .kpiGrid > *:nth-child(2) .icon,
+:root.light #view-leads .kpiGrid > *:nth-child(2) .kpiIcon,
+:root.light #view-leads .kpiGrid > *:nth-child(2) [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(2) .icon,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(2) .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(2) [class*="Icon"],
+body.light #view-leads .kpiGrid > *:nth-child(2) .icon,
+body.light #view-leads .kpiGrid > *:nth-child(2) .kpiIcon,
+body.light #view-leads .kpiGrid > *:nth-child(2) [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid > *:nth-child(2) .icon,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(2) .kpiIcon,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(2) [class*="Icon"]{
+  background:#ffe4e9!important;
+  border-color:#fda4af!important;
+  color:#e11d48!important;
+}
+
+html.light #view-leads .kpiGrid > *:nth-child(3) .icon,
+html.light #view-leads .kpiGrid > *:nth-child(3) .kpiIcon,
+html.light #view-leads .kpiGrid > *:nth-child(3) [class*="Icon"],
+html.light #view-leads .leadsSummaryGrid > *:nth-child(3) .icon,
+html.light #view-leads .leadsSummaryGrid > *:nth-child(3) .kpiIcon,
+html.light #view-leads .leadsSummaryGrid > *:nth-child(3) [class*="Icon"],
+:root.light #view-leads .kpiGrid > *:nth-child(3) .icon,
+:root.light #view-leads .kpiGrid > *:nth-child(3) .kpiIcon,
+:root.light #view-leads .kpiGrid > *:nth-child(3) [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(3) .icon,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(3) .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(3) [class*="Icon"],
+body.light #view-leads .kpiGrid > *:nth-child(3) .icon,
+body.light #view-leads .kpiGrid > *:nth-child(3) .kpiIcon,
+body.light #view-leads .kpiGrid > *:nth-child(3) [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid > *:nth-child(3) .icon,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(3) .kpiIcon,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(3) [class*="Icon"]{
+  background:#fef3c7!important;
+  border-color:#fbbf24!important;
+  color:#d97706!important;
+}
+
+html.light #view-leads .kpiGrid > *:nth-child(4) .icon,
+html.light #view-leads .kpiGrid > *:nth-child(4) .kpiIcon,
+html.light #view-leads .kpiGrid > *:nth-child(4) [class*="Icon"],
+html.light #view-leads .leadsSummaryGrid > *:nth-child(4) .icon,
+html.light #view-leads .leadsSummaryGrid > *:nth-child(4) .kpiIcon,
+html.light #view-leads .leadsSummaryGrid > *:nth-child(4) [class*="Icon"],
+:root.light #view-leads .kpiGrid > *:nth-child(4) .icon,
+:root.light #view-leads .kpiGrid > *:nth-child(4) .kpiIcon,
+:root.light #view-leads .kpiGrid > *:nth-child(4) [class*="Icon"],
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(4) .icon,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(4) .kpiIcon,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(4) [class*="Icon"],
+body.light #view-leads .kpiGrid > *:nth-child(4) .icon,
+body.light #view-leads .kpiGrid > *:nth-child(4) .kpiIcon,
+body.light #view-leads .kpiGrid > *:nth-child(4) [class*="Icon"],
+body.light #view-leads .leadsSummaryGrid > *:nth-child(4) .icon,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(4) .kpiIcon,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(4) [class*="Icon"]{
+  background:#dcfce7!important;
+  border-color:#86efac!important;
+  color:#16a34a!important;
+}
+</style>
+
+<style id="cronos-v94-leads-kpis-texto-visivel">
+/* === CRONOS V94 — texto das KPIs dos Leads no modo claro === */
+html.light #view-leads .leadsMetricCard span,
+:root.light #view-leads .leadsMetricCard span,
+body.light #view-leads .leadsMetricCard span{
+  color:#334155 !important;
+  font-weight:800 !important;
+}
+html.light #view-leads .leadsSummaryGrid > *:nth-child(1) span,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(1) span,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(1) span{ color:#1d4ed8 !important; }
+html.light #view-leads .leadsSummaryGrid > *:nth-child(2) span,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(2) span,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(2) span{ color:#be123c !important; }
+html.light #view-leads .leadsSummaryGrid > *:nth-child(3) span,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(3) span,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(3) span{ color:#b45309 !important; }
+html.light #view-leads .leadsSummaryGrid > *:nth-child(4) span,
+:root.light #view-leads .leadsSummaryGrid > *:nth-child(4) span,
+body.light #view-leads .leadsSummaryGrid > *:nth-child(4) span{ color:#15803d !important; }
+html.light #view-leads .leadsMetricCard small,
+:root.light #view-leads .leadsMetricCard small,
+body.light #view-leads .leadsMetricCard small{
+  color:#475569 !important;
+  opacity:1 !important;
+}
+</style>
+
+<style id="cronos-v95-funil-claro-base">
+/* === CRONOS V95 — Funil modo claro base === */
+/* Corrige colunas/cards dark no modo claro, KPIs translúcidas e branco durante rolagem. */
+
+html.light #view-kanban,
+:root.light #view-kanban,
+body.light #view-kanban{
+  --kan-light-text:#07152f;
+  --kan-light-muted:#465875;
+  --kan-light-line:rgba(37,99,235,.16);
+  --kan-light-line-strong:rgba(37,99,235,.26);
+  --kan-light-card:#ffffff;
+  --kan-light-soft:#f3f8ff;
+}
+
+/* Título */
+html.light #view-kanban .titleBlock h2,
+:root.light #view-kanban .titleBlock h2,
+body.light #view-kanban .titleBlock h2{
+  color:#07152f!important;
+}
+html.light #view-kanban .titleBlock p,
+:root.light #view-kanban .titleBlock p,
+body.light #view-kanban .titleBlock p{
+  color:#40516d!important;
+}
+
+/* KPIs superiores do Funil */
+html.light #view-kanban .kanbanMetricCard,
+:root.light #view-kanban .kanbanMetricCard,
+body.light #view-kanban .kanbanMetricCard{
+  background:
+    radial-gradient(260px 110px at 16% -10%, rgba(37,99,235,.16), transparent 68%),
+    linear-gradient(180deg,#ffffff 0%,#f3f8ff 100%)!important;
+  border:1px solid rgba(37,99,235,.18)!important;
+  box-shadow:
+    0 16px 30px rgba(15,23,42,.10),
+    0 7px 16px rgba(37,99,235,.065),
+    inset 0 0 0 1px rgba(255,255,255,.86)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+  opacity:1!important;
+}
+html.light #view-kanban .kanbanSummaryGrid > *:nth-child(1),
+:root.light #view-kanban .kanbanSummaryGrid > *:nth-child(1),
+body.light #view-kanban .kanbanSummaryGrid > *:nth-child(1){
+  background:radial-gradient(260px 110px at 16% -10%, rgba(37,99,235,.24), transparent 68%),linear-gradient(180deg,#ffffff,#eaf3ff)!important;
+  border-color:rgba(37,99,235,.24)!important;
+}
+html.light #view-kanban .kanbanSummaryGrid > *:nth-child(2),
+:root.light #view-kanban .kanbanSummaryGrid > *:nth-child(2),
+body.light #view-kanban .kanbanSummaryGrid > *:nth-child(2){
+  background:radial-gradient(260px 110px at 16% -10%, rgba(34,197,94,.23), transparent 68%),linear-gradient(180deg,#ffffff,#e7faef)!important;
+  border-color:rgba(34,197,94,.24)!important;
+}
+html.light #view-kanban .kanbanSummaryGrid > *:nth-child(3),
+:root.light #view-kanban .kanbanSummaryGrid > *:nth-child(3),
+body.light #view-kanban .kanbanSummaryGrid > *:nth-child(3){
+  background:radial-gradient(260px 110px at 16% -10%, rgba(245,158,11,.28), transparent 68%),linear-gradient(180deg,#ffffff,#fff1d6)!important;
+  border-color:rgba(245,158,11,.28)!important;
+}
+html.light #view-kanban .kanbanSummaryGrid > *:nth-child(4),
+:root.light #view-kanban .kanbanSummaryGrid > *:nth-child(4),
+body.light #view-kanban .kanbanSummaryGrid > *:nth-child(4){
+  background:radial-gradient(260px 110px at 16% -10%, rgba(14,165,233,.24), transparent 68%),linear-gradient(180deg,#ffffff,#e6faff)!important;
+  border-color:rgba(14,165,233,.25)!important;
+}
+html.light #view-kanban .kanbanMetricCard b,
+:root.light #view-kanban .kanbanMetricCard b,
+body.light #view-kanban .kanbanMetricCard b{
+  color:#07152f!important;
+}
+html.light #view-kanban .kanbanMetricCard span,
+:root.light #view-kanban .kanbanMetricCard span,
+body.light #view-kanban .kanbanMetricCard span{
+  color:#1e293b!important;
+  font-weight:900!important;
+}
+html.light #view-kanban .kanbanMetricCard small,
+:root.light #view-kanban .kanbanMetricCard small,
+body.light #view-kanban .kanbanMetricCard small{
+  color:#475569!important;
+  opacity:1!important;
+}
+html.light #view-kanban .kanbanMetricIcon,
+:root.light #view-kanban .kanbanMetricIcon,
+body.light #view-kanban .kanbanMetricIcon{
+  opacity:1!important;
+  filter:saturate(1.2) contrast(1.08)!important;
+  box-shadow:0 8px 16px rgba(15,23,42,.07), inset 0 1px 0 rgba(255,255,255,.74)!important;
+}
+html.light #view-kanban .kanbanMetricIcon.blue,
+:root.light #view-kanban .kanbanMetricIcon.blue,
+body.light #view-kanban .kanbanMetricIcon.blue{
+  background:#dbeafe!important;border-color:#93c5fd!important;color:#1d4ed8!important;
+}
+html.light #view-kanban .kanbanMetricIcon.green,
+:root.light #view-kanban .kanbanMetricIcon.green,
+body.light #view-kanban .kanbanMetricIcon.green{
+  background:#dcfce7!important;border-color:#86efac!important;color:#16a34a!important;
+}
+html.light #view-kanban .kanbanMetricIcon.amber,
+:root.light #view-kanban .kanbanMetricIcon.amber,
+body.light #view-kanban .kanbanMetricIcon.amber{
+  background:#fef3c7!important;border-color:#fbbf24!important;color:#d97706!important;
+}
+html.light #view-kanban .kanbanMetricIcon.cyan,
+:root.light #view-kanban .kanbanMetricIcon.cyan,
+body.light #view-kanban .kanbanMetricIcon.cyan{
+  background:#cffafe!important;border-color:#67e8f9!important;color:#0891b2!important;
+}
+
+/* Painel do funil */
+html.light #view-kanban .kanbanPanel,
+:root.light #view-kanban .kanbanPanel,
+body.light #view-kanban .kanbanPanel{
+  background:
+    radial-gradient(720px 260px at 16% 0%, rgba(37,99,235,.095), transparent 70%),
+    linear-gradient(180deg,rgba(255,255,255,.98),rgba(247,251,255,.94))!important;
+  border:1px solid rgba(37,99,235,.15)!important;
+  box-shadow:0 18px 38px rgba(15,23,42,.09), inset 0 1px 0 rgba(255,255,255,.86)!important;
+}
+html.light #view-kanban .kanbanPanelHead strong,
+:root.light #view-kanban .kanbanPanelHead strong,
+body.light #view-kanban .kanbanPanelHead strong{
+  color:#07152f!important;
+}
+html.light #view-kanban .kanbanPanelHead .muted,
+:root.light #view-kanban .kanbanPanelHead .muted,
+body.light #view-kanban .kanbanPanelHead .muted{
+  color:#40516d!important;
+  opacity:1!important;
+}
+html.light #view-kanban .kanbanHint,
+:root.light #view-kanban .kanbanHint,
+body.light #view-kanban .kanbanHint{
+  background:#e0f7ff!important;
+  border-color:rgba(14,165,233,.26)!important;
+  color:#0e7490!important;
+}
+
+/* Barras de rolagem do Kanban no claro */
+html.light #view-kanban .kanbanTopScroll,
+:root.light #view-kanban .kanbanTopScroll,
+body.light #view-kanban .kanbanTopScroll{
+  background:#d7e4f2!important;
+  border-color:rgba(37,99,235,.18)!important;
+  scrollbar-color:rgba(14,165,233,.78) rgba(203,213,225,.75)!important;
+}
+html.light #view-kanban .kanbanTopScroll::-webkit-scrollbar-track,
+:root.light #view-kanban .kanbanTopScroll::-webkit-scrollbar-track,
+body.light #view-kanban .kanbanTopScroll::-webkit-scrollbar-track{
+  background:#d7e4f2!important;
+}
+html.light #view-kanban .kanbanTopScroll::-webkit-scrollbar-thumb,
+:root.light #view-kanban .kanbanTopScroll::-webkit-scrollbar-thumb,
+body.light #view-kanban .kanbanTopScroll::-webkit-scrollbar-thumb{
+  background:linear-gradient(90deg,#1677ff,#19c6ff,#2ee6a6)!important;
+  border-color:#d7e4f2!important;
+}
+html.light #view-kanban .kanbanScrollArea,
+:root.light #view-kanban .kanbanScrollArea,
+body.light #view-kanban .kanbanScrollArea{
+  background:transparent!important;
+  scrollbar-color:rgba(14,165,233,.58) transparent!important;
+}
+
+/* Colunas */
+html.light #view-kanban .kanColV11,
+html.light #view-kanban .kanCol,
+:root.light #view-kanban .kanColV11,
+:root.light #view-kanban .kanCol,
+body.light #view-kanban .kanColV11,
+body.light #view-kanban .kanCol{
+  background:
+    linear-gradient(180deg,#ffffff 0%,#f4f8fd 100%)!important;
+  border:1px solid rgba(37,99,235,.17)!important;
+  box-shadow:0 12px 24px rgba(15,23,42,.075), inset 0 1px 0 rgba(255,255,255,.86)!important;
+}
+html.light #view-kanban .kanColV11 .kanHead,
+html.light #view-kanban .kanHead,
+:root.light #view-kanban .kanColV11 .kanHead,
+:root.light #view-kanban .kanHead,
+body.light #view-kanban .kanColV11 .kanHead,
+body.light #view-kanban .kanHead{
+  background:
+    radial-gradient(240px 120px at 12% 0%,rgba(37,99,235,.12),transparent 72%),
+    linear-gradient(180deg,#f8fbff,#eef6ff)!important;
+  border-bottom:1px solid rgba(37,99,235,.14)!important;
+}
+html.light #view-kanban .kanHeadMain b,
+:root.light #view-kanban .kanHeadMain b,
+body.light #view-kanban .kanHeadMain b{
+  color:#07152f!important;
+}
+html.light #view-kanban .kanHeadMain span,
+:root.light #view-kanban .kanHeadMain span,
+body.light #view-kanban .kanHeadMain span{
+  color:#52627a!important;
+}
+html.light #view-kanban .kanHeadValue,
+:root.light #view-kanban .kanHeadValue,
+body.light #view-kanban .kanHeadValue{
+  background:#e0f7ff!important;
+  border-color:rgba(14,165,233,.28)!important;
+  color:#0e7490!important;
+}
+html.light #view-kanban .kanHeadAlert,
+:root.light #view-kanban .kanHeadAlert,
+body.light #view-kanban .kanHeadAlert{
+  background:#fff1d6!important;
+  border-color:rgba(245,158,11,.28)!important;
+  color:#b45309!important;
+}
+html.light #view-kanban .kanColV11 .kanList,
+html.light #view-kanban .kanList,
+:root.light #view-kanban .kanColV11 .kanList,
+:root.light #view-kanban .kanList,
+body.light #view-kanban .kanColV11 .kanList,
+body.light #view-kanban .kanList{
+  background:linear-gradient(180deg,#f8fbff,#f1f6fc)!important;
+  scrollbar-color:rgba(14,165,233,.50) transparent!important;
+}
+html.light #view-kanban .kanColV11 .kanList::-webkit-scrollbar-thumb,
+:root.light #view-kanban .kanColV11 .kanList::-webkit-scrollbar-thumb,
+body.light #view-kanban .kanColV11 .kanList::-webkit-scrollbar-thumb{
+  background:rgba(14,165,233,.45)!important;
+}
+
+/* Cards internos */
+html.light #view-kanban .kanCardV11,
+html.light #view-kanban .kanCard,
+:root.light #view-kanban .kanCardV11,
+:root.light #view-kanban .kanCard,
+body.light #view-kanban .kanCardV11,
+body.light #view-kanban .kanCard{
+  background:
+    radial-gradient(240px 90px at 12% -8%, rgba(37,99,235,.10), transparent 70%),
+    linear-gradient(180deg,#ffffff 0%,#f7fbff 100%)!important;
+  border:1px solid rgba(37,99,235,.18)!important;
+  box-shadow:0 10px 20px rgba(15,23,42,.08), inset 0 1px 0 rgba(255,255,255,.86)!important;
+  color:#07152f!important;
+}
+html.light #view-kanban .kanCardName,
+:root.light #view-kanban .kanCardName,
+body.light #view-kanban .kanCardName{
+  color:#07152f!important;
+}
+html.light #view-kanban .kanPhone,
+:root.light #view-kanban .kanPhone,
+body.light #view-kanban .kanPhone{
+  color:#52627a!important;
+}
+html.light #view-kanban .kanPhone svg,
+:root.light #view-kanban .kanPhone svg,
+body.light #view-kanban .kanPhone svg{
+  color:#2563eb!important;
+}
+html.light #view-kanban .kanMiniLine,
+:root.light #view-kanban .kanMiniLine,
+body.light #view-kanban .kanMiniLine{
+  color:#17233b!important;
+}
+html.light #view-kanban .kanMiniLine svg,
+:root.light #view-kanban .kanMiniLine svg,
+body.light #view-kanban .kanMiniLine svg{
+  color:#0891b2!important;
+}
+html.light #view-kanban .kanMoney,
+:root.light #view-kanban .kanMoney,
+body.light #view-kanban .kanMoney{
+  color:#475569!important;
+}
+html.light #view-kanban .kanMoney b,
+:root.light #view-kanban .kanMoney b,
+body.light #view-kanban .kanMoney b{
+  color:#07152f!important;
+}
+html.light #view-kanban .kanMoney .open,
+html.light #view-kanban .kanMoney .open b,
+:root.light #view-kanban .kanMoney .open,
+:root.light #view-kanban .kanMoney .open b,
+body.light #view-kanban .kanMoney .open,
+body.light #view-kanban .kanMoney .open b{
+  color:#dc2626!important;
+}
+html.light #view-kanban .kanMoney .ok,
+html.light #view-kanban .kanMoney .ok b,
+:root.light #view-kanban .kanMoney .ok,
+:root.light #view-kanban .kanMoney .ok b,
+body.light #view-kanban .kanMoney .ok,
+body.light #view-kanban .kanMoney .ok b{
+  color:#16a34a!important;
+}
+
+/* Agendamento dentro do card */
+html.light #view-kanban .kanAppointment,
+:root.light #view-kanban .kanAppointment,
+body.light #view-kanban .kanAppointment{
+  background:#f3f8ff!important;
+  border-color:rgba(37,99,235,.16)!important;
+}
+html.light #view-kanban .kanAppointment small,
+:root.light #view-kanban .kanAppointment small,
+body.light #view-kanban .kanAppointment small{
+  color:#64748b!important;
+}
+html.light #view-kanban .kanAppointment b,
+:root.light #view-kanban .kanAppointment b,
+body.light #view-kanban .kanAppointment b{
+  color:#07152f!important;
+}
+html.light #view-kanban .kanAppointment svg,
+:root.light #view-kanban .kanAppointment svg,
+body.light #view-kanban .kanAppointment svg{
+  color:#0891b2!important;
+}
+html.light #view-kanban .kanAppointment.late em,
+:root.light #view-kanban .kanAppointment.late em,
+body.light #view-kanban .kanAppointment.late em{
+  color:#b91c1c!important;background:#fee2e2!important;border-color:#fecaca!important;
+}
+
+/* Botões internos */
+html.light #view-kanban .kanOpenBtn,
+:root.light #view-kanban .kanOpenBtn,
+body.light #view-kanban .kanOpenBtn{
+  background:linear-gradient(135deg,#2563eb,#0ea5e9)!important;
+  border-color:rgba(37,99,235,.28)!important;
+  color:#ffffff!important;
+  box-shadow:0 8px 16px rgba(37,99,235,.16)!important;
+}
+html.light #view-kanban .kanFichaBtn,
+:root.light #view-kanban .kanFichaBtn,
+body.light #view-kanban .kanFichaBtn{
+  background:#eaf3ff!important;
+  border-color:rgba(37,99,235,.22)!important;
+  color:#1d4ed8!important;
+}
+html.light #view-kanban .kanWhatsBtn,
+:root.light #view-kanban .kanWhatsBtn,
+body.light #view-kanban .kanWhatsBtn{
+  background:linear-gradient(135deg,#16a34a,#22c55e)!important;
+  border-color:rgba(22,163,74,.36)!important;
+  color:#ffffff!important;
+  box-shadow:0 8px 16px rgba(22,163,74,.16)!important;
+}
+
+/* Estados vazios */
+html.light #view-kanban .kanHiddenNotice,
+html.light #view-kanban .kanEmptyState,
+:root.light #view-kanban .kanHiddenNotice,
+:root.light #view-kanban .kanEmptyState,
+body.light #view-kanban .kanHiddenNotice,
+body.light #view-kanban .kanEmptyState{
+  background:#f8fbff!important;
+  border-color:rgba(37,99,235,.18)!important;
+  color:#64748b!important;
+}
+
+/* Corrige o branco durante rolagem: o otimizador não deve apagar o visual do Funil. */
+html.light body.cronos-is-scrolling #view-kanban .kanbanPanel,
+:root.light body.cronos-is-scrolling #view-kanban .kanbanPanel,
+body.light.cronos-is-scrolling #view-kanban .kanbanPanel{
+  background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(247,251,255,.94))!important;
+  box-shadow:0 18px 38px rgba(15,23,42,.09), inset 0 1px 0 rgba(255,255,255,.86)!important;
+}
+html.light body.cronos-is-scrolling #view-kanban .kanColV11,
+html.light body.cronos-is-scrolling #view-kanban .kanCol,
+:root.light body.cronos-is-scrolling #view-kanban .kanColV11,
+:root.light body.cronos-is-scrolling #view-kanban .kanCol,
+body.light.cronos-is-scrolling #view-kanban .kanColV11,
+body.light.cronos-is-scrolling #view-kanban .kanCol{
+  background:linear-gradient(180deg,#ffffff 0%,#f4f8fd 100%)!important;
+  box-shadow:0 12px 24px rgba(15,23,42,.075), inset 0 1px 0 rgba(255,255,255,.86)!important;
+}
+html.light body.cronos-is-scrolling #view-kanban .kanHead,
+:root.light body.cronos-is-scrolling #view-kanban .kanHead,
+body.light.cronos-is-scrolling #view-kanban .kanHead{
+  background:linear-gradient(180deg,#f8fbff,#eef6ff)!important;
+}
+html.light body.cronos-is-scrolling #view-kanban .kanList,
+:root.light body.cronos-is-scrolling #view-kanban .kanList,
+body.light.cronos-is-scrolling #view-kanban .kanList{
+  background:linear-gradient(180deg,#f8fbff,#f1f6fc)!important;
+}
+html.light body.cronos-is-scrolling #view-kanban .kanCardV11,
+html.light body.cronos-is-scrolling #view-kanban .kanCard,
+:root.light body.cronos-is-scrolling #view-kanban .kanCardV11,
+:root.light body.cronos-is-scrolling #view-kanban .kanCard,
+body.light.cronos-is-scrolling #view-kanban .kanCardV11,
+body.light.cronos-is-scrolling #view-kanban .kanCard{
+  background:linear-gradient(180deg,#ffffff 0%,#f7fbff 100%)!important;
+  box-shadow:0 10px 20px rgba(15,23,42,.08), inset 0 1px 0 rgba(255,255,255,.86)!important;
+}
+</style>
+
+<style id="cronos-v102-leads-solto-fix">
+/* === CRONOS V102 — Leads claro: remove bloco colado e solta os cards === */
+
+/* Nada de 'cartolina branca' atrás do módulo inteiro */
+html.light #view-leads,
+:root.light #view-leads,
+body.light #view-leads{
+  background:transparent!important;
+  box-shadow:none!important;
+  border:none!important;
+}
+
+/* Topo da seção e KPIs ficam integrados ao fundo da página */
+html.light #view-leads .topbar,
+html.light #view-leads .titleBlock,
+html.light #view-leads .leadsSummaryGrid,
+:root.light #view-leads .topbar,
+:root.light #view-leads .titleBlock,
+:root.light #view-leads .leadsSummaryGrid,
+body.light #view-leads .topbar,
+body.light #view-leads .titleBlock,
+body.light #view-leads .leadsSummaryGrid{
+  background:transparent!important;
+  box-shadow:none!important;
+}
+
+/* O wrapper pai não deve virar um card fantasma; só os cards internos contam */
+html.light #view-leads .leadsListPanel,
+html.light #view-leads .card.leadsListPanel,
+:root.light #view-leads .leadsListPanel,
+:root.light #view-leads .card.leadsListPanel,
+body.light #view-leads .leadsListPanel,
+body.light #view-leads .card.leadsListPanel{
+  background:transparent!important;
+  border-color:transparent!important;
+  box-shadow:none!important;
+  padding:0!important;
+}
+
+html.light #view-leads .leadsCardsWrap,
+:root.light #view-leads .leadsCardsWrap,
+body.light #view-leads .leadsCardsWrap{
+  margin-top:12px!important;
+  background:transparent!important;
+}
+
+/* Card do lead segue solto, individual e destacado */
+html.light #view-leads .leadCardV2,
+:root.light #view-leads .leadCardV2,
+body.light #view-leads .leadCardV2{
+  background:
+    radial-gradient(620px 180px at 25% -18%, rgba(37,99,235,.09), transparent 70%),
+    radial-gradient(520px 170px at 92% 0%, rgba(20,184,166,.075), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.985), rgba(247,251,255,.955))!important;
+}
+
+/* Rodapé vira peça própria, não filho visual do card do paciente */
+html.light #view-leads .leadsPaginationModern,
+:root.light #view-leads .leadsPaginationModern,
+body.light #view-leads .leadsPaginationModern{
+  margin-top:14px!important;
+  padding:12px 14px!important;
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(247,251,255,.93))!important;
+  border:1px solid rgba(37,99,235,.14)!important;
+  border-radius:16px!important;
+  box-shadow:0 10px 22px rgba(15,23,42,.05), inset 0 0 0 1px rgba(255,255,255,.72)!important;
+}
+
+html.light #view-leads .leadsPaginationInfo,
+html.light #view-leads .leadsPageSize,
+html.light #view-leads .leadsPageTotal,
+:root.light #view-leads .leadsPaginationInfo,
+:root.light #view-leads .leadsPageSize,
+:root.light #view-leads .leadsPageTotal,
+body.light #view-leads .leadsPaginationInfo,
+body.light #view-leads .leadsPageSize,
+body.light #view-leads .leadsPageTotal{
+  color:#4b5f7f!important;
+}
+
+/* Durante a rolagem, sem fundo branco aparecendo atrás do módulo */
+html.light body.cronos-is-scrolling #view-leads,
+:root.light body.cronos-is-scrolling #view-leads,
+body.light.cronos-is-scrolling #view-leads{
+  background:transparent!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadsListPanel,
+html.light body.cronos-is-scrolling #view-leads .card.leadsListPanel,
+:root.light body.cronos-is-scrolling #view-leads .leadsListPanel,
+:root.light body.cronos-is-scrolling #view-leads .card.leadsListPanel,
+body.light.cronos-is-scrolling #view-leads .leadsListPanel,
+body.light.cronos-is-scrolling #view-leads .card.leadsListPanel{
+  background:transparent!important;
+  background-image:none!important;
+  box-shadow:none!important;
+  border-color:transparent!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadsCardsWrap,
+:root.light body.cronos-is-scrolling #view-leads .leadsCardsWrap,
+body.light.cronos-is-scrolling #view-leads .leadsCardsWrap{
+  background:transparent!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadCardV2,
+:root.light body.cronos-is-scrolling #view-leads .leadCardV2,
+body.light.cronos-is-scrolling #view-leads .leadCardV2{
+  background:
+    radial-gradient(620px 180px at 25% -18%, rgba(37,99,235,.09), transparent 70%),
+    radial-gradient(520px 170px at 92% 0%, rgba(20,184,166,.075), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.985), rgba(247,251,255,.955))!important;
+  box-shadow:0 16px 34px rgba(15,23,42,.105), 0 8px 18px rgba(37,99,235,.06), inset 0 0 0 1px rgba(255,255,255,.82)!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadsPaginationModern,
+:root.light body.cronos-is-scrolling #view-leads .leadsPaginationModern,
+body.light.cronos-is-scrolling #view-leads .leadsPaginationModern{
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(247,251,255,.93))!important;
+  box-shadow:0 10px 22px rgba(15,23,42,.05), inset 0 0 0 1px rgba(255,255,255,.72)!important;
+  border-color:rgba(37,99,235,.14)!important;
+}
+</style>
+
+<style id="cronos-v103-leads-card-mae">
+/* === CRONOS V103 — Leads claro: card-mãe de volta, sem cartolina branca === */
+
+html.light #view-leads,
+:root.light #view-leads,
+body.light #view-leads{
+  background:transparent!important;
+  border:none!important;
+  box-shadow:none!important;
+}
+
+html.light #view-leads .leadsListPanel,
+html.light #view-leads .card.leadsListPanel,
+:root.light #view-leads .leadsListPanel,
+:root.light #view-leads .card.leadsListPanel,
+body.light #view-leads .leadsListPanel,
+body.light #view-leads .card.leadsListPanel{
+  margin-top:16px!important;
+  padding:14px!important;
+  border-radius:24px!important;
+  background:
+    radial-gradient(760px 240px at 12% 0%, rgba(37,99,235,.075), transparent 70%),
+    radial-gradient(680px 250px at 100% 100%, rgba(20,184,166,.075), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.58), rgba(239,249,247,.52))!important;
+  border:1px solid rgba(37,99,235,.12)!important;
+  box-shadow:0 14px 30px rgba(15,23,42,.045), inset 0 1px 0 rgba(255,255,255,.62)!important;
+}
+
+html.light #view-leads .leadsCardsWrap,
+:root.light #view-leads .leadsCardsWrap,
+body.light #view-leads .leadsCardsWrap{
+  margin-top:0!important;
+  background:transparent!important;
+}
+
+html.light #view-leads .leadsCards,
+:root.light #view-leads .leadsCards,
+body.light #view-leads .leadsCards{
+  background:transparent!important;
+  gap:14px!important;
+}
+
+html.light #view-leads .leadCardV2,
+:root.light #view-leads .leadCardV2,
+body.light #view-leads .leadCardV2{
+  width:auto!important;
+  max-width:none!important;
+  margin:0!important;
+  border-radius:22px!important;
+  background:
+    radial-gradient(520px 160px at 22% -12%, rgba(37,99,235,.075), transparent 72%),
+    radial-gradient(460px 150px at 92% 0%, rgba(20,184,166,.055), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.985), rgba(247,251,255,.96))!important;
+  border:1px solid rgba(37,99,235,.12)!important;
+  box-shadow:0 10px 22px rgba(15,23,42,.07), inset 0 1px 0 rgba(255,255,255,.80)!important;
+}
+
+html.light #view-leads .leadsPaginationModern,
+:root.light #view-leads .leadsPaginationModern,
+body.light #view-leads .leadsPaginationModern{
+  margin-top:14px!important;
+  padding:12px 14px!important;
+  border-radius:18px!important;
+  background:linear-gradient(180deg, rgba(255,255,255,.80), rgba(247,251,255,.70))!important;
+  border:1px solid rgba(37,99,235,.10)!important;
+  box-shadow:0 8px 18px rgba(15,23,42,.04), inset 0 1px 0 rgba(255,255,255,.68)!important;
+}
+
+html.light #view-leads .leadsPaginationInfo,
+html.light #view-leads .leadsPageSize,
+html.light #view-leads .leadsPageTotal,
+:root.light #view-leads .leadsPaginationInfo,
+:root.light #view-leads .leadsPageSize,
+:root.light #view-leads .leadsPageTotal,
+body.light #view-leads .leadsPaginationInfo,
+body.light #view-leads .leadsPageSize,
+body.light #view-leads .leadsPageTotal{
+  color:#475569!important;
+  opacity:1!important;
+}
+
+html.light #view-leads .leadsPaginationControls .btn,
+:root.light #view-leads .leadsPaginationControls .btn,
+body.light #view-leads .leadsPaginationControls .btn{
+  background:#ffffff!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  color:#1d4ed8!important;
+  box-shadow:0 6px 14px rgba(15,23,42,.045)!important;
+}
+
+html.light #view-leads .leadsPaginationControls .leadsPageActive,
+html.light #view-leads .leadsPaginationControls .btn.active,
+:root.light #view-leads .leadsPaginationControls .leadsPageActive,
+:root.light #view-leads .leadsPaginationControls .btn.active,
+body.light #view-leads .leadsPaginationControls .leadsPageActive,
+body.light #view-leads .leadsPaginationControls .btn.active{
+  background:linear-gradient(135deg,#2563eb,#14b8d6)!important;
+  color:#ffffff!important;
+  border-color:rgba(37,99,235,.28)!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadsListPanel,
+html.light body.cronos-is-scrolling #view-leads .card.leadsListPanel,
+:root.light body.cronos-is-scrolling #view-leads .leadsListPanel,
+:root.light body.cronos-is-scrolling #view-leads .card.leadsListPanel,
+body.light.cronos-is-scrolling #view-leads .leadsListPanel,
+body.light.cronos-is-scrolling #view-leads .card.leadsListPanel{
+  background:
+    radial-gradient(760px 240px at 12% 0%, rgba(37,99,235,.075), transparent 70%),
+    radial-gradient(680px 250px at 100% 100%, rgba(20,184,166,.075), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.58), rgba(239,249,247,.52))!important;
+  border-color:rgba(37,99,235,.12)!important;
+  box-shadow:0 14px 30px rgba(15,23,42,.045), inset 0 1px 0 rgba(255,255,255,.62)!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadCardV2,
+:root.light body.cronos-is-scrolling #view-leads .leadCardV2,
+body.light.cronos-is-scrolling #view-leads .leadCardV2{
+  background:
+    radial-gradient(520px 160px at 22% -12%, rgba(37,99,235,.075), transparent 72%),
+    radial-gradient(460px 150px at 92% 0%, rgba(20,184,166,.055), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.985), rgba(247,251,255,.96))!important;
+  box-shadow:0 10px 22px rgba(15,23,42,.07), inset 0 1px 0 rgba(255,255,255,.80)!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadsPaginationModern,
+:root.light body.cronos-is-scrolling #view-leads .leadsPaginationModern,
+body.light.cronos-is-scrolling #view-leads .leadsPaginationModern{
+  background:linear-gradient(180deg, rgba(255,255,255,.80), rgba(247,251,255,.70))!important;
+  border-color:rgba(37,99,235,.10)!important;
+  box-shadow:0 8px 18px rgba(15,23,42,.04), inset 0 1px 0 rgba(255,255,255,.68)!important;
+}
+</style>
+
+<style id="cronos-v104-leads-alinhamento-card-mae">
+/* === CRONOS V104 — Leads claro: alinhamento fino com o modo escuro === */
+/* Mantém o card-mãe, mas usa o mesmo respiro/ritmo visual do tema escuro. */
+
+html.light #view-leads .leadsListPanel,
+html.light #view-leads .card.leadsListPanel,
+:root.light #view-leads .leadsListPanel,
+:root.light #view-leads .card.leadsListPanel,
+body.light #view-leads .leadsListPanel,
+body.light #view-leads .card.leadsListPanel{
+  padding:10px!important;
+  border-radius:22px!important;
+}
+
+html.light #view-leads .leadsCards,
+:root.light #view-leads .leadsCards,
+body.light #view-leads .leadsCards{
+  gap:10px!important;
+}
+
+html.light #view-leads .leadCardV2,
+:root.light #view-leads .leadCardV2,
+body.light #view-leads .leadCardV2{
+  border-radius:18px!important;
+  padding:13px 14px 12px 20px!important;
+}
+
+/* A paginação segue dentro do card-mãe, mas respeitando o mesmo ritmo vertical dos cards. */
+html.light #view-leads .leadsPaginationModern,
+:root.light #view-leads .leadsPaginationModern,
+body.light #view-leads .leadsPaginationModern{
+  margin-top:10px!important;
+  border-radius:18px!important;
+}
+
+/* Mantém as mesmas medidas durante a rolagem para não dar salto visual. */
+html.light body.cronos-is-scrolling #view-leads .leadsListPanel,
+html.light body.cronos-is-scrolling #view-leads .card.leadsListPanel,
+:root.light body.cronos-is-scrolling #view-leads .leadsListPanel,
+:root.light body.cronos-is-scrolling #view-leads .card.leadsListPanel,
+body.light.cronos-is-scrolling #view-leads .leadsListPanel,
+body.light.cronos-is-scrolling #view-leads .card.leadsListPanel{
+  padding:10px!important;
+  border-radius:22px!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadsCards,
+:root.light body.cronos-is-scrolling #view-leads .leadsCards,
+body.light.cronos-is-scrolling #view-leads .leadsCards{
+  gap:10px!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadCardV2,
+:root.light body.cronos-is-scrolling #view-leads .leadCardV2,
+body.light.cronos-is-scrolling #view-leads .leadCardV2{
+  border-radius:18px!important;
+  padding:13px 14px 12px 20px!important;
+}
+
+html.light body.cronos-is-scrolling #view-leads .leadsPaginationModern,
+:root.light body.cronos-is-scrolling #view-leads .leadsPaginationModern,
+body.light.cronos-is-scrolling #view-leads .leadsPaginationModern{
+  margin-top:10px!important;
+  border-radius:18px!important;
+}
+</style>
+
+
+<style id="cronos-v105-recebimentos-claro-alinhado">
+
+/* === CRONOS V105 — Recebimentos claro alinhado ao modo escuro === */
+/* Modo claro com a mesma hierarquia do escuro: card-mãe visível, cards internos com profundidade e abas mais limpas. */
+html.light #view-installments,
+:root.light #view-installments,
+body.light #view-installments{
+  --recv-light-line: rgba(37,99,235,.14);
+  --recv-light-line-strong: rgba(37,99,235,.22);
+  --recv-light-surface: rgba(255,255,255,.88);
+  --recv-light-surface-2: rgba(248,252,255,.92);
+  --recv-light-text: #0f172a;
+  --recv-light-muted: #475569;
+  --recv-light-shadow: 0 16px 34px rgba(15,23,42,.075);
+}
+
+html.light #view-installments .receivablesHero,
+:root.light #view-installments .receivablesHero,
+body.light #view-installments .receivablesHero{
+  background:
+    radial-gradient(780px 260px at 10% -18%, rgba(37,99,235,.18), transparent 72%),
+    radial-gradient(620px 220px at 92% 0%, rgba(20,184,166,.13), transparent 74%),
+    linear-gradient(135deg, rgba(255,255,255,.94), rgba(239,248,255,.88) 56%, rgba(232,251,246,.82)) !important;
+  border:1px solid rgba(37,99,235,.16) !important;
+  box-shadow:0 18px 38px rgba(15,23,42,.075), inset 0 1px 0 rgba(255,255,255,.74) !important;
+  color:var(--recv-light-text) !important;
+}
+
+html.light #view-installments .receivablesTitleBlock h2,
+:root.light #view-installments .receivablesTitleBlock h2,
+body.light #view-installments .receivablesTitleBlock h2{
+  color:#0f172a !important;
+}
+html.light #view-installments .receivablesTitleBlock p,
+:root.light #view-installments .receivablesTitleBlock p,
+body.light #view-installments .receivablesTitleBlock p,
+html.light #view-installments .muted,
+:root.light #view-installments .muted,
+body.light #view-installments .muted{
+  color:#475569 !important;
+}
+
+html.light #view-installments .moduleIcon.moneyIcon,
+:root.light #view-installments .moduleIcon.moneyIcon,
+body.light #view-installments .moduleIcon.moneyIcon{
+  background:
+    radial-gradient(circle at 28% 18%, rgba(34,211,238,.62), transparent 54%),
+    linear-gradient(135deg, #2563eb, #0ea5e9 54%, #14b8d6) !important;
+  border-color:rgba(37,99,235,.24) !important;
+  box-shadow:0 14px 28px rgba(37,99,235,.20), 0 0 0 6px rgba(37,99,235,.055) !important;
+}
+
+html.light #view-installments .receivablesFilters label,
+:root.light #view-installments .receivablesFilters label,
+body.light #view-installments .receivablesFilters label{
+  color:#334155 !important;
+  font-weight:750 !important;
+}
+html.light #view-installments .receivablesFilters input,
+html.light #view-installments .receivablesFilters select,
+:root.light #view-installments .receivablesFilters input,
+:root.light #view-installments .receivablesFilters select,
+body.light #view-installments .receivablesFilters input,
+body.light #view-installments .receivablesFilters select{
+  background:rgba(255,255,255,.78) !important;
+  border-color:rgba(37,99,235,.15) !important;
+  color:#0f172a !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.72), 0 8px 18px rgba(15,23,42,.035) !important;
+}
+html.light #view-installments .receivablesFilters input::placeholder,
+:root.light #view-installments .receivablesFilters input::placeholder,
+body.light #view-installments .receivablesFilters input::placeholder{
+  color:#64748b !important;
+}
+html.light #view-installments #btnInstRefresh,
+:root.light #view-installments #btnInstRefresh,
+body.light #view-installments #btnInstRefresh{
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(241,248,255,.92)) !important;
+  border-color:rgba(37,99,235,.18) !important;
+  color:#1d4ed8 !important;
+  box-shadow:0 10px 20px rgba(15,23,42,.055) !important;
+}
+
+html.light #view-installments .receivableKpi,
+:root.light #view-installments .receivableKpi,
+body.light #view-installments .receivableKpi{
+  background:
+    radial-gradient(320px 130px at 10% -12%, rgba(37,99,235,.085), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.96), rgba(248,252,255,.90)) !important;
+  border:1px solid rgba(37,99,235,.13) !important;
+  box-shadow:0 14px 28px rgba(15,23,42,.065), inset 0 1px 0 rgba(255,255,255,.76) !important;
+  color:#0f172a !important;
+}
+html.light #view-installments .receivableKpi .kpiVal,
+:root.light #view-installments .receivableKpi .kpiVal,
+body.light #view-installments .receivableKpi .kpiVal{
+  color:#0f172a !important;
+  -webkit-text-fill-color:#0f172a !important;
+}
+html.light #view-installments .receivableKpi .kpiMiniIcon,
+:root.light #view-installments .receivableKpi .kpiMiniIcon,
+body.light #view-installments .receivableKpi .kpiMiniIcon{
+  background:rgba(37,99,235,.075) !important;
+  border-color:rgba(37,99,235,.16) !important;
+  color:#2563eb !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.72) !important;
+}
+html.light #view-installments .receivableKpi.is-received,
+:root.light #view-installments .receivableKpi.is-received,
+body.light #view-installments .receivableKpi.is-received{
+  background:radial-gradient(320px 130px at 12% -10%, rgba(34,197,94,.13), transparent 72%), linear-gradient(180deg, rgba(255,255,255,.96), rgba(239,253,246,.90)) !important;
+  border-color:rgba(22,163,74,.18) !important;
+}
+html.light #view-installments .receivableKpi.is-late,
+:root.light #view-installments .receivableKpi.is-late,
+body.light #view-installments .receivableKpi.is-late{
+  background:radial-gradient(320px 130px at 12% -10%, rgba(244,63,94,.13), transparent 72%), linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,241,244,.90)) !important;
+  border-color:rgba(225,29,72,.19) !important;
+}
+html.light #view-installments .receivableKpi.is-soon,
+:root.light #view-installments .receivableKpi.is-soon,
+body.light #view-installments .receivableKpi.is-soon{
+  background:radial-gradient(320px 130px at 12% -10%, rgba(245,158,11,.16), transparent 72%), linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,250,235,.91)) !important;
+  border-color:rgba(217,119,6,.20) !important;
+}
+html.light #view-installments .receivableKpi.is-future,
+:root.light #view-installments .receivableKpi.is-future,
+body.light #view-installments .receivableKpi.is-future{
+  background:radial-gradient(320px 130px at 12% -10%, rgba(14,165,233,.13), transparent 72%), linear-gradient(180deg, rgba(255,255,255,.96), rgba(239,248,255,.91)) !important;
+  border-color:rgba(14,165,233,.18) !important;
+}
+html.light #view-installments .receivableKpi.is-received .kpiMiniIcon,
+:root.light #view-installments .receivableKpi.is-received .kpiMiniIcon,
+body.light #view-installments .receivableKpi.is-received .kpiMiniIcon{color:#15803d !important;background:rgba(34,197,94,.10) !important;border-color:rgba(22,163,74,.20) !important;}
+html.light #view-installments .receivableKpi.is-late .kpiMiniIcon,
+:root.light #view-installments .receivableKpi.is-late .kpiMiniIcon,
+body.light #view-installments .receivableKpi.is-late .kpiMiniIcon{color:#be123c !important;background:rgba(244,63,94,.10) !important;border-color:rgba(225,29,72,.20) !important;}
+html.light #view-installments .receivableKpi.is-soon .kpiMiniIcon,
+:root.light #view-installments .receivableKpi.is-soon .kpiMiniIcon,
+body.light #view-installments .receivableKpi.is-soon .kpiMiniIcon{color:#b45309 !important;background:rgba(245,158,11,.12) !important;border-color:rgba(217,119,6,.22) !important;}
+html.light #view-installments .receivableKpi.is-future .kpiMiniIcon,
+:root.light #view-installments .receivableKpi.is-future .kpiMiniIcon,
+body.light #view-installments .receivableKpi.is-future .kpiMiniIcon{color:#0369a1 !important;background:rgba(14,165,233,.10) !important;border-color:rgba(14,165,233,.20) !important;}
+
+html.light #view-installments .receivablesQuickTabs,
+:root.light #view-installments .receivablesQuickTabs,
+body.light #view-installments .receivablesQuickTabs{
+  background:linear-gradient(180deg, rgba(232,244,255,.94), rgba(220,239,248,.86)) !important;
+  border:1px solid rgba(37,99,235,.15) !important;
+  box-shadow:0 12px 24px rgba(15,23,42,.055), inset 0 1px 0 rgba(255,255,255,.72) !important;
+}
+html.light #view-installments .receivablesQuickTabs button,
+:root.light #view-installments .receivablesQuickTabs button,
+body.light #view-installments .receivablesQuickTabs button{
+  color:#334155 !important;
+}
+html.light #view-installments .receivablesQuickTabs button:hover,
+:root.light #view-installments .receivablesQuickTabs button:hover,
+body.light #view-installments .receivablesQuickTabs button:hover{
+  background:rgba(255,255,255,.54) !important;
+  color:#0f172a !important;
+}
+html.light #view-installments .receivablesQuickTabs button.active,
+:root.light #view-installments .receivablesQuickTabs button.active,
+body.light #view-installments .receivablesQuickTabs button.active{
+  background:linear-gradient(135deg, #2563eb, #0ea5e9 58%, #14b8d6) !important;
+  border:1px solid rgba(255,255,255,.36) !important;
+  color:#ffffff !important;
+  box-shadow:0 10px 22px rgba(37,99,235,.20), inset 0 1px 0 rgba(255,255,255,.22) !important;
+}
+
+html.light #view-installments .receivablesRuleHint,
+:root.light #view-installments .receivablesRuleHint,
+body.light #view-installments .receivablesRuleHint{
+  background:linear-gradient(180deg, rgba(239,248,255,.92), rgba(230,244,250,.86)) !important;
+  border:1px solid rgba(37,99,235,.14) !important;
+  color:#334155 !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.68) !important;
+}
+html.light #view-installments .receivablesRuleHint strong,
+:root.light #view-installments .receivablesRuleHint strong,
+body.light #view-installments .receivablesRuleHint strong{ color:#0f172a !important; }
+
+html.light #view-installments .receivablesListCard,
+:root.light #view-installments .receivablesListCard,
+body.light #view-installments .receivablesListCard{
+  background:
+    radial-gradient(760px 240px at 12% 0%, rgba(37,99,235,.095), transparent 70%),
+    radial-gradient(620px 220px at 98% 100%, rgba(20,184,166,.075), transparent 72%),
+    linear-gradient(180deg, rgba(248,252,255,.92), rgba(240,250,247,.86)) !important;
+  border:1px solid rgba(37,99,235,.13) !important;
+  border-radius:22px !important;
+  box-shadow:0 16px 34px rgba(15,23,42,.065), inset 0 1px 0 rgba(255,255,255,.70) !important;
+}
+html.light #view-installments .receivablesListHeadV36 h3,
+:root.light #view-installments .receivablesListHeadV36 h3,
+body.light #view-installments .receivablesListHeadV36 h3{
+  color:#0f172a !important;
+}
+html.light #view-installments .receivablesHeadActions .btn,
+:root.light #view-installments .receivablesHeadActions .btn,
+body.light #view-installments .receivablesHeadActions .btn,
+html.light #view-installments .receivableActions .btn,
+:root.light #view-installments .receivableActions .btn,
+body.light #view-installments .receivableActions .btn{
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(241,248,255,.92)) !important;
+  border-color:rgba(37,99,235,.18) !important;
+  color:#1e3a8a !important;
+  box-shadow:0 8px 18px rgba(15,23,42,.045) !important;
+}
+html.light #view-installments .receivablesHeadActions .btn.primary,
+:root.light #view-installments .receivablesHeadActions .btn.primary,
+body.light #view-installments .receivablesHeadActions .btn.primary{
+  background:linear-gradient(135deg, #2563eb, #0ea5e9) !important;
+  border-color:rgba(37,99,235,.30) !important;
+  color:#ffffff !important;
+  box-shadow:0 10px 22px rgba(37,99,235,.18) !important;
+}
+html.light #view-installments .receivablesHeadActions .btn.ok,
+:root.light #view-installments .receivablesHeadActions .btn.ok,
+body.light #view-installments .receivablesHeadActions .btn.ok{
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(238,253,246,.92)) !important;
+  border-color:rgba(22,163,74,.22) !important;
+  color:#166534 !important;
+}
+
+html.light #view-installments .receivablePatientCard,
+:root.light #view-installments .receivablePatientCard,
+body.light #view-installments .receivablePatientCard{
+  background:
+    radial-gradient(520px 150px at 12% -14%, rgba(37,99,235,.080), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.98), rgba(248,252,255,.94)) !important;
+  border:1px solid rgba(37,99,235,.13) !important;
+  box-shadow:0 12px 26px rgba(15,23,42,.065), inset 0 1px 0 rgba(255,255,255,.76) !important;
+  color:#0f172a !important;
+}
+html.light #view-installments .receivablePatientCard.is-overdue,
+:root.light #view-installments .receivablePatientCard.is-overdue,
+body.light #view-installments .receivablePatientCard.is-overdue{
+  border-color:rgba(225,29,72,.25) !important;
+  background:radial-gradient(520px 150px at 12% -14%, rgba(244,63,94,.10), transparent 72%), linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,247,248,.94)) !important;
+}
+html.light #view-installments .receivablePatientCard.is-soon,
+:root.light #view-installments .receivablePatientCard.is-soon,
+body.light #view-installments .receivablePatientCard.is-soon{
+  border-color:rgba(217,119,6,.24) !important;
+  background:radial-gradient(520px 150px at 12% -14%, rgba(245,158,11,.12), transparent 72%), linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,251,235,.94)) !important;
+}
+html.light #view-installments .receivablePatientTop .instName,
+:root.light #view-installments .receivablePatientTop .instName,
+body.light #view-installments .receivablePatientTop .instName,
+html.light #view-installments .receivablePatientTop .instName .muted,
+:root.light #view-installments .receivablePatientTop .instName .muted,
+body.light #view-installments .receivablePatientTop .instName .muted{
+  color:#0f172a !important;
+  -webkit-text-fill-color:#0f172a !important;
+}
+html.light #view-installments .receivableStatusChip,
+:root.light #view-installments .receivableStatusChip,
+body.light #view-installments .receivableStatusChip{
+  color:#1d4ed8 !important;
+  background:rgba(37,99,235,.09) !important;
+  border-color:rgba(37,99,235,.22) !important;
+}
+html.light #view-installments .receivablePatientCard.is-overdue .receivableStatusChip,
+:root.light #view-installments .receivablePatientCard.is-overdue .receivableStatusChip,
+body.light #view-installments .receivablePatientCard.is-overdue .receivableStatusChip{
+  color:#be123c !important;
+  background:rgba(244,63,94,.105) !important;
+  border-color:rgba(225,29,72,.26) !important;
+}
+html.light #view-installments .receivablePatientCard.is-soon .receivableStatusChip,
+:root.light #view-installments .receivablePatientCard.is-soon .receivableStatusChip,
+body.light #view-installments .receivablePatientCard.is-soon .receivableStatusChip{
+  color:#b45309 !important;
+  background:rgba(245,158,11,.12) !important;
+  border-color:rgba(217,119,6,.25) !important;
+}
+html.light #view-installments .receivablePatientCard.is-paid .receivableStatusChip,
+:root.light #view-installments .receivablePatientCard.is-paid .receivableStatusChip,
+body.light #view-installments .receivablePatientCard.is-paid .receivableStatusChip{
+  color:#15803d !important;
+  background:rgba(34,197,94,.11) !important;
+  border-color:rgba(22,163,74,.23) !important;
+}
+html.light #view-installments .receivableMetrics .instMetric,
+:root.light #view-installments .receivableMetrics .instMetric,
+body.light #view-installments .receivableMetrics .instMetric{
+  background:rgba(255,255,255,.78) !important;
+  border-color:rgba(37,99,235,.12) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.70) !important;
+}
+html.light #view-installments .instMetricLabel,
+:root.light #view-installments .instMetricLabel,
+body.light #view-installments .instMetricLabel{
+  color:#64748b !important;
+}
+html.light #view-installments .instMetric strong,
+:root.light #view-installments .instMetric strong,
+body.light #view-installments .instMetric strong{
+  color:#0f172a !important;
+  -webkit-text-fill-color:#0f172a !important;
+}
+html.light #view-installments .instMetric.is-late strong,
+:root.light #view-installments .instMetric.is-late strong,
+body.light #view-installments .instMetric.is-late strong{color:#be123c !important;-webkit-text-fill-color:#be123c !important;}
+html.light #view-installments .instMetric.is-soon strong,
+html.light #view-installments .instMetric.is-pending strong,
+:root.light #view-installments .instMetric.is-soon strong,
+:root.light #view-installments .instMetric.is-pending strong,
+body.light #view-installments .instMetric.is-soon strong,
+body.light #view-installments .instMetric.is-pending strong{color:#b45309 !important;-webkit-text-fill-color:#b45309 !important;}
+
+html.light #view-installments .instAlert.late,
+:root.light #view-installments .instAlert.late,
+body.light #view-installments .instAlert.late{
+  background:linear-gradient(90deg, rgba(244,63,94,.14), rgba(244,63,94,.065)) !important;
+  border-color:rgba(225,29,72,.24) !important;
+  color:#be123c !important;
+  box-shadow:inset 4px 0 0 rgba(225,29,72,.70) !important;
+}
+html.light #view-installments .instAlert.soon,
+html.light #view-installments .instAlert.pending,
+:root.light #view-installments .instAlert.soon,
+:root.light #view-installments .instAlert.pending,
+body.light #view-installments .instAlert.soon,
+body.light #view-installments .instAlert.pending{
+  background:linear-gradient(90deg, rgba(245,158,11,.15), rgba(245,158,11,.06)) !important;
+  border-color:rgba(217,119,6,.23) !important;
+  color:#b45309 !important;
+  box-shadow:inset 4px 0 0 rgba(217,119,6,.55) !important;
+}
+html.light #view-installments .instAlert.ok,
+:root.light #view-installments .instAlert.ok,
+body.light #view-installments .instAlert.ok{
+  background:linear-gradient(90deg, rgba(34,197,94,.14), rgba(34,197,94,.055)) !important;
+  border-color:rgba(22,163,74,.22) !important;
+  color:#15803d !important;
+  box-shadow:inset 4px 0 0 rgba(22,163,74,.55) !important;
+}
+
+/* A rolagem do modo claro não derruba a hierarquia visual do módulo. */
+html.light body.cronos-is-scrolling #view-installments .receivablesHero,
+:root.light body.cronos-is-scrolling #view-installments .receivablesHero,
+body.light.cronos-is-scrolling #view-installments .receivablesHero,
+html.light body.cronos-is-scrolling #view-installments .receivableKpi,
+:root.light body.cronos-is-scrolling #view-installments .receivableKpi,
+body.light.cronos-is-scrolling #view-installments .receivableKpi,
+html.light body.cronos-is-scrolling #view-installments .receivablesQuickTabs,
+:root.light body.cronos-is-scrolling #view-installments .receivablesQuickTabs,
+body.light.cronos-is-scrolling #view-installments .receivablesQuickTabs,
+html.light body.cronos-is-scrolling #view-installments .receivablesRuleHint,
+:root.light body.cronos-is-scrolling #view-installments .receivablesRuleHint,
+body.light.cronos-is-scrolling #view-installments .receivablesRuleHint,
+html.light body.cronos-is-scrolling #view-installments .receivablesListCard,
+:root.light body.cronos-is-scrolling #view-installments .receivablesListCard,
+body.light.cronos-is-scrolling #view-installments .receivablesListCard,
+html.light body.cronos-is-scrolling #view-installments .receivablePatientCard,
+:root.light body.cronos-is-scrolling #view-installments .receivablePatientCard,
+body.light.cronos-is-scrolling #view-installments .receivablePatientCard,
+html.light body.cronos-is-scrolling #view-installments .receivableMetrics .instMetric,
+:root.light body.cronos-is-scrolling #view-installments .receivableMetrics .instMetric,
+body.light.cronos-is-scrolling #view-installments .receivableMetrics .instMetric{
+  background-image:inherit;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+
+</style>
+
+<style id="cronos-v105-recebimentos-scroll-preserve">
+
+/* V105 — preserva o card-mãe e os cards de pacientes durante a rolagem no modo claro. */
+html.light body.cronos-is-scrolling #view-installments .receivablesListCard,
+:root.light body.cronos-is-scrolling #view-installments .receivablesListCard,
+body.light.cronos-is-scrolling #view-installments .receivablesListCard{
+  background:
+    radial-gradient(760px 240px at 12% 0%, rgba(37,99,235,.095), transparent 70%),
+    radial-gradient(620px 220px at 98% 100%, rgba(20,184,166,.075), transparent 72%),
+    linear-gradient(180deg, rgba(248,252,255,.92), rgba(240,250,247,.86)) !important;
+  border-color:rgba(37,99,235,.13) !important;
+  box-shadow:0 16px 34px rgba(15,23,42,.065), inset 0 1px 0 rgba(255,255,255,.70) !important;
+}
+html.light body.cronos-is-scrolling #view-installments .receivablePatientCard,
+:root.light body.cronos-is-scrolling #view-installments .receivablePatientCard,
+body.light.cronos-is-scrolling #view-installments .receivablePatientCard{
+  background:
+    radial-gradient(520px 150px at 12% -14%, rgba(37,99,235,.080), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.98), rgba(248,252,255,.94)) !important;
+  border-color:rgba(37,99,235,.13) !important;
+  box-shadow:0 12px 26px rgba(15,23,42,.065), inset 0 1px 0 rgba(255,255,255,.76) !important;
+}
+html.light body.cronos-is-scrolling #view-installments .receivablePatientCard.is-overdue,
+:root.light body.cronos-is-scrolling #view-installments .receivablePatientCard.is-overdue,
+body.light.cronos-is-scrolling #view-installments .receivablePatientCard.is-overdue{
+  background:
+    radial-gradient(520px 150px at 12% -14%, rgba(244,63,94,.10), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,247,248,.94)) !important;
+  border-color:rgba(225,29,72,.25) !important;
+}
+html.light body.cronos-is-scrolling #view-installments .receivablePatientCard.is-soon,
+:root.light body.cronos-is-scrolling #view-installments .receivablePatientCard.is-soon,
+body.light.cronos-is-scrolling #view-installments .receivablePatientCard.is-soon{
+  background:
+    radial-gradient(520px 150px at 12% -14%, rgba(245,158,11,.12), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,251,235,.94)) !important;
+  border-color:rgba(217,119,6,.24) !important;
+}
+
 </style>

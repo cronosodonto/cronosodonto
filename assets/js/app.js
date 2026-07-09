@@ -201,6 +201,16 @@ function scrubInstallmentTasksForMaster(db, masterId){
   if(!masterId) return {before: db.tasks.length, after: db.tasks.length, removed: 0, created: 0};
 
   const before = db.tasks.length;
+  try{
+    const scope = instFilterScopeV38(filter, mk);
+    const label = instFilterLabelV38(filter);
+    if(el("instRuleHint")){
+      el("instRuleHint").innerHTML = `<strong>${escapeHTML(label)}:</strong> ${escapeHTML(scope)}`;
+    }
+    if(el("instScopeLabel")){
+      el("instScopeLabel").textContent = scope;
+    }
+  }catch(_){}
   const today = todayISO();
   const contactsById = new Map((db.contacts||[])
     .filter(c=>c.masterId===masterId)
@@ -329,21 +339,31 @@ function syncInstallmentTasks(db, actor){
   return scrubInstallmentTasksForMaster(db, masterId);
 }
 
+function addDaysISOCompat(iso, days){
+  const base = iso ? new Date(`${String(iso).slice(0,10)}T00:00:00`) : new Date();
+  if(isNaN(base)) return "";
+  base.setDate(base.getDate() + Number(days || 0));
+  return isoDate(base);
+}
+
 function installmentsKPIs(db, actor, monthKey){
   const today = todayISO();
+  const soonEnd = addDaysISOCompat(today, 7);
   const masterId = actor?.masterId;
   const entries = (db.entries||[]).filter(e=>e.masterId===masterId && e.installPlan && !e.installPlan.migratedToFinancialPlanId);
-  let monthSum=0, monthN=0, lateSum=0, lateN=0, futureSum=0, futureN=0;
+  let monthSum=0, monthN=0, lateSum=0, lateN=0, futureSum=0, futureN=0, soonSum=0, soonN=0;
 
   entries.forEach(e=>{
     ensureInstallmentsForEntry(e);
     (e.installments||[]).forEach(p=>{
       const due = p.dueDate;
       const paid = !!p.paidAt || p.status==="PAGA";
+      const amount = parseMoney(p.amount);
       if(paid) return;
-      if(due && monthKeyOf(due)===monthKey){ monthSum += p.amount; monthN++; }
-      if(due && due < today){ lateSum += p.amount; lateN++; }
-      if(due && due > today){ futureSum += p.amount; futureN++; }
+      if(due && monthKeyOf(due)===monthKey){ monthSum += amount; monthN++; }
+      if(due && due < today){ lateSum += amount; lateN++; }
+      if(due && due >= today && due <= soonEnd){ soonSum += amount; soonN++; }
+      if(due && due > today){ futureSum += amount; futureN++; }
     });
   });
 
@@ -354,15 +374,17 @@ function installmentsKPIs(db, actor, monthKey){
         (plan.payments||[]).forEach(p=>{
           const due = p.dueDate;
           const paid = financialPaymentPaid(p);
+          const amount = parseMoney(p.amount);
           if(paid) return;
-          if(due && monthKeyOf(due)===monthKey){ monthSum += parseMoney(p.amount); monthN++; }
-          if(due && due < today){ lateSum += parseMoney(p.amount); lateN++; }
-          if(due && due > today){ futureSum += parseMoney(p.amount); futureN++; }
+          if(due && monthKeyOf(due)===monthKey){ monthSum += amount; monthN++; }
+          if(due && due < today){ lateSum += amount; lateN++; }
+          if(due && due >= today && due <= soonEnd){ soonSum += amount; soonN++; }
+          if(due && due > today){ futureSum += amount; futureN++; }
         });
       });
     });
 
-  return {monthSum, monthN, lateSum, lateN, futureSum, futureN};
+  return {monthSum, monthN, lateSum, lateN, soonSum, soonN, futureSum, futureN};
 }
 
 function entryInstallmentSummary(entry){
@@ -415,6 +437,17 @@ function ensureFichaForRecebimentos(entry){
   if(!entry.ficha.activeEvaluationId){
     entry.ficha.activeEvaluationId = entry.ficha.avaliacoes[entry.ficha.avaliacoes.length - 1]?.id || "eval_1";
   }
+  const legacyOdontograma = (entry.ficha.odontograma && typeof entry.ficha.odontograma === "object") ? entry.ficha.odontograma : {};
+  entry.ficha.avaliacoes.forEach((av, idx)=>{
+    if(typeof av.observacoes !== "string"){
+      av.observacoes = (idx === 0 && entry.ficha.observacoes) ? String(entry.ficha.observacoes || "") : "";
+    }
+    if(!av.odontograma || typeof av.odontograma !== "object"){
+      av.odontograma = (idx === 0 && Object.keys(legacyOdontograma).length)
+        ? JSON.parse(JSON.stringify(legacyOdontograma))
+        : {};
+    }
+  });
 
   const firstEval = entry.ficha.avaliacoes[0] || { id:"eval_1", label:"Avaliação 1", date: todayISO() };
   entry.ficha.plano.forEach(item=>{
@@ -1425,7 +1458,7 @@ function fichaLinkedFinancialPaidTotal(entry, plano=[]){
   let total = 0;
   const seenPlans = new Set();
 
-  // Pagamentos vinculados diretamente aos procedimentos da ficha.
+  // Pagamentos vinculados diretamente aos procedimentos do prontuário.
   (plano || []).forEach(item=>{
     const plan = findFinancialPlanByFichaItem(entry, item);
     if(plan){
@@ -1445,7 +1478,7 @@ function fichaLinkedFinancialPaidTotal(entry, plano=[]){
 
   // Pagamentos do paciente que ainda não foram alocados em procedimentos específicos.
   // Ex.: entrada/recebimento avulso de R$ 4.000,00. O valor precisa aparecer
-  // no resumo da ficha, mas sem pintar procedimentos como pagos no chute.
+  // no resumo do prontuário, mas sem pintar procedimentos como pagos no chute.
   ensureFinancialPlans(entry).forEach(plan=>{
     const pid = String(plan?.id || '');
     if(!pid || seenPlans.has(pid)) return;
@@ -1480,12 +1513,16 @@ function fichaLinkedFinancialPaidTotal(entry, plano=[]){
   return Math.min(total, totalFechado || total);
 }
 
+function financialPlanIsApproved(plan){
+  const st = String(plan?.status || "Aguardando").toLowerCase();
+  return st.includes("aprov") || st.includes("concl");
+}
 function financialPlanStatusLabel(plan){
   const st = String(plan?.status || "Aguardando");
-  if(st.toLowerCase().includes("aprov")) return `<span class="badge ok">Aprovado</span>`;
+  if(financialPlanIsApproved(plan)) return `<span class="badge ok">Aprovado</span>`;
   if(st.toLowerCase().includes("reprov")) return `<span class="badge late">Reprovado</span>`;
   if(st.toLowerCase().includes("concl")) return `<span class="badge ok">Concluído</span>`;
-  return `<span class="badge pending">Aguardando</span>`;
+  return `<span class="badge pending">Aguardando aprovação</span>`;
 }
 
 function getFinancialPlan(db, entryId, planId){
@@ -1501,29 +1538,96 @@ function ensureNewInstallmentButton(){
     if(!list || el("instNewFlowBar")) return;
     const bar = document.createElement("div");
     bar.id = "instNewFlowBar";
-    bar.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 16px;padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.03)";
+    bar.className = "receivablesListHeadV36";
     bar.innerHTML = `
       <div>
-        <div style="font-weight:900">Recebimentos</div>
-        <div class="muted" style="font-size:12px">Escolha o paciente, vincule procedimentos da ficha e lance pagamentos à vista ou parcelados.</div>
+        <h3>Recebimentos por paciente</h3>
+        <p class="muted" id="instScopeLabel">Acompanhe orçamentos, parcelas e cobranças de forma rápida e organizada.</p>
       </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+      <div class="receivablesHeadActions">
         <button class="btn ok" type="button" onclick="openCreditAnticipationModal()">Antecipar crédito</button>
-        <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">+ Novo recebimento</button>
+        <button class="btn primary" type="button" onclick="openNewFinancialInstallment()">Novo recebimento</button>
       </div>
     `;
     list.parentNode.insertBefore(bar, list);
+
+    const tabs = document.querySelectorAll("#instQuickTabs [data-inst-filter]");
+    const current = el("instFilter")?.value || "all";
+    tabs.forEach(btn=>{
+      btn.classList.toggle("active", btn.dataset.instFilter === current);
+      if(!btn.__cronosInstTabBound){
+        btn.__cronosInstTabBound = true;
+        btn.addEventListener("click", ()=>{
+          const sel = el("instFilter");
+          if(sel) sel.value = btn.dataset.instFilter || "all";
+          renderInstallmentsView();
+        });
+      }
+    });
   }catch(e){
-    console.warn("Não foi possível inserir botão de novo recebimento:", e);
+    console.warn("Não foi possível inserir cabeçalho de recebimentos:", e);
   }
 }
 
+
+
+/* CRONOS V51 — comparação robusta de vencimento em Recebimentos */
+function cronosRecebDateISO(v){
+  const s = String(v || "").trim();
+  if(!s) return "";
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m){
+    return `${m[1]}-${String(Number(m[2])).padStart(2,"0")}-${String(Number(m[3])).padStart(2,"0")}`;
+  }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m){
+    return `${m[3]}-${String(Number(m[2])).padStart(2,"0")}-${String(Number(m[1])).padStart(2,"0")}`;
+  }
+  const d = new Date(s);
+  if(!Number.isNaN(d.getTime())){
+    try{ return cronosLocalISODate(d); }catch(_){}
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  }
+  return s.slice(0,10);
+}
+function cronosRecebTodayISO(){
+  return cronosRecebDateISO(todayISO());
+}
+function cronosRecebDueState(dueValue, todayValue){
+  const due = cronosRecebDateISO(dueValue);
+  const today = cronosRecebDateISO(todayValue || todayISO());
+  const soonEnd = addDaysISOCompat(today, 7);
+  if(!due) return "none";
+  if(due < today) return "late";
+  if(due === today) return "today";
+  if(due > today && due <= soonEnd) return "soon";
+  return "future";
+}
+function cronosRecebDueLabel(dueValue, todayValue){
+  const state = cronosRecebDueState(dueValue, todayValue);
+  if(state === "late") return "Atrasado";
+  if(state === "today") return "Vence hoje";
+  if(state === "soon") return "Vence em até 7 dias";
+  if(state === "future") return "Futuro";
+  return "Pendente";
+}
+function cronosRecebDaysLate(dueValue, todayValue){
+  const due = cronosRecebDateISO(dueValue);
+  const today = cronosRecebDateISO(todayValue || todayISO());
+  if(!due || !today || due >= today) return 0;
+  const [dy,dm,dd] = due.split("-").map(Number);
+  const [ty,tm,td] = today.split("-").map(Number);
+  const d0 = new Date(dy, dm-1, dd);
+  const d1 = new Date(ty, tm-1, td);
+  return Math.max(0, Math.round((d1 - d0) / 86400000));
+}
+
 function buildFinancialPlanCards(db, actor, mk, q, filter, today){
-  // Paginação do novo modelo deve aparecer no final da lista geral de Recebimentos,
-  // não no meio entre os cards novos e os parcelamentos antigos.
   window.__instFinancialPagerHtml = "";
+  const soonEnd = addDaysISOCompat(today, 7);
   const contactsById = new Map((db.contacts||[]).filter(c=>c.masterId===actor.masterId).map(c=>[String(c.id),c]));
   const rows = [];
+
   (db.entries||[])
     .filter(e=>e.masterId===actor.masterId)
     .forEach(entry=>{
@@ -1536,17 +1640,21 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
       plans.forEach(plan=>{
         renumberFinancialPlanPayments(plan);
         const payments = Array.isArray(plan.payments) ? plan.payments : [];
-        const monthPayments = payments.filter(p=>{
+        const scopedPayments = payments.filter(p=>{
           const paid = financialPaymentPaid(p);
           const cashISO = cronosPaymentCashISO(p, false);
-          const dueISO = p?.dueDate || p?.due || "";
+          const dueISO = cronosRecebDateISO(p?.dueDate || p?.due || "");
+          const dueState = cronosRecebDueState(dueISO, today);
+          if(filter === "late") return !paid && dueState === "late";
+          if(filter === "soon") return !paid && (dueState === "today" || dueState === "soon");
           if(paid) return cashISO && monthKeyOf(cashISO) === mk;
           return dueISO && monthKeyOf(dueISO) === mk;
         });
+        const monthPayments = scopedPayments;
         if(!monthPayments.length) return;
 
-        let paidSum=0, pendingSum=0, lateSum=0, futureSum=0;
-        let paidCount=0, pendingCount=0, lateCount=0, futureCount=0;
+        let paidSum=0, pendingSum=0, lateSum=0, futureSum=0, soonSum=0;
+        let paidCount=0, pendingCount=0, lateCount=0, futureCount=0, soonCount=0;
 
         monthPayments.forEach(p=>{
           const paid = financialPaymentPaid(p);
@@ -1557,25 +1665,31 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
             return;
           }
           pendingSum += amount; pendingCount++;
-          if(p.dueDate && p.dueDate < today){ lateSum += amount; lateCount++; }
-          else { futureSum += amount; futureCount++; }
+          const dueISO = cronosRecebDateISO(p.dueDate || p.due || "");
+          const dueState = cronosRecebDueState(dueISO, today);
+          if(dueState === "late"){ lateSum += amount; lateCount++; }
+          else {
+            if(dueState === "today" || dueState === "soon"){ soonSum += amount; soonCount++; }
+            if(dueState === "future" || dueState === "today" || dueState === "soon"){ futureSum += amount; futureCount++; }
+          }
         });
 
         if(filter === "paid" && paidCount <= 0) return;
         if(filter === "dueMonth" && pendingCount <= 0) return;
         if(filter === "late" && lateCount <= 0) return;
+        if(filter === "soon" && soonCount <= 0) return;
         if(filter === "open" && futureCount <= 0) return;
 
-        rows.push({entry, contact, plan, monthPayments, paidSum, pendingSum, lateSum, futureSum, paidCount, pendingCount, lateCount, futureCount});
+        rows.push({entry, contact, plan, payments, monthPayments, paidSum, pendingSum, lateSum, futureSum, soonSum, paidCount, pendingCount, lateCount, futureCount, soonCount});
       });
     });
 
   rows.sort((A,B)=>{
-    const aRank = A.lateCount>0 ? 3 : A.pendingCount>0 ? 2 : A.paidCount>0 ? 1 : 0;
-    const bRank = B.lateCount>0 ? 3 : B.pendingCount>0 ? 2 : B.paidCount>0 ? 1 : 0;
+    const aRank = A.lateCount>0 ? 4 : A.soonCount>0 ? 3 : A.pendingCount>0 ? 2 : A.paidCount>0 ? 1 : 0;
+    const bRank = B.lateCount>0 ? 4 : B.soonCount>0 ? 3 : B.pendingCount>0 ? 2 : B.paidCount>0 ? 1 : 0;
     if(aRank !== bRank) return bRank - aRank;
-    const ad = cronosPaymentCashISO(A.monthPayments[0], false) || A.monthPayments[0]?.dueDate || "9999-99-99";
-    const bd = cronosPaymentCashISO(B.monthPayments[0], false) || B.monthPayments[0]?.dueDate || "9999-99-99";
+    const ad = (A.monthPayments.find(p=>!financialPaymentPaid(p))?.dueDate) || cronosPaymentCashISO(A.monthPayments[0], false) || A.monthPayments[0]?.dueDate || "9999-99-99";
+    const bd = (B.monthPayments.find(p=>!financialPaymentPaid(p))?.dueDate) || cronosPaymentCashISO(B.monthPayments[0], false) || B.monthPayments[0]?.dueDate || "9999-99-99";
     return ad.localeCompare(bd);
   });
 
@@ -1594,8 +1708,8 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
   const finStart = (finPage - 1) * finPageSize;
   const renderRows = rows.slice(finStart, finStart + finPageSize);
   const finPagerHtml = finTotalPages > 1 ? `
-    <div class="instPager" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;">
-      <div class="muted">Novo modelo: página ${finPage} de ${finTotalPages} • ${rows.length} registro(s)</div>
+    <div class="instPager receivablesPagerV36">
+      <div class="muted">Página ${finPage} de ${finTotalPages} • ${rows.length} paciente(s)</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn small" ${finPage<=1 ? 'disabled' : ''} onclick="window.__instFinancialState.page=Math.max(1,(window.__instFinancialState.page||1)-1);renderInstallmentsView();">Anterior</button>
         <button class="btn small" ${finPage>=finTotalPages ? 'disabled' : ''} onclick="window.__instFinancialState.page=Math.min(${finTotalPages},(window.__instFinancialState.page||1)+1);renderInstallmentsView();">Próxima</button>
@@ -1604,93 +1718,117 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
   ` : '';
   window.__instFinancialPagerHtml = finPagerHtml;
 
-  return `
-    <div style="margin-bottom:10px;font-weight:900">Novo modelo de orçamentos</div>
-    ${renderRows.map(({entry, contact, plan, monthPayments, paidSum, pendingSum, lateSum, futureSum, paidCount, pendingCount, lateCount, futureCount})=>{
-      const totals = financialPlanTotals(plan);
-      const nextDue = financialPlanNextDue(plan);
-      const rowId = `finrow_${entry.id}_${plan.id}`;
-      const badges = [];
-      if(paidCount) badges.push(`<span class="badge ok">✅ ${paidCount} paga(s)</span>`);
-      if(lateCount) badges.push(`<span class="badge late">⚠️ ${lateCount} atrasada(s)</span>`);
-      if(futureCount) badges.push(`<span class="badge pending">🕒 ${futureCount} pendente(s)</span>`);
-      const periodDetails = monthPayments.map(p=>{
-        const paid = financialPaymentPaid(p);
-        const cashISO = cronosPaymentCashISO(p, false);
-        const late = !paid && p.dueDate && p.dueDate < today;
-        const statusChip = paid ? `<span class="badge ok">PAGA</span>` : (late ? `<span class="badge late">ATRASADA</span>` : `<span class="badge pending">PENDENTE</span>`);
-        const dateTxt = paid ? `Pago: ${fmtBR(cashISO || p.paidAt || p.cashDate || "")}` : `Venc: ${fmtBR(p.dueDate)}`;
-        return `<div class="chip">${p.number||""}/${p.total||""} • ${dateTxt} • <b>${moneyBR(p.amount)}</b> ${statusChip}</div>`;
-      }).join("");
+  return renderRows.map(({entry, contact, plan, payments, monthPayments, paidSum, pendingSum, lateSum, futureSum, soonSum, paidCount, pendingCount, lateCount, futureCount, soonCount})=>{
+    const totals = financialPlanTotals(plan);
+    const nextDue = financialPlanNextDue(plan);
+    const rowId = `finrow_${entry.id}_${plan.id}`;
+    const pendingPayments = payments.filter(p=>!financialPaymentPaid(p)).sort((a,b)=>String(cronosRecebDateISO(a.dueDate||a.due||"9999-99-99")).localeCompare(String(cronosRecebDateISO(b.dueDate||b.due||"9999-99-99"))));
+    const nextPayment = pendingPayments[0] || null;
+    const allLateCount = pendingPayments.filter(p=>cronosRecebDueState(p.dueDate || p.due || "", today) === "late").length;
+    const allTodayCount = pendingPayments.filter(p=>cronosRecebDueState(p.dueDate || p.due || "", today) === "today").length;
+    const allSoonCount = pendingPayments.filter(p=>cronosRecebDueState(p.dueDate || p.due || "", today) === "soon").length;
+    const nextState = nextPayment ? cronosRecebDueState(nextPayment.dueDate || nextPayment.due || "", today) : "";
+    const statusClass = allLateCount > 0 ? "is-overdue" : ((allTodayCount + allSoonCount) > 0 ? "is-soon" : (totals.openBalance <= 0 ? "is-paid" : "is-open"));
+    const statusLabel = allLateCount > 0 ? "Atrasado" : (allTodayCount > 0 ? "Vence hoje" : (allSoonCount > 0 ? "Vence em até 7 dias" : (totals.openBalance <= 0 ? "Em dia" : "Futuro")));
+    const openToneClass = totals.openBalance <= 0 ? "is-ok" : (allLateCount > 0 ? "is-late" : ((allTodayCount + allSoonCount) > 0 ? "is-soon" : "is-pending"));
+    const nextToneClass = nextState === "late" ? "is-late" : ((nextState === "today" || nextState === "soon") ? "is-soon" : (pendingPayments.length > 0 ? "is-pending" : ""));
 
-      const openToneClass = totals.openBalance <= 0 ? "is-ok" : (lateCount > 0 ? "is-late" : "is-pending");
-      const nextToneClass = lateCount > 0 ? "is-late" : (pendingCount > 0 ? "is-pending" : "");
-      const spotlightHtml = lateCount > 0
-        ? `<div class="instAlert late">⚠ ${lateCount} parcela(s) atrasada(s) no mês • ${moneyBR(lateSum)}</div>`
-        : pendingCount > 0
-          ? `<div class="instAlert pending">🕒 ${pendingCount} parcela(s) pendente(s) no mês • ${moneyBR(pendingSum)}</div>`
-          : paidCount > 0
-            ? `<div class="instAlert ok">✅ ${paidCount} paga(s) no mês • ${moneyBR(paidSum)}</div>`
-            : `<div class="instAlert neutral">Sem movimentação no mês selecionado.</div>`;
-      const extraMonthChips = [
-        `<span class="chip">Lançado: <b>${moneyBR(totals.scheduled)}</b></span>`,
-        `<span class="chip">Pagas no mês: <b>${moneyBR(paidSum)}</b></span>`,
-        `<span class="chip">Pendentes no mês: <b>${moneyBR(pendingSum)}</b></span>`,
-        `<span class="chip">Atrasado no mês: <b>${moneyBR(lateSum)}</b></span>`,
-        `<span class="chip">Futuro no mês: <b>${moneyBR(futureSum)}</b></span>`,
-        ...(badges.length ? badges : [])
-      ].join("");
+    const periodDetails = monthPayments.map(p=>{
+      const paid = financialPaymentPaid(p);
+      const cashISO = cronosPaymentCashISO(p, false);
+      const dueState = !paid ? cronosRecebDueState(p.dueDate || p.due || "", today) : "";
+      const late = dueState === "late";
+      const soon = dueState === "today" || dueState === "soon";
+      const statusChip = paid ? `<span class="badge ok">PAGA</span>` : (late ? `<span class="badge late">ATRASADA</span>` : (dueState === "today" ? `<span class="badge pending">VENCE HOJE</span>` : (soon ? `<span class="badge pending">VENCE JÁ</span>` : `<span class="badge pending">PENDENTE</span>`)));
+      const dateTxt = paid ? `Pago: ${fmtBR(cashISO || p.paidAt || p.cashDate || "")}` : `Venc: ${fmtBR(p.dueDate)}`;
+      return `<div class="chip">${p.number||""}/${p.total||""} • ${dateTxt} • <b>${moneyBR(p.amount)}</b> ${statusChip}</div>`;
+    }).join("");
 
-      return `
-        <div class="instRow instRowClean" id="${rowId}">
-          <div class="instHead">
-            <div style="min-width:0;flex:1">
-              <div class="instName">${escapeHTML(contact.name)} <span class="muted" style="font-weight:600">• ${escapeHTML(contact.phone||"")}</span></div>
-              <div class="instMeta instMetaTop">
-                <span class="chip">Orçamento: <b>${escapeHTML(plan.title || "Plano financeiro")}</b></span>
-                ${financialPlanStatusLabel(plan)}
-              </div>
-              <div class="instSummary">
-                <div class="instMetric">
-                  <span class="instMetricLabel">Total</span>
-                  <strong>${moneyBR(totals.total)}</strong>
-                </div>
-                <div class="instMetric ${totals.paid > 0 ? 'is-ok' : ''}">
-                  <span class="instMetricLabel">Pago</span>
-                  <strong>${moneyBR(totals.paid)}</strong>
-                </div>
-                <div class="instMetric ${openToneClass}">
-                  <span class="instMetricLabel">Aberto</span>
-                  <strong>${moneyBR(totals.openBalance)}</strong>
-                </div>
-                <div class="instMetric ${nextToneClass}">
-                  <span class="instMetricLabel">Próx.</span>
-                  <strong>${nextDue ? fmtBR(nextDue) : "—"}</strong>
-                </div>
-              </div>
-              ${spotlightHtml}
-              <details class="instExtra">
-                <summary>Detalhes financeiros</summary>
-                <div class="instMeta compact">${extraMonthChips}</div>
-                <div class="instMeta compact">${periodDetails || `<span class="muted">Sem parcelas do período para detalhar.</span>`}</div>
-              </details>
+    const nextDaysLate = nextPayment ? cronosRecebDaysLate(nextPayment.dueDate || nextPayment.due || "", today) : 0;
+    const spotlightHtml = allLateCount > 0
+      ? `<div class="instAlert late"> ${allLateCount} parcela(s) atrasada(s)${lateSum ? ` • ${moneyBR(lateSum)}` : ""}${nextPayment?.dueDate ? ` • venceu em ${fmtBR(cronosRecebDateISO(nextPayment.dueDate))}` : ""}${nextDaysLate ? ` • ${nextDaysLate} dia(s) de atraso` : ""}</div>`
+      : allTodayCount > 0
+        ? `<div class="instAlert soon"> ${allTodayCount} parcela(s) vence(m) hoje${soonSum ? ` • ${moneyBR(soonSum)}` : ""}</div>`
+        : allSoonCount > 0
+          ? `<div class="instAlert soon"> ${allSoonCount} parcela(s) vencendo em até 7 dias${soonSum ? ` • ${moneyBR(soonSum)}` : ""}${nextPayment?.dueDate ? ` • venc. ${fmtBR(cronosRecebDateISO(nextPayment.dueDate))}` : ""}</div>`
+          : pendingCount > 0
+            ? `<div class="instAlert pending"> ${pendingCount} parcela(s) pendente(s) no mês • ${moneyBR(pendingSum)}${nextPayment?.dueDate ? ` • venc. ${fmtBR(cronosRecebDateISO(nextPayment.dueDate))}` : ""}</div>`
+            : paidCount > 0
+              ? `<div class="instAlert ok"> ${paidCount} baixa(s) no mês • ${moneyBR(paidSum)}</div>`
+              : `<div class="instAlert neutral">Sem movimentação no mês selecionado.</div>`;
+
+    const extraMonthChips = [
+      `<span class="chip">Lançado: <b>${moneyBR(totals.scheduled)}</b></span>`,
+      `<span class="chip">Recebido no mês: <b>${moneyBR(paidSum)}</b></span>`,
+      `<span class="chip">Pendente no mês: <b>${moneyBR(pendingSum)}</b></span>`,
+      `<span class="chip">Atrasado: <b>${moneyBR(lateSum)}</b></span>`,
+      `<span class="chip">Vence em 7 dias: <b>${moneyBR(soonSum)}</b></span>`
+    ].join("");
+
+    const cleanPhone = String(contact.phone||"").replace(/\D/g,"");
+    const planApproved = financialPlanIsApproved(plan);
+    const canCharge = !!(planApproved && cleanPhone && nextPayment);
+    const chargeBtn = canCharge
+      ? `<a class="btn charge" href="${waChargeLink(contact.phone, contact.name, entry, nextPayment)}" target="_blank"><svg class="cronos-whatsapp-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.34 4.96L2 22l5.25-1.38a9.86 9.86 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.18 8.18 0 0 1-1.25-4.38c0-4.55 3.7-8.25 8.25-8.25a8.25 8.25 0 0 1 8.25 8.25c0 4.55-3.7 8.24-8.26 8.24Zm4.52-6.18c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.57.13-.17.25-.65.81-.8.98-.15.17-.3.19-.55.06-.25-.12-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.3.37-.45.12-.15.17-.25.25-.42.08-.17.04-.32-.02-.45-.06-.12-.57-1.37-.78-1.88-.21-.5-.42-.43-.57-.44h-.49c-.17 0-.45.06-.68.32-.23.25-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.12.17 1.79 2.73 4.34 3.83.61.26 1.08.42 1.45.54.61.19 1.16.16 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg><span>Cobrar</span></a>`
+      : `<button class="btn charge" disabled title="${planApproved ? "Sem telefone ou parcela pendente" : "Aprove o recebimento antes de cobrar"}"><svg class="cronos-whatsapp-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.34 4.96L2 22l5.25-1.38a9.86 9.86 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.18 8.18 0 0 1-1.25-4.38c0-4.55 3.7-8.25 8.25-8.25a8.25 8.25 0 0 1 8.25 8.25c0 4.55-3.7 8.24-8.26 8.24Zm4.52-6.18c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.57.13-.17.25-.65.81-.8.98-.15.17-.3.19-.55.06-.25-.12-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.3.37-.45.12-.15.17-.25.25-.42.08-.17.04-.32-.02-.45-.06-.12-.57-1.37-.78-1.88-.21-.5-.42-.43-.57-.44h-.49c-.17 0-.45.06-.68.32-.23.25-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.12.17 1.79 2.73 4.34 3.83.61.26 1.08.42 1.45.54.61.19 1.16.16 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg><span>Cobrar</span></button>`;
+    const payBtn = nextPayment && planApproved
+      ? `<button class="btn ok compactLow" title="Baixa a próxima parcela pendente" onclick="payFinancialPayment('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(nextPayment.id)}')">Baixar próxima</button>`
+      : `<button class="btn ok" disabled title="${planApproved ? "Sem parcela pendente" : "Aprove o recebimento antes de dar baixa"}">Baixar próxima</button>`;
+
+    return `
+      <div class="instRow instRowClean receivablePatientCard ${statusClass}" id="${rowId}">
+        <div class="instHead receivablePatientHead">
+          <div class="receivablePatientMain">
+            <div class="receivablePatientTop">
+              <div class="instName">${escapeHTML(contact.name)} <span class="muted">• ${escapeHTML(contact.phone||"")}</span></div>
+              <span class="receivableStatusChip">${escapeHTML(statusLabel)}</span>
             </div>
-            <div class="instBtns">
-              <button class="btn" onclick="openLeadEntry('${entry.id}')">Abrir lead</button>
-              <button class="btn primary" onclick="openNewFinancialInstallment('${entry.id}','${plan.id}')">Gerenciar</button>
+            <div class="instMeta instMetaTop">
+              <span class="chip">Orçamento: <b>${escapeHTML(plan.title || "Recebimento de ficha")}</b></span>
+              ${financialPlanStatusLabel(plan)}
             </div>
+            <div class="instSummary receivableMetrics">
+              <div class="instMetric">
+                <span class="instMetricLabel">Total</span>
+                <strong>${moneyBR(totals.total)}</strong>
+              </div>
+              <div class="instMetric is-ok">
+                <span class="instMetricLabel">Pago</span>
+                <strong>${moneyBR(totals.paid)}</strong>
+              </div>
+              <div class="instMetric ${openToneClass}">
+                <span class="instMetricLabel">Em aberto</span>
+                <strong>${moneyBR(totals.openBalance)}</strong>
+              </div>
+              <div class="instMetric ${nextToneClass}">
+                <span class="instMetricLabel">Próx.</span>
+                <strong>${nextDue ? fmtBR(cronosRecebDateISO(nextDue)) : "—"}</strong>
+              </div>
+            </div>
+            ${spotlightHtml}
+            <details class="instExtra receivableExtra">
+              <summary>Detalhes financeiros</summary>
+              <div class="instMeta compact">${extraMonthChips}</div>
+              <div class="instMeta compact">${periodDetails || `<span class="muted">Sem parcelas do período para detalhar.</span>`}</div>
+            </details>
+          </div>
+          <div class="instBtns receivableActions">
+            ${chargeBtn}
+            ${payBtn}
+            <button class="btn" onclick="openLeadEntry('${entry.id}')">Abrir lead</button>
+            <button class="btn primary" onclick="openNewFinancialInstallment('${entry.id}','${plan.id}')">Gerenciar</button>
           </div>
         </div>
-      `;
-    }).join("")}
-    <div style="height:10px"></div>
-  `;
+      </div>
+    `;
+  }).join("");
 }
 
 function renderFinancialPaymentTable(entry, plan, contact){
   renumberFinancialPlanPayments(plan);
   const today = todayISO();
   const canSensitive = canManageFinancialSensitiveActions();
+  const planApproved = financialPlanIsApproved(plan);
   const rows = (plan.payments||[]).map(p=>{
     const uiMutation = String(p?.__cronosUiMutation || "");
     const mutating = !!uiMutation || isFinancialPaymentMutationPending(entry?.id, plan?.id, p?.id);
@@ -1706,14 +1844,16 @@ function renderFinancialPaymentTable(entry, plan, contact){
           ? (canSensitive
               ? `<a class="miniLink" href="javascript:void(0)" onclick="undoFinancialPayment('${entry.id}','${plan.id}','${p.id}')">Desfazer</a>`
               : `<span class="muted" style="font-size:12px">Pago</span>`)
-          : `<button type="button" class="btn ok" onclick="payFinancialPayment('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(p.id)}'); return false;">Dar baixa</button>`);
+          : (planApproved
+              ? `<button type="button" class="btn ok compactLow" title="Baixa esta parcela" onclick="payFinancialPayment('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(p.id)}'); return false;">Dar baixa</button>`
+              : `<button type="button" class="btn ok compactLow" disabled title="Aprove o recebimento antes de dar baixa">Dar baixa</button>`));
     const transfer = (!mutating && paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferFinancialPaymentCashDate('${entry.id}','${plan.id}','${p.id}')">Transferir data</a>` : "";
     const cashISO = cronosPaymentCashISO(p, false);
     const deleteBtn = (!mutating && canSensitive) ? `<button type="button" class="miniBtn danger" onclick="deleteFinancialPayment('${entry.id}','${plan.id}','${p.id}')" title="Excluir pagamento">🗑️</button>` : "";
     return `
       <tr>
         <td class="mono">${p.number||""}/${p.total||""}</td>
-        <td class="mono">${p.dueDate?fmtBR(p.dueDate):"—"}</td>
+        <td class="mono">${p.dueDate?fmtBR(cronosRecebDateISO(p.dueDate)): "—"}</td>
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod || "—")}</td>
         <td>${st}${(!mutating && cashISO) ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}${(!mutating && (p.creditAnticipated || p.settlementType === "antecipacao_credito")) ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
@@ -1722,7 +1862,7 @@ function renderFinancialPaymentTable(entry, plan, contact){
     `;
   }).join("");
   return `
-    <table class="instTable financialPaymentTable" style="width:auto;min-width:720px;max-width:820px;table-layout:fixed">
+    <table class="instTable financialPaymentTable" style="width:100%;min-width:820px;max-width:none;table-layout:fixed">
       <colgroup>
         <col style="width:72px">
         <col style="width:112px">
@@ -1755,7 +1895,7 @@ function refreshFinancialUIAfterPayment(){
   try{ renderNewFinancialInstallmentApp(); }catch(err){ console.error("Falha ao atualizar painel de recebimento:", err); }
   try{ renderInstallmentsView(); }catch(err){ console.error("Falha ao atualizar Recebimentos:", err); }
   try{ renderDashboard(); }catch(err){ console.error("Falha ao atualizar Dashboard após baixa:", err); }
-  try{ window.__cronosRenderFichaApp?.(); }catch(err){ console.error("Falha ao atualizar Ficha após baixa:", err); }
+  try{ window.__cronosRenderFichaApp?.(); }catch(err){ console.error("Falha ao atualizar prontuário após baixa:", err); }
   try{ updateSidebarPills(); }catch(err){ console.error("Falha ao atualizar indicadores laterais:", err); }
 }
 
@@ -2242,7 +2382,7 @@ async function saveFichaMutation(db, entry, options={}){
     }catch(error){
       console.error("Falha ao salvar ficha em tables_v2:", error);
       if(!options.silent){
-        toast("Ficha não salva", "A nuvem não confirmou esta alteração. Tente novamente antes de sair da ficha.");
+        toast("Prontuário não salvo", "A nuvem não confirmou esta alteração. Tente novamente antes de sair do prontuário.");
       }
       return false;
     }
@@ -2261,7 +2401,7 @@ async function confirmFichaMutation(db, entry, before, successTitle="", successM
     if(revision === __cronosFichaMutationRevision){
       restoreCronosCriticalSnapshot(before);
       try{ window.__cronosRenderFichaApp?.(); }catch(_){ }
-      toast("Alteração não salva", "A nuvem não confirmou. A Ficha voltou ao estado anterior.");
+      toast("Alteração não salva", "A nuvem não confirmou. O prontuário voltou ao estado anterior.");
     }else{
       toast("Uma alteração anterior não foi confirmada", "Mantive a edição mais recente. Aguarde o salvamento e confira antes de atualizar.");
     }
@@ -2770,6 +2910,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
   const db = loadDB();
   const initial = getFinancialPlan(db, entryId, planId);
   if(!initial.entry || !initial.plan) return toast("Erro", "Recebimento não encontrado.");
+  if(!financialPlanIsApproved(initial.plan)) return toast("Aprovação necessária", "Aprove o recebimento antes de dar baixa.");
   const initialPayment = (initial.plan.payments||[]).find(p=>String(p.id)===String(paymentId));
   if(!initialPayment) return toast("Erro", "Pagamento não encontrado.");
   if(financialPaymentPaid(initialPayment)) return toast("Já foi", "Esse pagamento já está baixado.");
@@ -3120,21 +3261,29 @@ function openNewFinancialInstallment(entryId="", planId=""){
   window.__newFinancialInstallmentState = st;
   openModal({
     title: entryId ? "Gerenciar recebimento" : "Novo recebimento",
-    sub: entryId ? "Veja recebimentos existentes, parcelas e vínculos com a ficha." : "Crie recebimentos à vista, parcelados ou vinculados à ficha do paciente.",
+    sub: entryId ? "Veja recebimentos existentes, parcelas e vínculos com a ficha." : "Crie recebimentos à vista, parcelados ou vinculados à prontuário do paciente.",
     bodyHTML:'<div id="newFinancialInstallmentApp" style="width:100%"></div>',
-    footHTML:'<button class="btn" onclick="closeModal()">Fechar</button>',
+    footHTML:'<button type="button" class="btn" onclick="closeModal()">Fechar</button>',
     onMount: renderNewFinancialInstallmentApp,
-    maxWidth:'min(99vw, 1280px)',
-    width:'min(99vw, 1280px)'
+    maxWidth:'min(97vw, 1120px)',
+    width:'min(97vw, 1120px)'
   });
 }
 
 
 function renderFinancialPlanPaymentEditor(entry, selectedPlan, contact, remaining){
   if(!entry || !selectedPlan) return "";
+  const planApproved = financialPlanIsApproved(selectedPlan);
+  const approvalLock = planApproved ? "" : `
+    <div class="newFinApprovalLock">
+      <b>Recebimento aguardando aprovação</b>
+      <span>Aprove este recebimento antes de lançar parcelas, cobrar ou dar baixa.</span>
+    </div>
+  `;
   return `
     <div class="card selectedPlanPaymentEditor" style="box-shadow:none;margin-top:12px;padding:12px;border-radius:16px;background:rgba(255,255,255,.025);border:1px solid var(--line)">
       <h3 style="margin:0 0 10px">3. Lançar parcelas</h3>
+      ${approvalLock}
       <div class="newPayLayout" style="display:grid;grid-template-columns:max-content max-content;gap:12px;align-items:end;max-width:max-content">
         <div style="display:grid;gap:10px;min-width:0">
           <div class="newPayTopGrid" style="display:grid;grid-template-columns:145px 165px 125px 78px;gap:10px;align-items:end">
@@ -3178,8 +3327,8 @@ function renderFinancialPlanPaymentEditor(entry, selectedPlan, contact, remainin
         </div>
 
         <div style="display:flex;gap:8px;align-items:end;align-self:end;flex-wrap:wrap;justify-content:flex-start">
-          <button type="button" class="btn primary" style="width:auto;white-space:nowrap;padding-inline:14px" onclick="CRONOS_NEW_FIN_UI.addPayment()">Adicionar parcela</button>
-          <button type="button" class="btn" style="width:auto;white-space:nowrap;padding-inline:14px" onclick="CRONOS_NEW_FIN_UI.fillRemaining()">Usar saldo restante</button>
+          <button type="button" class="btn primary newFinAddPaymentBtn" style="width:auto;white-space:nowrap;padding-inline:14px" ${planApproved ? "" : "disabled title=\"Aprove o recebimento antes de lançar parcelas\""} onclick="CRONOS_NEW_FIN_UI.addPayment()">Adicionar parcela</button>
+          <button type="button" class="btn newFinUseBalanceBtn" style="width:auto;white-space:nowrap;padding-inline:14px" ${planApproved ? "" : "disabled title=\"Aprove o recebimento antes de usar o saldo\""} onclick="CRONOS_NEW_FIN_UI.fillRemaining()">Usar saldo restante</button>
         </div>
       </div>
       <div style="margin-top:14px">${renderFinancialPaymentTable(entry, selectedPlan, contact)}</div>
@@ -3439,10 +3588,10 @@ function renderNewFinancialInstallmentApp(){
       ${entry ? `
         <div class="card" style="box-shadow:none">
           <h3 style="margin:0 0 10px">2. Recebimentos do paciente</h3>
-          <div class="small muted" style="margin-top:-6px;margin-bottom:10px">Recebimentos já existentes aparecem aqui mesmo que não tenham vindo da ficha.</div>
+          <div class="small muted" style="margin-top:-6px;margin-bottom:10px">Recebimentos já existentes aparecem aqui mesmo que não tenham vindo do prontuário.</div>
           ${fichaSelectableItems.length ? `
             <div style="border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.025);margin-bottom:12px">
-              <div style="font-weight:900;margin-bottom:6px">Procedimentos disponíveis da ficha</div>
+              <div style="font-weight:900;margin-bottom:6px">Procedimentos disponíveis do prontuário</div>
               <div class="small muted" style="margin-bottom:8px">Selecione um ou mais procedimentos para gerar um recebimento vinculado. Os que já estão pagos ou em pagamento não aparecem aqui.</div>
               <div data-cronos-scroll-key="new-fin-ficha-items" style="display:grid;gap:8px;max-height:190px;overflow:auto">
                 ${fichaSelectableItems.map(item=>`
@@ -3458,12 +3607,12 @@ function renderNewFinancialInstallmentApp(){
               </div>
               <div class="small" style="margin-top:8px">Selecionado: <b>${selectedNewFinFichaItems.length}</b> item(ns) • <b>${moneyBR(selectedNewFinFichaTotal)}</b></div>
             </div>
-          ` : `<div class="muted" style="margin-bottom:12px">Nenhum procedimento da ficha sem recebimento. Se o paciente já tinha parcelas antigas, elas aparecem na lista de recebimentos abaixo. Você também pode criar recebimento avulso manual.</div>`}
+          ` : `<div class="muted" style="margin-bottom:12px">Nenhum procedimento do prontuário sem recebimento. Se o paciente já tinha parcelas antigas, elas aparecem na lista de recebimentos abaixo. Você também pode criar recebimento avulso manual.</div>`}
 
           <div class="newBudgetGrid" style="display:grid;grid-template-columns:170px 300px 125px;gap:10px;align-items:end;max-width:620px">
             <div style="min-width:0">
               <label>Título</label>
-              <input id="newFinTitle" value="${selectedNewFinFichaItems.length ? 'Recebimento da ficha' : 'Recebimento avulso'}" placeholder="Ex: Recebimento">
+              <input id="newFinTitle" value="${selectedNewFinFichaItems.length ? 'Recebimento do prontuário' : 'Recebimento avulso'}" placeholder="Ex: Recebimento">
             </div>
             <div style="min-width:0">
               <label>Dentista avaliador</label>
@@ -3475,7 +3624,7 @@ function renderNewFinancialInstallmentApp(){
             </div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-            <button class="btn ok" onclick="CRONOS_NEW_FIN_UI.createPlan()">Criar recebimento</button>
+            <button class="btn ok newFinCreatePlanBtn" onclick="CRONOS_NEW_FIN_UI.createPlan()">Criar recebimento</button>
           </div>
 
           ${plans.some(p=>p.source === "legacyInstallments" || p.legacyInstallPlan) ? `
@@ -3489,7 +3638,7 @@ function renderNewFinancialInstallmentApp(){
               const t = financialPlanTotals(plan);
               const active = selectedPlan && String(selectedPlan.id)===String(plan.id);
               return `
-                <div style="border:1px solid var(--line);border-radius:14px;padding:10px;background:${active ? 'rgba(124,92,255,.12)' : 'rgba(255,255,255,.03)'}">
+                <div style="border:1px solid var(--line);border-radius:14px;padding:10px;background:${active ? 'rgba(22,119,255,.12)' : 'rgba(255,255,255,.03)'}">
                   <div>
                     <b>${escapeHTML(plan.title||"Plano financeiro")}</b> ${financialPlanStatusLabel(plan)}
                     <div class="muted" style="font-size:12px">${escapeHTML(plan.dentist||"Sem avaliador")} • ${fmtBR(String(plan.createdAt||"").slice(0,10))}</div>
@@ -3500,8 +3649,10 @@ function renderNewFinancialInstallmentApp(){
                       <span class="chip">Saldo a lançar: <b>${moneyBR(t.remainingToSchedule)}</b></span>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
-                      <button type="button" class="btn small ${active?'primary':''}" onclick="CRONOS_NEW_FIN_UI.selectPlan('${escapeHTML(plan.id)}')">${active?'Selecionado':'Selecionar'}</button>
-                      ${canSensitive ? `<button type="button" class="btn small" onclick="CRONOS_NEW_FIN_UI.approvePlan('${escapeHTML(plan.id)}')">Aprovar</button>` : ""}
+                      <button type="button" class="btn small newFinSelectPlanBtn ${active?'selected':''}" onclick="CRONOS_NEW_FIN_UI.selectPlan('${escapeHTML(plan.id)}')">${active?'Selecionado':'Selecionar'}</button>
+                      ${canSensitive ? (financialPlanIsApproved(plan)
+                        ? `<button type="button" class="btn small newFinApprovedBtn" disabled>Aprovado</button>`
+                        : `<button type="button" class="btn small newFinApprovePlanBtn" onclick="CRONOS_NEW_FIN_UI.approvePlan('${escapeHTML(plan.id)}')">Aprovar</button>`) : ""}
                       ${canSensitive ? `<button type="button" class="btn small danger" onclick="CRONOS_NEW_FIN_UI.removePlan('${escapeHTML(plan.id)}')">Excluir</button>` : ""}
                     </div>
                     ${active ? renderFinancialPlanPaymentEditor(entry, plan, contact, t.remainingToSchedule) : ""}
@@ -3599,7 +3750,7 @@ window.CRONOS_NEW_FIN_UI = {
     const nowISO = new Date().toISOString();
     const plan = {
       id: uid("budget"),
-      title: String(val("newFinTitle") || (selectedItems.length ? "Recebimento da ficha" : "Recebimento avulso")).trim() || "Recebimento",
+      title: String(val("newFinTitle") || (selectedItems.length ? "Recebimento do prontuário" : "Recebimento avulso")).trim() || "Recebimento",
       dentist: String(val("newFinDentist") || "").trim(),
       amount,
       status: "Aguardando",
@@ -3621,7 +3772,7 @@ window.CRONOS_NEW_FIN_UI = {
       item.updatedAt = nowISO;
     });
     markFinancialMutation(entry, plan, null, nowISO);
-    try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar vínculo da ficha:", err); }
+    try{ syncFichaFinancialLinks(entry); }catch(err){ console.warn("Falha ao sincronizar vínculo do prontuário:", err); }
 
     const ok = await saveConfirmedFinancialChange(db, entry, before, {
       operationLabel: "um recebimento sendo salvo",
@@ -3727,6 +3878,7 @@ window.CRONOS_NEW_FIN_UI = {
     const st = window.__newFinancialInstallmentState || {};
     const {plan} = getFinancialPlan(db, st.entryId, st.planId);
     if(!plan) return;
+    if(!financialPlanIsApproved(plan)) return toast("Aprovação necessária", "Aprove o recebimento antes de usar o saldo restante.");
     const t = financialPlanTotals(plan);
     setVal("newPayAmount", Number(t.remainingToSchedule.toFixed(2)));
   },
@@ -3737,6 +3889,7 @@ window.CRONOS_NEW_FIN_UI = {
     const st = window.__newFinancialInstallmentState || {};
     const {entry, plan} = getFinancialPlan(db, st.entryId, st.planId);
     if(!entry || !plan) return toast("Orçamento", "Selecione um orçamento.");
+    if(!financialPlanIsApproved(plan)) return toast("Aprovação necessária", "Aprove o recebimento antes de lançar parcelas ou pagamentos.");
     const due = val("newPayDue") || todayISO();
     const method = val("newPayMethod") || "";
     const amount = parseMoney(val("newPayAmount"));
@@ -3839,6 +3992,27 @@ if(!window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__){
 }
 
 
+
+function instFilterLabelV38(filter){
+  const labels = {
+    all:"Todos do mês",
+    late:"Atrasados acumulados",
+    soon:"Próximos 7 dias",
+    dueMonth:"Pendentes do mês",
+    paid:"Recebidos do mês",
+    open:"Futuros do mês"
+  };
+  return labels[filter] || "Todos do mês";
+}
+function instFilterScopeV38(filter, mk){
+  if(filter === "late") return "Mostrando todos os recebimentos vencidos e não pagos até hoje, independente do mês selecionado.";
+  if(filter === "soon") return "Mostrando parcelas que vencem de hoje até os próximos 7 dias, independente do mês selecionado.";
+  if(filter === "open") return `Mostrando parcelas futuras que pertencem a ${monthLabelFromKey(mk)}.`;
+  if(filter === "paid") return `Mostrando baixas registradas em ${monthLabelFromKey(mk)}.`;
+  if(filter === "dueMonth") return `Mostrando parcelas pendentes de ${monthLabelFromKey(mk)}.`;
+  return `Mostrando movimentações de ${monthLabelFromKey(mk)}.`;
+}
+
 function renderInstallmentsView(){
   const actor = currentActor();
   if(!actor){ showAuth(); return; }
@@ -3870,6 +4044,19 @@ function renderInstallmentsView(){
   const mk = mm?.value || nowMK;
   const q = (el("instSearch")?.value||"").trim().toLowerCase();
   const filter = (el("instFilter")?.value||"all");
+  try{
+    document.querySelectorAll("#instQuickTabs [data-inst-filter]").forEach(btn=>{
+      btn.classList.toggle("active", btn.dataset.instFilter === filter);
+      if(!btn.__cronosInstTabBound){
+        btn.__cronosInstTabBound = true;
+        btn.addEventListener("click", ()=>{
+          const sel = el("instFilter");
+          if(sel) sel.value = btn.dataset.instFilter || "all";
+          renderInstallmentsView();
+        });
+      }
+    });
+  }catch(_){}
   const today = todayISO();
   const canSensitive = canManageFinancialSensitiveActions(actor);
 
@@ -3879,6 +4066,8 @@ function renderInstallmentsView(){
   el("kpiInstMonthN").textContent = `${kReceived.count} baixa(s)`;
   el("kpiInstLate").textContent = moneyBR(k.lateSum);
   el("kpiInstLateN").textContent = `${k.lateN} parcelas`;
+  if(el("kpiInstSoon")) el("kpiInstSoon").textContent = moneyBR(k.soonSum || 0);
+  if(el("kpiInstSoonN")) el("kpiInstSoonN").textContent = `${k.soonN || 0} parcelas`;
   el("kpiInstFuture").textContent = moneyBR(k.futureSum);
   el("kpiInstFutureN").textContent = `${k.futureN} parcelas`;
 
@@ -3905,14 +4094,17 @@ function renderInstallmentsView(){
     const monthInstallments = (e.installments||[]).filter(p=>{
       const paid = !!p.paidAt || !!p.cashDate || p.status === "PAGA";
       const cashISO = cronosPaymentCashISO(p, false);
-      const dueISO = p?.dueDate || p?.due || "";
+      const dueISO = cronosRecebDateISO(p?.dueDate || p?.due || "");
+      const dueState = cronosRecebDueState(dueISO, today);
+      if(filter === "late") return !paid && dueState === "late";
+      if(filter === "soon") return !paid && (dueState === "today" || dueState === "soon");
       if(paid) return cashISO && monthKeyOf(cashISO) === mk;
       return dueISO && monthKeyOf(dueISO) === mk;
     });
     if(!monthInstallments.length) return;
 
-    let monthPaidSum=0, monthPendingSum=0, monthLateSum=0, monthFutureSum=0;
-    let monthPaidCount=0, monthPendingCount=0, monthLateCount=0, monthFutureCount=0;
+    let monthPaidSum=0, monthPendingSum=0, monthLateSum=0, monthFutureSum=0, monthSoonSum=0;
+    let monthPaidCount=0, monthPendingCount=0, monthLateCount=0, monthFutureCount=0, monthSoonCount=0;
 
     monthInstallments.forEach(p=>{
       const paid = !!p.paidAt || !!p.cashDate || p.status === "PAGA";
@@ -3926,26 +4118,35 @@ function renderInstallmentsView(){
       }
       monthPendingSum += parseMoney(p.amount);
       monthPendingCount++;
-      if(p.dueDate && p.dueDate < today){
+      const dueISO = cronosRecebDateISO(p.dueDate || p.due || "");
+      const dueState = cronosRecebDueState(dueISO, today);
+      if(dueState === "late"){
         monthLateSum += parseMoney(p.amount);
         monthLateCount++;
       } else {
-        monthFutureSum += parseMoney(p.amount);
-        monthFutureCount++;
+        if(dueState === "today" || dueState === "soon"){
+          monthSoonSum += parseMoney(p.amount);
+          monthSoonCount++;
+        }
+        if(dueState === "future" || dueState === "today" || dueState === "soon"){
+          monthFutureSum += parseMoney(p.amount);
+          monthFutureCount++;
+        }
       }
     });
 
     if(filter === "paid" && monthPaidCount <= 0) return;
     if(filter === "dueMonth" && monthPendingCount <= 0) return;
     if(filter === "late" && monthLateCount <= 0) return;
+    if(filter === "soon" && monthSoonCount <= 0) return;
     if(filter === "open" && monthFutureCount <= 0) return;
 
     const overall = entryInstallmentSummary(e);
     rows.push({
       e, c, overall,
       monthInstallments,
-      monthPaidSum, monthPendingSum, monthLateSum, monthFutureSum,
-      monthPaidCount, monthPendingCount, monthLateCount, monthFutureCount,
+      monthPaidSum, monthPendingSum, monthLateSum, monthFutureSum, monthSoonSum,
+      monthPaidCount, monthPendingCount, monthLateCount, monthFutureCount, monthSoonCount,
     });
   });
 
@@ -3979,39 +4180,51 @@ function renderInstallmentsView(){
     return;
   }
 
-  const cardsHtml = pagedRows.map(({e,c,overall,monthInstallments,monthPaidSum,monthPendingSum,monthLateSum,monthFutureSum,monthPaidCount,monthPendingCount,monthLateCount,monthFutureCount})=>{
+  const cardsHtml = pagedRows.map(({e,c,overall,monthInstallments,monthPaidSum,monthPendingSum,monthLateSum,monthFutureSum,monthSoonSum,monthPaidCount,monthPendingCount,monthLateCount,monthFutureCount,monthSoonCount})=>{
     const pm = e.installPlan?.payMethod || "—";
     const each = e.installPlan?.each ? moneyBR(e.installPlan.each) : moneyBR((parseMoney(e.installPlan.amount)||0)/Math.max(1,parseInt(e.installPlan.n||1,10)));
-    const next = overall.nextDue ? fmtBR(overall.nextDue) : "—";
+    const next = overall.nextDue ? fmtBR(cronosRecebDateISO(overall.nextDue)) : "—";
     const rowId = `instrow_${e.id}`;
 
     const badges = [];
-    if(monthPaidCount > 0) badges.push(`<span class="badge ok">✅ ${monthPaidCount} paga(s)</span>`);
-    if(monthLateCount > 0) badges.push(`<span class="badge late">⚠️ ${monthLateCount} atrasada(s)</span>`);
-    if(monthFutureCount > 0) badges.push(`<span class="badge pending">🕒 ${monthFutureCount} pendente(s)</span>`);
-    if(!badges.length && monthPendingCount > 0) badges.push(`<span class="badge pending">🕒 ${monthPendingCount} pendente(s)</span>`);
+    if(monthPaidCount > 0) badges.push(`<span class="badge ok">${monthPaidCount} paga(s)</span>`);
+    if(monthLateCount > 0) badges.push(`<span class="badge late">${monthLateCount} atrasada(s)</span>`);
+    if(monthFutureCount > 0) badges.push(`<span class="badge pending">${monthFutureCount} pendente(s)</span>`);
+    if(!badges.length && monthPendingCount > 0) badges.push(`<span class="badge pending">${monthPendingCount} pendente(s)</span>`);
 
     const periodDetails = monthInstallments.map(p=>{
       const paid = !!p.paidAt || !!p.cashDate || p.status === "PAGA";
       const cashISO = cronosPaymentCashISO(p, false);
-      const late = !paid && p.dueDate && p.dueDate < today;
+      const dueState = !paid ? cronosRecebDueState(p.dueDate || p.due || "", today) : "";
+      const late = dueState === "late";
       const statusChip = paid
         ? `<span class="badge ok">PAGA</span>`
         : late
           ? `<span class="badge late">ATRASADA</span>`
-          : `<span class="badge pending">PENDENTE</span>`;
-      const dateTxt = paid ? `Pago: ${fmtBR(cashISO || p.paidAt || p.cashDate || "")}` : `Venc: ${fmtBR(p.dueDate)}`;
+          : (dueState === "today" ? `<span class="badge pending">VENCE HOJE</span>` : `<span class="badge pending">PENDENTE</span>`);
+      const dateTxt = paid ? `Pago: ${fmtBR(cronosRecebDateISO(cashISO || p.paidAt || p.cashDate || ""))}` : `Venc: ${fmtBR(cronosRecebDateISO(p.dueDate || p.due || ""))}`;
       return `<div class="chip">${p.number}/${p.total} • ${dateTxt} • <b>${moneyBR(p.amount)}</b> ${statusChip}</div>`;
     }).join("");
 
-    const nextToneClass = monthLateCount > 0 ? "is-late" : (monthPendingCount > 0 ? "is-pending" : "");
-    const spotlightHtml = monthLateCount > 0
-      ? `<div class="instAlert late">⚠ ${monthLateCount} parcela(s) atrasada(s) no mês • ${moneyBR(monthLateSum)}</div>`
-      : monthPendingCount > 0
-        ? `<div class="instAlert pending">🕒 ${monthPendingCount} parcela(s) pendente(s) no mês • ${moneyBR(monthPendingSum)}</div>`
-        : monthPaidCount > 0
-          ? `<div class="instAlert ok">✅ ${monthPaidCount} paga(s) no mês • ${moneyBR(monthPaidSum)}</div>`
-          : `<div class="instAlert neutral">Sem movimentação no mês selecionado.</div>`;
+    const pendingInstallmentsForStatus = (e.installments||[]).filter(p=>!(p.paidAt || p.cashDate || p.status==="PAGA")).sort((a,b)=>String(cronosRecebDateISO(a.dueDate||a.due||"9999-99-99")).localeCompare(String(cronosRecebDateISO(b.dueDate||b.due||"9999-99-99"))));
+    const firstPendingForStatus = pendingInstallmentsForStatus[0] || null;
+    const legacyLateCountAll = pendingInstallmentsForStatus.filter(p=>cronosRecebDueState(p.dueDate || p.due || "", today) === "late").length;
+    const legacyTodayCountAll = pendingInstallmentsForStatus.filter(p=>cronosRecebDueState(p.dueDate || p.due || "", today) === "today").length;
+    const legacySoonCountAll = pendingInstallmentsForStatus.filter(p=>cronosRecebDueState(p.dueDate || p.due || "", today) === "soon").length;
+    const firstState = firstPendingForStatus ? cronosRecebDueState(firstPendingForStatus.dueDate || firstPendingForStatus.due || "", today) : "";
+    const nextToneClass = firstState === "late" ? "is-late" : ((firstState === "today" || firstState === "soon") ? "is-soon" : (monthPendingCount > 0 ? "is-pending" : ""));
+    const firstDaysLate = firstPendingForStatus ? cronosRecebDaysLate(firstPendingForStatus.dueDate || firstPendingForStatus.due || "", today) : 0;
+    const spotlightHtml = legacyLateCountAll > 0
+      ? `<div class="instAlert late"> ${legacyLateCountAll} parcela(s) atrasada(s)${monthLateSum ? ` • ${moneyBR(monthLateSum)}` : ""}${firstPendingForStatus?.dueDate ? ` • venceu em ${fmtBR(cronosRecebDateISO(firstPendingForStatus.dueDate))}` : ""}${firstDaysLate ? ` • ${firstDaysLate} dia(s) de atraso` : ""}</div>`
+      : legacyTodayCountAll > 0
+        ? `<div class="instAlert soon"> ${legacyTodayCountAll} parcela(s) vence(m) hoje${monthSoonSum ? ` • ${moneyBR(monthSoonSum)}` : ""}</div>`
+        : legacySoonCountAll > 0
+          ? `<div class="instAlert soon"> ${legacySoonCountAll} parcela(s) vencendo em até 7 dias${monthSoonSum ? ` • ${moneyBR(monthSoonSum)}` : ""}</div>`
+          : monthPendingCount > 0
+            ? `<div class="instAlert pending"> ${monthPendingCount} parcela(s) pendente(s) no mês • ${moneyBR(monthPendingSum)}</div>`
+            : monthPaidCount > 0
+              ? `<div class="instAlert ok"> ${monthPaidCount} paga(s) no mês • ${moneyBR(monthPaidSum)}</div>`
+              : `<div class="instAlert neutral">Sem movimentação no mês selecionado.</div>`;
     const extraMonthChips = [
       `<span class="chip">Forma: <b>${escapeHTML(pm)}</b></span>`,
       `<span class="chip">Pagas no mês: <b>${moneyBR(monthPaidSum)}</b></span>`,
@@ -4021,12 +4234,31 @@ function renderInstallmentsView(){
       ...(badges.length ? badges : [])
     ].join("");
 
+    const pendingInstallments = pendingInstallmentsForStatus;
+    const nextInstallment = pendingInstallments[0] || null;
+    const statusClass = legacyLateCountAll > 0 ? "is-overdue" : ((legacyTodayCountAll + legacySoonCountAll) > 0 ? "is-soon" : (overall.lateCount > 0 ? "is-overdue" : "is-open"));
+    const statusLabel = legacyLateCountAll > 0 ? "Atrasado" : (legacyTodayCountAll > 0 ? "Vence hoje" : (legacySoonCountAll > 0 ? "Vence em até 7 dias" : (overall.lateCount > 0 ? "Atrasado" : "Em aberto")));
+    const cleanPhone = String(c.phone||"").replace(/\D/g,"");
+    const canCharge = !!(cleanPhone && nextInstallment);
+    const chargeBtn = canCharge
+      ? `<a class="btn charge" href="${waChargeLink(c.phone, c.name, e, nextInstallment)}" target="_blank"><svg class="cronos-whatsapp-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.34 4.96L2 22l5.25-1.38a9.86 9.86 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.18 8.18 0 0 1-1.25-4.38c0-4.55 3.7-8.25 8.25-8.25a8.25 8.25 0 0 1 8.25 8.25c0 4.55-3.7 8.24-8.26 8.24Zm4.52-6.18c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.57.13-.17.25-.65.81-.8.98-.15.17-.3.19-.55.06-.25-.12-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.3.37-.45.12-.15.17-.25.25-.42.08-.17.04-.32-.02-.45-.06-.12-.57-1.37-.78-1.88-.21-.5-.42-.43-.57-.44h-.49c-.17 0-.45.06-.68.32-.23.25-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.12.17 1.79 2.73 4.34 3.83.61.26 1.08.42 1.45.54.61.19 1.16.16 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg><span>Cobrar</span></a>`
+      : `<button class="btn charge" disabled title="Sem telefone ou parcela pendente"><svg class="cronos-whatsapp-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.34 4.96L2 22l5.25-1.38a9.86 9.86 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.18 8.18 0 0 1-1.25-4.38c0-4.55 3.7-8.25 8.25-8.25a8.25 8.25 0 0 1 8.25 8.25c0 4.55-3.7 8.24-8.26 8.24Zm4.52-6.18c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.57.13-.17.25-.65.81-.8.98-.15.17-.3.19-.55.06-.25-.12-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.3.37-.45.12-.15.17-.25.25-.42.08-.17.04-.32-.02-.45-.06-.12-.57-1.37-.78-1.88-.21-.5-.42-.43-.57-.44h-.49c-.17 0-.45.06-.68.32-.23.25-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.12.17 1.79 2.73 4.34 3.83.61.26 1.08.42 1.45.54.61.19 1.16.16 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg><span>Cobrar</span></button>`;
+    const payBtn = nextInstallment
+      ? `<button class="btn ok compactLow" title="Baixa a próxima parcela pendente" onclick="payInstallment('${escapeJSString(e.id)}', ${Number(nextInstallment.number)||0}); return false;">Baixar próxima</button>`
+      : `<button class="btn ok" disabled>Baixar próxima</button>`;
+
     return `
-      <div class="instRow instRowClean" id="${rowId}">
-        <div class="instHead">
-          <div style="min-width:0;flex:1">
-            <div class="instName">${escapeHTML(c.name)} <span class="muted" style="font-weight:600">• ${escapeHTML(c.phone||"")}</span></div>
-            <div class="instSummary">
+      <div class="instRow instRowClean receivablePatientCard ${statusClass}" id="${rowId}">
+        <div class="instHead receivablePatientHead">
+          <div class="receivablePatientMain">
+            <div class="receivablePatientTop">
+              <div class="instName">${escapeHTML(c.name)} <span class="muted">• ${escapeHTML(c.phone||"")}</span></div>
+              <span class="receivableStatusChip">${escapeHTML(statusLabel)}</span>
+            </div>
+            <div class="instMeta instMetaTop">
+              <span class="chip">Orçamento: <b>Parcelamento legado</b></span>
+            </div>
+            <div class="instSummary receivableMetrics">
               <div class="instMetric">
                 <span class="instMetricLabel">Parcelas</span>
                 <strong>${overall.paidCount}/${overall.total}</strong>
@@ -4045,13 +4277,15 @@ function renderInstallmentsView(){
               </div>
             </div>
             ${spotlightHtml}
-            <details class="instExtra">
-              <summary>Detalhes do mês</summary>
+            <details class="instExtra receivableExtra">
+              <summary>Detalhes financeiros</summary>
               <div class="instMeta compact">${extraMonthChips}</div>
               <div class="instMeta compact">${periodDetails || `<span class="muted">Sem parcelas do período para detalhar.</span>`}</div>
             </details>
           </div>
-          <div class="instBtns">
+          <div class="instBtns receivableActions">
+            ${chargeBtn}
+            ${payBtn}
             <button class="btn" onclick="openLeadEntry('${e.id}')">Abrir lead</button>
             <button class="btn primary" data-toggle-inst="${e.id}" onclick="toggleInstRow('${e.id}')">Ver parcelas</button>
             ${canSensitive ? `<button class="btn danger" onclick="deleteInstallmentPlan('${e.id}')">Excluir</button>` : ""}
@@ -4111,8 +4345,9 @@ function renderInstallmentTable(entry, contact){
   const pmDefault = entry.installPlan?.payMethod || "";
   const rows = (entry.installments||[]).map(p=>{
     const paid = !!p.paidAt || !!p.cashDate || p.status==="PAGA";
-    const late = !paid && p.dueDate && p.dueDate < today;
-    const st = paid ? `<span class="badge ok">PAGO</span>` : (late ? `<span class="badge late">ATRASADO</span>` : `<span class="badge pending">PENDENTE</span>`);
+    const dueState = !paid ? cronosRecebDueState(p.dueDate || p.due || "", today) : "";
+    const late = dueState === "late";
+    const st = paid ? `<span class="badge ok">PAGO</span>` : (late ? `<span class="badge late">ATRASADO</span>` : (dueState === "today" ? `<span class="badge pending">VENCE HOJE</span>` : `<span class="badge pending">PENDENTE</span>`));
     const action = paid
       ? (canSensitive ? `<a class="miniLink" href="javascript:void(0)" onclick="undoInstallmentPay('${entry.id}', ${p.number})">Desfazer</a>` : `<span class="muted" style="font-size:12px">Pago</span>`)
       : `<button class="btn ok" type="button" onclick="payInstallment('${escapeJSString(entry.id)}', ${Number(p.number)||0}); return false;">Dar baixa</button>`;
@@ -4795,7 +5030,7 @@ function cronosActionLabel(action){
     payment_date_transferred:"Data da baixa transferida",
     payment_deleted:"Pagamento/parcela excluído",
     credit_anticipated:"Antecipação de crédito",
-    ficha_updated:"Ficha atualizada"
+    ficha_updated:"Prontuário atualizado"
   };
   return map[action] || String(action || "Ação registrada");
 }
@@ -5792,6 +6027,337 @@ function captureV2Snapshots(db){
     entries: new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), v2Fingerprint(x)]))
   };
 }
+
+
+/* ===== CRONOS AUTOSAVE V20 — patches locais para não perder alterações antes da nuvem confirmar ===== */
+function cronosPendingV2Key(){
+  return `${DBKEY}:pending_v2_patches`;
+}
+function cronosPatchItemTime(item){
+  if(!item || typeof item !== "object") return 0;
+  const candidates = [item.deletedAt, item.updatedAt, item.lastUpdateAt, item.modifiedAt, item.createdAt, item.at];
+  for(const v of candidates){
+    if(!v) continue;
+    const s = String(v);
+    const t = Date.parse(s.length === 10 ? s + "T00:00:00" : s);
+    if(Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+function loadPendingV2Patches(){
+  try{
+    const raw = localStorage.getItem(cronosPendingV2Key());
+    const data = raw ? JSON.parse(raw) : null;
+    if(data && typeof data === "object"){
+      data.contacts = data.contacts && typeof data.contacts === "object" ? data.contacts : {};
+      data.entries = data.entries && typeof data.entries === "object" ? data.entries : {};
+      data.deletedContacts = data.deletedContacts && typeof data.deletedContacts === "object" ? data.deletedContacts : {};
+      data.deletedEntries = data.deletedEntries && typeof data.deletedEntries === "object" ? data.deletedEntries : {};
+      return data;
+    }
+  }catch(err){
+    console.warn("Cronos autosave: falha ao ler patches locais.", err);
+  }
+  return { version:20, contacts:{}, entries:{}, deletedContacts:{}, deletedEntries:{}, updatedAt:"" };
+}
+function savePendingV2Patches(patch){
+  try{
+    const normalized = patch && typeof patch === "object" ? patch : {};
+    normalized.version = 20;
+    normalized.updatedAt = new Date().toISOString();
+    localStorage.setItem(cronosPendingV2Key(), JSON.stringify(normalized));
+    return true;
+  }catch(err){
+    console.warn("Cronos autosave: não foi possível gravar patches locais.", err);
+    return false;
+  }
+}
+function clearPendingV2Patches(){
+  try{ localStorage.removeItem(cronosPendingV2Key()); }catch(_){ }
+}
+function persistPendingV2Patches(db){
+  try{
+    if(!usesAnyClinicTableV2()) return false;
+    const normalized = normalizeDBShape(db || DB || freshDB());
+    const patch = loadPendingV2Patches();
+    let changed = false;
+    const nowISO = new Date().toISOString();
+
+    function collect(kind, list, snapshotMap, active){
+      if(!active) return;
+      const bucket = kind === "contacts" ? patch.contacts : patch.entries;
+      const deletedBucket = kind === "contacts" ? patch.deletedContacts : patch.deletedEntries;
+      const current = new Map((Array.isArray(list) ? list : []).filter(x=>x && x.id).map(x=>[String(x.id), x]));
+
+      current.forEach((item, id)=>{
+        const fp = v2Fingerprint(item);
+        if(snapshotMap.get(id) !== fp){
+          bucket[id] = item;
+          if(deletedBucket[id]) delete deletedBucket[id];
+          changed = true;
+        }
+      });
+
+      snapshotMap.forEach((_, id)=>{
+        if(!current.has(id)){
+          deletedBucket[id] = { id, deletedAt: nowISO };
+          if(bucket[id]) delete bucket[id];
+          changed = true;
+        }
+      });
+    }
+
+    collect("contacts", normalized.contacts, __v2Snapshots.contacts || new Map(), isClinicSourceV2("contacts"));
+    collect("entries", normalized.entries, __v2Snapshots.entries || new Map(), isClinicSourceV2("entries"));
+
+    if(changed) return savePendingV2Patches(patch);
+  }catch(err){
+    console.warn("Cronos autosave: falha ao montar patches locais.", err);
+  }
+  return false;
+}
+function applyPendingV2Patches(db){
+  try{
+    if(!usesAnyClinicTableV2()) return normalizeDBShape(db || freshDB());
+    const patch = loadPendingV2Patches();
+    const hasPatch = Object.keys(patch.contacts || {}).length || Object.keys(patch.entries || {}).length || Object.keys(patch.deletedContacts || {}).length || Object.keys(patch.deletedEntries || {}).length;
+    const out = normalizeDBShape(db || freshDB());
+    if(!hasPatch) return out;
+
+    function apply(kind, active){
+      if(!active) return;
+      const arrName = kind;
+      const bucket = kind === "contacts" ? patch.contacts : patch.entries;
+      const deletedBucket = kind === "contacts" ? patch.deletedContacts : patch.deletedEntries;
+      const map = new Map((out[arrName] || []).filter(x=>x && x.id).map(x=>[String(x.id), x]));
+
+      Object.values(bucket || {}).forEach(item=>{
+        if(!item || !item.id) return;
+        const id = String(item.id);
+        const old = map.get(id);
+        if(!old || cronosPatchItemTime(item) >= cronosPatchItemTime(old)){
+          map.set(id, item);
+        }
+      });
+
+      Object.values(deletedBucket || {}).forEach(tomb=>{
+        const id = String(tomb?.id || "");
+        if(!id) return;
+        const old = map.get(id);
+        if(!old || cronosPatchItemTime(tomb) >= cronosPatchItemTime(old)){
+          map.delete(id);
+        }
+      });
+      out[arrName] = Array.from(map.values());
+    }
+
+    apply("contacts", isClinicSourceV2("contacts"));
+    apply("entries", isClinicSourceV2("entries"));
+    out.lastLocalPatchAppliedAt = new Date().toISOString();
+    return normalizeDBShape(out);
+  }catch(err){
+    console.warn("Cronos autosave: falha ao aplicar patches locais.", err);
+    return normalizeDBShape(db || freshDB());
+  }
+}
+
+/* ===== CRONOS AUTOSAVE V21 — patches locais também para TAREFAS =====
+   O bug real: ao salvar, o merge com o JSON antigo da nuvem podia ressuscitar tarefas
+   apagadas ou estados antigos. Agora task update/delete também tem tombstone local. */
+function cronosPendingTaskPatchKey(){
+  return `${DBKEY}:pending_task_patches_v21`;
+}
+function loadPendingTaskPatches(){
+  try{
+    const raw = localStorage.getItem(cronosPendingTaskPatchKey());
+    const data = raw ? JSON.parse(raw) : null;
+    if(data && typeof data === "object"){
+      data.tasks = data.tasks && typeof data.tasks === "object" ? data.tasks : {};
+      data.deletedTasks = data.deletedTasks && typeof data.deletedTasks === "object" ? data.deletedTasks : {};
+      return data;
+    }
+  }catch(err){
+    console.warn("Cronos autosave tarefas: falha ao ler patches.", err);
+  }
+  return { version:21, tasks:{}, deletedTasks:{}, updatedAt:"" };
+}
+function savePendingTaskPatches(patch){
+  try{
+    const normalized = patch && typeof patch === "object" ? patch : {};
+    normalized.version = 21;
+    normalized.updatedAt = new Date().toISOString();
+    localStorage.setItem(cronosPendingTaskPatchKey(), JSON.stringify(normalized));
+    return true;
+  }catch(err){
+    console.warn("Cronos autosave tarefas: não foi possível gravar patches.", err);
+    return false;
+  }
+}
+function clearPendingTaskPatches(){
+  try{ localStorage.removeItem(cronosPendingTaskPatchKey()); }catch(_){ }
+}
+function cronosTaskFingerprint(task){
+  try{ return JSON.stringify(task || {}); }
+  catch(_){ return String(task?.id || task?.key || "") + "|" + String(task?.updatedAt || task?.createdAt || ""); }
+}
+function captureTaskSnapshots(db){
+  try{
+    const normalized = normalizeDBShape(db || DB || freshDB());
+    window.__CRONOS_TASK_SNAPSHOTS__ = new Map(
+      (normalized.tasks || [])
+        .filter(t => t && (t.id || t.key))
+        .map(t => [String(t.id || t.key), cronosTaskFingerprint(t)])
+    );
+  }catch(err){
+    console.warn("Cronos autosave tarefas: falha ao capturar snapshot.", err);
+  }
+}
+function persistPendingTaskPatches(db){
+  try{
+    const normalized = normalizeDBShape(db || DB || freshDB());
+    const patch = loadPendingTaskPatches();
+    const snapshot = window.__CRONOS_TASK_SNAPSHOTS__ instanceof Map ? window.__CRONOS_TASK_SNAPSHOTS__ : new Map();
+    const current = new Map((normalized.tasks || []).filter(t => t && (t.id || t.key)).map(t => [String(t.id || t.key), t]));
+    const nowISO = new Date().toISOString();
+    let changed = false;
+
+    current.forEach((task, id)=>{
+      const fp = cronosTaskFingerprint(task);
+      if(snapshot.get(id) !== fp){
+        patch.tasks[id] = task;
+        if(patch.deletedTasks[id]) delete patch.deletedTasks[id];
+        changed = true;
+      }
+    });
+
+    snapshot.forEach((_, id)=>{
+      if(!current.has(id)){
+        patch.deletedTasks[id] = { id, deletedAt: nowISO };
+        if(patch.tasks[id]) delete patch.tasks[id];
+        changed = true;
+      }
+    });
+
+    if(changed) return savePendingTaskPatches(patch);
+  }catch(err){
+    console.warn("Cronos autosave tarefas: falha ao montar patches.", err);
+  }
+  return false;
+}
+function recordTaskPatch(task){
+  try{
+    if(!task || !(task.id || task.key)) return false;
+    const id = String(task.id || task.key);
+    const patch = loadPendingTaskPatches();
+    const clone = JSON.parse(JSON.stringify(task));
+    clone.updatedAt = clone.updatedAt || new Date().toISOString();
+    patch.tasks[id] = clone;
+    if(patch.deletedTasks[id]) delete patch.deletedTasks[id];
+    return savePendingTaskPatches(patch);
+  }catch(err){
+    console.warn("Cronos autosave tarefas: falha ao registrar alteração.", err);
+    return false;
+  }
+}
+function recordTaskDeletion(taskOrId){
+  try{
+    const id = typeof taskOrId === "string" ? taskOrId : String(taskOrId?.id || taskOrId?.key || "");
+    if(!id) return false;
+    const patch = loadPendingTaskPatches();
+    patch.deletedTasks[id] = { id, deletedAt:new Date().toISOString() };
+    if(patch.tasks[id]) delete patch.tasks[id];
+    try{ rememberPersistentTaskDeletion(id); }catch(_){}
+    return savePendingTaskPatches(patch);
+  }catch(err){
+    console.warn("Cronos autosave tarefas: falha ao registrar exclusão.", err);
+    return false;
+  }
+}
+function applyPendingTaskPatches(db){
+  try{
+    const patch = loadPendingTaskPatches();
+    const hasPatch = Object.keys(patch.tasks || {}).length || Object.keys(patch.deletedTasks || {}).length;
+    const out = normalizeDBShape(db || freshDB());
+    if(!hasPatch) return out;
+
+    const map = new Map((out.tasks || []).filter(t => t && (t.id || t.key)).map(t => [String(t.id || t.key), t]));
+
+    Object.values(patch.tasks || {}).forEach(task=>{
+      const id = String(task?.id || task?.key || "");
+      if(!id) return;
+      const old = map.get(id);
+      if(!old || cronosPatchItemTime(task) >= cronosPatchItemTime(old)){
+        map.set(id, task);
+      }
+    });
+
+    const allDeletedTaskTombs = { ...(loadPersistentTaskTombstones ? loadPersistentTaskTombstones() : {}), ...(patch.deletedTasks || {}) };
+    Object.values(allDeletedTaskTombs || {}).forEach(tomb=>{
+      const id = String(tomb?.id || "");
+      if(!id) return;
+      const old = map.get(id);
+      if(!old || cronosPatchItemTime(tomb) >= cronosPatchItemTime(old)){
+        map.delete(id);
+      }
+    });
+
+    out.tasks = Array.from(map.values());
+    out.lastLocalTaskPatchAppliedAt = new Date().toISOString();
+    return normalizeDBShape(out);
+  }catch(err){
+    console.warn("Cronos autosave tarefas: falha ao aplicar patches.", err);
+    return normalizeDBShape(db || freshDB());
+  }
+}
+
+
+/* ===== CRONOS V27 — túmulo persistente para tarefas apagadas =====
+   Algumas tarefas podiam voltar se uma cópia antiga da nuvem chegasse depois.
+   Este registro local mantém exclusões por alguns dias e reaplica no carregamento. */
+function cronosTaskTombstoneKey(){
+  return `${DBKEY}:deleted_task_tombstones_v27`;
+}
+function loadPersistentTaskTombstones(){
+  try{
+    const raw = localStorage.getItem(cronosTaskTombstoneKey());
+    const data = raw ? JSON.parse(raw) : {};
+    const cutoff = Date.now() - (1000 * 60 * 60 * 24 * 14); // 14 dias
+    const out = {};
+    Object.values(data || {}).forEach(t=>{
+      const id = String(t?.id || "");
+      const at = Date.parse(t?.deletedAt || t?.updatedAt || "");
+      if(id && (!Number.isFinite(at) || at >= cutoff)) out[id] = { id, deletedAt:t.deletedAt || new Date().toISOString() };
+    });
+    if(JSON.stringify(out) !== JSON.stringify(data || {})){
+      localStorage.setItem(cronosTaskTombstoneKey(), JSON.stringify(out));
+    }
+    return out;
+  }catch(err){
+    console.warn("Cronos autosave tarefas: falha ao ler túmulos persistentes.", err);
+    return {};
+  }
+}
+function rememberPersistentTaskDeletion(taskOrId){
+  try{
+    const id = typeof taskOrId === "string" ? taskOrId : String(taskOrId?.id || taskOrId?.key || "");
+    if(!id) return false;
+    const data = loadPersistentTaskTombstones();
+    data[id] = { id, deletedAt:new Date().toISOString() };
+    localStorage.setItem(cronosTaskTombstoneKey(), JSON.stringify(data));
+    return true;
+  }catch(err){
+    console.warn("Cronos autosave tarefas: falha ao gravar túmulo persistente.", err);
+    return false;
+  }
+}
+
+try{
+  window.recordTaskPatch = recordTaskPatch;
+  window.recordTaskDeletion = recordTaskDeletion;
+  window.rememberPersistentTaskDeletion = rememberPersistentTaskDeletion;
+  window.applyPendingTaskPatches = applyPendingTaskPatches;
+}catch(_){}
+
 function removeV2CollectionsFromObject(db){
   const out = normalizeDBShape(db || freshDB());
   const compact = { ...out };
@@ -5945,18 +6511,66 @@ async function fetchAllV2Payloads(tableName){
 
   return output;
 }
+async function seedV2FromLegacyIfEmpty(tableName, legacyItems, rowMapper, label){
+  // Recuperação automática: algumas importações administrativas antigas gravam os
+  // contatos/leads dentro do JSON do clinic_state, enquanto a clínica já está
+  // configurada para ler pelas tabelas V2. Nesse caso a interface ficava vazia,
+  // embora o backup do superadmin mostrasse os dados. Se a tabela V2 está vazia
+  // e o JSON legado tem registros, espelhamos esses registros para a tabela V2.
+  if(isSupportMode()) return false;
+  if(!CLOUD_CLINIC_ID) return false;
+
+  const items = (Array.isArray(legacyItems) ? legacyItems : [])
+    .filter(item => item && typeof item === "object" && String(item.id || "").trim());
+
+  if(!items.length) return false;
+
+  try{
+    await upsertV2Rows(tableName, items.map(item => rowMapper(item)));
+    console.warn(`Cronos V2: ${items.length} ${label} recuperados do JSON legado para ${tableName}.`);
+    return true;
+  }catch(error){
+    console.warn(`Cronos V2: não consegui espelhar ${label} do JSON legado para ${tableName}.`, error);
+    return false;
+  }
+}
+
 async function hydrateClinicArraysFromTables(db){
   const loaded = normalizeDBShape(db || freshDB());
 
   // V21: contatos e leads não precisam esperar um pelo outro. Baixamos em paralelo
   // para reduzir o tempo do F5/login sem voltar a mostrar contagem antiga na tela.
+  // Correção: se a clínica estiver em V2, mas uma importação/admin colocou os dados
+  // apenas no JSON legado, não sobrescrevemos a coleção com array vazio. Usamos o
+  // legado como fallback e tentamos espelhar para a tabela correta.
   const jobs = [];
 
   if(isClinicSourceV2("contacts")){
-    jobs.push(fetchAllV2Payloads(CLOUD_CONTACTS_V2_TABLE).then(rows=>{ loaded.contacts = rows; }));
+    jobs.push((async()=>{
+      const legacyContacts = Array.isArray(loaded.contacts) ? loaded.contacts.slice() : [];
+      const rows = await fetchAllV2Payloads(CLOUD_CONTACTS_V2_TABLE);
+      if(rows.length || !legacyContacts.length){
+        loaded.contacts = rows;
+        return;
+      }
+
+      loaded.contacts = legacyContacts;
+      await seedV2FromLegacyIfEmpty(CLOUD_CONTACTS_V2_TABLE, legacyContacts, contactToV2Row, "contatos");
+    })());
   }
+
   if(isClinicSourceV2("entries")){
-    jobs.push(fetchAllV2Payloads(CLOUD_LEADS_V2_TABLE).then(rows=>{ loaded.entries = rows; }));
+    jobs.push((async()=>{
+      const legacyEntries = Array.isArray(loaded.entries) ? loaded.entries.slice() : [];
+      const rows = await fetchAllV2Payloads(CLOUD_LEADS_V2_TABLE);
+      if(rows.length || !legacyEntries.length){
+        loaded.entries = rows;
+        return;
+      }
+
+      loaded.entries = legacyEntries;
+      await seedV2FromLegacyIfEmpty(CLOUD_LEADS_V2_TABLE, legacyEntries, leadToV2Row, "leads");
+    })());
   }
 
   if(jobs.length){
@@ -6306,7 +6920,7 @@ function __cronosItemTime(item){
   };
 
   // Antes o merge olhava praticamente só o horário do objeto principal.
-  // Quando a alteração era dentro da ficha/parcelamento, o item filho podia estar novo,
+  // Quando a alteração era dentro do prontuário/parcelamento, o item filho podia estar novo,
   // mas o lead pai antigo fazia a nuvem vencer e apagar o local. Aqui usamos o maior
   // horário encontrado na árvore relevante do registro.
   let latest = 0;
@@ -6475,6 +7089,7 @@ async function flushCloudSave(dbToSave){
     normalized = ensureMemberMirror(normalized, CLOUD_MEMBER_INFO);
   }
 
+  try{ normalized = applyPendingTaskPatches(normalized); }catch(e){ console.warn("Cronos autosave tarefas: patch não aplicado antes da nuvem.", e); }
   try{ scrubInstallmentTasksForAllMasters(normalized); }catch(e){ console.warn("Falha ao higienizar tarefas antes da nuvem:", e); }
 
   try{
@@ -6528,6 +7143,8 @@ async function flushCloudSave(dbToSave){
 
   CLOUD_ROW_ID = data?.id || CLOUD_ROW_ID;
   CLOUD_DB_READY = true;
+  try{ clearPendingV2Patches(); }catch(_){ }
+  try{ clearPendingTaskPatches(); captureTaskSnapshots(normalized); }catch(_){ }
   return true;
 }
 
@@ -6578,6 +7195,7 @@ function scheduleCloudSave(immediate=false){
 
 function flushPendingCloudSaveOnExit(){
   try{
+    if(DB) persistPendingV2Patches(DB);
     if(!DB || typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
     if(__cloudSaveTimer){
       clearTimeout(__cloudSaveTimer);
@@ -6650,7 +7268,9 @@ async function ensureCloudDBLoaded(force=false){
       let loaded = mergeCloudAndLocalDB(cloudBeforePull, localBeforePull);
       if(usesAnyClinicTableV2()){
         loaded = await hydrateClinicArraysFromTables(loaded);
+        loaded = applyPendingV2Patches(loaded);
       }
+      try{ loaded = applyPendingTaskPatches(loaded); }catch(e){ console.warn("Cronos autosave tarefas: patch não aplicado no carregamento.", e); }
       loaded = ensureMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "");
       const cloudClinicName = String(ctx.row.clinic_name || "").trim();
       if(cloudClinicName){
@@ -6664,6 +7284,7 @@ async function ensureCloudDBLoaded(force=false){
       CLOUD_DB_READY = true;
       try{ cronosMarkCloudDBHydrated("ensure_cloud_loaded"); }catch(_){ }
       safeSetLocalDB(DB);
+      try{ captureTaskSnapshots(DB); }catch(_){ }
 
       // Alterações reais chamam saveDB; não reenviamos a base inteira após o pull.
       return DB;
@@ -6723,6 +7344,7 @@ function loadDB(){
     return DB;
   }
   DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
+  try{ captureTaskSnapshots(DB); }catch(_){ }
   return DB;
 }
 function saveDB(db, options={}){
@@ -6756,6 +7378,8 @@ function saveDB(db, options={}){
   window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
   window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
 
+  try{ persistPendingV2Patches(DB); }catch(e){ console.warn("Cronos autosave: patches locais não foram atualizados.", e); }
+  try{ persistPendingTaskPatches(DB); }catch(e){ console.warn("Cronos autosave tarefas: patches locais não foram atualizados.", e); }
   safeSetLocalDB(DB);
 
   try{
@@ -6763,7 +7387,10 @@ function saveDB(db, options={}){
   }catch(e){}
 
   if(options.skipCloud) return Promise.resolve(false);
-  return scheduleCloudSave(!!options.immediate);
+  // V20: salvar imediatamente por padrão. O debounce antigo era bonito no papel,
+  // mas podia perder alteração se o usuário saísse/F5 rápido demais.
+  const shouldSaveImmediately = options.immediate !== false;
+  return scheduleCloudSave(shouldSaveImmediately);
 }
 
 function createIsolatedSupabaseClient(){
@@ -8482,7 +9109,7 @@ if(!prev.length){
       const svgFicha = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>`;
       const svgEdit  = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
       const btnEdit = `<button type="button" class="iconBtn cronos-action-edit" title="Abrir / editar lead" onclick="openLeadEntry('${entryId}')">${svgEdit}</button>`;
-      const btnFicha = `<button type="button" class="iconBtn btnFicha cronos-action-ficha" data-ficha-entry="${entryId}" title="Ficha" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')">${svgFicha}</button>`;
+      const btnFicha = `<button type="button" class="iconBtn btnFicha cronos-action-ficha" data-ficha-entry="${entryId}" title="Prontuário" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${entryId}')">${svgFicha}</button>`;
       return `
         <div class="card" style="padding:10px; margin-bottom:10px">
           <div style="display:flex; justify-content:space-between; gap:10px">
@@ -8569,6 +9196,7 @@ window.DASH_PREVIEW_LIMIT = 10;
 function renderDashboardCharts(rows){
   const line = el("chartRevenueLine");
   const bar = el("chartStatusBars");
+  const donut = el("chartStatusDonut");
   if(!line || !bar) return;
 
   const actor = currentActor();
@@ -8583,8 +9211,8 @@ function renderDashboardCharts(rows){
 
   const __doDrawDashCharts = () => {
     drawMultiLineChart(line, revenueData.labels, [
-      { name:"Recebido", values: revenueData.receivedSeries, details: revenueData.receivedDetails, color:"rgba(46,229,157,0.9)", fill:true },
-      { name:"Bruto/Orçado", values: revenueData.grossSeries, details: revenueData.grossDetails, color:"rgba(255,90,90,0.9)", dash:[6,6], fill:false }
+      { name:"Recebido", values: revenueData.receivedSeries, details: revenueData.receivedDetails, color:"rgba(46,230,166,0.96)", fill:true, lineWidth:3.8, shadowBlur:18, z:2 },
+      { name:"Bruto/Orçado", values: revenueData.grossSeries, details: revenueData.grossDetails, color:"rgba(25,198,255,0.84)", dash:[6,6], fill:false, lineWidth:2.6, shadowBlur:10, z:1 }
     ], { yPrefix: "", showPoints: false, showMaxLabel: false, axisLabelPrefix: revenueData.axisLabelPrefix || "Dia" });
 
     const valueEl = document.getElementById("lineChartValue");
@@ -8597,6 +9225,7 @@ function renderDashboardCharts(rows){
     if(hintEl) hintEl.textContent = revenueData.hintText;
 
     drawBarChart(bar, barLabels, barValues);
+    if(donut) drawDonutChart(donut, barLabels, barValues);
   };
 
   requestAnimationFrame(() => {
@@ -8667,8 +9296,8 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
   const isLight = document.documentElement.classList.contains("light");
   const textColor = css.getPropertyValue('--text').trim() || (isLight ? "#0f172a" : "#e8eef7");
   const mutedColor = css.getPropertyValue('--muted').trim() || (isLight ? "#334155" : "#aab4c3");
-  const gridColor = isLight ? "rgba(15,23,42,0.12)" : "rgba(255,255,255,0.18)";
-  const axisColor = isLight ? "rgba(15,23,42,0.20)" : "rgba(255,255,255,0.28)";
+  const gridColor = isLight ? "rgba(15,23,42,0.10)" : "rgba(183,212,255,0.09)";
+  const axisColor = isLight ? "rgba(15,23,42,0.16)" : "rgba(183,212,255,0.16)";
   const labelColor = isLight ? "rgba(15,23,42,0.78)" : "rgba(232,238,246,0.88)";
   const legendTextColor = isLight ? "rgba(15,23,42,0.90)" : "rgba(232,238,246,0.96)";
 
@@ -8681,7 +9310,7 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
   const padL = 34;
   const padR = 18;
   const padB = 30;
-  const topBase = 64; // legenda + respiro
+  const topBase = 56; // legenda + respiro
 
   const all = (series||[]).flatMap(s=>s.values||[]).filter(v=>typeof v==="number" && !isNaN(v));
   let minV = Math.min(...(all.length?all:[0]));
@@ -8750,12 +9379,13 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
     return pts;
   }
 
-  (series||[]).forEach((s, si)=>{
+  const __drawSeries = [...(series||[])].sort((a,b)=>(a.z||0)-(b.z||0));
+  __drawSeries.forEach((s, si)=>{
     const values = (s.values||[]).map(v=>Number(v)||0);
     if(values.length===0) return;
 
     ctx.save();
-    ctx.lineWidth = 3;
+    ctx.lineWidth = s.lineWidth || 3;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     ctx.strokeStyle = s.color || "rgba(30,120,255,0.9)";
@@ -8763,9 +9393,9 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
 
     const pts = drawSmoothPath(values);
 
-    ctx.shadowColor = "rgba(0,0,0,0.25)";
-    ctx.shadowBlur = 10;
-    ctx.shadowOffsetY = 2;
+    ctx.shadowColor = s.color || "rgba(25,198,255,0.55)";
+    ctx.shadowBlur = (typeof s.shadowBlur === "number" ? s.shadowBlur : 14);
+    ctx.shadowOffsetY = 0;
     ctx.stroke();
 
     if(s.fill){
@@ -8773,7 +9403,7 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 0.18;
       const grad = ctx.createLinearGradient(0, plotTop, 0, plotBottom);
-      grad.addColorStop(0, (s.color||"rgba(46,229,157,0.9)").replace("0.9","0.22"));
+      grad.addColorStop(0, (s.color||"rgba(46,230,166,0.9)").replace("0.9","0.22"));
       grad.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = grad;
       ctx.lineTo(pts[pts.length-1].x, plotBottom);
@@ -8784,7 +9414,7 @@ function drawMultiLineChart(canvas, labels, series, opt={}){
 
     ctx.globalAlpha = 1;
     ctx.fillStyle = "rgba(255,255,255,0.95)";
-    ctx.strokeStyle = s.color || "rgba(46,229,157,0.9)";
+    ctx.strokeStyle = s.color || "rgba(46,230,166,0.9)";
     ctx.lineWidth = 2;
     if(opt.showPoints){
     pts.forEach((p,i)=>{
@@ -8862,6 +9492,171 @@ ctx.restore();
   return 0;
 }
 
+
+
+function dashboardStatusVisualColors(label, i=0){
+  const s = String(label||"").trim().toLowerCase();
+  if(/fechou/.test(s)) return ["#22d3ee","#2563eb"];
+  if(/compareceu/.test(s)) return ["#2ee6a6","#14b8a6"];
+  if(/agendado|remarcou/.test(s)) return ["#60a5fa","#7c3aed"];
+  if(/sem resposta/.test(s)) return ["#fb7185","#ef4444"];
+  if(/faltou|desmarcou/.test(s)) return ["#f59e0b","#f97316"];
+  if(/conversando/.test(s)) return ["#a78bfa","#8b5cf6"];
+  if(/incorreto|caro|interesse|entregue|mora longe|outro lugar/.test(s)) return ["#f87171","#dc2626"];
+  const fallback = [
+    ["#1677ff","#19c6ff"],
+    ["#19c6ff","#2ee6a6"],
+    ["#2ee6a6","#13b981"],
+    ["#0f62fe","#1677ff"],
+    ["#ffcc00","#ff5a7a"],
+    ["#64748b","#94a3b8"]
+  ];
+  return fallback[i % fallback.length];
+}
+function ensureCronosChartHoverTip(){
+  let tip = document.getElementById('cronosChartHoverTip');
+  if(!tip){
+    tip = document.createElement('div');
+    tip.id = 'cronosChartHoverTip';
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+function bindCanvasHoverTooltip(canvas, regions){
+  if(!canvas) return;
+  canvas.__hoverRegions = Array.isArray(regions) ? regions : [];
+  if(canvas.__hoverTooltipBound) return;
+  canvas.__hoverTooltipBound = true;
+  const hide = ()=>{
+    const tip = ensureCronosChartHoverTip();
+    tip.classList.remove('show');
+  };
+  const move = (ev)=>{
+    const tip = ensureCronosChartHoverTip();
+    const rect = canvas.getBoundingClientRect();
+    const x = ev.clientX - rect.left;
+    const y = ev.clientY - rect.top;
+    const hit = (canvas.__hoverRegions||[]).find(r => x >= r.x && x <= (r.x+r.w) && y >= r.y && y <= (r.y+r.h));
+    if(!hit){ hide(); return; }
+    tip.textContent = hit.text || '';
+    tip.style.left = ev.clientX + 'px';
+    tip.style.top = ev.clientY + 'px';
+    tip.classList.add('show');
+  };
+  canvas.addEventListener('mousemove', move);
+  canvas.addEventListener('mouseleave', hide);
+  canvas.addEventListener('blur', hide);
+}
+
+function drawDonutChart(canvas, labels, values){
+  if(!canvas) return;
+  const w0 = canvas.clientWidth || canvas.width || 0;
+  const h0 = canvas.clientHeight || canvas.height || 0;
+  if(w0===0 || h0===0) return;
+
+  const isLight = document.documentElement.classList.contains("light");
+  const textColor = isLight ? "rgba(15,23,42,0.92)" : "rgba(238,246,255,0.96)";
+  const mutedColor = isLight ? "rgba(71,85,105,0.92)" : "rgba(156,179,217,0.92)";
+  const {ctx,w,h} = clearCanvas(canvas);
+
+  const total = values.reduce((s,v)=>s+(Number(v)||0),0);
+  const cx = Math.min(96, w*0.28);
+  const cy = h/2;
+  const outer = Math.min(h*0.31, 52);
+  const inner = outer * 0.58;
+
+  const baseColors = [
+    ["#1677ff","#19c6ff"],
+    ["#19c6ff","#2ee6a6"],
+    ["#2ee6a6","#13b981"],
+    ["#0f62fe","#1677ff"],
+    ["#ffcc00","#ff5a7a"],
+    ["#64748b","#94a3b8"]
+  ];
+
+  function isNegative(label){
+    return /(faltou|sem resposta|desmarcou|incorreto|caro|interesse|entregue)/i.test(String(label||""));
+  }
+
+  function itemColors(label, i){
+    return isNegative(label) ? ["#ffcc00","#ff5a7a"] : baseColors[i % baseColors.length];
+  }
+
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = isLight ? "rgba(15,23,42,.08)" : "rgba(183,212,255,.10)";
+
+  if(!total){
+    ctx.beginPath();
+    ctx.arc(cx,cy,outer,0,Math.PI*2);
+    ctx.stroke();
+    ctx.fillStyle = mutedColor;
+    ctx.font = "700 12px ui-sans-serif, system-ui";
+    ctx.fillText("Sem dados", cx-28, cy+4);
+    ctx.restore();
+    bindCanvasHoverTooltip(canvas, []);
+    return;
+  }
+
+  let a0 = -Math.PI/2;
+  labels.forEach((label,i)=>{
+    const v = Number(values[i]||0);
+    if(!v) return;
+    const a1 = a0 + (v/total)*Math.PI*2;
+    const grad = ctx.createLinearGradient(cx-outer, cy-outer, cx+outer, cy+outer);
+    const colors = itemColors(label, i);
+    grad.addColorStop(0, colors[0]);
+    grad.addColorStop(1, colors[1]);
+    ctx.beginPath();
+    ctx.arc(cx,cy,outer,a0,a1);
+    ctx.arc(cx,cy,inner,a1,a0,true);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.stroke();
+    a0 = a1;
+  });
+
+  ctx.fillStyle = isLight ? "rgba(255,255,255,.84)" : "rgba(6,13,31,.86)";
+  ctx.beginPath();
+  ctx.arc(cx,cy,inner-1,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = textColor;
+  ctx.font = "900 20px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  const totalTxt = String(total);
+  ctx.fillText(totalTxt, cx - ctx.measureText(totalTxt).width/2, cy+1);
+  ctx.fillStyle = mutedColor;
+  ctx.font = "11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  ctx.fillText("leads", cx - ctx.measureText("leads").width/2, cy+18);
+
+  const lx = Math.min(w*0.46, 170);
+  let ly = Math.max(18, cy - Math.min(52, labels.length*11/2));
+  ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  const hoverRegions = [];
+  labels.slice(0,6).forEach((label,i)=>{
+    const v = Number(values[i]||0);
+    const colors = itemColors(label, i);
+    ctx.fillStyle = isNegative(label) ? colors[0] : colors[1];
+    ctx.beginPath();
+    ctx.arc(lx, ly+4, 4, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = textColor;
+    const maxLabel = w < 520 ? 12 : 18;
+    const rawLabel = String(label||"—");
+    const shown = rawLabel.length > maxLabel ? rawLabel.slice(0,maxLabel-1)+"…" : rawLabel;
+    ctx.fillText(shown, lx+12, ly+8);
+    ctx.fillStyle = mutedColor;
+    const pct = total ? `${Math.round((v/total)*100)}%` : "0%";
+    ctx.fillText(`${v} • ${pct}`, w-80, ly+8);
+    hoverRegions.push({x: lx - 8, y: ly - 8, w: Math.max(90, w - lx - 10), h: 18, text: `${rawLabel}: ${v} lead(s) • ${pct}`});
+    ly += 19;
+  });
+
+  ctx.restore();
+  bindCanvasHoverTooltip(canvas, hoverRegions);
+}
+
 function drawBarChart(canvas, labels, values){
   if(!canvas) return;
   const w0 = canvas.clientWidth || canvas.width || 0;
@@ -8869,43 +9664,124 @@ function drawBarChart(canvas, labels, values){
   if(w0===0 || h0===0) return;
 
   const isLight = document.documentElement.classList.contains("light");
-  const labelColor = isLight ? "rgba(15,23,42,0.82)" : "rgba(232,238,246,0.92)";
-  const axisColor = isLight ? "rgba(15,23,42,0.18)" : "rgba(255,255,255,0.26)";
+  const labelColor = isLight ? "rgba(15,23,42,0.82)" : "rgba(232,238,246,0.90)";
+  const valueColor = isLight ? "rgba(15,23,42,0.88)" : "rgba(238,246,255,0.96)";
+  const axisColor = isLight ? "rgba(15,23,42,0.13)" : "rgba(183,212,255,0.12)";
+  const gridColor = isLight ? "rgba(15,23,42,0.08)" : "rgba(183,212,255,0.075)";
 
   const {ctx,w,h} = clearCanvas(canvas);
-  const pad = 28;
-  const top = 56;// mais área útil p/ barras
-  const maxV = Math.max(1, ...values);
+  const padL = 34;
+  const padR = 12;
+  const padB = 46;
+  const top = 46;
+  const maxV = Math.max(1, ...values.map(v=>Number(v)||0));
   const n = values.length || 1;
-  const barW = (w - pad - 10) / n;
+  const barW = (w - padL - padR) / n;
   const rects = [];
 
-  ctx.strokeStyle = axisColor;
+  function roundRect(ctx, x, y, width, height, radius){
+    const r = Math.min(radius, Math.abs(height)/2, width/2);
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+width, y, x+width, y+height, r);
+    ctx.arcTo(x+width, y+height, x, y+height, r);
+    ctx.arcTo(x, y+height, x, y, r);
+    ctx.arcTo(x, y, x+width, y, r);
+    ctx.closePath();
+  }
+
+  function negativeStatus(label){
+    const s = String(label||"").toLowerCase();
+    return /(faltou|sem resposta|desmarcou|incorreto|caro|interesse|entregue)/i.test(s);
+  }
+
+  function displayLabel(label){
+    const s = String(label||"—");
+    const map = {
+      "Sem resposta":"Sem resp.",
+      "Compareceu":"Comparec.",
+      "Conversando":"Convers.",
+      "Desmarcou":"Desmarc.",
+      "Número incorreto":"Nº incor.",
+      "Msg não entregue":"Não entr."
+    };
+    return map[s] || s;
+  }
+
+  function fitText(text, maxWidth){
+    let out = String(text||"");
+    if(ctx.measureText(out).width <= maxWidth) return out;
+    while(out.length > 2 && ctx.measureText(out + "…").width > maxWidth) out = out.slice(0,-1);
+    return out + "…";
+  }
+
+  const plotTop = top;
+  const plotBottom = h - padB;
+  const plotRight = w - padR;
+
+  ctx.save();
+  ctx.strokeStyle = gridColor;
   ctx.lineWidth = 1;
+  for(let g=0; g<=3; g++){
+    const yy = plotTop + (g*(plotBottom-plotTop))/3;
+    ctx.beginPath();
+    ctx.moveTo(padL, yy);
+    ctx.lineTo(plotRight, yy);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = axisColor;
   ctx.beginPath();
-  ctx.moveTo(pad, top);
-  ctx.lineTo(pad, h-pad);
-  ctx.lineTo(w-10, h-pad);
+  ctx.moveTo(padL, plotTop);
+  ctx.lineTo(padL, plotBottom);
+  ctx.lineTo(plotRight, plotBottom);
   ctx.stroke();
+  ctx.restore();
 
   for(let i=0;i<n;i++){
-    const v = values[i]||0;
-    const bh = ((v)* (h-pad-top)) / maxV;
-    const x = pad + i*barW + 6;
-    const y = (h-pad) - bh;
-    ctx.fillStyle = "rgba(30,120,255,0.7)";
-    ctx.fillRect(x, y, Math.max(6, barW-12), bh);
-    rects.push({x:x, y:y, w:Math.max(6, barW-12), h:bh, label:labels[i]||"", value:values[i]||0});
+    const v = Number(values[i]||0);
+    const bh = Math.max(3, (v * (plotBottom-plotTop)) / maxV);
+    const x = padL + i*barW + Math.min(12, barW*.16);
+    const bw = Math.max(8, barW - Math.min(24, barW*.32));
+    const y = plotBottom - bh;
+    const label = labels[i] || "";
+
+    const grad = ctx.createLinearGradient(0, y, 0, plotBottom);
+    if(negativeStatus(label)){
+      grad.addColorStop(0, "rgba(255,204,0,0.86)");
+      grad.addColorStop(1, "rgba(255,90,122,0.58)");
+    }else{
+      grad.addColorStop(0, "rgba(22,119,255,0.96)");
+      grad.addColorStop(0.58, "rgba(25,198,255,0.74)");
+      grad.addColorStop(1, "rgba(46,230,166,0.42)");
+    }
+
+    ctx.save();
+    ctx.shadowColor = negativeStatus(label) ? "rgba(255,204,0,0.18)" : "rgba(25,198,255,0.18)";
+    ctx.shadowBlur = 10;
+    roundRect(ctx, x, y, bw, bh, 9);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.restore();
+
+    rects.push({x:x, y:y, w:bw, h:bh, label:label, value:v});
+
+    ctx.fillStyle = valueColor;
+    ctx.font = "700 12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    const valTxt = String(v);
+    const valW = ctx.measureText(valTxt).width;
+    ctx.fillText(valTxt, x + (bw-valW)/2, Math.max(14, y - 8));
+
     ctx.fillStyle = labelColor;
-    ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-    const lab = (labels[i]||"").slice(0,12);
-    ctx.fillText(lab, x, h-10);
+    ctx.font = "11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    const lab = fitText(displayLabel(label), Math.max(24, barW-8));
+    const labW = ctx.measureText(lab).width;
+    ctx.fillText(lab, x + (bw-labW)/2, h-18);
   }
 
   try{
     canvas.__chartData = { type:"bar", rects: rects };
     __bindChartHoverOnce(canvas);
-  }catch(_){}
+  }catch(_){ }
 
 }
 
@@ -8943,16 +9819,20 @@ function renderLeadsPagination(totalLeads, totalPages){
     }
     parts.push(
       p === currentPage
-        ? `<button class="btn primary" type="button" data-page="${p}" aria-current="page">${p}</button>`
+        ? `<button class="btn primary leadsPageActive" type="button" data-page="${p}" aria-current="page">${p}</button>`
         : `<button class="btn ghost" type="button" data-page="${p}">${p}</button>`
     );
   }
 
   wrap.innerHTML = `
-    <div class="muted" style="margin-right:auto">Mostrando ${startItem}-${endItem} de ${totalLeads} leads</div>
-    <button class="btn ghost" type="button" data-page="prev" ${currentPage <= 1 ? 'disabled' : ''}>← Anterior</button>
-    ${parts.join('')}
-    <button class="btn ghost" type="button" data-page="next" ${currentPage >= totalPages ? 'disabled' : ''}>Próxima →</button>
+    <div class="leadsPaginationInfo">Mostrando ${startItem}-${endItem} de ${totalLeads} leads</div>
+    <div class="leadsPaginationControls">
+      <span class="leadsPageSize">Itens por página: <b>${leadsPerPage}</b></span>
+      <button class="btn ghost" type="button" data-page="prev" ${currentPage <= 1 ? 'disabled' : ''}>‹</button>
+      ${parts.join('')}
+      <span class="leadsPageTotal">de ${totalPages}</span>
+      <button class="btn ghost" type="button" data-page="next" ${currentPage >= totalPages ? 'disabled' : ''}>›</button>
+    </div>
   `;
 
   wrap.querySelectorAll('button[data-page]').forEach(btn=>{
@@ -9004,6 +9884,74 @@ function renderLeadsTable(list){
 
   list = fullList.slice(start, end);
 
+  const leadIconSvg = {
+    person:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"></path><circle cx="12" cy="8" r="4"></circle></svg>`,
+    phone:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.7 19.7 0 0 1-8.59-3.05 19.4 19.4 0 0 1-6-6A19.7 19.7 0 0 1 2.18 4.18 2 2 0 0 1 4.16 2h3a2 2 0 0 1 2 1.72c.12.9.32 1.77.6 2.61a2 2 0 0 1-.45 2.11L8.1 9.65a16 16 0 0 0 6.25 6.25l1.21-1.21a2 2 0 0 1 2.11-.45c.84.28 1.71.48 2.61.6A2 2 0 0 1 22 16.92Z"></path></svg>`,
+    tooth:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3.5c1.7 0 2.7 1 4.5 1s2.8-1 4.5-1C19.1 3.5 21 5.7 21 8.7c0 4.5-2.1 11.8-5 11.8-1.6 0-1.3-4.8-4-4.8s-2.4 4.8-4 4.8c-2.9 0-5-7.3-5-11.8 0-3 1.9-5.2 4.5-5.2Z"></path></svg>`,
+    calendar:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M8 3.5v4"></path><path d="M16 3.5v4"></path><path d="M3.5 9.5h17"></path></svg>`,
+    pin:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>`,
+    money:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="3"></rect><circle cx="12" cy="12" r="3"></circle><path d="M7 12h.01"></path><path d="M17 12h.01"></path></svg>`,
+    history:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path><path d="M12 7v5l3 2"></path></svg>`,
+    file:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"></path><path d="M14 3v5h5"></path></svg>`,
+    edit:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`,
+    campaign:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13V8.5a2 2 0 0 1 2-2h2.5L18 3.8v15.4l-9.5-2.7H6a2 2 0 0 1-2-2V13Z"></path><path d="M8.5 16.5 10 21h2.2l-1.5-4.1"></path><path d="M20 9.5v4"></path></svg>`,
+    task:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="3"></rect><path d="M8.5 10.5l1.5 1.5 3-3"></path><path d="M8.5 15.5l1.5 1.5 3-3"></path></svg>`,
+    open:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"></path><path d="M15 12H3"></path><path d="M16 5h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3"></path></svg>`,
+    trash:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 14h10l1-14"></path><path d="M9 7V4h6v3"></path></svg>`,
+    whats:`<svg class="cronos-whatsapp-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.34 4.96L2 22l5.25-1.38a9.86 9.86 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.18 8.18 0 0 1-1.25-4.38c0-4.55 3.7-8.25 8.25-8.25a8.25 8.25 0 0 1 8.25 8.25c0 4.55-3.7 8.24-8.26 8.24Zm4.52-6.18c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.57.13-.17.25-.65.81-.8.98-.15.17-.3.19-.55.06-.25-.12-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.3.37-.45.12-.15.17-.25.25-.42.08-.17.04-.32-.02-.45-.06-.12-.57-1.37-.78-1.88-.21-.5-.42-.43-.57-.44h-.49c-.17 0-.45.06-.68.32-.23.25-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.12.17 1.79 2.73 4.34 3.83.61.26 1.08.42 1.45.54.61.19 1.16.16 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg>`,
+    flame:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22c4 0 7-2.8 7-6.8 0-2.7-1.4-5-3.6-6.7.1 1.9-.7 3.2-2 4.1.1-3.3-1.6-6.2-4.6-8.6.2 3.4-1.5 5.2-2.9 7C4.7 12.5 4 13.7 4 15.2 4 19.2 8 22 12 22Z"></path><path d="M12 19c1.8 0 3-1.2 3-3 0-1.2-.6-2.2-1.7-3-.1 1-.6 1.8-1.3 2.2 0-1.5-.8-2.8-2.2-3.9.1 1.7-.7 2.5-1.3 3.4-.4.5-.5.9-.5 1.3 0 1.8 1.8 3 4 3Z"></path></svg>`,
+    clock:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>`,
+    check:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.2 4.2L19 7"></path></svg>`
+  };
+
+  const statusNorm = (s)=>String(s||"").trim().toLowerCase();
+  const isOpenLeadStatus = (status)=>{
+    const s = statusNorm(status);
+    return !["fechou","fechado","compareceu","faltou","desmarcou","número incorreto","numero incorreto","não tem interesse","nao tem interesse"].includes(s);
+  };
+
+  const fullMetrics = fullList.reduce((acc, e)=>{
+    const c = e?.contactId ? _getContact(e.contactId) : null;
+    const financeSummary = (typeof cronosEntryFinancialSummary === "function")
+      ? cronosEntryFinancialSummary(e, db)
+      : { budget:0, paid:0, open:0 };
+    const openVal = Math.max(0, parseMoney(financeSummary.open));
+    const status = String(e?.status || "").trim();
+
+    const tagsArr = ([]
+      .concat(Array.isArray(e?.tags) ? e.tags : (Array.isArray(e?.tag) ? e.tag : (e?.tag ? [e.tag] : [])))
+      .concat(Array.isArray(c?.tags) ? c.tags : (Array.isArray(c?.tag) ? c.tag : (c?.tag ? [c.tag] : [])))
+      .map(String));
+    const priorityRaw = String(e?.priority || e?.prioridade || e?.temperature || e?.temperatura || e?.temp || e?.pri || tagsArr.find(t => /^\s*prioridade\s*:/i.test(String(t || ''))) || '').toLowerCase();
+    if(priorityRaw.includes("quente") || priorityRaw.includes("hot") || priorityRaw.includes("2")) acc.hot++;
+    if(openVal > 0 || isOpenLeadStatus(status)) acc.open++;
+    if(statusNorm(status) === "compareceu") acc.showed++;
+    acc.openAmount += openVal;
+    return acc;
+  }, {total: totalLeads, hot:0, open:0, showed:0, openAmount:0});
+
+  const summaryWrap = document.getElementById("leadsSummaryCards");
+  if(summaryWrap){
+    summaryWrap.innerHTML = `
+      <div class="leadsMetricCard">
+        <div class="leadsMetricIcon blue">${leadIconSvg.person}</div>
+        <div><b>${fullMetrics.total}</b><span>Leads filtrados</span><small>Total de leads</small></div>
+      </div>
+      <div class="leadsMetricCard">
+        <div class="leadsMetricIcon hot">${leadIconSvg.flame}</div>
+        <div><b>${fullMetrics.hot}</b><span>Quentes</span><small>Leads quentes</small></div>
+      </div>
+      <div class="leadsMetricCard">
+        <div class="leadsMetricIcon amber">${leadIconSvg.clock}</div>
+        <div><b>${fullMetrics.open}</b><span>Em aberto</span><small>${moneyBR(fullMetrics.openAmount)} em oportunidades</small></div>
+      </div>
+      <div class="leadsMetricCard">
+        <div class="leadsMetricIcon green">${leadIconSvg.check}</div>
+        <div><b>${fullMetrics.showed}</b><span>Compareceram</span><small>Leads que compareceram</small></div>
+      </div>
+    `;
+  }
+
   const cardsHtml = (list||[]).map((e)=>{
     const c = e?.contactId ? _getContact(e.contactId) : null;
 
@@ -9020,10 +9968,13 @@ function renderLeadsTable(list){
     else if (priNorm === '1' || priNorm === 'warm' || priNorm === 'morno' || priNorm === 'm') prioridade = 'Morno';
     else if (priNorm === '0' || priNorm === 'cold' || priNorm === 'frio' || priNorm === 'f') prioridade = 'Frio';
 
-    const tagsArr = ([]
+    const entryTagsArr = ([]
       .concat(Array.isArray(e.tags) ? e.tags : (Array.isArray(e.tag) ? e.tag : (e.tag ? [e.tag] : [])))
+      .map(String));
+    const contactTagsArr = ([]
       .concat(Array.isArray(c?.tags) ? c.tags : (Array.isArray(c?.tag) ? c.tag : (c?.tag ? [c.tag] : [])))
       .map(String));
+    const tagsArr = entryTagsArr.concat(contactTagsArr);
     if (!prioridade && tagsArr.length) {
       const tagPref = tagsArr.find(t => /^\s*prioridade\s*:/i.test(String(t || '')));
       if (tagPref) prioridade = String(tagPref).split(':').slice(1).join(':').trim();
@@ -9037,7 +9988,9 @@ function renderLeadsTable(list){
       return 'neutral';
     })();
 
-    const priBadge = prioridade ? `<span class="badge ${priClass}">${escapeHTML(prioridade)}</span>` : '';
+    const priBadge = prioridade ? `<span class="leadChip priority ${priClass}">${leadIconSvg.flame}${escapeHTML(prioridade)}</span>` : '';
+    const inCampaign = entryTagsArr.some(t => String(t || "").trim().toLowerCase() === "campanha");
+    const campaignBadge = inCampaign ? `<span class="leadChip campaign">${leadIconSvg.campaign}${escapeHTML("Campanha")}</span>` : "";
 
     const tratamentoRaw = (e.treatment || e.tratamento || e.procedimento || e.trat || c?.treatment || c?.tratamento || '') || '';
     const tratamentoManual = (e.treatmentOther || e.tratamentoOutro || e.treatment_other || c?.treatmentOther || c?.tratamentoOutro || '') || '';
@@ -9053,54 +10006,77 @@ function renderLeadsTable(list){
     const financeSummary = (typeof cronosEntryFinancialSummary === "function")
       ? cronosEntryFinancialSummary(e, db)
       : { budget:0, paid:0, open:0 };
-    const budgetVal = parseMoney(financeSummary.budget);
     const paidVal   = parseMoney(financeSummary.paid);
-    const openVal   = parseMoney(financeSummary.open);
+    const openVal   = Math.max(0, parseMoney(financeSummary.open));
 
-    const statusPill = String(e.status || "").trim() ? chipStatus(e) : "";
+    const statusRaw = String(e.status || "").trim();
+    const statusPill = statusRaw ? `<span class="leadChip status ${statusDotClass(statusRaw)||""}">${escapeHTML(statusRaw)}</span>` : "";
 
     const id = e.id ?? e._id ?? '';
     const idAttr = escapeHTML(String(id));
 
+    const accent = (() => {
+      const p = (prioridade||'').toLowerCase();
+      const s = statusNorm(statusRaw);
+      if(p.includes("quente")) return "hot";
+      if(s === "compareceu" || s === "agendado") return "green";
+      if(openVal > 0) return "amber";
+      return "blue";
+    })();
 
-    const svgFicha = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>`;
-    const svgEdit  = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
-    const svgOk    = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="4" width="16" height="16" rx="4"></rect><path d="m8.5 12.5 2.4 2.4 4.8-5"></path></svg>`;
-    const svgTrash = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 14h10l1-14"></path><path d="M9 7V4h6v3"></path></svg>`;
-    const svgWhats = `<svg class="cronos-whatsapp-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.34 4.96L2 22l5.25-1.38a9.86 9.86 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.18 8.18 0 0 1-1.25-4.38c0-4.55 3.7-8.25 8.25-8.25a8.25 8.25 0 0 1 8.25 8.25c0 4.55-3.7 8.24-8.26 8.24Zm4.52-6.18c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.57.13-.17.25-.65.81-.8.98-.15.17-.3.19-.55.06-.25-.12-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.3.37-.45.12-.15.17-.25.25-.42.08-.17.04-.32-.02-.45-.06-.12-.57-1.37-.78-1.88-.21-.5-.42-.43-.57-.44h-.49c-.17 0-.45.06-.68.32-.23.25-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.12.17 1.79 2.73 4.34 3.83.61.26 1.08.42 1.45.54.61.19 1.16.16 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg>`;
+    const openClass = openVal > 0 ? "danger" : "ok";
 
-    const btnFicha = `<button type="button" class="iconBtn btnFicha cronos-action-ficha" data-ficha-entry="${idAttr}" title="Ficha" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${idAttr}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${idAttr}')">${svgFicha}</button>`;
-    const btnEdit  = `<button class="iconBtn cronos-action-edit" title="Abrir" onclick="openLeadEntry('${idAttr}')">${svgEdit}</button>`;
-    const btnOk    = `<button class="iconBtn cronos-action-ok" title="Marcar OK" onclick="markOK('${idAttr}')">${svgOk}</button>`;
-    const btnMsg   = `<button class="iconBtn cronos-whatsapp-icon-only" title="WhatsApp" onclick="openWhats('${idAttr}')">${svgWhats}</button>`;
-    const btnDel   = `<button class="iconBtn danger cronos-action-delete" title="Excluir" onclick="deleteLead('${idAttr}')">${svgTrash}</button>`;
+    const btnHistory = `<button class="leadActionSmall" type="button" title="Histórico" onclick="CRONOS_SHOW_AUDIT('entry','${idAttr}')">${leadIconSvg.history}<span>Histórico</span></button>`;
+    const btnFicha = `<button type="button" class="leadActionSmall btnFicha" data-ficha-entry="${idAttr}" title="Prontuário" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${idAttr}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${idAttr}')">${leadIconSvg.file}<span>Prontuário</span></button>`;
+    const btnCampaign = `<button class="leadActionSmall campaignToggle ${inCampaign ? "active" : ""}" type="button" title="${inCampaign ? "Remover da campanha" : "Marcar para campanha"}" onclick="return toggleLeadCampaign(event,'${idAttr}')">${leadIconSvg.campaign}<span>Campanha</span></button>`;
+    const btnOk    = `<button class="leadActionSmall" title="Criar tarefa para este lead" onclick="return openLeadTaskShortcut(event,'${idAttr}')">${leadIconSvg.task}<span>Tarefa</span></button>`;
+    const btnDel   = `<button class="leadActionSmall danger" title="Excluir" onclick="deleteLead('${idAttr}')">${leadIconSvg.trash}<span>Excluir</span></button>`;
 
     return `
-      <div class="leadCard">
-        <div class="leadCardTop">
-          <div class="leadTitle">
-            <div class="leadNameRow">
-              <div class="name">${name}</div>
-              ${priBadge}
-            </div>
-            <div class="leadMeta">
-              <span>${escapeHTML(phonePretty)}</span>
-              ${statusPill ? `<span>•</span><span>${statusPill}</span>` : ""}
-            </div>
-          </div>
-
-          <div class="leadActionsRow">
-            ${btnFicha}${btnEdit}${btnOk}${btnMsg}${btnDel}
+      <article class="leadCard leadCardV2 accent-${accent}">
+        <div class="leadAccent"></div>
+        <div class="leadMainBlock">
+          <div class="leadAvatar">${leadIconSvg.person}</div>
+          <div class="leadIdentity">
+            <div class="name">${name}</div>
+            <div class="leadPhone">${leadIconSvg.phone}<span>${escapeHTML(phonePretty)}</span></div>
+            <div class="leadChipRow">${statusPill}${priBadge}${campaignBadge}</div>
           </div>
         </div>
 
-        <div class="leadGrid">
-          <div class="kv"><div class="k">Tratamento</div><div class="v">${tratamento}</div></div>
-          <div class="kv"><div class="k">Agendamento</div><div class="v">${apptText}</div></div>
-          <div class="kv"><div class="k">Origem</div><div class="v">${origem}</div></div>
-          <div class="kv"><div class="k">Valores</div><div class="v">Pago: ${moneyBR(paidVal)}<br>Em aberto: ${moneyBR(Math.max(0, openVal))}</div></div>
+        <div class="leadInfoGrid">
+          <div class="leadInfoItem">
+            <span class="leadInfoIcon">${leadIconSvg.tooth}</span>
+            <div><small>Tratamento</small><strong>${tratamento}</strong></div>
+          </div>
+          <div class="leadInfoItem">
+            <span class="leadInfoIcon">${leadIconSvg.calendar}</span>
+            <div><small>Próximo agendamento</small><strong>${apptText}</strong></div>
+          </div>
+          <div class="leadInfoItem leadInfoWide">
+            <span class="leadInfoIcon">${leadIconSvg.pin}</span>
+            <div><small>Origem</small><strong>${origem}</strong></div>
+          </div>
         </div>
-      </div>
+
+        <div class="leadMoneyBox">
+          <div class="leadInfoIcon">${leadIconSvg.money}</div>
+          <div>
+            <small>Valores</small>
+            <div class="leadPaid">Pago: <b>${moneyBR(paidVal)}</b></div>
+            <div class="leadOpen ${openClass}">Em aberto: <b>${moneyBR(openVal)}</b></div>
+          </div>
+        </div>
+
+        <div class="leadPrimaryActions">
+          <button class="leadPrimaryBtn" type="button" onclick="openLeadEntry('${idAttr}')">${leadIconSvg.open}<span>Abrir lead</span></button>
+          <button class="leadWhatsBtn" type="button" onclick="openWhats('${idAttr}')">${leadIconSvg.whats}<span>WhatsApp</span></button>
+        </div>
+
+        <div class="leadSecondaryActions">
+          ${btnHistory}${btnFicha}${btnCampaign}${btnOk}${btnDel}
+        </div>
+      </article>
     `;
   }).join('');
 
@@ -9115,6 +10091,66 @@ function renderLeadsTable(list){
 
 
 
+
+
+function toggleLeadCampaign(evOrEntryId, maybeEntryId){
+  try{
+    if(evOrEntryId && typeof evOrEntryId === "object" && typeof evOrEntryId.preventDefault === "function"){
+      evOrEntryId.preventDefault();
+      evOrEntryId.stopPropagation();
+    }
+
+    const entryId = maybeEntryId !== undefined ? maybeEntryId : evOrEntryId;
+    const idKey = String(entryId || "");
+    if(!idKey) return false;
+
+    const nowMs = Date.now();
+    window.__CRONOS_CAMPAIGN_CLICK_LOCK__ = window.__CRONOS_CAMPAIGN_CLICK_LOCK__ || {};
+    const last = Number(window.__CRONOS_CAMPAIGN_CLICK_LOCK__[idKey] || 0);
+    if(nowMs - last < 700){
+      return false;
+    }
+    window.__CRONOS_CAMPAIGN_CLICK_LOCK__[idKey] = nowMs;
+
+    const actor = currentActor();
+    if(!actor?.perms?.edit){
+      toast("Sem permissão", "Seu nível não pode alterar campanhas.");
+      return false;
+    }
+
+    const db = loadDB();
+    const e = (db.entries || []).find(x => String(x.id) === idKey);
+    if(!e){
+      toast("Lead não encontrado");
+      return false;
+    }
+
+    e.tags = Array.isArray(e.tags) ? e.tags.map(String) : [];
+    const idx = e.tags.findIndex(t => String(t || "").trim().toLowerCase() === "campanha");
+    const now = new Date().toISOString();
+
+    if(idx >= 0){
+      e.tags.splice(idx, 1);
+      toast("Removido da campanha", "Esse lead saiu da lista de campanha.");
+    }else{
+      e.tags.push("Campanha");
+      toast("Marcado para campanha", "Esse lead agora aparece no filtro Campanha.");
+    }
+
+    e.updatedAt = now;
+    e.lastUpdateAt = now;
+    e.updatedBy = cronosActorLabel(actor);
+
+    saveDB(db, { immediate:true });
+    try{ window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null; }catch(_){}
+    renderAll();
+  }catch(err){
+    console.error("Erro ao alternar campanha:", err);
+    toast("Erro", "Não foi possível alterar a campanha.");
+  }
+  return false;
+}
+window.toggleLeadCampaign = toggleLeadCampaign;
 
 function openChangeMyPassword(){
   const actor = currentActor();
@@ -9136,7 +10172,7 @@ function openChangeMyPassword(){
       <div class="muted" style="font-size:12px; margin-top:10px">Use pelo menos 6 caracteres para não dar palco pro caos.</div>
     `,
     footHTML: `
-      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn ok" id="btnSaveMyPassword">Salvar nova senha</button>
     `,
     onMount: ()=>{
@@ -9208,6 +10244,60 @@ function renderSettings(){
   }
 }
 
+function userRoleLabelV40(role){
+  const r = String(role || "").trim().toUpperCase();
+  if(r === "MASTER") return "MASTER";
+  if(r === "GERENTE") return "GERENTE";
+  if(r === "SECRETARIA") return "SECRETARIA";
+  return r || "—";
+}
+
+function userStatusInfoV40(row){
+  if(row.kind === "MASTER"){
+    return { key:"active", label:"ATIVO", cls:"active" };
+  }
+  if(row.pendingApproval === true){
+    return { key:"pending", label:"AGUARDANDO APROVAÇÃO", cls:"pending" };
+  }
+  if(row.active === false){
+    return { key:"inactive", label:"BLOQUEADO", cls:"inactive" };
+  }
+  return { key:"active", label:"ATIVO", cls:"active" };
+}
+
+function userDateV40(raw){
+  if(!raw) return "—";
+  try{
+    const d = new Date(raw);
+    if(isNaN(d)) return "—";
+    return d.toLocaleDateString("pt-BR");
+  }catch(_){
+    return "—";
+  }
+}
+
+function updateUsersKpisV40(rows){
+  const set = (id, value)=>{ const node = el(id); if(node) node.textContent = String(value ?? 0); };
+  const countRole = role => rows.filter(r => String(r.role || "").toUpperCase() === role).length;
+  set("usersKpiTotal", rows.length);
+  set("usersKpiMasters", countRole("MASTER"));
+  set("usersKpiGerentes", countRole("GERENTE"));
+  set("usersKpiSecretarias", countRole("SECRETARIA"));
+  set("usersKpiCrc", countRole("CRC"));
+  set("usersKpiDentistas", countRole("DENTISTA"));
+  set("usersKpiPending", rows.filter(r=>userStatusInfoV40(r).key==="pending").length);
+}
+
+function userActionsHTMLV40(row, actor, canManage){
+  if(row.kind !== "USER" || !canManage) return `<span class="muted">—</span>`;
+  if(row.role === "MASTER" && !actor.perms.manageMasters) return `<span class="muted">—</span>`;
+
+  const edit = `<button class="miniBtn usersMiniActionV40" title="Editar usuário" aria-label="Editar usuário" onclick="openUserEdit('${row.id}')">Editar</button>`;
+  const del = `<button class="miniBtn danger usersMiniActionV40" title="Excluir usuário" aria-label="Excluir usuário" onclick="deleteUser('${row.id}')">Excluir</button>`;
+
+  return `<div class="usersActionsV40">${edit}${del}</div>`;
+}
+
 function renderUsers(){
   const actor = currentActor();
   const tbody = el("usersTbody");
@@ -9216,17 +10306,18 @@ function renderUsers(){
     return;
   }
   if(!canAccessView("users", actor)) return;
+
   const db = loadDB();
   const master = db.masters.find(m=>m.id===actor.masterId);
-  const users = db.users.filter(u=>u.masterId===actor.masterId);
+  const users = (db.users || []).filter(u=>u.masterId===actor.masterId);
 
   const rows = [
     {
       kind:"MASTER",
+      id: master?.id || "master",
       name: master?.name || "Master",
       login: master?.email || "—",
       role: "MASTER",
-      master: master?.name || "—",
       createdAt: master?.createdAt || "",
       active: true,
       pendingApproval: false,
@@ -9235,10 +10326,9 @@ function renderUsers(){
     ...users.map(u=>({
       kind:"USER",
       id: u.id,
-      name: u.name,
-      login: u.username ? `${u.username} / ${u.email||""}` : (u.email||""),
-      role: u.role,
-      master: master?.name || "—",
+      name: u.name || "Usuário",
+      login: u.username ? `${u.username}${u.email ? " / " + u.email : ""}` : (u.email || u.loginEmail || ""),
+      role: u.role || "SECRETARIA",
       createdAt: u.createdAt,
       active: u.active !== false,
       pendingApproval: u.pendingApproval === true,
@@ -9246,34 +10336,52 @@ function renderUsers(){
     }))
   ];
 
-  tbody.innerHTML = rows.map(r=>{
+  updateUsersKpisV40(rows);
+
+  const q = String(el("usersSearch")?.value || "").trim().toLowerCase();
+  const roleFilter = String(el("usersRoleFilter")?.value || "all").toUpperCase();
+  const statusFilter = String(el("usersStatusFilter")?.value || "all").toLowerCase();
+
+  const filtered = rows.filter(r=>{
+    const status = userStatusInfoV40(r).key;
+    const role = String(r.role || "").toUpperCase();
+    const hay = `${r.name || ""} ${r.login || ""} ${role} ${status}`.toLowerCase();
+
+    if(q && !hay.includes(q)) return false;
+    if(roleFilter !== "ALL" && role !== roleFilter) return false;
+    if(statusFilter !== "all" && status !== statusFilter) return false;
+    return true;
+  });
+
+  if(!tbody) return;
+
+  const empty = el("usersEmpty");
+  if(empty) empty.classList.toggle("hidden", filtered.length > 0);
+
+  tbody.innerHTML = filtered.map(r=>{
     const canManage = !!actor?.perms?.manageUsers;
-    const isPending = r.kind === "USER" && r.pendingApproval === true;
-    const isInactive = r.kind === "USER" && !isPending && r.active === false;
-    const rowClass = isPending ? "userRowPending" : (isInactive ? "userRowInactive" : "");
-    const statusChip = isPending
-      ? `<span class="chip chipWarn">Aguardando aprovação</span>${r.blockedReason ? `<div class="muted" style="margin-top:6px">${escapeHTML(r.blockedReason)}</div>` : ``}`
-      : (isInactive
-          ? `<span class="chip chipDanger">Bloqueado</span>${r.blockedReason ? `<div class="muted" style="margin-top:6px">${escapeHTML(r.blockedReason)}</div>` : ``}`
-          : `<span class="chip"><span class="dot ${r.role==="MASTER"?"ok":"warm"}"></span>${r.role}</span>`);
+    const status = userStatusInfoV40(r);
+    const role = userRoleLabelV40(r.role);
+    const rowClass = status.key === "pending" ? "userRowPending usersRowV40" : (status.key === "inactive" ? "userRowInactive usersRowV40" : "usersRowV40");
+
+    const roleChip = `<span class="userChipV40 role-${escapeHTML(role.toLowerCase())}">${escapeHTML(role)}</span>`;
+    const statusChip = `<span class="userChipV40 status-${escapeHTML(status.cls)}">${escapeHTML(status.label)}</span>${r.blockedReason ? `<div class="muted usersReasonV40">${escapeHTML(r.blockedReason)}</div>` : ``}`;
+
     return `
       <tr class="${rowClass}">
-        <td><b>${escapeHTML(r.name)}</b></td>
-        <td class="mono">${escapeHTML(r.login)}</td>
-        <td>${statusChip}</td>
-        <td>${escapeHTML(r.master)}</td>
-        <td class="nowrap">${r.createdAt ? new Date(r.createdAt).toLocaleString("pt-BR") : "—"}</td>
-        <td class="nowrap">
-          ${r.kind==="USER" && canManage ? ( (r.role==="MASTER" && !actor.perms.manageMasters) ? `<span class="muted">—</span>` : `
-            <button class="miniBtn" onclick="openUserEdit('${r.id}')">✏️</button>
-            <button class="miniBtn danger" onclick="deleteUser('${r.id}')">🗑️</button>
-          ` ) : `<span class="muted">—</span>`}
+        <td>
+          <b>${escapeHTML(r.name)}</b>
+          ${r.kind === "MASTER" ? `<div class="muted usersSubV40">Clínica principal</div>` : ``}
         </td>
+        <td class="mono usersLoginV40">${escapeHTML(r.login || "—")}</td>
+        <td>${roleChip}</td>
+        <td>${statusChip}</td>
+        <td class="nowrap">${userDateV40(r.createdAt)}</td>
+        <td class="nowrap">${userActionsHTMLV40(r, actor, canManage)}</td>
       </tr>
     `;
   }).join("");
 }
-
 /* -------- Navigation -------- */
 const CRONOS_CLOUD_SYNC_MIN_INTERVAL_MS = 4000;
 window.__CRONOS_LAST_CLOUD_PULL_AT__ = window.__CRONOS_LAST_CLOUD_PULL_AT__ || 0;
@@ -9291,7 +10399,7 @@ async function refreshCloudDataNow({ force=false, reason="" } = {}){
   const run = (async ()=>{
     try{
       // Antes de puxar a nuvem, tenta enviar mudanças locais pendentes.
-      // Isso evita que procedimentos recém-lançados na ficha sejam apagados por um refresh
+      // Isso evita que procedimentos recém-lançados no prontuário sejam apagados por um refresh
       // quando ainda estavam só no navegador.
       if(DB && typeof supabaseClient !== "undefined" && supabaseClient?.auth){
         try{ await scheduleCloudSave(true); }catch(err){ console.warn("Não foi possível enviar alterações locais antes do refresh:", err); }
@@ -10117,7 +11225,7 @@ function cronosMergeFichaSafe(primaryFicha, secondaryFicha){
   if(!cronosFichaHasContent(primary) && !cronosFichaHasContent(secondary)) return primary || secondary || null;
 
   // Quando os dois cadastros têm ficha, NÃO misturamos tudo dentro da mesma avaliação.
-  // Cada avaliação da ficha secundária vira uma nova avaliação no cadastro principal,
+  // Cada avaliação do prontuário secundária vira uma nova avaliação no cadastro principal,
   // preservando a data e os procedimentos como um registro separado.
   if(!Array.isArray(primary.plano)) primary.plano = [];
   if(!Array.isArray(primary.avaliacoes)) primary.avaliacoes = [];
@@ -10175,7 +11283,7 @@ function cronosMergeFichaSafe(primaryFicha, secondaryFicha){
   });
 
   // Odontograma não é mesclado sobrescrevendo dente/campo já preenchido.
-  // O principal prevalece; dados que só existiam na ficha secundária entram sem apagar o atual.
+  // O principal prevalece; dados que só existiam no prontuário secundária entram sem apagar o atual.
   primary.odontograma = { ...(secondary.odontograma || {}), ...(primary.odontograma || {}) };
   primary.activeEvaluationId = primary.activeEvaluationId || primary.avaliacoes?.[0]?.id || "";
   primary.updatedAt = [primary.updatedAt, secondary.updatedAt, new Date().toISOString()].filter(Boolean).sort().pop();
@@ -10267,7 +11375,7 @@ function cronosMergeDuplicateContactsInternal(currentContactId, duplicateContact
   const ok = options.skipConfirm === true || confirm(
     "Mesclar estes dois cadastros?\n\n" +
     "O Cronos vai manter o cadastro mais completo, preservar fichas, recebimentos, parcelas e histórico.\n" +
-    "Nada será apagado da ficha: se um cadastro tiver ficha e o outro não, a ficha será preservada.\n\n" +
+    "Nada será apagado do prontuário: se um cadastro tiver ficha e o outro não, a ficha será preservada.\n\n" +
     "Cadastro principal sugerido: " + (primary.name || "Sem nome") + "\n" +
     "Cadastro que será unido: " + (secondary.name || "Sem nome") + "\n\n" +
     "OK = Mesclar agora\nCancelar = voltar sem alterar"
@@ -10424,7 +11532,7 @@ function openNewLead(){
     sub: "Se já existir, selecione a sugestão. Se existir e já tiver neste mês, ele abre pra editar.",
     bodyHTML: leadEntryFormHTML(entry, contact, "new", ""),
     footHTML: `
-      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn ok" id="btnSaveLead">Salvar</button>
     `,
     onMount: ()=>{
@@ -10447,7 +11555,7 @@ function openLeadEntry(entryId){
     sub: "Atualize o que precisar. Histórico fica salvo.",
     bodyHTML: leadEntryFormHTML(entry, contact, "edit", ""),
     footHTML: `
-      <button class="btn" onclick="closeModal()">Fechar</button>
+      <button type="button" class="btn" onclick="closeModal()">Fechar</button>
       ${actor.perms.edit ? `<button class="btn ok" id="btnSaveLead">Salvar</button>` : ``}
     `,
     onMount: ()=>{
@@ -10460,7 +11568,7 @@ function openLeadEntry(entryId){
 
 
 function printLeadEntry(entryId){
-  // Usa a mesma impressão da ficha principal de Leads, evitando divergência no Funil.
+  // Usa a mesma impressão do prontuário principal de Leads, evitando divergência no Funil.
   try{
     if(typeof window.printFicha === "function") return window.printFicha(entryId);
   }catch(err){
@@ -10526,7 +11634,7 @@ function printLeadEntry(entryId){
 
   const logo = (typeof getSmallLogoDataURI === "function" ? getSmallLogoDataURI() : "") || "";
   const clinicName = h(typeof getClinicDisplayName === "function" ? getClinicDisplayName(db, actor) : "Clínica");
-  const title = `Ficha do Paciente • ${h(c?.name || e?.name || "")}`;
+  const title = `Prontuário do Paciente • ${h(c?.name || e?.name || "")}`;
   const procedureRows = plano.length ? plano.map((item, idx)=>{
     const av = getEval(item);
     const base = num(item.valorBase || 0);
@@ -10546,7 +11654,7 @@ function printLeadEntry(entryId){
         <td>${h(getClinicalLabel(item))}</td>
         <td>${h(getFinanceLabel(item))}</td>
       </tr>`;
-  }).join("") : `<tr><td colspan="10" class="empty">Nenhum procedimento registrado na ficha deste paciente.</td></tr>`;
+  }).join("") : `<tr><td colspan="10" class="empty">Nenhum procedimento registrado no prontuário deste paciente.</td></tr>`;
 
   const receivingRows = planRows.length ? planRows.map(({plan, totals:pt, pays}, idx)=>`
     <div class="planCard">
@@ -10567,7 +11675,7 @@ function printLeadEntry(entryId){
           <td>${h(pay.status || (pay.paid ? "PAGA" : "PENDENTE"))}</td>
           <td class="mono">${dateBR(pay.cashDate || pay.paidAt || "")}</td>
         </tr>`).join("")}</tbody></table>` : `<div class="muted small">Sem parcelas detalhadas.</div>`}
-    </div>`).join("") : `<div class="empty">Nenhum recebimento vinculado à ficha.</div>`;
+    </div>`).join("") : `<div class="empty">Nenhum recebimento vinculado ao prontuário.</div>`;
 
   const htmlDoc = `
 <!doctype html>
@@ -10591,7 +11699,7 @@ function printLeadEntry(entryId){
   <div class="head">
     <div class="brand">
       ${logo ? `<img src="${logo}" alt="Cronos"/>` : ``}
-      <div><div class="brandTitle">${clinicName}</div><div class="sub">Ficha do paciente • Plano de tratamento e valores</div></div>
+      <div><div class="brandTitle">${clinicName}</div><div class="sub">Prontuário do paciente • Plano de tratamento e valores</div></div>
     </div>
     <div class="stamp">Gerado em ${new Date().toLocaleString("pt-BR")}<br>Cronos Odonto</div>
   </div>
@@ -10622,7 +11730,7 @@ function printLeadEntry(entryId){
     <div class="box"><div class="label">Em aberto</div><div class="num bad">${m(totals.emAberto || 0)}</div></div>
   </div>
 
-  <h2>Procedimentos da ficha</h2>
+  <h2>Procedimentos do prontuário</h2>
   <table>
     <thead><tr><th>#</th><th>Avaliação</th><th>Procedimento</th><th>Dente</th><th>Face</th><th class="money">Valor base</th><th class="money">Valor fechado</th><th class="money">Desconto</th><th>Clínico</th><th>Financeiro</th></tr></thead>
     <tbody>${procedureRows}</tbody>
@@ -10631,8 +11739,8 @@ function printLeadEntry(entryId){
   <h2>Recebimentos / parcelamentos vinculados</h2>
   ${receivingRows}
 
-  <h2>Observações da ficha</h2>
-  <div class="card notes">${h(ficha.observacoes || e.notes || "—")}</div>
+  <h2>Observações do prontuário</h2>
+  <div class="card notes">${h(getFichaEvaluationObservation(ficha, ficha.activeEvaluationId || getActiveFichaEvaluation(ficha, e)?.id) || e.notes || "—")}</div>
 
   <div class="footer"><span>Documento de apoio interno/comercial. Confirme condições finais com a clínica.</span><span>${h(c?.name || e?.name || "Paciente")}</span></div>
 <script>window.onload=()=>{ setTimeout(()=>window.print(), 250); };<\/script>
@@ -11378,7 +12486,7 @@ function toggleLeadDone(entryId){
     e.status = "Concluído";
   }
   e.lastUpdateAt = new Date().toISOString();
-  saveDB(db);
+  saveDB(db, { immediate:true });
   renderAll();
 }
 
@@ -11428,8 +12536,8 @@ function markOK(entryId){
       cronosAuditAction(db, { action:"status_changed", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, details:`${fromStatus || "—"} → ${toStatus || "—"}`, before:{status:fromStatus}, after:{status:toStatus} });
     }
 
-    saveDB(db);
-    toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído ✅" : `Voltou para: ${toStatus}`);
+    saveDB(db, { immediate:true });
+    toast("Status atualizado", (toStatus==="Concluído") ? "Marcado como Concluído" : `Voltou para: ${toStatus}`);
     renderAll();
   }catch(e){
     console.error(e);
@@ -11575,7 +12683,7 @@ function openNewUser(){
     sub: "Usuário interno vinculado ao Master.",
     bodyHTML: userFormHTML(null),
     footHTML: `
-      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn ok" id="btnSaveUser">Salvar</button>
     `,
     onMount: ()=>{
@@ -11654,7 +12762,7 @@ function openUserEdit(userId){
     sub: u.authUid ? "Nome e nível podem ser alterados aqui. Credenciais cloud de terceiros precisam de rota administrativa." : "Altere nível e login. (Senha opcional)",
     bodyHTML: userFormHTML(u),
     footHTML: `
-      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn ok" id="btnSaveUser">Salvar</button>
     `,
     onMount: ()=>{
@@ -12122,21 +13230,52 @@ function kanbanPotentialValue(entry, db){
 
 function renderKanban(){
   const actor = currentActor();
-if(!actor) return;
+  if(!actor) return;
 
-const db = loadDB();
-const board = el("kanbanBoard");
-if(!board) return;
+  const db = loadDB();
+  const board = el("kanbanBoard");
+  if(!board) return;
 
-const contactsById = (typeof getContactsByIdMap === "function") ? getContactsByIdMap(db) : new Map((db.contacts||[]).map(c=>[String(c.id), c]));
-const rows = filteredEntries().slice(); // respects filters + month
+  const contactsById = (typeof getContactsByIdMap === "function") ? getContactsByIdMap(db) : new Map((db.contacts||[]).map(c=>[String(c.id), c]));
+  const rows = filteredEntries().slice(); // respeita filtros + mês
 
-function currentStatus(entry){
-  const log = Array.isArray(entry.statusLog) ? entry.statusLog : [];
-  const last = log.length ? String(log[log.length - 1]?.to || "").trim() : "";
-  const direct = String(entry.status || "").trim();
-  return last || direct || "";
-}
+  const kanIcon = {
+    funnel:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6.5 7.4V19l-3 1.5v-8.1Z"></path></svg>`,
+    money:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="3"></rect><circle cx="12" cy="12" r="3"></circle><path d="M7 12h.01"></path><path d="M17 12h.01"></path></svg>`,
+    alert:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2.8 19h18.4Z"></path><path d="M12 8v5"></path><path d="M12 17h.01"></path></svg>`,
+    check:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.2 4.2L19 7"></path></svg>`,
+    phone:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.7 19.7 0 0 1-8.59-3.05 19.4 19.4 0 0 1-6-6A19.7 19.7 0 0 1 2.18 4.18 2 2 0 0 1 4.16 2h3a2 2 0 0 1 2 1.72c.12.9.32 1.77.6 2.61a2 2 0 0 1-.45 2.11L8.1 9.65a16 16 0 0 0 6.25 6.25l1.21-1.21a2 2 0 0 1 2.11-.45c.84.28 1.71.48 2.61.6A2 2 0 0 1 22 16.92Z"></path></svg>`,
+    tooth:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3.5c1.7 0 2.7 1 4.5 1s2.8-1 4.5-1C19.1 3.5 21 5.7 21 8.7c0 4.5-2.1 11.8-5 11.8-1.6 0-1.3-4.8-4-4.8s-2.4 4.8-4 4.8c-2.9 0-5-7.3-5-11.8 0-3 1.9-5.2 4.5-5.2Z"></path></svg>`,
+    calendar:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M8 3.5v4"></path><path d="M16 3.5v4"></path><path d="M3.5 9.5h17"></path></svg>`,
+    pin:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>`,
+    file:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"></path><path d="M14 3v5h5"></path><path d="M8 13h8"></path><path d="M8 17h5"></path></svg>`,
+    open:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"></path><path d="M15 12H3"></path><path d="M16 5h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3"></path></svg>`,
+    whats:`<svg class="cronos-whatsapp-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.34 4.96L2 22l5.25-1.38a9.86 9.86 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.18 8.18 0 0 1-1.25-4.38c0-4.55 3.7-8.25 8.25-8.25a8.25 8.25 0 0 1 8.25 8.25c0 4.55-3.7 8.24-8.26 8.24Zm4.52-6.18c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.57.13-.17.25-.65.81-.8.98-.15.17-.3.19-.55.06-.25-.12-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.3.37-.45.12-.15.17-.25.25-.42.08-.17.04-.32-.02-.45-.06-.12-.57-1.37-.78-1.88-.21-.5-.42-.43-.57-.44h-.49c-.17 0-.45.06-.68.32-.23.25-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.12.17 1.79 2.73 4.34 3.83.61.26 1.08.42 1.45.54.61.19 1.16.16 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg>`
+  };
+
+  function currentStatus(entry){
+    const log = Array.isArray(entry.statusLog) ? entry.statusLog : [];
+    const last = log.length ? String(log[log.length - 1]?.to || "").trim() : "";
+    const direct = String(entry.status || "").trim();
+    return last || direct || "";
+  }
+
+  function cardText(value, fallback="—"){
+    return escapeHTML(String(value || "").trim() || fallback);
+  }
+
+  function appointmentTone(dateRaw){
+    const raw = String(dateRaw || "").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { cls:"neutral", label:"Sem data" };
+    const today = todayISO();
+    if(raw < today) return { cls:"late", label:"Atrasado" };
+    if(raw === today) return { cls:"today", label:"Hoje" };
+    const tomorrow = new Date(today+"T00:00:00");
+    tomorrow.setDate(tomorrow.getDate()+1);
+    const t = tomorrow.toISOString().slice(0,10);
+    if(raw === t) return { cls:"soon", label:"Amanhã" };
+    return { cls:"future", label:"Futuro" };
+  }
 
   const groups = new Map(KANBAN_COLUMNS.map(c=>[c.status, []]));
   rows.forEach(e=>{
@@ -12145,60 +13284,124 @@ function currentStatus(entry){
     groups.get(s).push(e);
   });
 
-  board.innerHTML = KANBAN_COLUMNS.map(col=>{
+  const summary = KANBAN_COLUMNS.reduce((acc, col)=>{
     const list = groups.get(col.status) || [];
+    const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
+    acc.totalLeads += list.length;
+    acc.totalValue += total;
+    if(col.status === "Sem resposta"){
+      acc.noResponse = list.length;
+      acc.noResponseValue = total;
+    }
+    if(col.status === "Fechou"){
+      acc.closed = list.length;
+      acc.closedValue = total;
+    }
+    return acc;
+  }, { totalLeads:0, totalValue:0, noResponse:0, noResponseValue:0, closed:0, closedValue:0 });
 
-const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
-const sortedList = list
-  .slice()
-  .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""));
-const visibleList = sortedList.slice(0, KANBAN_RENDER_LIMIT);
-const hiddenCount = Math.max(0, sortedList.length - visibleList.length);
-
-    return `
-      <div class="kanCol" data-kan-status="${escapeHTML(col.status)}">
-        <div class="kanHead">
-          <b>${escapeHTML(col.title)}</b>
-          <span class="pill">${list.length}</span>
-<span class="pill" style="margin-left:6px" title="Valor orçado/fechado dos leads desta coluna">${moneyBR(total)}</span>
-        </div>
-        <div class="kanList" data-dropzone="${escapeHTML(col.status)}">
-          ${list.length ? visibleList
-            .map(e=>{
-              const c = contactsById.get(String(e.contactId || ""));
-              const finSummary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
-              const paid = parseMoney(finSummary?.paid ?? e.valuePaid ?? 0);
-              const budget = parseMoney(finSummary?.budget ?? e.valueBudget ?? 0);
-              const open = parseMoney(finSummary?.open ?? Math.max(0, budget - paid));
-              const apptDateRaw = (e.apptDate || e.agendamentoData || e.appointmentDate || "").toString().trim();
-              const apptTimeRaw = (e.apptTime || e.agendamentoHora || e.appointmentTime || "").toString().trim();
-              const apptLabel = `${apptDateRaw ? fmtBR(apptDateRaw) : ""}${apptTimeRaw ? ` às ${apptTimeRaw}` : ""}`.trim() || "—";
-              const showApptOnCard = ["Agendado","Remarcou"].includes(col.status) || !!apptDateRaw;
-              const extraInfo = [e.treatment, e.origin].map(x=>String(x || "").trim()).filter(Boolean).join(" • ");
-              return `
-                <div class="kanCard" draggable="true" data-entry="${e.id}">
-                  <div style="display:flex; justify-content:space-between; gap:10px">
-                    <div>
-                      <div style="font-weight:900">${escapeHTML(c?.name||"—")}</div>
-                      <div class="muted" style="font-size:12px; margin-top:2px">${escapeHTML(c?.phone||"—")}</div>
-                      ${extraInfo ? `<div class="muted" style="font-size:12px; margin-top:6px">${escapeHTML(extraInfo)}</div>` : ""}
-                      ${showApptOnCard ? `<div class="muted mono" style="font-size:12px; margin-top:6px">Agendamento: <b>${escapeHTML(apptLabel)}</b></div>` : ""}
-                      ${(budget||paid)?`<div class="muted mono" style="font-size:12px; margin-top:6px">Pago: <b>${moneyBR(paid)}</b> • Em aberto: <b>${moneyBR(open)}</b></div>`:""}
-                    </div>
-                    <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
-                      <button class="miniBtn" onclick="openLeadEntry('${e.id}')">Abrir</button>
-                      <button class="miniBtn" onclick="printLeadEntry('${e.id}')">🖨️</button>
-                    </div>
-                  </div>
-                </div>
-              `;
-            }).join("")
-            + (hiddenCount ? `<div class="muted" style="font-size:12px; padding:10px 6px; line-height:1.35">Mostrando ${visibleList.length} de ${list.length}. Use busca/filtros para refinar sem travar o navegador.</div>` : "")
-          : `<div class="muted" style="font-size:13px">—</div>`}
-        </div>
+  const summaryWrap = el("kanbanSummaryCards");
+  if(summaryWrap){
+    summaryWrap.innerHTML = `
+      <div class="kanbanMetricCard">
+        <div class="kanbanMetricIcon blue">${kanIcon.funnel}</div>
+        <div><b>${summary.totalLeads}</b><span>Leads no funil</span><small>Total filtrado</small></div>
+      </div>
+      <div class="kanbanMetricCard">
+        <div class="kanbanMetricIcon green">${kanIcon.money}</div>
+        <div><b>${moneyBR(summary.totalValue)}</b><span>Valor no funil</span><small>Orçado/fechado filtrado</small></div>
+      </div>
+      <div class="kanbanMetricCard">
+        <div class="kanbanMetricIcon amber">${kanIcon.alert}</div>
+        <div><b>${summary.noResponse}</b><span>Sem resposta</span><small>${moneyBR(summary.noResponseValue)} em reativação</small></div>
+      </div>
+      <div class="kanbanMetricCard">
+        <div class="kanbanMetricIcon cyan">${kanIcon.check}</div>
+        <div><b>${summary.closed}</b><span>Fechados</span><small>${moneyBR(summary.closedValue)} em fechamentos</small></div>
       </div>
     `;
+  }
+
+  board.innerHTML = KANBAN_COLUMNS.map(col=>{
+    const list = groups.get(col.status) || [];
+    const total = list.reduce((sum,e)=> sum + kanbanPotentialValue(e, db), 0);
+    const sortedList = list
+      .slice()
+      .sort((a,b)=>{
+        if(col.status === "Agendado"){
+          const ad = String(a.apptDate || a.agendamentoData || a.appointmentDate || "9999-12-31");
+          const bd = String(b.apptDate || b.agendamentoData || b.appointmentDate || "9999-12-31");
+          const at = String(a.apptTime || a.agendamentoHora || a.appointmentTime || "99:99");
+          const bt = String(b.apptTime || b.agendamentoHora || b.appointmentTime || "99:99");
+          return (ad+at).localeCompare(bd+bt);
+        }
+        return (b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||"");
+      });
+    const visibleList = sortedList.slice(0, KANBAN_RENDER_LIMIT);
+    const hiddenCount = Math.max(0, sortedList.length - visibleList.length);
+
+    return `
+      <section class="kanCol kanColV11" data-kan-status="${escapeHTML(col.status)}">
+        <div class="kanHead">
+          <div class="kanHeadMain">
+            <b>${escapeHTML(col.title)}</b>
+            <span>${list.length} lead${list.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="kanHeadValue">${moneyBR(total)}</div>
+          ${col.status === "Sem resposta" && list.length ? `<div class="kanHeadAlert">Prioridade de reativação</div>` : ""}
+        </div>
+        <div class="kanList" data-dropzone="${escapeHTML(col.status)}">
+          ${list.length ? visibleList.map(e=>{
+            const c = contactsById.get(String(e.contactId || ""));
+            const finSummary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
+            const paid = parseMoney(finSummary?.paid ?? e.valuePaid ?? 0);
+            const budget = parseMoney(finSummary?.budget ?? e.valueBudget ?? 0);
+            const open = Math.max(0, parseMoney(finSummary?.open ?? Math.max(0, budget - paid)));
+            const apptDateRaw = (e.apptDate || e.agendamentoData || e.appointmentDate || "").toString().trim();
+            const apptTimeRaw = (e.apptTime || e.agendamentoHora || e.appointmentTime || "").toString().trim();
+            const apptLabel = `${apptDateRaw ? fmtBR(apptDateRaw) : ""}${apptTimeRaw ? ` às ${apptTimeRaw}` : ""}`.trim() || "—";
+            const showApptOnCard = ["Agendado"].includes(col.status);
+            const tone = appointmentTone(apptDateRaw);
+            const treatment = String(e.treatment || e.tratamento || e.procedimento || "").trim() || "—";
+            const origin = String(e.origin || e.origem || e.source || "").trim() || "—";
+            const name = c?.name || e.name || e.lead || e.nome || "—";
+            const phone = c?.phone || e.phone || e.telefone || e.contato || "—";
+            const id = escapeHTML(String(e.id || ""));
+
+            return `
+              <article class="kanCard kanCardV11" draggable="true" data-entry="${id}">
+                <div class="kanCardTop">
+                  <div class="kanCardName">${cardText(name)}</div>
+                  <button class="kanOpenBtn" onclick="openLeadEntry('${id}')">${kanIcon.open}<span>Abrir</span></button>
+                </div>
+                <div class="kanPhone">${kanIcon.phone}<span>${cardText(phone)}</span></div>
+
+                <div class="kanInfoStack">
+                  <div class="kanMiniLine">${kanIcon.tooth}<span>${cardText(treatment)}</span></div>
+                  <div class="kanMiniLine">${kanIcon.pin}<span>${cardText(origin)}</span></div>
+                  ${showApptOnCard ? `<div class="kanAppointment ${tone.cls}">${kanIcon.calendar}<div><small>Agendamento</small><b>${escapeHTML(apptLabel)}</b></div><em>${tone.label}</em></div>` : ""}
+                </div>
+
+                <div class="kanMoney">
+                  <span>Pago: <b>${moneyBR(paid)}</b></span>
+                  <span class="${open > 0 ? "open" : "ok"}">Em aberto: <b>${moneyBR(open)}</b></span>
+                </div>
+
+                <div class="kanCardActions">
+                  <button class="kanFichaBtn" type="button" data-ficha-entry="${id}" title="Abrir prontuário" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${id}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${id}')">${kanIcon.file}<span>Prontuário</span></button>
+                  <button class="kanWhatsBtn" type="button" onclick="openWhats('${id}')" title="Abrir WhatsApp">${kanIcon.whats}<span>WhatsApp</span></button>
+                </div>
+              </article>
+            `;
+          }).join("")
+          + (hiddenCount ? `<div class="kanHiddenNotice">Mostrando ${visibleList.length} de ${list.length}. Use busca/filtros para refinar sem travar o navegador.</div>` : "")
+          : `<div class="kanEmptyState">Sem leads nesta etapa.</div>`}
+        </div>
+      </section>
+    `;
   }).join("");
+
+  syncKanbanHorizontalScroll();
 
   window.__KANBAN_DRAG_ID = null;
 
@@ -12233,17 +13436,50 @@ const hiddenCount = Math.max(0, sortedList.length - visibleList.length);
     });
   });
 
+  function syncKanbanHorizontalScroll(){
+    const scrollArea = el("kanbanScrollArea");
+    const topScroll = el("kanbanTopScroll");
+    const inner = el("kanbanTopScrollInner");
+    if(!scrollArea || !topScroll || !inner || !board) return;
+
+    const applyWidth = ()=>{
+      inner.style.width = Math.max(board.scrollWidth, scrollArea.clientWidth + 1) + "px";
+    };
+    applyWidth();
+    requestAnimationFrame(applyWidth);
+
+    if(!scrollArea.dataset.kanSyncBound){
+      scrollArea.dataset.kanSyncBound = "1";
+      scrollArea.addEventListener("scroll", ()=>{
+        if(topScroll.__syncing) return;
+        scrollArea.__syncing = true;
+        topScroll.scrollLeft = scrollArea.scrollLeft;
+        scrollArea.__syncing = false;
+      });
+    }
+    if(!topScroll.dataset.kanSyncBound){
+      topScroll.dataset.kanSyncBound = "1";
+      topScroll.addEventListener("scroll", ()=>{
+        if(scrollArea.__syncing) return;
+        topScroll.__syncing = true;
+        scrollArea.scrollLeft = topScroll.scrollLeft;
+        topScroll.__syncing = false;
+      });
+    }
+
+    topScroll.scrollLeft = scrollArea.scrollLeft;
+  }
+
   function kanbanMoveTo(status){
     const entryId = window.__KANBAN_DRAG_ID;
     window.__KANBAN_DRAG_ID = null;
     qsa(".kanCard", board).forEach(c=>c.classList.remove("kanSelected"));
     if(entryId && status){
-  quickUpdateStatus(entryId, status === KANBAN_EMPTY_STATUS ? "" : status);
-
-  setTimeout(() => {
-    renderKanban();
-  }, 50);
-}
+      quickUpdateStatus(entryId, status === KANBAN_EMPTY_STATUS ? "" : status);
+      setTimeout(() => {
+        renderKanban();
+      }, 50);
+    }
   }
 
   qsa("[data-dropzone], .kanCol", board).forEach(zone=>{
@@ -12274,27 +13510,26 @@ const hiddenCount = Math.max(0, sortedList.length - visibleList.length);
     });
   });
 
-
   function quickUpdateStatus(entryId, newStatus){
-  const actor = currentActor();
-  if(!actor?.perms?.edit) return toast("Sem permissão para editar");
-  const db = loadDB();
-  const e = db.entries.find(x=>x.id===entryId);
-  if(!e) return;
-  const old = e.status;
-  if(old===newStatus) return;
-  e.status = newStatus;
-  e.lastUpdateAt = new Date().toISOString();
-  e.updatedAt = e.lastUpdateAt;
-  e.updatedBy = cronosActorLabel(actor);
-  e.statusLog = e.statusLog || [];
-  e.statusLog.push({at: e.lastUpdateAt, from: old, to: newStatus, by: actor.name});
-  cronosAuditAction(db, { action:"status_changed", entityType:"entry", entityId:e.id, entryId:e.id, contactId:e.contactId, details:`Funil: ${old || "—"} → ${newStatus || "—"}`, before:{status:old}, after:{status:newStatus} });
-  saveDB(db);
-  renderAll();
+    const actor = currentActor();
+    if(!actor?.perms?.edit) return toast("Sem permissão para editar");
+    const db = loadDB();
+    const e = db.entries.find(x=>x.id===entryId);
+    if(!e) return;
+    const old = e.status;
+    if(old===newStatus) return;
+    e.status = newStatus;
+    e.lastUpdateAt = new Date().toISOString();
+    e.updatedAt = e.lastUpdateAt;
+    e.updatedBy = cronosActorLabel(actor);
+    e.statusLog = e.statusLog || [];
+    e.statusLog.push({at: e.lastUpdateAt, from: old, to: newStatus, by: actor.name});
+    cronosAuditAction(db, { action:"status_changed", entityType:"entry", entityId:e.id, entryId:e.id, contactId:e.contactId, details:`Funil: ${old || "—"} → ${newStatus || "—"}`, before:{status:old}, after:{status:newStatus} });
+    saveDB(db);
+    renderAll();
+  }
 }
 
-}
 
 /* -------- Tasks -------- */
 const TASK_ACTIONS = ["Ligar","WhatsApp","Enviar orçamento","Confirmar agendamento","Follow-up","Outros"];
@@ -12311,21 +13546,18 @@ return `<span class="chip"><span class="dot warm"></span>Pendente</span>`;
 function renderTasks(){
   const actor = currentActor();
   if(!actor) return;
+
   const db = loadDB();
   syncInstallmentTasks(db, actor);
   saveDB(db, { skipCloud:true });
   try{ cronosUpdateTasksSidebarPill({ repair:false }); }catch(_){ }
 
-  const tbody = el("tasksTbody");
-  if(!tbody) return;
+  const listRoot = el("tasksCardsList") || el("tasksTbody");
+  if(!listRoot) return;
 
   const monthEl = el("taskMonth");
   const searchEl = el("taskSearch");
   const filterEl = el("taskFilter");
-
-  // Filtro de tarefas
-  // "Todos" respeita o mês selecionado.
-  // "Pendentes e em atraso" ignora o mês e mostra todas as tarefas abertas.
 
   if(monthEl && !monthEl.value){
     monthEl.value = todayISO().slice(0,7);
@@ -12344,6 +13576,22 @@ function renderTasks(){
   const taskMonth = monthEl?.value || "";
   const taskSearch = (searchEl?.value || "").trim().toLowerCase();
   const taskFilter = filterEl?.value || "Todos";
+  const todayStr = todayISO();
+  const today = new Date(todayStr+"T00:00:00");
+
+  const taskIcon = {
+    check:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.2 4.2L19 7"></path></svg>`,
+    clock:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>`,
+    calendar:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M8 3.5v4"></path><path d="M16 3.5v4"></path><path d="M3.5 9.5h17"></path></svg>`,
+    alert:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2.8 19h18.4Z"></path><path d="M12 8v5"></path><path d="M12 17h.01"></path></svg>`,
+    pending:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3.5 6h.01"></path><path d="M3.5 12h.01"></path><path d="M3.5 18h.01"></path></svg>`,
+    person:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"></path><circle cx="12" cy="8" r="4"></circle></svg>`,
+    phone:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.7 19.7 0 0 1-8.59-3.05 19.4 19.4 0 0 1-6-6A19.7 19.7 0 0 1 2.18 4.18 2 2 0 0 1 4.16 2h3a2 2 0 0 1 2 1.72c.12.9.32 1.77.6 2.61a2 2 0 0 1-.45 2.11L8.1 9.65a16 16 0 0 0 6.25 6.25l1.21-1.21a2 2 0 0 1 2.11-.45c.84.28 1.71.48 2.61.6A2 2 0 0 1 22 16.92Z"></path></svg>`,
+    edit:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`,
+    open:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"></path><path d="M15 12H3"></path><path d="M16 5h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3"></path></svg>`,
+    rotate:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10V4h6"></path><path d="M3.05 4.91A10 10 0 1 1 6 17.3"></path></svg>`,
+    trash:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 14h10l1-14"></path><path d="M9 7V4h6v3"></path></svg>`
+  };
 
   function normTaskFilter(v){
     return String(v || "")
@@ -12356,25 +13604,15 @@ function renderTasks(){
 
   const taskFilterNorm = normTaskFilter(taskFilter);
   const filterTextNorm = normTaskFilter(filterEl?.selectedOptions?.[0]?.textContent || "");
-
   const isTodosFilter = taskFilter === "Todos" || taskFilterNorm === "todos" || filterTextNorm === "todos";
   const isAllOpenFilter =
     taskFilter === "PendentesEAtraso" ||
-    taskFilterNorm === "pendentes e atraso" ||
-    taskFilterNorm === "pendentes e em atraso" ||
-    filterTextNorm === "pendentes e atraso" ||
-    filterTextNorm === "pendentes e em atraso" ||
     taskFilterNorm.includes("pendentes") && taskFilterNorm.includes("atraso") ||
     filterTextNorm.includes("pendentes") && filterTextNorm.includes("atraso") ||
     taskFilterNorm.includes("abert") ||
     filterTextNorm.includes("abert");
 
-  const isLateFilter = !isAllOpenFilter && (
-    taskFilter === "Atrasado" ||
-    taskFilterNorm.includes("atrasad") ||
-    filterTextNorm.includes("atrasad")
-  );
-
+  const isLateFilter = !isAllOpenFilter && (taskFilter === "Atrasado" || taskFilterNorm.includes("atrasad") || filterTextNorm.includes("atrasad"));
   const isPendingFilter = !isAllOpenFilter && (
     taskFilter === "Pendente" ||
     taskFilterNorm === "pendente" ||
@@ -12382,99 +13620,354 @@ function renderTasks(){
     filterTextNorm === "pendente" ||
     filterTextNorm === "pendentes"
   );
+  const isDoneFilter = taskFilter === "Feito" || taskFilterNorm.includes("feito") || filterTextNorm.includes("feito");
 
-  const isDoneFilter = (
-    taskFilter === "Feito" ||
-    taskFilterNorm.includes("feito") ||
-    filterTextNorm.includes("feito")
-  );
+  function getTaskLead(t){
+    const e = db.entries.find(x => x.id === t.entryId);
+    const c = e ? db.contacts.find(x => x.id === e.contactId) : null;
+    return { e, c };
+  }
 
-  const allStatusMode = isTodosFilter;
-  const allOpenMode = isAllOpenFilter;
+  function dueInfo(t){
+    const d = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
+    const overdue = d && d < today && !t.done;
+    const todayDue = String(t.dueDate || "") === todayStr && !t.done;
+    if(t.done) return { cls:"done", label:"Feita", icon:taskIcon.check, rank:3 };
+    if(overdue) return { cls:"late", label:"Atrasada", icon:taskIcon.alert, rank:0 };
+    if(todayDue) return { cls:"today", label:"Vencendo hoje", icon:taskIcon.clock, rank:1 };
+    return { cls:"pending", label:"Pendente", icon:taskIcon.pending, rank:2 };
+  }
 
-  const today = new Date(todayISO()+"T00:00:00");
+  const actorTasks = (db.tasks||[]).filter(t => !t.masterId || t.masterId === actor.masterId);
+  const monthTasks = actorTasks.filter(t => isAllOpenFilter ? t.done !== true : String(t.dueDate || "").slice(0,7) === taskMonth);
 
-  const tasks = (db.tasks||[])
-    .filter(t => !t.masterId || t.masterId === actor.masterId)
+  const tasks = monthTasks
     .filter(t => {
-      // Visão mensal: Todos, Atrasado, Pendente e Feito respeitam o mês selecionado.
-      // Visão operacional: Pendentes e em atraso mostra todas as tarefas abertas.
-      if(allOpenMode) return t.done !== true;
-      return String(t.dueDate || "").slice(0,7) === taskMonth;
-    })
-    .filter(t => {
-      const e = db.entries.find(x => x.id === t.entryId);
-      const c = e ? db.contacts.find(x => x.id === e.contactId) : null;
-      const hay = `${c?.name || ""} ${c?.phone || ""}`.toLowerCase();
+      const { c } = getTaskLead(t);
+      const hay = `${c?.name || ""} ${c?.phone || ""} ${t.title || ""} ${t.notes || ""}`.toLowerCase();
       return !taskSearch || hay.includes(taskSearch);
     })
     .filter(t => {
-      const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
-      const overdue = due && due < today && !t.done;
-      const pending = !t.done && !overdue;
-
+      const info = dueInfo(t);
       if(isAllOpenFilter) return t.done !== true;
-      if(isLateFilter) return !!overdue;
-      if(isPendingFilter) return !!pending;
+      if(isLateFilter) return info.cls === "late";
+      if(isPendingFilter) return !t.done && info.cls !== "late";
       if(isDoneFilter) return !!t.done;
       return true;
     })
     .sort((a,b)=> {
-      const aDue = String(a.dueDate||"9999-12-31");
-      const bDue = String(b.dueDate||"9999-12-31");
-
-      if(allStatusMode || allOpenMode){
-        const aDate = a.dueDate ? new Date(a.dueDate+"T00:00:00") : null;
-        const bDate = b.dueDate ? new Date(b.dueDate+"T00:00:00") : null;
-
-        const rank = (t, d)=>{
-          const overdue = d && d < today && t.done !== true;
-          if(overdue) return 0;
-          if(t.done === true) return allStatusMode ? 2 : 1;
-          return 1;
-        };
-
-        const ar = rank(a, aDate);
-        const br = rank(b, bDate);
-        if(ar !== br) return ar - br;
+      const ai = dueInfo(a), bi = dueInfo(b);
+      if(isTodosFilter || isAllOpenFilter){
+        if(ai.rank !== bi.rank) return ai.rank - bi.rank;
       }
-
-      return aDue.localeCompare(bDue);
+      return String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31"));
     });
 
-  if(!tasks.length){
-    tbody.innerHTML = `<tr><td colspan="6" class="muted">Nenhuma tarefa encontrada para este filtro.</td></tr>`;
-    return;
+  const metrics = monthTasks.reduce((acc,t)=>{
+    const info = dueInfo(t);
+    acc.total++;
+    if(t.done) acc.done++;
+    else acc.pending++;
+    if(info.cls === "today") acc.today++;
+    if(info.cls === "late") acc.late++;
+    return acc;
+  }, { total:0, pending:0, today:0, late:0, done:0 });
+
+  const summaryWrap = el("tasksSummaryCards");
+  if(summaryWrap){
+    summaryWrap.innerHTML = `
+      <div class="tasksMetricCard pending"><div class="tasksMetricIcon">${taskIcon.clock}</div><div><b>${metrics.pending}</b><span>Pendentes</span><small>Aguardando ação</small></div></div>
+      <div class="tasksMetricCard today"><div class="tasksMetricIcon">${taskIcon.calendar}</div><div><b>${metrics.today}</b><span>Vencendo hoje</span><small>Para hoje</small></div></div>
+      <div class="tasksMetricCard late"><div class="tasksMetricIcon">${taskIcon.alert}</div><div><b>${metrics.late}</b><span>Atrasadas</span><small>Precisam de atenção</small></div></div>
+      <div class="tasksMetricCard done"><div class="tasksMetricIcon">${taskIcon.check}</div><div><b>${metrics.done}</b><span>Concluídas no mês</span><small>Até o momento</small></div></div>
+    `;
   }
 
-  tbody.innerHTML = tasks.map(t=>{
-  const e = db.entries.find(x=>x.id===t.entryId);
-  const c = e ? db.contacts.find(x=>x.id===e.contactId) : null;
-  const due = t.dueDate ? new Date(t.dueDate+"T00:00:00") : null;
-  const overdue = due && due < today && !t.done;
-  const cls = t.done ? "taskOk" : (overdue ? "taskBad" : "");  const svgEdit = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path><path d="M15 5l4 4"></path></svg>`;
-  const svgOk = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg>`;
-  const svgReopen = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10V4h6"></path><path d="M3.05 4.91A10 10 0 1 1 6 17.3"></path></svg>`;
-  return `
-    <tr class="${cls}">
-      <td class="nowrap">${taskStatusLabel(t)}</td>
-      <td><b>${escapeHTML(t.title||"—")}</b><div class="muted" style="font-size:12px">${escapeHTML(t.action||"")}</div></td>
-      <td>${escapeHTML(c?.name||"—")}<div class="muted" style="font-size:12px">${escapeHTML(c?.phone||"")}</div></td>
-      <td class="nowrap">${t.dueDate?fmtBR(t.dueDate):"—"}</td>
-      <td>${escapeHTML(t.notes||"")}</td>
-      <td>
-        <div class="taskActionsCell">
-          <div class="taskActionsRow leadActionsRow">
-            <button class="iconBtn cronos-action-edit" onclick="openTaskEdit('${t.id}')" title="Editar tarefa">${svgEdit}</button>
-            <button class="iconBtn ${t.done ? '' : 'cronos-action-ok'}" onclick="toggleTaskDone('${t.id}')" title="${t.done?'Reabrir':'Concluir'}">${t.done ? svgReopen : svgOk}</button>
+  const countEl = el("tasksListCount");
+  if(countEl) countEl.textContent = String(tasks.length);
+
+  function esc(value){ return escapeHTML(String(value || "")); }
+  function shortText(value, max=88){
+    const s = String(value || "").trim();
+    if(!s) return "Sem observação.";
+    return s.length > max ? s.slice(0, max-1).trim() + "…" : s;
+  }
+
+  const tasksRenderKey = `${taskMonth}|${taskFilter}|${taskSearch}`;
+  if(window.__CRONOS_TASKS_RENDER_KEY !== tasksRenderKey){
+    window.__CRONOS_TASKS_RENDER_KEY = tasksRenderKey;
+    window.__CRONOS_TASKS_SHOW_ALL = false;
+  }
+
+  const TASKS_VISIBLE_LIMIT = 10;
+  const shouldLimitTasks = !window.__CRONOS_TASKS_SHOW_ALL && tasks.length > TASKS_VISIBLE_LIMIT;
+  const visibleTasks = shouldLimitTasks ? tasks.slice(0, TASKS_VISIBLE_LIMIT) : tasks;
+
+  if(!tasks.length){
+    listRoot.innerHTML = `<div class="tasksEmptyState">Nenhuma tarefa encontrada para este filtro.</div>`;
+  }else{
+    const cardsHtml = visibleTasks.map(t=>{
+      const { e, c } = getTaskLead(t);
+      const info = dueInfo(t);
+      const canDeleteTask = CRONOS_CAN_DELETE_TASKS(actor);
+      const dueText = t.dueDate ? fmtBR(t.dueDate) : "—";
+      const leadName = c?.name || "—";
+      const leadPhone = c?.phone || "";
+      const title = t.title || "—";
+      const action = t.action || "";
+      const notes = shortText(t.notes || "", 88);
+
+      return `
+        <article class="taskCardV15 ${info.cls}">
+          <div class="taskCardMain">
+            <div class="taskMainTop">
+              <div class="taskStatusPill ${info.cls}">${info.icon}<span>${info.label}</span></div>
+              ${action ? `<span class="taskActionLabel">${esc(action)}</span>` : ""}
+            </div>
+            <div class="taskCardTitle">${esc(title)}</div>
+            <div class="taskLeadMeta">
+              <span>${taskIcon.person}<b>${esc(leadName)}</b></span>
+              ${leadPhone ? `<span>${taskIcon.phone}${esc(leadPhone)}</span>` : ""}
+            </div>
           </div>
-          ${e?`<button class="btn primary taskOpenLead" onclick="openLeadEntry('${e.id}')">Abrir lead</button>`:""}
-        </div>
-      </td>
-    </tr>
-  `;
-}).join("");
+          <div class="taskDueBox ${info.cls}">
+            <small>Vencimento</small>
+            <strong>${esc(dueText)}</strong>
+          </div>
+          <div class="taskObsBox">
+            <small>Obs.</small>
+            <span title="${esc(t.notes || "")}">${esc(notes)}</span>
+          </div>
+          <div class="taskCardActions">
+            <button class="taskBtnComplete ${t.done ? "reopen" : ""}" type="button" onclick="toggleTaskDone('${t.id}')">${t.done ? taskIcon.rotate : taskIcon.check}<span>${t.done ? "Reabrir" : "Concluir"}</span></button>
+            ${!t.done ? `<button class="taskBtnGhost" type="button" onclick="postponeTask('${t.id}',1)">${taskIcon.clock}<span>Adiar</span></button>` : ""}
+            <button class="taskBtnGhost" type="button" onclick="openTaskEdit('${t.id}')">${taskIcon.edit}<span>Editar</span></button>
+            ${canDeleteTask ? `<button class="taskBtnDelete" type="button" onclick="deleteTask('${t.id}')">${taskIcon.trash}<span>Apagar</span></button>` : ""}
+            ${e ? `<button class="taskBtnOpen" type="button" onclick="openLeadEntry('${e.id}')">${taskIcon.open}<span>Abrir lead</span></button>` : ""}
+          </div>
+        </article>
+      `;
+    }).join("");
+
+    const moreHtml = shouldLimitTasks
+      ? `<button class="tasksSeeMoreBtn" type="button" onclick="CRONOS_TASKS_SHOW_MORE && CRONOS_TASKS_SHOW_MORE()">Ver mais tarefas <span>${tasks.length - TASKS_VISIBLE_LIMIT}</span></button>`
+      : (tasks.length > TASKS_VISIBLE_LIMIT ? `<button class="tasksSeeMoreBtn ghost" type="button" onclick="CRONOS_TASKS_SHOW_LESS && CRONOS_TASKS_SHOW_LESS()">Mostrar menos tarefas</button>` : "");
+
+    listRoot.innerHTML = cardsHtml + moreHtml;
+  }
+
+  window.CRONOS_TASKS_SHOW_MORE = function(){
+    window.__CRONOS_TASKS_SHOW_ALL = true;
+    renderTasks();
+  };
+
+  window.CRONOS_TASKS_SHOW_LESS = function(){
+    window.__CRONOS_TASKS_SHOW_ALL = false;
+    renderTasks();
+  };
+
+  const focusPanel = el("tasksFocusPanel");
+  if(focusPanel){
+    const todayTotal = metrics.today;
+    const todayDone = monthTasks.filter(t => t.done && String(t.dueDate || "") === todayStr).length;
+    const ratio = todayTotal ? Math.round((todayDone / Math.max(todayTotal, 1)) * 100) : 0;
+    focusPanel.innerHTML = `
+      <div class="tasksSideTitle">${taskIcon.clock}<strong>Foco de hoje</strong></div>
+      <p>${fmtBR(todayStr)} • ${todayTotal} tarefa${todayTotal === 1 ? "" : "s"} para hoje.</p>
+      <div class="tasksProgress"><div class="tasksProgressRing" style="--p:${ratio}"><span>${todayDone}/${Math.max(todayTotal, 1)}</span></div><div><b>${ratio}%</b><small>Concluídas</small></div></div>
+      <button class="tasksSideBtn" type="button" onclick="CRONOS_TASKS_FILTER_TODAY && CRONOS_TASKS_FILTER_TODAY()">Ver tarefas de hoje</button>
+    `;
+  }
+
+  const quickPanel = el("tasksQuickPanel");
+  if(quickPanel){
+    quickPanel.innerHTML = `
+      <div class="tasksSideTitle">${taskIcon.pending}<strong>Resumo rápido</strong></div>
+      <div class="tasksQuickRows">
+        <div><span>Total de tarefas</span><b>${metrics.total}</b></div>
+        <div><span>Pendentes</span><b>${metrics.pending}</b></div>
+        <div><span>Vencendo hoje</span><b>${metrics.today}</b></div>
+        <div><span>Atrasadas</span><b>${metrics.late}</b></div>
+        <div><span>Concluídas no mês</span><b>${metrics.done}</b></div>
+      </div>
+    `;
+  }
+
+  const nextPanel = el("tasksNextDuePanel");
+  if(nextPanel){
+    const upcoming = monthTasks.filter(t => !t.done && t.dueDate).reduce((acc,t)=>{
+      const key = String(t.dueDate).slice(0,10);
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    const rows = Object.keys(upcoming).sort().slice(0,4);
+    nextPanel.innerHTML = `
+      <div class="tasksSideTitle">${taskIcon.calendar}<strong>Próximos vencimentos</strong></div>
+      <div class="tasksQuickRows">
+        ${rows.length ? rows.map(d=>`<div><span>${d === todayStr ? "Hoje" : fmtBR(d)}</span><b>${upcoming[d]} tarefa${upcoming[d] === 1 ? "" : "s"}</b></div>`).join("") : `<div><span>Sem próximos vencimentos</span><b>—</b></div>`}
+      </div>
+    `;
+  }
+
+  window.CRONOS_TASKS_FILTER_TODAY = function(){
+    if(monthEl) monthEl.value = todayStr.slice(0,7);
+    if(filterEl) filterEl.value = "Todos";
+    if(searchEl) searchEl.value = "";
+    renderTasks();
+  };
 }
+
+function postponeTask(taskId, days=1){
+  const actor = currentActor();
+  if(!actor?.perms?.edit) return toast("Sem permissão para editar");
+  const db = loadDB();
+  const t = (db.tasks || []).find(x => x.id === taskId);
+  if(!t) return;
+  const base = t.dueDate ? new Date(t.dueDate+"T00:00:00") : new Date(todayISO()+"T00:00:00");
+  base.setDate(base.getDate() + Number(days || 1));
+  t.dueDate = isoDate(base);
+  t.updatedAt = new Date().toISOString();
+  t.updatedBy = cronosActorLabel(actor);
+  try{ recordTaskPatch(t); }catch(_){}
+  saveDB(db, { immediate:true });
+  try{ toast("Tarefa adiada", "Vencimento movido para " + fmtBR(t.dueDate)); }catch(_){}
+  renderAll();
+}
+
+
+
+function openLeadTaskShortcut(evOrEntryId, maybeEntryId){
+  try{
+    if(evOrEntryId && typeof evOrEntryId === "object" && typeof evOrEntryId.preventDefault === "function"){
+      evOrEntryId.preventDefault();
+      evOrEntryId.stopPropagation();
+    }
+
+    const entryId = maybeEntryId !== undefined ? maybeEntryId : evOrEntryId;
+    const actor = currentActor();
+    if(!actor) return false;
+    if(!actor.perms.edit || !canAccessView("tasks", actor)){
+      toast("Sem permissão", "Seu nível não pode criar tarefas.");
+      return false;
+    }
+
+    const db = loadDB();
+    const e = (db.entries || []).find(x => String(x.id) === String(entryId));
+    if(!e){
+      toast("Lead não encontrado");
+      return false;
+    }
+
+    const c = db.contacts.find(x => String(x.id) === String(e.contactId));
+    const leadName = c?.name || e.name || e.lead || e.nome || "—";
+    const phone = c?.phone || e.phone || e.telefone || e.contato || "";
+    const treatmentRaw = (e.treatment || e.tratamento || e.procedimento || e.trat || c?.treatment || c?.tratamento || "") || "";
+    const treatmentManual = (e.treatmentOther || e.tratamentoOutro || e.treatment_other || c?.treatmentOther || c?.tratamentoOutro || "") || "";
+    const treatment = (typeof cronosDisplayManualField === "function")
+      ? cronosDisplayManualField(treatmentRaw, treatmentManual)
+      : (treatmentManual || treatmentRaw || "");
+    const suggestedTitle = treatment ? `Follow-up sobre ${treatment}` : "Follow-up do lead";
+
+    openModal({
+      title:"Nova tarefa",
+      sub:`Lead: ${leadName}${phone ? " • " + phone : ""}`,
+      bodyHTML: `
+        <div class="twoCol">
+          <div style="grid-column:1/-1">
+            <label>Lead</label>
+            <div class="taskLeadFixedBox">
+              <strong>${escapeHTML(leadName)}</strong>
+              <span>${escapeHTML([phone, treatment].filter(Boolean).join(" • ") || "Lead selecionado")}</span>
+            </div>
+            <input id="tf_entry" type="hidden" value="${escapeHTML(String(e.id))}"/>
+          </div>
+          <div>
+            <label>Vencimento *</label>
+            <input id="tf_due" type="date" value=""/>
+          </div>
+          <div>
+            <label>Ação *</label>
+            <select id="tf_action"><option value="">Selecione a ação...</option>${TASK_ACTIONS.map(a=>`<option value="${a}">${a}</option>`).join("")}</select>
+            <div id="tf_action_other_wrap" style="display:none;margin-top:8px">
+              <label>Qual ação? *</label>
+              <input id="tf_action_other" placeholder="Ex: Enviar contrato, chamar no Instagram..."/>
+            </div>
+          </div>
+          <div style="grid-column:1/-1">
+            <label>Tarefa *</label>
+            <input id="tf_title" value="${escapeHTML(suggestedTitle)}" placeholder="Ex: Ligar e passar valor do orçamento"/>
+          </div>
+          <div style="grid-column:1/-1">
+            <label>Obs</label>
+            <textarea id="tf_notes" placeholder="Contexto, detalhes, objeções..."></textarea>
+          </div>
+        </div>
+      `,
+      footHTML: `
+        <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
+        <button type="button" class="btn ok" id="btnSaveTask">Salvar tarefa</button>
+      `,
+      onMount: ()=>{
+        const actionEl = el("tf_action");
+        const actionOtherWrap = el("tf_action_other_wrap");
+        const actionOtherEl = el("tf_action_other");
+        const syncOtherAction = ()=>{
+          const isOther = String(actionEl?.value || "") === "Outros";
+          if(actionOtherWrap) actionOtherWrap.style.display = isOther ? "block" : "none";
+          if(!isOther && actionOtherEl) actionOtherEl.value = "";
+        };
+        actionEl?.addEventListener("change", syncOtherAction);
+        syncOtherAction();
+
+        const btn = el("btnSaveTask");
+        btn.addEventListener("click", ()=>{
+          const dueDate = val("tf_due");
+          const title = val("tf_title").trim();
+          let action = val("tf_action");
+          const notes = val("tf_notes").trim();
+
+          if(!dueDate) return toast("Informe o vencimento", "A tarefa precisa de uma data definida.");
+          if(!title) return toast("Informe a tarefa");
+          if(!action) return toast("Selecione a ação", "Escolha o tipo de ação da tarefa.");
+          if(action === "Outros"){
+            const customAction = String(val("tf_action_other") || "").trim();
+            if(!customAction) return toast("Informe a ação", "Digite qual ação será feita em 'Outros'.");
+            action = customAction;
+          }
+
+          const now = new Date().toISOString();
+          const t = {
+            id: uid("task"),
+            masterId: actor.masterId,
+            entryId: String(e.id),
+            contactId: e.contactId || "",
+            dueDate,
+            title,
+            action,
+            notes,
+            done:false,
+            createdAt:now,
+            updatedAt:now,
+            updatedBy:cronosActorLabel(actor)
+          };
+
+          db.tasks = db.tasks || [];
+          db.tasks.push(t);
+          try{ recordTaskPatch(t); }catch(_){}
+          saveDB(db, { immediate:true });
+          closeModal({ force:true, source:"lead-task-shortcut" });
+          toast("Tarefa criada", "Ela já aparece no módulo Tarefas.");
+          renderAll();
+        });
+      }
+    });
+  }catch(err){
+    console.error("Erro ao abrir atalho de tarefa do lead:", err);
+    toast("Erro", "Não foi possível abrir a criação de tarefa.");
+  }
+  return false;
+}
+window.openLeadTaskShortcut = openLeadTaskShortcut;
 
 function openNewTask(){
   const actor = currentActor();
@@ -12521,8 +14014,8 @@ function openNewTask(){
       </div>
     `,
     footHTML: `
-      <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn ok" id="btnSaveTask">Salvar</button>
+      <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn ok" id="btnSaveTask">Salvar</button>
     `,
     onMount: ()=>{
       const searchEl = el("tf_entry_search");
@@ -12579,7 +14072,7 @@ function openNewTask(){
           </button>
         `).join("");
         suggestEl.querySelectorAll("[data-task-lead-idx]").forEach(btn=>{
-          btn.addEventListener("mouseenter", ()=>{ btn.style.background = "rgba(124,92,255,.12)"; });
+          btn.addEventListener("mouseenter", ()=>{ btn.style.background = "rgba(22,119,255,.12)"; });
           btn.addEventListener("mouseleave", ()=>{ btn.style.background = "transparent"; });
           btn.addEventListener("mousedown", (ev)=>{
             ev.preventDefault();
@@ -12621,11 +14114,12 @@ function openNewTask(){
           action = customAction;
         }
 
-        const t = {id: uid("task"), masterId: actor.masterId, entryId, dueDate, title, action, notes, done:false, createdAt:new Date().toISOString()};
+        const t = {id: uid("task"), masterId: actor.masterId, entryId, dueDate, title, action, notes, done:false, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), updatedBy:cronosActorLabel(actor)};
         db.tasks = db.tasks || [];
         db.tasks.push(t);
+        try{ recordTaskPatch(t); }catch(_){}
         saveDB(db, { immediate:true });
-        closeModal();
+        closeModal({ force:true, source:"save-task" });
         toast("Tarefa criada");
         renderAll();
       });
@@ -12680,8 +14174,8 @@ function openTaskEdit(taskId){
       </div>
     `,
     footHTML: `
-      <button class="btn" onclick="closeModal()">Fechar</button>
-      <button class="btn ok" id="btnSaveTask">Salvar</button>
+      <button type="button" class="btn" onclick="closeModal()">Fechar</button>
+      <button type="button" class="btn ok" id="btnSaveTask">Salvar</button>
     `,
     onMount: ()=>{
       const actionEl = el("tf_action");
@@ -12712,8 +14206,11 @@ function openTaskEdit(taskId){
         t.title = title;
         t.action = action;
         t.notes = val("tf_notes").trim();
-        saveDB(db);
-        closeModal();
+        t.updatedAt = new Date().toISOString();
+        t.updatedBy = cronosActorLabel(actor);
+        try{ recordTaskPatch(t); }catch(_){}
+        saveDB(db, { immediate:true });
+        closeModal({ force:true, source:"save-task" });
         toast("Tarefa atualizada");
         renderAll();
       });
@@ -12730,14 +14227,43 @@ function toggleTaskDone(taskId){
     return toast("Aviso", "Essa tarefa é automática e vinculada ao recebimento.");
   }
   t.done = !t.done;
-  saveDB(db);
+  t.updatedAt = new Date().toISOString();
+  t.updatedBy = cronosActorLabel(currentActor());
+  try{ recordTaskPatch(t); }catch(_){}
+  saveDB(db, { immediate:true });
   toast(t.done ? "Tarefa marcada como feita" : "Tarefa reaberta");
  if (typeof renderTasks === "function") renderTasks();
   if (typeof updateSidebarPills === "function") updateSidebarPills();
 }
 function markTaskDone(taskId){ return toggleTaskDone(taskId); }
+function CRONOS_CAN_DELETE_TASKS(actor){
+  const role = String(actor?.role || (actor?.kind === "master" ? "MASTER" : "")).toUpperCase();
+  return !!actor && (role === "MASTER" || role === "GERENTE" || actor.isPrimaryMaster === true);
+}
+
 function deleteTask(taskId){
-  return toast("Exclusão bloqueada", "As tarefas não podem mais ser apagadas. Use editar, concluir ou reabrir.");
+  const actor = currentActor();
+  if(!CRONOS_CAN_DELETE_TASKS(actor)){
+    return toast("Sem permissão", "Apenas Gerente ou Master pode apagar tarefas.");
+  }
+
+  const db = loadDB();
+  const idx = (db.tasks || []).findIndex(x => String(x.id) === String(taskId));
+  if(idx < 0) return toast("Tarefa não encontrada");
+
+  const t = db.tasks[idx];
+  if(t.key && String(t.key).startsWith("INST:")){
+    return toast("Tarefa automática", "Essa tarefa é vinculada ao recebimento. Para remover, ajuste o recebimento.");
+  }
+
+  const label = String(t.title || "esta tarefa").trim();
+  if(!confirm(`Apagar a tarefa "${label}"?\n\nEssa ação remove apenas a tarefa, não apaga o lead.`)) return;
+
+  try{ recordTaskDeletion(t); }catch(_){}
+  db.tasks.splice(idx, 1);
+  saveDB(db, { immediate:true });
+  try{ toast("Tarefa apagada", "A lista foi atualizada."); }catch(_){}
+  renderAll();
 }
 
 function renderAll(){
@@ -12884,7 +14410,17 @@ function bindActions(){
     });
   });
 
-  el("btnNewUser").onclick = openNewUser;
+  const btnNewUser = el("btnNewUser");
+  if(btnNewUser) btnNewUser.onclick = openNewUser;
+
+  const usersSearch = el("usersSearch");
+  const usersRoleFilter = el("usersRoleFilter");
+  const usersStatusFilter = el("usersStatusFilter");
+  const btnUsersRefresh = el("btnUsersRefresh");
+  if(usersSearch) usersSearch.addEventListener("input", debounce(renderUsers, 150));
+  if(usersRoleFilter) usersRoleFilter.addEventListener("change", renderUsers);
+  if(usersStatusFilter) usersStatusFilter.addEventListener("change", renderUsers);
+  if(btnUsersRefresh) btnUsersRefresh.addEventListener("click", ()=>runManualCloudRefresh(btnUsersRefresh));
 
   const btnBackup = el("btnBackup");
   if(btnBackup) btnBackup.onclick = exportJSON;
@@ -13286,7 +14822,7 @@ function __openChartPointDetails(data, idx){
           title: `Origem do gráfico — ${label}`,
           sub: "Auditoria rápida da receita/orçamento.",
           bodyHTML,
-          footHTML: `<button class="btn" onclick="closeModal()">Fechar</button>`,
+          footHTML: `<button type="button" class="btn" onclick="closeModal()">Fechar</button>`,
           maxWidth: "920px"
         });
       }else{
@@ -13339,7 +14875,7 @@ function __openChartPointDetails(data, idx){
               <span class="muted" id="chartOriginPageLabel">Página 1 de ${totalPages}</span>
               <button class="btn small" id="chartOriginNext" type="button">Próxima</button>
             </div>
-            <button class="btn" onclick="closeModal()">Fechar</button>
+            <button type="button" class="btn" onclick="closeModal()">Fechar</button>
           </div>
         `,
         maxWidth: "980px",
@@ -14643,7 +16179,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 })();
 
-/* Ficha do lead e procedimentos */
+/* Prontuário do lead e procedimentos */
 (function(){
   try{
     const FACE_OPTIONS = [
@@ -14737,7 +16273,7 @@ document.addEventListener("DOMContentLoaded", () => {
         html:not(.light) .procNameSuggestPanel,body:not(.light) .procNameSuggestPanel,:root:not(.light) .procNameSuggestPanel{background:#111827!important;color:#e5edf8!important;border-color:rgba(148,163,184,.26)!important;box-shadow:0 20px 48px rgba(0,0,0,.44)!important}
         .procNameSuggestPanel{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;isolation:isolate}
         .procNameSuggestPanel .miniBtn{background:rgba(148,163,184,.08);border-color:rgba(148,163,184,.20);display:flex;align-items:center;gap:8px}
-        .procNameSuggestPanel .miniBtn:hover{background:rgba(124,92,255,.14)}
+        .procNameSuggestPanel .miniBtn:hover{background:rgba(22,119,255,.14)}
         @media(max-width:1120px){.procGrid{grid-template-columns:1fr 1fr}.procCatalogTable{min-width:1180px;table-layout:auto}.procCatalogTable th,.procCatalogTable td{white-space:nowrap}.procCatalogTable td:first-child,.procCatalogTable th:first-child{white-space:normal}}
         .brandCardHint{margin-top:8px;font-size:12px;color:var(--muted)}
         .brandRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -14752,7 +16288,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .toothWrap{display:grid;grid-template-columns:repeat(8,minmax(44px,1fr));gap:8px;margin-top:10px}
         .toothBtn{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);border-radius:12px;padding:10px 6px;cursor:pointer;font-weight:800;min-height:44px}
         .toothBtn:hover{background:rgba(255,255,255,.06)}
-        .toothBtn.sel{outline:2px solid rgba(124,92,255,.7);background:rgba(124,92,255,.12)}
+        .toothBtn.sel{outline:2px solid rgba(22,119,255,.7);background:rgba(22,119,255,.12)}
         .toothChipRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
         .toothChip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:rgba(255,255,255,.04);padding:6px 10px;border-radius:999px;font-size:12px}
         .fichaLayout{display:block}
@@ -14789,8 +16325,8 @@ document.addEventListener("DOMContentLoaded", () => {
         .fichaTable th,.fichaTable td{padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
         .fichaTable th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;background:color-mix(in srgb, var(--panel2) 92%, transparent)}
         .fichaTable input[type="number"], .fichaTable select, .fichaTable input[type="text"], .fichaTable textarea{padding:8px 10px;border-radius:12px;font-size:13px}
-        .fichaDone{background:rgba(46,229,157,.12)!important}
-        .fichaDone td{background:rgba(46,229,157,.12)!important}
+        .fichaDone{background:rgba(46,230,166,.12)!important}
+        .fichaDone td{background:rgba(46,230,166,.12)!important}
         .totalsGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
         .fichaTotalsUnderOdonto{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:14px}
         .totalBox{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
@@ -14820,8 +16356,8 @@ document.addEventListener("DOMContentLoaded", () => {
         .fichaMoneyInput{font-variant-numeric:tabular-nums}
         .faceChipWrap{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
         .faceChip{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);border-radius:999px;padding:8px 10px;font-weight:800;font-size:12px;cursor:pointer;transition:.15s ease}
-        .faceChip:hover{background:rgba(124,92,255,.12);border-color:rgba(124,92,255,.45)}
-        .faceChip.active{background:rgba(124,92,255,.18);border-color:rgba(124,92,255,.75);box-shadow:0 0 0 2px rgba(124,92,255,.12) inset}
+        .faceChip:hover{background:rgba(22,119,255,.12);border-color:rgba(22,119,255,.45)}
+        .faceChip.active{background:rgba(22,119,255,.18);border-color:rgba(22,119,255,.75);box-shadow:0 0 0 2px rgba(22,119,255,.12) inset}
         .faceChip:disabled{opacity:.48;cursor:not-allowed}
         .faceSelectedText{margin-top:8px;font-size:12px;color:var(--muted)}
 
@@ -14831,7 +16367,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .procSuggestMenu{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:50;max-height:310px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb, var(--panel2) 96%, #000 4%);box-shadow:0 18px 36px rgba(0,0,0,.32);padding:6px;display:none}
         .procSuggestMenu.show{display:block}
         .procSuggestItem{width:100%;text-align:left;border:0;border-radius:10px;background:transparent;color:var(--text);padding:10px 11px;cursor:pointer;font-weight:800}
-        .procSuggestItem:hover{background:rgba(124,92,255,.18)}
+        .procSuggestItem:hover{background:rgba(22,119,255,.18)}
         .procSuggestItem .muted{font-size:12px;font-weight:700}
         .procSuggestEmpty{padding:12px;color:var(--muted);font-size:13px}
 
@@ -14843,7 +16379,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .odontoStatusLayer .toothLine{fill:#6b7280;stroke:none;pointer-events:none;transition:fill .16s ease,opacity .16s ease;shape-rendering:geometricPrecision}
         body:not(.light) .odontoStatusLayer .toothLine{fill:rgba(203,213,225,.82)}
         .odontoStatusLayer.deciduous,.odontoLabelLayer.deciduous,.odontoClickLayer.deciduous{transform:scale(.78);transform-origin:50% 50%}
-        .odontoStatusLayer .odontogramaTooth.active .toothLine{fill:#7c5cff;opacity:1}
+        .odontoStatusLayer .odontogramaTooth.active .toothLine{fill:#1677ff;opacity:1}
         .odontoStatusLayer .odontogramaTooth.paid .toothLine,.odontoStatusLayer .odontogramaTooth.plan .toothLine,.odontoStatusLayer .odontogramaTooth.closed .toothLine{fill:#ca8a04;opacity:1}
         .odontoStatusLayer .odontogramaTooth.done .toothLine{fill:#16a34a;opacity:1}
         .odontoStatusLayer .odontogramaTooth.absent .toothLine{fill:#dc2626;opacity:1}
@@ -14853,7 +16389,7 @@ document.addEventListener("DOMContentLoaded", () => {
         body:not(.light) .odontoLabelLayer .odontoNumberText{fill:rgba(226,232,240,.92)}
         .dentitionToggle{display:inline-flex;gap:6px;padding:5px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);margin:0 0 12px;flex-wrap:wrap}
         .dentitionToggle button{border:0;border-radius:999px;background:transparent;color:var(--muted);font-weight:900;padding:8px 12px;cursor:pointer}
-        .dentitionToggle button.active{background:rgba(124,92,255,.18);color:var(--text);box-shadow:inset 0 0 0 1px rgba(124,92,255,.22)}
+        .dentitionToggle button.active{background:rgba(22,119,255,.18);color:var(--text);box-shadow:inset 0 0 0 1px rgba(22,119,255,.22)}
 .fichaPaid{background:rgba(255,212,0,.18)!important}.fichaPaid td{background:rgba(255,212,0,.18)!important}
         .fichaAbsent{background:rgba(220,38,38,.12)!important}.fichaAbsent td{background:rgba(220,38,38,.12)!important}
         .fichaPlan{background:rgba(255,212,0,.14)!important}.fichaPlan td{background:rgba(255,212,0,.14)!important}
@@ -14866,6 +16402,565 @@ document.addEventListener("DOMContentLoaded", () => {
         .panelMiniGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.panelMiniGrid>div{border:1px solid var(--line);border-radius:12px;padding:9px;background:rgba(255,255,255,.03)}.panelMiniGrid span{display:block;font-size:11px;margin-bottom:4px}.panelMiniGrid b{font-size:13px}
         .fichaEmpty{padding:18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}
         @media(max-width:1180px){.fichaHead,.procGrid,.fichaAddGrid,.totalsGrid,.odontoGrid{grid-template-columns:1fr}.fichaTable{min-width:760px}}
+
+        /* === CRONOS V55 — Prontuário baseado na segunda referência === */
+        body.cronos-ficha-open #modalBg{background:rgba(2,6,23,.70)!important;backdrop-filter:blur(8px)!important}
+        body.cronos-ficha-open #modalBg>.modal.modalFichaWide{
+          width:min(98.8vw,1840px)!important;max-width:min(98.8vw,1840px)!important;
+          border-radius:26px!important;border:1px solid rgba(112,166,255,.20)!important;
+          background:
+            radial-gradient(1200px 460px at 15% 0%,rgba(15,93,208,.28),transparent 72%),
+            radial-gradient(900px 520px at 100% 18%,rgba(28,198,255,.09),transparent 70%),
+            linear-gradient(180deg,#071733 0%,#06122b 100%)!important;
+          box-shadow:0 34px 90px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06)!important;
+          overflow:hidden!important;
+        }
+        body.cronos-ficha-open .modalFichaWide .modalHead{
+          min-height:72px!important;padding:18px 22px 14px!important;
+          border-bottom:1px solid rgba(112,166,255,.16)!important;
+          background:linear-gradient(90deg,rgba(20,85,195,.18),rgba(28,198,255,.05),transparent)!important;
+        }
+        body.cronos-ficha-open .modalFichaWide #modalTitle{font-size:24px!important;letter-spacing:-.03em!important}
+        body.cronos-ficha-open .modalFichaWide #modalSub{font-size:12.5px!important;color:rgba(226,237,255,.70)!important}
+        body.cronos-ficha-open .modalFichaWide .x{border-radius:14px!important;width:38px!important;height:38px!important;background:rgba(15,23,42,.44)!important;border:1px solid rgba(148,163,184,.22)!important}
+        body.cronos-ficha-open .modalFichaWide #modalBody{
+          max-height:calc(92vh - 146px)!important;padding:18px 20px 96px!important;
+          overflow:auto!important;scroll-padding-bottom:120px!important;
+        }
+        body.cronos-ficha-open .modalFichaWide #fichaApp{display:flex!important;flex-direction:column!important;gap:12px!important}
+
+        /* Topo */
+        .modalFichaWide .fichaHeroV55{
+          display:grid!important;grid-template-columns:minmax(360px,1.25fr) minmax(220px,.72fr) minmax(250px,.86fr) minmax(280px,.95fr)!important;
+          gap:12px!important;margin-bottom:0!important;
+        }
+        .modalFichaWide .fichaPatientHeroV55,.modalFichaWide .fichaTopCardV55{
+          border:1px solid rgba(112,166,255,.18)!important;border-radius:20px!important;
+          background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.020))!important;
+          box-shadow:inset 0 1px 0 rgba(255,255,255,.045)!important;
+        }
+        .modalFichaWide .fichaPatientHeroV55{display:flex;gap:16px;align-items:center;padding:18px!important;min-width:0!important}
+        .modalFichaWide .patientAvatarV55{
+          width:74px;height:74px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;
+          font-size:27px;font-weight:950;color:white;background:linear-gradient(135deg,#1d4ed8,#0891b2);
+          border:1px solid rgba(125,211,252,.38);box-shadow:0 14px 34px rgba(14,165,233,.18);
+        }
+        .modalFichaWide .patientInfoV55{min-width:0}
+        .modalFichaWide .patientTitleRowV55{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+        .modalFichaWide .patientTitleRowV55 h3{margin:0;font-size:25px;line-height:1.08;letter-spacing:-.03em}
+        .modalFichaWide .patientStatusV55{font-size:12px;font-weight:900;border-radius:999px;padding:6px 10px;color:#bfdbfe;background:rgba(37,99,235,.20);border:1px solid rgba(96,165,250,.24)}
+        .modalFichaWide .patientMetaGridV55{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:12px;color:rgba(226,237,255,.72);font-size:13px}
+        .modalFichaWide .patientMetaGridV55 b{display:inline-block;margin-left:6px;color:#f8fbff}
+
+        .modalFichaWide .fichaTopCardV55{display:flex;align-items:center;gap:12px;padding:14px 16px!important;min-width:0}
+        .modalFichaWide .topCardIconV55{width:52px;height:52px;border-radius:17px;display:grid;place-items:center;flex:0 0 auto;background:rgba(37,99,235,.18);border:1px solid rgba(96,165,250,.24);color:#bfdbfe}
+        .modalFichaWide .topCardIconV55 img{width:44px;height:44px;object-fit:contain;border-radius:14px}
+        .modalFichaWide .topCardIconV55 svg{width:24px;height:24px}
+        .modalFichaWide .purpleIconV55{background:rgba(124,58,237,.18);border-color:rgba(167,139,250,.28);color:#ddd6fe}
+        .modalFichaWide .neutralIconV55{background:rgba(14,165,233,.12);border-color:rgba(125,211,252,.22);color:#bae6fd}
+        .modalFichaWide .fichaTopCardV55 small{display:block;color:rgba(226,237,255,.62);font-size:12px;margin-bottom:5px}
+        .modalFichaWide .fichaTopCardV55 strong{display:block;color:#f8fbff;font-size:16px;line-height:1.22;word-break:break-word}
+        .modalFichaWide .fichaTopCardV55 em{display:block;font-style:normal;color:rgba(226,237,255,.58);font-size:12px;margin-top:5px;word-break:break-word}
+
+        /* Odontograma + painel */
+        .modalFichaWide .odontoFull{
+          border-radius:22px!important;padding:16px!important;margin:0!important;
+          border:1px solid rgba(112,166,255,.18)!important;
+          background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.018))!important;
+        }
+        .modalFichaWide .fichaSectionTitleV55,.modalFichaWide .fichaPanelTitleV55{
+          font-size:21px!important;font-weight:950!important;letter-spacing:-.025em!important;margin:0 0 10px!important;
+        }
+        .modalFichaWide .odontoGrid{grid-template-columns:minmax(600px,1.10fr) minmax(470px,.90fr)!important;gap:14px!important;align-items:stretch!important}
+        .modalFichaWide .odontoRefStage{border-radius:20px!important;border-color:rgba(112,166,255,.18)!important;background:rgba(2,8,24,.16)!important}
+        .modalFichaWide .dentitionToggle{margin:0 0 12px!important;padding:5px!important;border-radius:999px!important;background:rgba(255,255,255,.035)!important;border-color:rgba(112,166,255,.15)!important}
+        .modalFichaWide .dentitionToggle button{padding:8px 14px!important;font-size:13px!important}
+        .modalFichaWide .dentitionToggle button.active{background:linear-gradient(135deg,rgba(37,99,235,.40),rgba(14,165,233,.20))!important;color:#fff!important}
+
+        .modalFichaWide .odontoPanel{
+          border-radius:22px!important;padding:16px!important;border:1px solid rgba(112,166,255,.18)!important;
+          background:radial-gradient(650px 280px at 0% 0%,rgba(29,78,216,.17),transparent 72%),rgba(3,10,29,.32)!important;
+        }
+        .modalFichaWide .panelMiniGrid{grid-template-columns:1fr 1fr 1fr!important;gap:8px!important}
+        .modalFichaWide .panelMiniGrid>div{
+          border-radius:14px!important;padding:11px 12px!important;border:1px solid rgba(112,166,255,.16)!important;background:rgba(255,255,255,.03)!important;
+        }
+        .modalFichaWide .panelMiniGrid span{color:rgba(226,237,255,.64)!important}
+        .modalFichaWide .panelMiniGrid b{font-size:14px!important;color:#fff!important}
+        .modalFichaWide .odontoPanel label{font-size:12px!important;color:rgba(226,237,255,.82)!important;font-weight:900!important}
+        .modalFichaWide .odontoPanel input,.modalFichaWide .odontoPanel select,.modalFichaWide .procPickerWrap input{
+          border-radius:14px!important;background:rgba(2,8,24,.50)!important;border-color:rgba(112,166,255,.16)!important;
+        }
+        .modalFichaWide .sideFormGrid{gap:9px!important}
+        .modalFichaWide .faceChip{border-radius:10px!important;padding:7px 9px!important;background:rgba(255,255,255,.035)!important}
+        .modalFichaWide .fichaAddPlanBtn{
+          background:linear-gradient(135deg,#1677ff,#0ea5e9)!important;border-color:rgba(125,211,252,.45)!important;color:white!important;
+          box-shadow:0 12px 28px rgba(14,165,233,.18)!important;max-width:none!important;flex:1 1 100%!important;
+        }
+        .modalFichaWide .fichaQuickActions .btn.small{border-radius:13px!important;padding:9px 11px!important}
+
+        /* Financeiro abaixo do odontograma */
+        .modalFichaWide .totalsGrid.fichaTotalsUnderOdonto{grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:8px!important;margin-top:14px!important}
+        .modalFichaWide .totalBox{
+          border-radius:16px!important;padding:13px 12px!important;border:1px solid rgba(112,166,255,.16)!important;background:rgba(255,255,255,.03)!important;
+        }
+        .modalFichaWide .totalBox .label{font-size:11px!important;text-transform:none!important;color:rgba(226,237,255,.64)!important}
+        .modalFichaWide .totalBox .value{font-size:18px!important;color:#f8fbff!important}
+        .modalFichaWide .totalBox .valueHighlight{background:transparent!important;border:0!important;padding:0!important;color:#38bdf8!important;box-shadow:none!important}
+        .modalFichaWide #fichaTotalDesconto,.modalFichaWide #fichaTotalDescontoPct{color:#34d399!important}
+        .modalFichaWide #fichaTotalAberto{color:#fb7185!important}
+
+        /* Plano/tabela */
+        .modalFichaWide .fichaPlanToolbarV55{
+          border-radius:22px!important;padding:15px 17px!important;border:1px solid rgba(112,166,255,.18)!important;
+          background:linear-gradient(135deg,rgba(29,78,216,.13),rgba(255,255,255,.025))!important;margin:0 0 10px!important;
+        }
+        .modalFichaWide .fichaPlanToolbarV55 [style*="font-weight:900"]{font-size:20px!important;letter-spacing:-.025em}
+        .modalFichaWide .fichaPlanToolbarV55 .btn.primary{background:linear-gradient(135deg,#1677ff,#0ea5e9)!important;border-color:rgba(125,211,252,.45)!important;color:white!important}
+        .modalFichaWide .fichaTableWrap{border-radius:22px!important;border:1px solid rgba(112,166,255,.18)!important;background:rgba(2,8,24,.20)!important}
+        .modalFichaWide .fichaTable{border-collapse:separate!important;border-spacing:0!important;background:transparent!important}
+        .modalFichaWide .fichaTable th{
+          position:sticky!important;top:0!important;z-index:3!important;background:rgba(7,20,50,.98)!important;
+          color:rgba(226,237,255,.72)!important;font-size:11px!important;padding:13px 10px!important;border-bottom:1px solid rgba(112,166,255,.18)!important;
+        }
+        .modalFichaWide .fichaTable td{padding:12px 10px!important;border-bottom:1px solid rgba(112,166,255,.10)!important;background:rgba(255,255,255,.006)!important}
+        .modalFichaWide .fichaTable tr:hover td{background:rgba(59,130,246,.06)!important}
+        .modalFichaWide .fichaTable input[type="number"],.modalFichaWide .fichaTable input[type="text"],.modalFichaWide .fichaTable select{
+          border-radius:12px!important;background:rgba(2,8,24,.48)!important;border-color:rgba(112,166,255,.16)!important;
+        }
+        .modalFichaWide .fichaTable tr.fichaPaid,.modalFichaWide .fichaTable tr.fichaPlan,.modalFichaWide .fichaTable tr.fichaClosed{box-shadow:inset 4px 0 0 rgba(245,158,11,.80)!important}
+        .modalFichaWide .fichaTable tr.fichaPaid td,.modalFichaWide .fichaTable tr.fichaPlan td,.modalFichaWide .fichaTable tr.fichaClosed td{background:rgba(245,158,11,.105)!important}
+        .modalFichaWide .fichaTable tr.fichaDone{box-shadow:inset 4px 0 0 rgba(34,197,94,.80)!important}
+        .modalFichaWide .fichaTable tr.fichaDone td{background:rgba(34,197,94,.10)!important}
+        .modalFichaWide .fichaTable tr.fichaAbsent{box-shadow:inset 4px 0 0 rgba(244,63,94,.76)!important}
+        .modalFichaWide .fichaTable tr.fichaAbsent td{background:rgba(244,63,94,.105)!important}
+        .modalFichaWide .fichaTable .miniBtn,.modalFichaWide .fichaTable .btn.small{border-radius:12px!important;padding:7px 10px!important}
+
+        /* Observações e rodapé */
+        .modalFichaWide .fichaAddWrap{border-radius:22px!important;padding:15px 17px!important;border-color:rgba(112,166,255,.18)!important;background:rgba(255,255,255,.026)!important}
+        .modalFichaWide .fichaAddWrap textarea{border-radius:16px!important;background:rgba(2,8,24,.48)!important;border-color:rgba(112,166,255,.16)!important}
+        .modalFichaWide .modalFoot{
+          position:absolute!important;left:0!important;right:0!important;bottom:0!important;padding:14px 20px!important;
+          border-top:1px solid rgba(112,166,255,.16)!important;background:linear-gradient(180deg,rgba(6,15,36,.72),rgba(6,15,36,.98))!important;
+          backdrop-filter:blur(10px)!important;
+        }
+        .modalFichaWide .modalFoot .btn{border-radius:14px!important;min-height:40px!important}
+        .modalFichaWide .modalFoot .btn:first-child{background:rgba(14,165,233,.14)!important;border-color:rgba(125,211,252,.36)!important}
+        .modalFichaWide .modalFoot .btn:last-child{background:linear-gradient(135deg,#1677ff,#2563eb)!important;border-color:rgba(147,197,253,.38)!important;color:white!important}
+
+        @media(max-width:1280px){
+          .modalFichaWide .fichaHeroV55{grid-template-columns:1fr 1fr!important}
+          .modalFichaWide .odontoGrid{grid-template-columns:1fr!important}
+          .modalFichaWide .totalsGrid.fichaTotalsUnderOdonto{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+        }
+        @media(max-width:760px){
+          .modalFichaWide .fichaHeroV55{grid-template-columns:1fr!important}
+          .modalFichaWide .panelMiniGrid{grid-template-columns:1fr!important}
+          .modalFichaWide .totalsGrid.fichaTotalsUnderOdonto{grid-template-columns:1fr 1fr!important}
+        }
+
+
+
+        /* === CRONOS V56 — Prontuário ajustado ao mockup aprovado === */
+        /* Topo mais compacto */
+        .modalFichaWide .fichaHeroV55{
+          grid-template-columns:minmax(340px,1.12fr) minmax(210px,.72fr) minmax(260px,.82fr) minmax(250px,.80fr)!important;
+          gap:10px!important;
+          margin-bottom:0!important;
+        }
+        .modalFichaWide .fichaPatientHeroV55,
+        .modalFichaWide .fichaTopCardV55{
+          min-height:82px!important;
+          padding:12px 14px!important;
+          border-radius:18px!important;
+        }
+        .modalFichaWide .fichaPatientHeroV55{gap:12px!important}
+        .modalFichaWide .patientAvatarV55{
+          width:58px!important;
+          height:58px!important;
+          font-size:22px!important;
+        }
+        .modalFichaWide .patientTitleRowV55 h3{
+          font-size:21px!important;
+          line-height:1.08!important;
+        }
+        .modalFichaWide .patientStatusV55{
+          padding:4px 8px!important;
+          font-size:11px!important;
+        }
+        .modalFichaWide .patientMetaGridV55{
+          gap:5px 12px!important;
+          margin-top:8px!important;
+          font-size:12px!important;
+        }
+        .modalFichaWide .topCardIconV55{
+          width:44px!important;
+          height:44px!important;
+          border-radius:15px!important;
+        }
+        .modalFichaWide .topCardIconV55 img{
+          width:36px!important;
+          height:36px!important;
+        }
+        .modalFichaWide .topCardIconV55 svg{
+          width:21px!important;
+          height:21px!important;
+        }
+        .modalFichaWide .fichaTopCardV55 small{
+          font-size:11px!important;
+          margin-bottom:3px!important;
+        }
+        .modalFichaWide .fichaTopCardV55 strong{
+          font-size:14px!important;
+          line-height:1.14!important;
+        }
+        .modalFichaWide .fichaTopCardV55 em{
+          font-size:11px!important;
+          margin-top:3px!important;
+        }
+
+        /* Odontograma + plano: ocupa melhor a dobra e diminui espaços mortos */
+        .modalFichaWide .odontoFull{
+          padding:14px!important;
+          border-radius:21px!important;
+        }
+        .modalFichaWide .odontoGrid{
+          grid-template-columns:minmax(620px,1.05fr) minmax(470px,.95fr)!important;
+          align-items:start!important;
+          gap:12px!important;
+        }
+        .modalFichaWide .odontoRefStage{
+          aspect-ratio:1536/690!important;
+        }
+        .modalFichaWide .odontoPanel{
+          padding:14px!important;
+          border-radius:20px!important;
+        }
+        .modalFichaWide .odontoPanel label{
+          margin:7px 0 5px!important;
+        }
+        .modalFichaWide .panelMiniGrid{
+          grid-template-columns:1fr 1fr 1fr!important;
+          gap:8px!important;
+        }
+        .modalFichaWide .panelMiniGrid>div{
+          padding:9px 10px!important;
+          min-height:54px!important;
+        }
+        .modalFichaWide .sideFormGrid{
+          gap:8px!important;
+        }
+        .modalFichaWide .odontoPanel input,
+        .modalFichaWide .odontoPanel select,
+        .modalFichaWide .procPickerWrap input{
+          min-height:38px!important;
+          padding:8px 11px!important;
+        }
+
+        /* Resumo financeiro como bloco aproveitando espaço abaixo do odontograma */
+        .modalFichaWide .totalsGrid.fichaTotalsUnderOdonto{
+          grid-template-columns:repeat(6,minmax(0,1fr))!important;
+          gap:8px!important;
+          margin-top:12px!important;
+        }
+        .modalFichaWide .totalBox{
+          min-height:74px!important;
+          padding:11px 12px!important;
+          border-radius:15px!important;
+        }
+        .modalFichaWide .totalBox .label{
+          font-size:10.8px!important;
+          margin-bottom:6px!important;
+          line-height:1.15!important;
+        }
+        .modalFichaWide .totalBox .value{
+          font-size:17px!important;
+          line-height:1.1!important;
+        }
+
+        /* Botões do painel com as cores específicas, mas sem neon de trio elétrico */
+        .modalFichaWide .fichaQuickActions{
+          gap:8px!important;
+          margin-top:11px!important;
+        }
+        .modalFichaWide .fichaQuickActions .btn{
+          box-shadow:none!important;
+        }
+        .modalFichaWide .fichaAddPlanBtn{
+          flex:1 1 100%!important;
+          max-width:none!important;
+          min-height:42px!important;
+          border-radius:14px!important;
+          background:rgba(124,58,237,.14)!important;
+          border:1px solid rgba(167,139,250,.82)!important;
+          color:#f3e8ff!important;
+          box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)!important;
+        }
+        .modalFichaWide .fichaAddPlanBtn:hover{
+          background:rgba(124,58,237,.22)!important;
+          box-shadow:0 10px 24px rgba(124,58,237,.12)!important;
+        }
+        .modalFichaWide .fichaAddPlanBtn::before{
+          content:"+";
+          margin-right:8px;
+          font-weight:950;
+          font-size:18px;
+          line-height:1;
+        }
+        .modalFichaWide .fichaQuickActions .fichaPaidAction{
+          border-color:rgba(245,158,11,.92)!important;
+          background:rgba(245,158,11,.13)!important;
+          color:#fde68a!important;
+        }
+        .modalFichaWide .fichaQuickActions .fichaDoneAction{
+          border-color:rgba(34,197,94,.88)!important;
+          background:rgba(34,197,94,.13)!important;
+          color:#bbf7d0!important;
+        }
+        .modalFichaWide .fichaQuickActions .fichaAbsentAction{
+          border-color:rgba(248,113,113,.88)!important;
+          background:rgba(248,113,113,.13)!important;
+          color:#fecaca!important;
+        }
+        .modalFichaWide .fichaQuickActions .fichaNeutralAction{
+          border-color:rgba(148,163,184,.32)!important;
+          background:rgba(148,163,184,.07)!important;
+          color:#e2e8f0!important;
+        }
+
+        /* Gerar recebimento e atualizar tabela menos protagonistas */
+        .modalFichaWide .fichaPlanToolbarV55 .btn.primary,
+        .modalFichaWide #fichaGenerateReceivingBtn{
+          background:rgba(124,58,237,.12)!important;
+          border:1px solid rgba(167,139,250,.62)!important;
+          color:#e9d5ff!important;
+          box-shadow:none!important;
+        }
+        .modalFichaWide #fichaGenerateReceivingBtn:disabled{
+          opacity:.72!important;
+          filter:none!important;
+        }
+        .modalFichaWide .fichaPlanToolbarV55 .btn:not(.primary){
+          background:rgba(148,163,184,.06)!important;
+          border-color:rgba(148,163,184,.24)!important;
+          color:#e2e8f0!important;
+        }
+
+        /* Tabela e linhas: manter hierarquia sem amarelo chapado demais */
+        .modalFichaWide .fichaTableWrap{
+          border-radius:20px!important;
+        }
+        .modalFichaWide .fichaTable td{
+          padding:10px 10px!important;
+        }
+        .modalFichaWide .fichaTable tr.fichaPaid td,
+        .modalFichaWide .fichaTable tr.fichaPlan td,
+        .modalFichaWide .fichaTable tr.fichaClosed td{
+          background:rgba(245,158,11,.095)!important;
+        }
+        .modalFichaWide .fichaTable tr.fichaDone td{
+          background:rgba(34,197,94,.085)!important;
+        }
+        .modalFichaWide .fichaTable tr.fichaAbsent td{
+          background:rgba(248,113,113,.095)!important;
+        }
+
+        @media(max-width:1280px){
+          .modalFichaWide .fichaHeroV55{
+            grid-template-columns:1.2fr .8fr!important;
+          }
+          .modalFichaWide .odontoGrid{
+            grid-template-columns:1fr!important;
+          }
+          .modalFichaWide .totalsGrid.fichaTotalsUnderOdonto{
+            grid-template-columns:repeat(3,minmax(0,1fr))!important;
+          }
+        }
+        @media(max-width:760px){
+          .modalFichaWide .fichaHeroV55{
+            grid-template-columns:1fr!important;
+          }
+          .modalFichaWide .totalsGrid.fichaTotalsUnderOdonto{
+            grid-template-columns:repeat(2,minmax(0,1fr))!important;
+          }
+        }
+
+
+
+        /* === CRONOS V57 — força final: botões coloridos + área financeira ocupada === */
+        /* Regras com especificidade maior que as versões anteriores. */
+
+        /* Resumo financeiro passa a ocupar melhor a área vazia abaixo do odontograma */
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto{
+          display:grid!important;
+          grid-template-columns:repeat(3,minmax(0,1fr))!important;
+          gap:10px!important;
+          margin-top:14px!important;
+          align-content:start!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto::before{
+          content:"Resumo financeiro";
+          grid-column:1/-1;
+          display:block;
+          font-size:15px;
+          font-weight:950;
+          letter-spacing:-.015em;
+          color:#eef6ff;
+          margin:0 0 2px;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox{
+          min-height:88px!important;
+          padding:13px 14px!important;
+          border-radius:16px!important;
+          background:linear-gradient(180deg,rgba(255,255,255,.040),rgba(255,255,255,.020))!important;
+          border:1px solid rgba(112,166,255,.17)!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox .label{
+          font-size:11px!important;
+          line-height:1.2!important;
+          margin-bottom:8px!important;
+          color:rgba(226,237,255,.66)!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto .totalBox .value{
+          font-size:19px!important;
+          line-height:1.15!important;
+        }
+
+        /* Botão principal: roxo discreto, sem neon ciano/verde */
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaAddPlanBtn,
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.primary.fichaAddPlanBtn,
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide button.fichaAddPlanBtn{
+          background:rgba(124,58,237,.14)!important;
+          background-image:none!important;
+          border:1px solid rgba(167,139,250,.86)!important;
+          color:#f3e8ff!important;
+          box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)!important;
+          text-shadow:none!important;
+          min-height:44px!important;
+          border-radius:15px!important;
+          filter:none!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide button.fichaAddPlanBtn:hover{
+          background:rgba(124,58,237,.22)!important;
+          background-image:none!important;
+          box-shadow:0 12px 26px rgba(124,58,237,.12)!important;
+        }
+
+        /* Botões de andamento com cores específicas */
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaPaidAction{
+          background:rgba(245,158,11,.14)!important;
+          background-image:none!important;
+          border:1px solid rgba(245,158,11,.92)!important;
+          color:#fde68a!important;
+          box-shadow:none!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaDoneAction{
+          background:rgba(34,197,94,.14)!important;
+          background-image:none!important;
+          border:1px solid rgba(34,197,94,.88)!important;
+          color:#bbf7d0!important;
+          box-shadow:none!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaAbsentAction{
+          background:rgba(248,113,113,.14)!important;
+          background-image:none!important;
+          border:1px solid rgba(248,113,113,.88)!important;
+          color:#fecaca!important;
+          box-shadow:none!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaQuickActions .btn.fichaNeutralAction{
+          background:rgba(148,163,184,.075)!important;
+          background-image:none!important;
+          border:1px solid rgba(148,163,184,.34)!important;
+          color:#e2e8f0!important;
+          box-shadow:none!important;
+        }
+
+        /* Botões da toolbar do plano: menos protagonistas */
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide #fichaGenerateReceivingBtn,
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 .btn.primary{
+          background:rgba(124,58,237,.12)!important;
+          background-image:none!important;
+          border:1px solid rgba(167,139,250,.62)!important;
+          color:#e9d5ff!important;
+          box-shadow:none!important;
+          filter:none!important;
+          text-shadow:none!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .fichaPlanToolbarV55 .btn:not(.primary){
+          background:rgba(148,163,184,.065)!important;
+          background-image:none!important;
+          border-color:rgba(148,163,184,.26)!important;
+          color:#e2e8f0!important;
+          box-shadow:none!important;
+        }
+
+        /* Em telas menores, mantém duas colunas no financeiro para não virar torre gigante */
+        @media(max-width:900px){
+          body.cronos-ficha-open #modalBg > .modal.modalFichaWide .totalsGrid.fichaTotalsUnderOdonto{
+            grid-template-columns:repeat(2,minmax(0,1fr))!important;
+          }
+        }
+
+
+
+        /* === CRONOS V58 — botões do prontuário em linha única === */
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions{
+          display:grid!important;
+          grid-template-columns:repeat(5,minmax(0,1fr))!important;
+          gap:8px!important;
+          align-items:center!important;
+          width:100%!important;
+        }
+
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaAddPlanBtn{
+          grid-column:1 / -1!important;
+          width:100%!important;
+          max-width:none!important;
+          justify-content:center!important;
+        }
+
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.small{
+          width:100%!important;
+          min-width:0!important;
+          min-height:38px!important;
+          padding:8px 8px!important;
+          border-radius:13px!important;
+          font-size:12px!important;
+          line-height:1.12!important;
+          white-space:normal!important;
+          text-align:center!important;
+          justify-content:center!important;
+        }
+
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaPaidAction{
+          grid-column:auto!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaDoneAction{
+          grid-column:auto!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaAbsentAction{
+          grid-column:auto!important;
+        }
+        body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaNeutralAction{
+          grid-column:auto!important;
+        }
+
+        @media(max-width:1280px){
+          body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions{
+            grid-template-columns:repeat(3,minmax(0,1fr))!important;
+          }
+          body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions .btn.fichaAddPlanBtn{
+            grid-column:1 / -1!important;
+          }
+        }
+
+        @media(max-width:760px){
+          body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoPanel .fichaQuickActions{
+            grid-template-columns:repeat(2,minmax(0,1fr))!important;
+          }
+        }
+
       `;
       document.head.appendChild(style);
     }
@@ -14933,8 +17028,11 @@ document.addEventListener("DOMContentLoaded", () => {
         entry.ficha.activeEvaluationId = entry.ficha.avaliacoes[entry.ficha.avaliacoes.length - 1]?.id || 'eval_1';
       }
       if(!entry.ficha.dentitionType) entry.ficha.dentitionType = 'permanent';
-      entry.ficha.avaliacoes.forEach(av=>{
+      entry.ficha.avaliacoes.forEach((av, idx)=>{
         if(!av.dentitionType) av.dentitionType = normalizeDentitionType(entry.ficha.dentitionType || 'permanent');
+        if(typeof av.observacoes !== 'string'){
+          av.observacoes = (idx === 0 && entry.ficha.observacoes) ? String(entry.ficha.observacoes || '') : '';
+        }
       });
 
       const firstEval = entry.ficha.avaliacoes[0] || { id:'eval_1', label:'Avaliação 1', date: todayISO(), dentitionType:'permanent' };
@@ -14948,6 +17046,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if(item.financialPlanId && !item.recebimentoId) item.recebimentoId = item.financialPlanId;
       });
 
+      try{ enforceFichaAbsentProcedureConsistency(entry.ficha); }catch(_){}
       try{ syncFichaFinancialLinks(entry); }catch(_){}
       return entry.ficha;
     }
@@ -15015,6 +17114,25 @@ document.addEventListener("DOMContentLoaded", () => {
     function nextFichaEvaluationLabel(ficha){
       const n = (Array.isArray(ficha?.avaliacoes) ? ficha.avaliacoes.length : 0) + 1;
       return `Avaliação ${n}`;
+    }
+
+    function getFichaEvaluationObservation(ficha, evaluationId){
+      ficha = ficha || {};
+      const list = Array.isArray(ficha.avaliacoes) ? ficha.avaliacoes : [];
+      const ev = list.find(a=>String(a.id)===String(evaluationId)) || list[0] || null;
+      if(ev && typeof ev.observacoes === 'string') return ev.observacoes;
+      if(list.length <= 1 && typeof ficha.observacoes === 'string') return ficha.observacoes;
+      return '';
+    }
+
+    function setFichaEvaluationObservation(ficha, evaluationId, value){
+      if(!ficha || typeof ficha !== 'object') return;
+      ficha.avaliacoes = Array.isArray(ficha.avaliacoes) ? ficha.avaliacoes : [];
+      let ev = ficha.avaliacoes.find(a=>String(a.id)===String(evaluationId));
+      if(!ev){
+        ev = getActiveFichaEvaluation(ficha, null);
+      }
+      if(ev) ev.observacoes = String(value || '');
     }
 
     function getFinancialPlanForFichaItem(entry, item){
@@ -15158,7 +17276,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const ficha = ensureFicha(entry);
       const ids = Array.from(new Set((itemIds||[]).map(String).filter(Boolean)));
       const items = ficha.plano.filter(item=>ids.includes(String(item.id)));
-      if(!items.length) return toast('Recebimento', 'Selecione pelo menos um procedimento da ficha.');
+      if(!items.length) return toast('Recebimento', 'Selecione pelo menos um procedimento do prontuário.');
 
       const unavailable = items.filter(item=>!isFichaItemAvailableForReceiving(entry, item));
       if(unavailable.length){
@@ -15215,7 +17333,7 @@ document.addEventListener("DOMContentLoaded", () => {
             date: p.cashDate || date,
             value: parseMoney(p.amount),
             method: p.payMethod || method || '',
-            desc: `Recebimento da ficha • ${evalLabel}`,
+            desc: `Recebimento do prontuário • ${evalLabel}`,
             source: 'financialPlan',
             receivedNow: true
           });
@@ -15257,12 +17375,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       card.innerHTML = `
         <h3>Identidade da clínica</h3>
-        <div class="muted" style="line-height:1.5; margin-bottom:10px">A ficha do paciente usa estes dados no cabeçalho e na impressão. Cada clínica gerencia a própria marca sem depender de ti.</div>
+        <div class="muted" style="line-height:1.5; margin-bottom:10px">A prontuário do paciente usa estes dados no cabeçalho e na impressão. Cada clínica gerencia a própria marca sem depender de ti.</div>
         <div class="procGrid" style="grid-template-columns:1fr .8fr; align-items:start">
           <div>
-            <label>Nome da clínica na ficha</label>
+            <label>Nome da clínica no prontuário</label>
             <input id="brandClinicName" type="text" value="${escapeHTML(branding?.clinicName || actor?.masterName || '')}" placeholder="Ex: Mundo Odonto">
-            <div class="brandCardHint">Se ficar vazio, a ficha usa o nome padrão da clínica.</div>
+            <div class="brandCardHint">Se ficar vazio, a prontuário usa o nome padrão da clínica.</div>
           </div>
           <div>
             <label>Logo da clínica</label>
@@ -15335,13 +17453,13 @@ document.addEventListener("DOMContentLoaded", () => {
         card.innerHTML = `
           <h3>Procedimentos odontológicos</h3>
           <div class="muted" style="line-height:1.5; margin-bottom:10px">
-            Cadastro mestre usado na <b>Ficha</b> do lead. O valor base entra automático no plano de tratamento, mas continua editável no paciente.
+            Cadastro mestre usado na <b>Prontuário</b> do lead. O valor base entra automático no plano de tratamento, mas continua editável no paciente.
           </div>
           <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
-            <button class="btn ok" id="btnManageProcedures">🦷 Gerenciar procedimentos</button>
+            <button class="btn ok" id="btnManageProcedures">Gerenciar procedimentos</button>
             <span class="muted" id="proceduresCountHint" style="font-size:12px"></span>
           </div>
-          <div class="procCardHint">Sugestão: deixa só procedimentos ativos e valores de tabela aqui. Ajustes e desconto implícito ficam na ficha do paciente.</div>
+          <div class="procCardHint">Sugestão: deixa só procedimentos ativos e valores de tabela aqui. Ajustes e desconto implícito ficam no prontuário do paciente.</div>
         `;
         host.appendChild(card);
       }
@@ -15360,9 +17478,9 @@ document.addEventListener("DOMContentLoaded", () => {
       window.__procCatalogState = { editingId:null, search:'' };
       openModal({
         title:'Cadastro de procedimentos',
-        sub:'Usado pela Ficha do lead. Valor base é referência; o valor do paciente continua editável no plano de tratamento.',
+        sub:'Usado pela Prontuário do lead. Valor base é referência; o valor do paciente continua editável no plano de tratamento.',
         bodyHTML:'<div id="procCatalogApp" style="width:100%"></div>',
-        footHTML:'<button class="btn" onclick="closeModal()">Fechar</button>',
+        footHTML:'<button type="button" class="btn" onclick="closeModal()">Fechar</button>',
         onMount: renderProcedureCatalogApp,
         maxWidth:'min(99vw, 1880px)',
         width:'min(99vw, 1880px)',
@@ -15883,29 +18001,103 @@ window.CRONOS_PROC_UI = {
           btn.disabled = !selectedItems.length;
         }
       }catch(err){
-        console.warn('Falha ao atualizar resumo financeiro da ficha:', err);
+        console.warn('Falha ao atualizar resumo financeiro do prontuário:', err);
       }
     }
-    function getToothMeta(entry, tooth){
-      const ficha = ensureFicha(entry);
-      return ficha.odontograma?.[String(tooth)] || {};
+    function getFichaEvaluationOdontograma(ficha, evaluationId, ensureBucket=false){
+      if(!ficha) return {};
+      const fallbackId = String(ficha?.activeEvaluationId || ficha?.avaliacoes?.[0]?.id || 'eval_1');
+      const targetId = String(evaluationId || fallbackId);
+      const av = (Array.isArray(ficha.avaliacoes) ? ficha.avaliacoes : []).find(item=>String(item.id) === targetId) || ficha.avaliacoes?.[0];
+      if(!av) return {};
+      if((!av.odontograma || typeof av.odontograma !== 'object') && ensureBucket){
+        av.odontograma = {};
+      }
+      return (av && av.odontograma && typeof av.odontograma === 'object') ? av.odontograma : {};
     }
-    function isToothAbsent(entry, tooth){
-      const meta = getToothMeta(entry, tooth);
+
+    function fichaItemTeethList(item){
+      return String(item?.dente || '')
+        .split(',')
+        .map(s=>s.trim())
+        .filter(Boolean);
+    }
+
+    function toothHasFichaProcedureInEvaluation(ficha, tooth, evaluationId){
+      const evalId = String(evaluationId || ficha?.activeEvaluationId || 'eval_1');
+      const key = String(tooth || '');
+      if(!key) return false;
+      return (Array.isArray(ficha?.plano) ? ficha.plano : []).some(item=>{
+        if(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(item)) return false;
+        if(String(item.avaliacaoId || 'eval_1') !== evalId) return false;
+        return fichaItemTeethList(item).includes(key);
+      });
+    }
+
+    function removeAbsentFromOdontoBucket(odonto, tooth){
+      if(!odonto || typeof odonto !== 'object') return false;
+      const key = String(tooth || '');
+      if(!key || !odonto[key]) return false;
+      const meta = odonto[key] || {};
+      const wasAbsent = meta.absent === true || meta.condition === 'absent' || meta.status === 'absent';
+      if(!wasAbsent) return false;
+      meta.absent = false;
+      if(meta.condition === 'absent') meta.condition = '';
+      if(meta.status === 'absent') meta.status = '';
+      if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete odonto[key];
+      else odonto[key] = meta;
+      return true;
+    }
+
+    function clearAbsentStatusForEvaluationTooth(ficha, tooth, evaluationId){
+      const odonto = getFichaEvaluationOdontograma(ficha, evaluationId, true);
+      return removeAbsentFromOdontoBucket(odonto, tooth);
+    }
+
+    function teethWithFichaProcedureInEvaluation(ficha, teeth, evaluationId){
+      return Array.from(new Set((Array.isArray(teeth) ? teeth : [])
+        .map(String)
+        .filter(Boolean)
+        .filter(tooth=>toothHasFichaProcedureInEvaluation(ficha, tooth, evaluationId))));
+    }
+
+    function enforceFichaAbsentProcedureConsistency(ficha){
+      if(!ficha || typeof ficha !== 'object') return 0;
+      let changed = 0;
+      const evals = Array.isArray(ficha.avaliacoes) ? ficha.avaliacoes : [];
+      evals.forEach(av=>{
+        const evalId = String(av?.id || '');
+        if(!evalId) return;
+        const odonto = getFichaEvaluationOdontograma(ficha, evalId, true);
+        Object.keys(odonto || {}).forEach(tooth=>{
+          if(toothHasFichaProcedureInEvaluation(ficha, tooth, evalId)){
+            if(removeAbsentFromOdontoBucket(odonto, tooth)) changed++;
+          }
+        });
+      });
+      return changed;
+    }
+    function getToothMeta(entry, tooth, evaluationId){
+      const ficha = ensureFicha(entry);
+      const odonto = getFichaEvaluationOdontograma(ficha, evaluationId || ficha?.activeEvaluationId, false);
+      return odonto?.[String(tooth)] || {};
+    }
+    function isToothAbsent(entry, tooth, evaluationId){
+      const meta = getToothMeta(entry, tooth, evaluationId);
       return meta?.absent === true || meta?.condition === 'absent' || meta?.status === 'absent';
     }
-    function getToothProgressStatus(entry, tooth){
+    function getToothProgressStatus(entry, tooth, evaluationId){
       const ficha = ensureFicha(entry);
-      const meta = getToothMeta(entry, tooth);
+      const evalId = String(evaluationId || ficha?.activeEvaluationId || ficha?.avaliacoes?.[0]?.id || 'eval_1');
+      const meta = getToothMeta(entry, tooth, evalId);
       const manualStatus = String(meta?.status || '').toLowerCase();
 
-      // A cor escolhida no odontograma pertence ao próprio dente.
-      // Antes ela era ignorada sempre que existia procedimento vinculado, fazendo
-      // amarelo/verde desaparecerem ou parecerem alternar ao marcar outro dente.
+      // A cor escolhida no odontograma pertence à avaliação ativa.
+      // Cada avaliação tem seu próprio mapa de dentes e não herda pintura da outra.
       if(manualStatus === 'done' || manualStatus === 'realizado') return 'done';
       if(manualStatus === 'paid' || manualStatus === 'pago' || manualStatus === 'closed' || manualStatus === 'plan') return 'paid';
 
-      const planForTooth = ficha.plano.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
+      const planForTooth = ficha.plano.filter(x=>String(x.avaliacaoId || 'eval_1') === evalId && String(x.dente||'').split(',').map(s=>s.trim()).includes(String(tooth)));
       if(planForTooth.length){
         const allClinicallyDone = planForTooth.every(x=>isFichaItemClinicallyDone(entry, x));
         if(allClinicallyDone) return 'done';
@@ -15913,9 +18105,9 @@ window.CRONOS_PROC_UI = {
       }
       return '';
     }
-    function getToothVisualState(entry, tooth){
-      if(isToothAbsent(entry, tooth)) return 'absent';
-      return getToothProgressStatus(entry, tooth);
+    function getToothVisualState(entry, tooth, evaluationId){
+      if(isToothAbsent(entry, tooth, evaluationId)) return 'absent';
+      return getToothProgressStatus(entry, tooth, evaluationId);
     }
 
     const ODONTO_CRONOS_ORIGINAL_VIEWBOX = '0 0 2551 800';
@@ -15983,37 +18175,76 @@ window.CRONOS_PROC_UI = {
       const db = loadDB();
       const actor = currentActor();
       const branding = getClinicBranding(db, actor);
-      const patientName = escapeHTML(contact?.name || entry?.name || 'Paciente');
-      const phone = escapeHTML(contact?.phone || entry?.phone || '—');
+      const rawPatientName = String(contact?.name || entry?.name || 'Paciente');
+      const patientName = escapeHTML(rawPatientName);
+      const initials = escapeHTML(rawPatientName.trim().split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('').toUpperCase() || 'P');
+      const phoneRaw = String(contact?.phone || entry?.phone || '');
+      const phone = escapeHTML(phoneRaw || '—');
       const cpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
       const birthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
-      const city = escapeHTML(entry?.city || '—');
-      const treatment = escapeHTML(entry?.treatment || '—');
+      const treatmentRaw = (typeof cronosDisplayManualField === 'function')
+        ? cronosDisplayManualField(entry?.treatment, entry?.treatmentOther)
+        : (entry?.treatment || '—');
+      const treatment = escapeHTML(treatmentRaw || '—');
       const clinicName = escapeHTML(getClinicDisplayName(db, actor));
+      const status = escapeHTML(entry?.status || 'Lead ativo');
+      const originRaw = (typeof cronosDisplayManualField === 'function')
+        ? cronosDisplayManualField(entry?.origin, entry?.originOther)
+        : (entry?.origin || '');
+      const origin = escapeHTML(originRaw || '—');
+      const leadId = escapeHTML(String(entry?.id || '—'));
+      const logo = branding?.logoDataUri || '';
       return `
-        <div class="fichaHead">
-          <div class="cardMini">
-            <div style="display:flex; gap:10px; align-items:center">
-              ${branding?.logoDataUri ? `<img src="${branding.logoDataUri}" alt="${clinicName}" style="width:auto;height:60px;max-width:120px;object-fit:contain;border:none;background:transparent">` : ``}
-              <div>
-                <div class="muted" style="font-size:12px">Clínica</div>
-                <div style="font-size:20px; font-weight:800">${clinicName}</div>
+        <div class="fichaHead fichaHeroV55">
+          <div class="fichaPatientHeroV55">
+            <div class="patientAvatarV55">${initials}</div>
+            <div class="patientInfoV55">
+              <div class="patientTitleRowV55">
+                <h3>${patientName}</h3>
+                <span class="patientStatusV55">${status}</span>
+              </div>
+              <div class="patientMetaGridV55">
+                <span>Telefone <b>${phone}</b></span>
+                <span>CPF <b>${cpf}</b></span>
+                <span>Nascimento <b>${birthAge}</b></span>
               </div>
             </div>
-            <div style="font-size:18px; font-weight:800; margin-top:10px">${patientName}</div>
-            <div class="muted" style="margin-top:6px">Telefone: ${phone}</div>
-            <div class="muted">CPF: ${cpf}</div>
-            <div class="muted">Nascimento: ${birthAge}</div>
           </div>
-          <div class="cardMini">
-            <div class="muted" style="font-size:12px">Resumo rápido</div>
-            <div style="font-size:15px; font-weight:800; margin-top:2px">Tratamento principal: ${treatment}</div>
-            <div class="muted" style="margin-top:6px">Emissão: ${fmtBR(todayISO())}</div>
-            <div class="muted">Lead: ${escapeHTML(String(entry?.id || '—'))}</div>
+
+          <div class="fichaTopCardV55 clinicCardV55">
+            <div class="topCardIconV55">${logo ? `<img src="${logo}" alt="${clinicName}">` : `<span>CO</span>`}</div>
+            <div>
+              <small>Clínica</small>
+              <strong>${clinicName}</strong>
+              <em>Identidade do prontuário</em>
+            </div>
+          </div>
+
+          <div class="fichaTopCardV55">
+            <div class="topCardIconV55 neutralIconV55">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"></path><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>
+            </div>
+            <div>
+              <small>Lead</small>
+              <strong>${leadId}</strong>
+              <em>Origem: ${origin}</em>
+            </div>
+          </div>
+
+          <div class="fichaTopCardV55 resumoCardV55">
+            <div class="topCardIconV55 purpleIconV55">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>
+            </div>
+            <div>
+              <small>Resumo rápido</small>
+              <strong>${treatment}</strong>
+              <em>Emissão: ${fmtBR(todayISO())}</em>
+            </div>
           </div>
         </div>
       `;
     }
+
     function renderFichaApp(){
       injectFichaStyles();
       const state = getFichaState();
@@ -16075,7 +18306,7 @@ window.CRONOS_PROC_UI = {
         ${buildFichaHeader(entry, contact)}
 
         <div class="odontoFull">
-          <div class="sectionTitle">Odontograma</div>
+          <div class="sectionTitle fichaSectionTitleV55">Odontograma</div>
           <div class="dentitionToggle" role="group" aria-label="Tipo de dentição">
             <button type="button" class="${activeDentition === 'permanent' ? 'active' : ''}" onclick="CRONOS_FICHA_UI.setDentitionType('permanent')">Dentes permanentes</button>
             <button type="button" class="${activeDentition === 'deciduous' ? 'active' : ''}" onclick="CRONOS_FICHA_UI.setDentitionType('deciduous')">Dentes decíduos</button>
@@ -16104,7 +18335,7 @@ window.CRONOS_PROC_UI = {
             </div>
 
             <div class="odontoPanel">
-              <div style="font-size:16px; font-weight:800">Plano do tratamento</div>
+              <div class="fichaPanelTitleV55">Plano de tratamento</div>
               <div class="small" style="margin:6px 0 10px">Selecione um ou vários dentes no odontograma e lance o procedimento aqui mesmo, sem descer a tela.</div>
 
               <div class="panelMiniGrid">
@@ -16118,7 +18349,7 @@ window.CRONOS_PROC_UI = {
                   <select id="fichaEvalSelect" style="max-width:220px" onchange="CRONOS_FICHA_UI.setActiveEvaluation(this.value)">
                     ${ficha.avaliacoes.map(av=>`<option value="${escapeHTML(av.id)}" ${String(av.id)===String(activeEvaluation.id) ? 'selected' : ''}>${escapeHTML(av.label)} • ${fmtBR(av.date)}</option>`).join('')}
                   </select>
-                  <button type="button" class="miniBtn" onclick="CRONOS_FICHA_UI.newEvaluation()">+ Nova avaliação</button>
+                  <button type="button" class="miniBtn" onclick="CRONOS_FICHA_UI.newEvaluation()">Nova avaliação</button>
                 </div>
               </div>
               ${selectedTeeth.length ? `<div class="toothChipRow">${selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : `<div class="small muted" style="margin-top:8px">Nenhum dente selecionado ainda.</div>`}
@@ -16149,7 +18380,7 @@ window.CRONOS_PROC_UI = {
               </div>
 
               <div class="sideActions fichaQuickActions">
-                <button class="btn primary fichaAddPlanBtn" onclick="CRONOS_FICHA_UI.addToPlan()">➕ Adicionar ao plano</button>
+                <button class="btn primary fichaAddPlanBtn" onclick="CRONOS_FICHA_UI.addToPlan()">Adicionar ao plano</button>
                 <button class="btn small fichaPaidAction" onclick="CRONOS_FICHA_UI.markSelectedProgress('paid')">Marcar pago/em pagamento</button>
                 <button class="btn small fichaDoneAction" onclick="CRONOS_FICHA_UI.markSelectedProgress('done')">Marcar realizado</button>
                 <button class="btn small fichaAbsentAction" onclick="CRONOS_FICHA_UI.setAbsentForSelection()">Marcar ausente</button>
@@ -16162,7 +18393,7 @@ window.CRONOS_PROC_UI = {
         </div>
 
         <div class="fichaLayout">
-          <div class="fichaPlanToolbar" style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;margin:0 0 10px">
+          <div class="fichaPlanToolbar fichaPlanToolbarV55" style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;margin:0 0 10px">
             <div>
               <div style="font-weight:900">Plano de tratamento • ${escapeHTML(activeEvaluation.label || 'Avaliação')} ${activeEvaluation.date ? `(${fmtBR(activeEvaluation.date)})` : ''}</div>
               <div class="small muted">Mostrando apenas os procedimentos desta avaliação. Use os botões abaixo para alternar entre avaliações anteriores.</div>
@@ -16220,9 +18451,9 @@ window.CRONOS_PROC_UI = {
           </div>
 
           <div class="fichaAddWrap" style="margin-top:14px">
-            <label>Observações da ficha</label>
-            <textarea id="fichaObsTxt" placeholder="Escreve aqui tudo que deve sair na impressão..." oninput="CRONOS_FICHA_UI.setObs(this.value)">${escapeHTML(String(ficha.observacoes || ''))}</textarea>
-            <div class="small" style="margin-top:8px">Fica salvo no Cronos e reaparece em qualquer nova impressão.</div>
+            <label>Observações do prontuário</label>
+            <textarea id="fichaObsTxt" placeholder="Escreve aqui a observação desta avaliação..." oninput="CRONOS_FICHA_UI.setObs(this.value)">${escapeHTML(String(getFichaEvaluationObservation(ficha, activeEvaluation.id) || ''))}</textarea>
+            <div class="small" style="margin-top:8px">Fica salvo apenas nesta avaliação e reaparece na impressão dela.</div>
           </div>
         </div>
       `;
@@ -16398,7 +18629,7 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
       },
       setPrice(v){ const s = getFichaState(); if(!s) return; s.price = v; },
-      setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; ensureFicha(entry).observacoes = String(v || ''); saveFichaMutation(db, entry); },
+      setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; const ficha = ensureFicha(entry); const active = getActiveFichaEvaluation(ficha, entry); setFichaEvaluationObservation(ficha, active.id, v); saveFichaMutation(db, entry); },
       async addToPlan(){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
@@ -16416,6 +18647,16 @@ window.CRONOS_PROC_UI = {
         const dentitionType = getFichaDentitionType(ficha, entry);
         if(proc.exigeDente && !teeth.length){
           return toast('Dente', 'Seleciona pelo menos um dente para esse procedimento.');
+        }
+        if(proc.exigeDente && teeth.length){
+          const absentTeeth = teeth.filter(tooth=>isToothAbsent(entry, tooth, evalInfo.id));
+          if(absentTeeth.length){
+            const msg = absentTeeth.length === 1
+              ? `O dente ${absentTeeth[0]} está marcado como ausente nesta avaliação. Para lançar procedimento nele, o Cronos precisa remover a marcação de ausência. Continuar?`
+              : `Os dentes ${absentTeeth.join(', ')} estão marcados como ausentes nesta avaliação. Para lançar procedimento neles, o Cronos precisa remover a marcação de ausência. Continuar?`;
+            if(!confirm(msg)) return;
+            absentTeeth.forEach(tooth=>clearAbsentStatusForEvaluationTooth(ficha, tooth, evalInfo.id));
+          }
         }
         if(proc.exigeDente && proc.cobraPorDente){
           teeth.forEach(tooth=>{
@@ -16480,7 +18721,7 @@ window.CRONOS_PROC_UI = {
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
         const entry = getEntryById(s.entryId);
-        if(!entry) return toast('Ficha', 'Lead não encontrado.');
+        if(!entry) return toast('Prontuário', 'Lead não encontrado.');
         const ficha = ensureFicha(entry);
         const catalog = getProcedureCatalog(db);
 
@@ -16625,7 +18866,7 @@ window.CRONOS_PROC_UI = {
         const total = items.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
         window.__fichaReceivingDraft = { entryId: String(entry.id), itemIds: items.map(i=>String(i.id)) };
         openModal({
-          title:'Gerar recebimento da ficha',
+          title:'Gerar recebimento do prontuário',
           sub:`${items.length} procedimento(s) • ${moneyBR(total)}`,
           bodyHTML:`
             <div style="display:grid;gap:12px">
@@ -16677,7 +18918,7 @@ window.CRONOS_PROC_UI = {
               </div>
             </div>
           `,
-          footHTML:`<button class="btn" onclick="closeModal()">Cancelar</button><button class="btn ok" onclick="CRONOS_FICHA_UI.confirmReceiving()">Criar cobrança</button>`,
+          footHTML:`<button type="button" class="btn" onclick="closeModal()">Cancelar</button><button class="btn ok" onclick="CRONOS_FICHA_UI.confirmReceiving()">Criar cobrança</button>`,
           maxWidth:'min(96vw, 860px)'
         });
       },
@@ -16731,7 +18972,7 @@ window.CRONOS_PROC_UI = {
         const date = prompt('Data da nova avaliação (AAAA-MM-DD):', todayISO());
         if(!date) return;
         if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Data inválida', 'Use o formato AAAA-MM-DD.');
-        const av = { id: uid('eval'), label: nextFichaEvaluationLabel(ficha), date, dentitionType:getFichaDentitionType(ficha, entry), createdAt:new Date().toISOString() };
+        const av = { id: uid('eval'), label: nextFichaEvaluationLabel(ficha), date, dentitionType:getFichaDentitionType(ficha, entry), observacoes:'', createdAt:new Date().toISOString() };
         ficha.avaliacoes.push(av);
         ficha.activeEvaluationId = av.id;
         s.activeEvaluationId = String(av.id);
@@ -16764,14 +19005,15 @@ window.CRONOS_PROC_UI = {
         if(!entry) return;
         const ficha = ensureFicha(entry);
         const key = String(tooth);
-        const meta = ficha.odontograma[key] || {};
+        const odonto = getFichaEvaluationOdontograma(ficha, s.activeEvaluationId || ficha.activeEvaluationId, true);
+        const meta = odonto[key] || {};
         const cur = String(meta.status || '');
         let next = 'paid';
         if(cur === 'paid' || cur === 'pago' || cur === 'closed' || cur === 'plan') next = 'done';
         else if(cur === 'done' || cur === 'realizado') next = '';
         meta.status = next;
-        if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
-        else ficha.odontograma[key] = meta;
+        if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete odonto[key];
+        else odonto[key] = meta;
         s.selectedTooth = key;
         renderFichaApp();
         await confirmFichaMutation(db, entry, before, 'Odontograma salvo ✅', 'A cor foi confirmada na nuvem.');
@@ -16784,12 +19026,18 @@ window.CRONOS_PROC_UI = {
         const ficha = ensureFicha(entry);
         const key = String(tooth || s.selectedTooth || '');
         if(!key) return;
-        const meta = ficha.odontograma[key] || {};
-        meta.absent = !(meta.absent === true || meta.status === 'absent' || meta.condition === 'absent');
+        const evalId = String(s.activeEvaluationId || ficha.activeEvaluationId || 'eval_1');
+        const odonto = getFichaEvaluationOdontograma(ficha, evalId, true);
+        const meta = odonto[key] || {};
+        const willMarkAbsent = !(meta.absent === true || meta.status === 'absent' || meta.condition === 'absent');
+        if(willMarkAbsent && toothHasFichaProcedureInEvaluation(ficha, key, evalId)){
+          return toast('Dente com procedimento', `O dente ${key} já possui procedimento nesta avaliação. Remova o procedimento antes de marcar como ausente.`);
+        }
+        meta.absent = willMarkAbsent;
         if(meta.status === 'absent') meta.status = '';
         meta.condition = meta.absent ? 'absent' : '';
-        if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
-        else ficha.odontograma[key] = meta;
+        if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete odonto[key];
+        else odonto[key] = meta;
         s.selectedTooth = key;
         saveFichaMutation(db, entry);
         renderFichaApp();
@@ -16825,12 +19073,17 @@ window.CRONOS_PROC_UI = {
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
+        const odonto = getFichaEvaluationOdontograma(ficha, s.activeEvaluationId || ficha.activeEvaluationId, true);
         teeth.forEach(tooth=>{
           const key = String(tooth);
-          const meta = ficha.odontograma[key] || {};
+          const meta = odonto[key] || {};
           meta.status = status || '';
-          if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
-          else ficha.odontograma[key] = meta;
+          if(status){
+            meta.absent = false;
+            if(meta.condition === 'absent') meta.condition = '';
+          }
+          if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete odonto[key];
+          else odonto[key] = meta;
         });
         // A marcação conclui esta seleção. Assim o próximo clique em outro dente
         // não reaplica o novo status nos dentes que já estavam coloridos.
@@ -16849,15 +19102,23 @@ window.CRONOS_PROC_UI = {
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
-        const allAbsent = teeth.every(tooth=>isToothAbsent(entry, tooth));
+        const evalId = String(s.activeEvaluationId || ficha.activeEvaluationId || 'eval_1');
+        const odonto = getFichaEvaluationOdontograma(ficha, evalId, true);
+        const allAbsent = teeth.every(tooth=>isToothAbsent(entry, tooth, evalId));
+        if(!allAbsent){
+          const blocked = teethWithFichaProcedureInEvaluation(ficha, teeth, evalId);
+          if(blocked.length){
+            return toast('Dente com procedimento', `${blocked.length === 1 ? `O dente ${blocked[0]} já possui procedimento` : `Os dentes ${blocked.join(', ')} já possuem procedimento`} nesta avaliação. Remova o procedimento antes de marcar como ausente.`);
+          }
+        }
         teeth.forEach(tooth=>{
           const key = String(tooth);
-          const meta = ficha.odontograma[key] || {};
+          const meta = odonto[key] || {};
           meta.absent = !allAbsent;
           meta.condition = meta.absent ? 'absent' : '';
           if(meta.status === 'absent') meta.status = '';
-          if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete ficha.odontograma[key];
-          else ficha.odontograma[key] = meta;
+          if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete odonto[key];
+          else odonto[key] = meta;
         });
         s.selectedTeeth = [];
         s.selectedTooth = null;
@@ -16870,16 +19131,23 @@ window.CRONOS_PROC_UI = {
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
-        const old = ficha.odontograma[s.selectedTooth] || {};
-        ficha.odontograma[s.selectedTooth] = {
+        const odonto = getFichaEvaluationOdontograma(ficha, s.activeEvaluationId || ficha.activeEvaluationId, true);
+        const old = odonto[s.selectedTooth] || {};
+        const nextStatus = String(el('odontoStatusSel')?.value || old.status || '');
+        const nextCondition = old.condition || '';
+        const nextAbsent = old.absent === true || nextStatus === 'absent' || nextCondition === 'absent';
+        if(nextAbsent && toothHasFichaProcedureInEvaluation(ficha, s.selectedTooth, s.activeEvaluationId || ficha.activeEvaluationId)){
+          return toast('Dente com procedimento', `O dente ${s.selectedTooth} já possui procedimento nesta avaliação. Remova o procedimento antes de marcar como ausente.`);
+        }
+        odonto[s.selectedTooth] = {
           ...old,
-          status: String(el('odontoStatusSel')?.value || old.status || ''),
+          status: nextStatus,
           note: String(el('odontoNoteTxt')?.value || old.note || '').trim(),
           absent: old.absent === true,
           condition: old.condition || ''
         };
-        if(!ficha.odontograma[s.selectedTooth].status && !ficha.odontograma[s.selectedTooth].note && !ficha.odontograma[s.selectedTooth].absent && !ficha.odontograma[s.selectedTooth].condition){
-          delete ficha.odontograma[s.selectedTooth];
+        if(!odonto[s.selectedTooth].status && !odonto[s.selectedTooth].note && !odonto[s.selectedTooth].absent && !odonto[s.selectedTooth].condition){
+          delete odonto[s.selectedTooth];
         }
         saveDB(db);
         renderFichaApp();
@@ -16894,7 +19162,8 @@ window.CRONOS_PROC_UI = {
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
-        teeth.forEach(tooth=>{ delete ficha.odontograma[String(tooth)]; });
+        const odonto = getFichaEvaluationOdontograma(ficha, s.activeEvaluationId || ficha.activeEvaluationId, true);
+        teeth.forEach(tooth=>{ delete odonto[String(tooth)]; });
         s.selectedTeeth = [];
         s.selectedTooth = null;
         renderFichaApp();
@@ -16943,14 +19212,14 @@ window.CRONOS_PROC_UI = {
     window.openFicha = function(entryId){
       ensureProcedureCatalogSeeded();
       const st = setupFichaState(entryId);
-      if(!st) return toast('Ficha', 'Lead não encontrado.');
+      if(!st) return toast('Prontuário', 'Lead não encontrado.');
       const entry = getEntryById(entryId);
       const contact = getContactForEntry(entry);
       openModal({
-        title:'Ficha do paciente',
+        title:'Prontuário do paciente',
         sub:`${contact?.name || entry?.name || 'Lead'} • ${isFichaReadOnlyForActor(currentActor()) ? 'visualização comercial / impressão' : 'plano de tratamento, valores e odontograma'}`,
         bodyHTML:'<div id="fichaApp" style="width:100%"></div>',
-        footHTML:`<button class="btn" onclick="printFicha('${escapeHTML(String(entryId))}')">🖨️ Imprimir ficha</button><button class="btn" onclick="closeModal()">Fechar</button>`,
+        footHTML:`<button class="btn fichaPrintBtn" onclick="printFicha('${escapeHTML(String(entryId))}')">Imprimir prontuário</button><button type="button" class="btn" onclick="closeModal()">Fechar</button>`,
         onMount: renderFichaApp,
         maxWidth:'min(99vw, 1880px)',
         width:'min(99vw, 1880px)',
@@ -16984,7 +19253,7 @@ window.CRONOS_PROC_UI = {
 
     window.printFicha = function(entryId){
       const entry = getEntryById(entryId);
-      if(!entry) return toast('Ficha', 'Lead não encontrado.');
+      if(!entry) return toast('Prontuário', 'Lead não encontrado.');
       const db = loadDB();
       const actor = currentActor();
       const contact = getContactForEntry(entry);
@@ -17000,14 +19269,14 @@ window.CRONOS_PROC_UI = {
       const patientBirthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
       const patientTreatment = escapeHTML(entry?.treatment || '—');
       const patientEvaluation = escapeHTML(`${activeEvaluation?.label || 'Avaliação'}${activeEvaluation?.date ? ` • ${fmtBR(activeEvaluation.date)}` : ''}`);
-      const obs = escapeHTML(String(ficha?.observacoes || entry?.obs || '').trim() || '');
+      const obs = escapeHTML(String(activeEvaluation?.observacoes || ficha?.observacoes || entry?.obs || '').trim() || '');
       const activeDentition = getFichaDentitionType(ficha, entry);
       const printRows = getOdontoRowsForDentition(activeDentition);
       const upper = [...printRows.supDir, ...printRows.supEsq];
       const lower = [...printRows.infDir, ...printRows.infEsq];
       function getPrintToothVisualState(tooth){
-        if(isToothAbsent(entry, tooth)) return 'absent';
-        const meta = getToothMeta(entry, tooth);
+        if(isToothAbsent(entry, tooth, activeEvaluation.id)) return 'absent';
+        const meta = getToothMeta(entry, tooth, activeEvaluation.id);
         const manualStatus = String(meta?.status || '').toLowerCase();
         if(manualStatus === 'done' || manualStatus === 'realizado') return 'done';
         if(manualStatus === 'paid' || manualStatus === 'pago' || manualStatus === 'closed' || manualStatus === 'plan') return 'paid';
@@ -17022,7 +19291,7 @@ window.CRONOS_PROC_UI = {
         return list.map((tooth, i)=>`<div class="box ${getPrintToothVisualState(tooth)}" style="left:${__odontoBoxLeftPct(tooth, i)}%; top:${y}%">${tooth}</div>`).join('');
       }
 
-      const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha - ${patientName}</title>
+      const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Prontuário - ${patientName}</title>
         <style>
           :root{--print-line:rgba(17,24,39,.42);--print-line-soft:rgba(17,24,39,.18)}
           body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0}
@@ -17107,7 +19376,7 @@ window.CRONOS_PROC_UI = {
           iframe.contentWindow.print();
         }catch(e){
           console.error('printFicha/iframe', e);
-          toast('Impressão', 'Não foi possível abrir a impressão da ficha.');
+          toast('Impressão', 'Não foi possível abrir a impressão do prontuário.');
         }
       };
       const cleanup = ()=> setTimeout(()=>{ try{ iframe.remove(); }catch(_){ } }, 800);
@@ -17130,7 +19399,7 @@ window.CRONOS_PROC_UI = {
         if(!m || !m[1]) return;
         const btn = document.createElement('button');
         btn.className = 'iconBtn btnFicha cronos-action-ficha';
-        btn.title = 'Ficha';
+        btn.title = 'Prontuário';
         btn.innerHTML = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>`;
         btn.onclick = ()=>openFicha(m[1]);
         row.insertBefore(btn, row.firstChild);
@@ -17169,3 +19438,23 @@ window.CRONOS_PROC_UI = {
 
 
 /* V24 — corrige contador lateral de Tarefas após F5/login: sincroniza tarefas automáticas antes de calcular a badge. */
+
+
+/* CRONOS V110 — classe temporária para aliviar pintura durante a rolagem do modal Gerenciar recebimento */
+(function(){
+  if(window.__CRONOS_NEWFIN_SCROLL_PERF_V110__) return;
+  window.__CRONOS_NEWFIN_SCROLL_PERF_V110__ = true;
+  let timer = null;
+  document.addEventListener('scroll', function(ev){
+    try{
+      const target = ev && ev.target;
+      const body = document.body;
+      if(!body || !document.getElementById('newFinancialInstallmentApp')) return;
+      const modalBody = document.getElementById('modalBody');
+      if(target !== modalBody && !(target && target.closest && target.closest('#newFinancialInstallmentApp'))) return;
+      body.classList.add('cronos-newfin-scrolling');
+      clearTimeout(timer);
+      timer = setTimeout(function(){ body.classList.remove('cronos-newfin-scrolling'); }, 140);
+    }catch(_){ }
+  }, true);
+})();

@@ -162,6 +162,36 @@
     .footer{padding:38px 0;border-top:1px solid var(--line);color:#64748b}.footer-grid{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}.footer a{font-weight:800;color:#334155}
     @media (max-width:980px){.hero-grid,.problem-solution,.split,.cta{grid-template-columns:1fr}.product-card{min-height:auto}.product-inner{min-height:auto}.feature-grid{grid-template-columns:1fr 1fr}.flow{grid-template-columns:1fr 1fr}.navlinks a:not(.btn){display:none}.hero{padding-top:56px}.h1{font-size:clamp(42px,12vw,66px)}}
     @media (max-width:680px){.wrap{width:min(100% - 28px,1160px)}.nav{height:70px}.brand{padding:8px 12px 8px 8px}.brand-mark{width:38px;height:38px}.brand-name{font-size:18px}.btn{padding:12px 16px}.hero{padding-bottom:42px}.metrics,.pipeline,.product-foot,.feature-grid,.flow{grid-template-columns:1fr}.product-card{border-radius:30px}.product-inner{border-radius:23px;padding:16px}.section{padding:62px 0}.story-card,.feature,.brand-panel,.cta{border-radius:28px;padding:24px}.navlinks{gap:12px}.navlinks .btn{font-size:13px;padding:11px 14px}}
+  
+.cronos-float-dock{position:fixed;right:22px;bottom:22px;z-index:90;display:flex;flex-direction:column;gap:12px;align-items:flex-end}
+.cronos-fab{position:relative;width:62px;height:62px;border:none;border-radius:22px;display:flex;align-items:center;justify-content:center;box-shadow:0 22px 50px rgba(7,17,31,.24);cursor:pointer;transition:.18s ease;background:#fff;color:#07111f}
+.cronos-fab:hover{transform:translateY(-2px)}
+.cronos-fab-chat{background:linear-gradient(135deg,#07111f,#12305a);border:1px solid rgba(255,255,255,.08)}
+.cronos-fab-chat img{width:34px;height:34px;object-fit:contain}
+.cronos-fab-whatsapp{background:linear-gradient(135deg,#25d366,#18b856);color:#fff;text-decoration:none}
+.cronos-fab-whatsapp svg{width:30px;height:30px}
+.cronos-fab-badge{position:absolute;top:-4px;right:-4px;min-width:24px;height:24px;padding:0 6px;border-radius:999px;background:#ff4d6d;color:#fff;font-size:12px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;border:3px solid #fff}
+.cronos-fab-ping{position:absolute;inset:-5px;border-radius:26px;border:2px solid rgba(34,184,242,.25);animation:cronosPing 2s infinite}
+@keyframes cronosPing{0%{transform:scale(1);opacity:.8}70%{transform:scale(1.12);opacity:0}100%{opacity:0}}
+.cronos-chat-panel{position:fixed;right:22px;bottom:96px;z-index:89;width:min(390px,calc(100% - 24px));background:#fff;border:1px solid #d7e4f3;border-radius:26px;box-shadow:0 28px 70px rgba(7,17,31,.22);overflow:hidden}
+.cronos-chat-panel.hidden,.cronos-fab-badge.hidden{display:none}
+.cronos-chat-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;background:linear-gradient(135deg,#07111f,#12305a);color:#fff}
+.cronos-chat-brand{display:flex;align-items:center;gap:12px}.cronos-chat-brand img{width:34px;height:34px;object-fit:contain}.cronos-chat-brand strong{display:block}.cronos-chat-brand span{display:block;font-size:12px;color:#cfe2ff}
+.cronos-chat-close{border:none;background:rgba(255,255,255,.12);color:#fff;width:34px;height:34px;border-radius:12px;font-size:24px;line-height:1;cursor:pointer}
+.cronos-chat-status{padding:10px 14px;font-size:12px;background:#fff4d4;color:#7c5300;border-bottom:1px solid #f1deb5}.cronos-chat-status.hidden{display:none}
+.cronos-chat-body{max-height:360px;overflow:auto;padding:16px;background:linear-gradient(180deg,#f8fbff,#ffffff)}
+.cronos-msg{display:grid;gap:6px;margin-bottom:14px}.cronos-msg-meta{display:flex;justify-content:space-between;gap:12px;font-size:11px;color:#6b7c93}.cronos-msg-meta strong{color:#20324e}
+.cronos-msg-bubble{padding:12px 14px;border-radius:16px;background:#eef6ff;color:#0f172a;line-height:1.45;font-size:14px;border:1px solid #d9e7f8}
+.cronos-msg.visitor .cronos-msg-bubble{background:linear-gradient(135deg,#38e272,#22b8f2);color:#06111d;border:none}.cronos-msg.admin .cronos-msg-bubble{background:#eaf2ff;border-color:#bfd6ff}
+.cronos-chat-quick{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 14px;background:#fff}.cronos-chat-quick.hidden{display:none}
+.cronos-quick-btn{border:1px solid #d9e7f8;background:#f8fbff;color:#16304f;border-radius:999px;padding:10px 12px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
+.cronos-chat-form{display:flex;gap:10px;padding:14px 16px 16px;background:#fff;border-top:1px solid #e8eef7}.cronos-chat-input{flex:1;border:1px solid #d3e1f1;border-radius:14px;padding:13px 14px;font:inherit;outline:none}.cronos-chat-send{border:none;border-radius:14px;padding:0 16px;font:inherit;font-weight:900;background:linear-gradient(135deg,#38e272,#22b8f2);color:#06111d;cursor:pointer}
+@media (max-width:680px){.cronos-float-dock{right:14px;bottom:14px}.cronos-chat-panel{right:14px;bottom:88px;width:min(100% - 20px,390px)}}
+
+  
+    .cronos-float-dock.is-chat-open .cronos-fab-chat{display:none}
+    .cronos-quick-attendant{background:linear-gradient(135deg,#07111f,#12305a)!important;color:#fff!important;border-color:rgba(34,184,242,.32)!important}
+
   </style>
 </head>
 <body>
@@ -347,5 +377,15 @@
       <div style="display:flex;gap:16px;flex-wrap:wrap"><a href="app/">Acesso</a></div>
     </div>
   </footer>
+
+  <script>
+    window.CRONOS_SITE_CHAT_CONFIG = window.CRONOS_SITE_CHAT_CONFIG || {
+      whatsappNumber: '',
+      whatsappMessage: 'Olá! Vim pelo site do Cronos Odonto e quero saber mais sobre o sistema.'
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="assets/js/site-chat.js"></script>
 </body>
+
 </html>

@@ -17,6 +17,13 @@
   const qsa=(s,r=document)=>Array.from(r.querySelectorAll(s));
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
+  function perfIconSvg(name){
+    const icons = {
+      reading:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17.5V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5Z"></path><path d="M8 15.5l3.1-3.1 2.3 2.3L17 9"></path><path d="M14 9h3v3"></path></svg>`
+    };
+    return icons[name] || icons.reading;
+  }
+
   function hasCronos(){return typeof window.loadDB==='function'&&typeof window.currentActor==='function'}
   function load(){try{return window.loadDB()}catch(_){return null}}
   function actor(){try{return window.currentActor()}catch(_){return null}}
@@ -128,16 +135,18 @@
       #${VIEW_ID},#${VIEW_ID} *{box-sizing:border-box}
       .perfWrap{display:grid;gap:14px;min-width:0;max-width:100%}
       .perfWrap > *,.perfGrid > *,.perfMain > *{min-width:0}
-      .perfHero{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;padding:16px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(135deg,rgba(124,92,255,.15),rgba(46,229,157,.08)),var(--panel2);box-shadow:var(--shadow)}
+      .perfHero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:14px;padding:16px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(135deg,rgba(22,119,255,.15),rgba(46,230,166,.08)),var(--panel2);box-shadow:var(--shadow)}
       :root.light .perfHero{background:linear-gradient(135deg,rgba(37,99,235,.12),rgba(6,182,212,.08)),var(--panel2)}
       .perfHero h2{margin:0 0 6px;font-size:24px;letter-spacing:-.02em}
-      .perfHero p{margin:0;color:var(--muted);line-height:1.45;max-width:760px}
+      .perfHero p{margin:0;color:var(--muted);line-height:1.45;max-width:min(720px,100%)}
       .perfBtn{border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.06);color:inherit;padding:10px 13px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:8px;justify-content:center;min-width:98px}
       .perfBtn:hover{filter:brightness(1.08);transform:translateY(-1px)}
-      .perfActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-      .perfYearControl{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.045);padding:7px 9px;color:var(--muted);font-size:12px;font-weight:800}
+      .perfActions{display:flex;align-items:flex-start;gap:8px;flex-wrap:nowrap;justify-content:flex-end;justify-self:end;margin-left:auto;max-width:100%;white-space:nowrap}
+      .perfYearControl{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.045);padding:7px 8px;color:var(--muted);font-size:12px;font-weight:800;white-space:nowrap;min-width:0}
       :root.light .perfYearControl{background:rgba(15,23,42,.035)}
-      .perfSelect{appearance:none;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--text);padding:7px 30px 7px 10px;font-weight:900;cursor:pointer;min-width:92px;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+      .perfSelect{appearance:none;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--text);padding:7px 28px 7px 10px;font-weight:900;cursor:pointer;min-width:0;width:92px;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+      .perfYearControl:nth-child(2) .perfSelect{width:104px}
+      .perfActions .perfBtn{min-width:94px;padding-left:12px;padding-right:12px;white-space:nowrap}
       .perfSelect:focus{outline:2px solid color-mix(in srgb,var(--brand) 40%,transparent);outline-offset:2px}
       .perfBtn.loading{opacity:.88;pointer-events:none}
       .perfBtn .perfSpin{width:14px;height:14px;border-radius:999px;border:2px solid color-mix(in srgb,var(--text) 22%,transparent);border-top-color:var(--accent);animation:perfSpin .8s linear infinite;display:inline-block}
@@ -149,7 +158,7 @@
       .perfProgressTop{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;margin-bottom:10px}.perfProgressTop h3{margin:0;font-size:18px}.perfProgressTop b{font-size:22px}
       .perfBar{position:relative;height:22px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid var(--line);overflow:hidden}
       :root.light .perfBar{background:rgba(15,23,42,.055)}
-      .perfBarFill{height:100%;min-width:0;border-radius:999px;background:linear-gradient(90deg,#ef4444 0%,#f97316 25%,#facc15 50%,#22c55e 75%,#38bdf8 100%);background-repeat:no-repeat;background-position:left center;box-shadow:0 0 24px rgba(46,229,157,.24);transition:width .45s ease,background-size .45s ease}
+      .perfBarFill{height:100%;min-width:0;border-radius:999px;background:linear-gradient(90deg,#ef4444 0%,#f97316 25%,#facc15 50%,#22c55e 75%,#38bdf8 100%);background-repeat:no-repeat;background-position:left center;box-shadow:0 0 24px rgba(46,230,166,.24);transition:width .45s ease,background-size .45s ease}
       .perfMini{height:12px;border-radius:999px;background:rgba(255,255,255,.065);border:1px solid var(--line);overflow:hidden;min-width:92px;max-width:150px;margin-left:auto}
       :root.light .perfMini{background:rgba(15,23,42,.055)}
       .perfMiniFill{height:100%;border-radius:999px;background:linear-gradient(90deg,#ef4444 0%,#f97316 25%,#facc15 50%,#22c55e 75%,#38bdf8 100%);background-repeat:no-repeat;background-position:left center}
@@ -161,8 +170,21 @@
       .perfTable{width:100%;border-collapse:separate;border-spacing:0 8px;table-layout:fixed}.perfTable th{font-size:12px;color:var(--muted);font-weight:800;text-align:left;padding:0 10px}.perfTable td{padding:10px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:rgba(255,255,255,.035);word-break:break-word}.perfTable td:first-child{border-left:1px solid var(--line);border-radius:12px 0 0 12px}.perfTable td:last-child{border-right:1px solid var(--line);border-radius:0 12px 12px 0}.perfTable .right{text-align:right}.perfTable .center{text-align:center}.perfUp{color:var(--ok);font-weight:900}.perfDown{color:var(--danger);font-weight:900}.perfFlat{color:var(--muted);font-weight:900}
       .perfSelectedRow td{background:color-mix(in srgb,var(--brand) 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--brand) 28%,transparent)}
       .perfTableScroll{max-height:430px;overflow-y:auto;overflow-x:hidden;padding-right:0;max-width:100%}.perfEmpty{padding:18px;border:1px dashed var(--line);border-radius:16px;color:var(--muted);line-height:1.5}
+      .perfStatusCard{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(22,119,255,.10),rgba(46,230,166,.04)),var(--panel2)}
+      .perfStatusCard:before{content:'';position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--status-color,var(--brand)),rgba(46,230,166,.65));opacity:.9}
+      .perfStatusBadge{display:inline-flex;align-items:center;gap:7px;border:1px solid color-mix(in srgb,var(--status-color,var(--brand)) 42%,transparent);border-radius:999px;background:color-mix(in srgb,var(--status-color,var(--brand)) 12%,transparent);color:var(--text);padding:6px 10px;font-size:12px;font-weight:950;margin-bottom:9px}
+      .perfKpi.isMissing b{color:var(--danger)}.perfKpi.isProjection b{color:var(--accent)}
+      .perfRead{display:grid;gap:10px;background:linear-gradient(135deg,rgba(22,119,255,.09),rgba(25,198,255,.035));border-color:rgba(25,198,255,.18)}
+      :root.light .perfRead{background:linear-gradient(135deg,rgba(37,99,235,.08),rgba(6,182,212,.05));border-color:rgba(37,99,235,.16)}
+      .perfReadHead{display:flex;align-items:center;gap:10px;font-weight:950;font-size:16px}.perfReadIcon{width:34px;height:34px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(22,119,255,.25),rgba(46,230,166,.12));border:1px solid rgba(25,198,255,.22);color:#67e8f9;flex:0 0 auto}.perfReadIcon svg{width:18px;height:18px;display:block}
+      :root.light .perfReadIcon{background:linear-gradient(135deg,rgba(37,99,235,.16),rgba(6,182,212,.10));border-color:rgba(37,99,235,.22);color:#0f4ecf;box-shadow:inset 0 0 0 1px rgba(255,255,255,.45)}
+      .perfRead p{margin:0;color:var(--text);line-height:1.45}.perfMetricPair{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.perfMetricBox{padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.035)}.perfMetricBox span{display:block;color:var(--muted);font-size:12px}.perfMetricBox b{display:block;margin-top:6px;font-size:18px;letter-spacing:-.01em}
+      .perfLegend .perfDot{width:9px;height:9px;border-radius:999px;display:inline-block;margin-right:5px;background:var(--dot-color,var(--brand));box-shadow:0 0 10px color-mix(in srgb,var(--dot-color,var(--brand)) 45%,transparent)}
+      .perfLegend span{display:inline-flex;align-items:center}.perfTrendSummary{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;color:var(--muted);font-size:12px}.perfTrendSummary b{color:var(--text)}.perfTrendSummary em{font-style:normal;font-weight:900}.perfTrendSummary .up{color:var(--ok)}.perfTrendSummary .down{color:var(--danger)}.perfTable thead th{position:sticky;top:0;z-index:3;background:var(--panel2);padding-top:8px;padding-bottom:8px}.perfTableScroll{scrollbar-gutter:stable}.perfSelectedRow td{background:linear-gradient(90deg,color-mix(in srgb,var(--brand) 18%,transparent),color-mix(in srgb,var(--brand) 10%,transparent));}
+
       @media(max-width:1260px){.perfMain{grid-template-columns:1fr}.perfChartWrap{min-height:290px}.perfChart{height:280px}}
-      @media(max-width:1100px){.perfGrid{grid-template-columns:1fr 1fr}.perfMain{grid-template-columns:1fr}}
+      @media(max-width:1100px){.perfGrid{grid-template-columns:1fr 1fr}.perfMain{grid-template-columns:1fr}.perfHero{grid-template-columns:minmax(0,1fr) auto}.perfHero p{max-width:620px}.perfActions{transform:scale(.96);transform-origin:top right}}
+      @media(max-width:920px){.perfHero{grid-template-columns:1fr}.perfActions{justify-self:start;margin-left:0;transform:none;flex-wrap:wrap;justify-content:flex-start}.perfHero p{max-width:100%}}
       @media(max-width:650px){#${VIEW_ID}{padding:0}.perfGrid{grid-template-columns:1fr}.perfHero h2{font-size:21px}.perfTable{font-size:13px}.perfChart{height:260px}.perfChartWrap{min-height:280px}}
     `;
     document.head.appendChild(st);
@@ -362,8 +384,8 @@
     const text=css.getPropertyValue('--text').trim()||'#e8eef6';
     const muted=css.getPropertyValue('--muted').trim()||'#a9b4c2';
     const line=css.getPropertyValue('--line').trim()||'rgba(255,255,255,.12)';
-    const ok=css.getPropertyValue('--ok').trim()||'#2ee59d';
-    const brand=css.getPropertyValue('--brand').trim()||'#7c5cff';
+    const ok=css.getPropertyValue('--ok').trim()||'#2ee6a6';
+    const brand=css.getPropertyValue('--brand').trim()||'#1677ff';
     const warn=css.getPropertyValue('--warn').trim()||'#ffcc00';
     const allSeries=Array.isArray(series)?series:[];
     const drawable=allSeries.filter(x=>!x.isFuture);
@@ -400,7 +422,7 @@
       const x=xAtIndex(i);
       const y=p.isFuture ? null : yAt(p.value);
       if(!p.isFuture){
-        ctx.beginPath();ctx.fillStyle=p.diff<0?'#ef4444':(p.diff>0?ok:brand);ctx.arc(x,y,4.2,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(0,0,0,.25)';ctx.lineWidth=1;ctx.stroke();
+        ctx.beginPath();ctx.fillStyle=p.isSelected?warn:(p.diff<0?'#ef4444':(p.diff>0?ok:brand));ctx.arc(x,y,p.isSelected?5.6:4.2,0,Math.PI*2);ctx.fill();ctx.strokeStyle=p.isSelected?text:'rgba(0,0,0,.25)';ctx.lineWidth=p.isSelected?2:1;ctx.stroke();
       }else{
         ctx.beginPath();ctx.fillStyle='rgba(148,163,184,.55)';ctx.arc(x,padT+ch,3.2,0,Math.PI*2);ctx.fill();
       }
@@ -473,11 +495,31 @@
     }
   }
 
+
+  function monthStatusLabel(current, previous, projection){
+    current=num(current); previous=num(previous); projection=num(projection);
+    if(previous<=0 && current>0) return {label:'Mês abriu vantagem', tone:'var(--ok)', kind:'up'};
+    if(current>=previous && previous>0) return {label:'Base superada', tone:'var(--ok)', kind:'up'};
+    if(projection>=previous && previous>0) return {label:'Projeção positiva', tone:'var(--accent)', kind:'trend'};
+    if(previous>0 && current<previous) return {label:'Abaixo da base', tone:'var(--danger)', kind:'down'};
+    return {label:'Aguardando dados', tone:'var(--muted)', kind:'flat'};
+  }
+
+  function performanceReading(current, previous, projection, avgCurrent, dailyNeeded, selectedLabel, previousLabel){
+    current=num(current); previous=num(previous); projection=num(projection); avgCurrent=num(avgCurrent); dailyNeeded=num(dailyNeeded);
+    if(previous<=0 && current<=0) return 'Ainda não há base suficiente para leitura. Assim que houver recebimentos, o Cronos começa a comparar o ritmo do mês.';
+    if(previous<=0 && current>0) return `${selectedLabel} já tem recebimentos registrados e criou uma base nova para acompanhar crescimento nos próximos meses.`;
+    if(current>=previous) return `${selectedLabel} já superou ${previousLabel}. Agora a leitura principal é manter o ritmo sem depender de achismo no fechamento.`;
+    if(projection>=previous) return `${selectedLabel} ainda está abaixo no acumulado, mas a média diária atual projeta superação até o fim do mês.`;
+    if(avgCurrent>0 && dailyNeeded>avgCurrent) return `${selectedLabel} precisa acelerar: a média necessária por dia ainda está acima do ritmo atual da clínica.`;
+    return `${selectedLabel} está abaixo da base. Use a tabela mensal para entender se foi queda pontual ou tendência.`;
+  }
+
   function statusText(progress, current, previous, projection, dailyNeeded, remainingDays){
     if(previous<=0 && current<=0) return 'Ainda não há base no mês anterior. Assim que houver recebimentos registrados, a Performance começa a medir o desafio automaticamente.';
     if(previous<=0 && current>0) return `O mês anterior estava zerado. O mês analisado já abriu vantagem com ${money(current)} registrados.`;
     if(current>=previous) return `Mês anterior superado. Cada fechamento acima da base mostra que a operação está evoluindo — crescimento real, não achismo em planilha.`;
-    if(projection>=previous) return `No ritmo atual, a clínica tende a superar o mês anterior. Continuem nesse passo que o mês está andando com postura.`;
+    if(projection>=previous) return `Se o ritmo atual continuar, o mês analisado deve superar a base anterior.`;
     if(remainingDays>0) return `Para superar o mês anterior, falta uma média de ${money(dailyNeeded)} por dia até o fim do mês. Não é julgamento; é bússola.`;
     return 'O mês fechou abaixo do anterior, mas isso vira referência para entender o ritmo e ajustar o próximo ciclo.';
   }
@@ -528,6 +570,14 @@
     const supportTitle=analysisIsCurrent?'Média diária necessária':'Saldo final vs base';
     const supportValue=analysisIsCurrent?money(dailyNeeded):diffLabel;
     const supportSmall=analysisIsCurrent?'Até o fim do mês.':(diff>=0?'O mês fechou acima da base.':'O mês fechou abaixo da base.');
+    const avgCurrent = day>0 ? current.value/day : 0;
+    const avgReference = analysisIsCurrent ? avgCurrent : (dim>0 ? current.value/dim : 0);
+    const monthStatus = monthStatusLabel(current.value, previous.value, projection);
+    const readingText = performanceReading(current.value, previous.value, projection, avgReference, dailyNeeded, monthLabel(selectedMonthKey), monthLabel(previous.monthKey));
+    const missingTitle = diff>=0 ? 'Acima da base' : 'Falta para superar';
+    const missingValue = diff>=0 ? `+${money(Math.abs(diff))}` : money(missing);
+    const missingSmallLabel = diff>=0 ? 'Em relação ao mês anterior.' : 'Ainda falta para bater a base anterior.';
+    const projectionLabel = analysisIsCurrent ? 'Projeção até o fim do mês' : 'Resultado final';
     v.innerHTML=`
       <div class="perfWrap">
         <div class="perfHero">
@@ -538,19 +588,22 @@
           <div class="perfActions"><label class="perfYearControl">Ano <select class="perfSelect" onchange="CRONOS_PERFORMANCE.setYear(this.value)">${years.map(y=>`<option value="${y}" ${Number(y)===Number(selectedYear)?'selected':''}>${y}</option>`).join('')}</select></label><label class="perfYearControl">Mês <select class="perfSelect" onchange="CRONOS_PERFORMANCE.setMonth(this.value)">${monthOptionsHtml(selectedYear,selectedMonthKey)}</select></label><button class="perfBtn" onclick="CRONOS_PERFORMANCE.refresh(this)">Atualizar</button></div>
         </div>
         <div class="perfGrid">
-          <div class="perfCard perfKpi"><span class="muted">Mês anterior</span><b>${money(previous.value)}</b><small>${esc(previous.fullLabel||monthLabel(previous.monthKey))} é a base do desafio atual.</small></div>
-          <div class="perfCard perfKpi"><span class="muted">Mês analisado</span><b>${money(current.value)}</b><small>${esc(current.fullLabel||monthLabel(current.monthKey))} • ${periodStateLabel}.</small></div>
-          <div class="perfCard perfKpi"><span class="muted">Diferença</span><b class="${diffClass}">${diffLabel}</b><small>${diff>=0?'Acima do mês anterior.':'Ainda falta para superar o mês anterior.'}</small></div>
-          <div class="perfCard perfKpi"><span class="muted">${projectionTitle}</span><b>${money(projection)}</b><small>${projectionSmall}</small></div>
+          <div class="perfCard perfKpi"><span class="muted">Base anterior</span><b>${money(previous.value)}</b><small>${esc(previous.fullLabel||monthLabel(previous.monthKey))} é a referência do desafio.</small></div>
+          <div class="perfCard perfKpi"><span class="muted">Recebido no mês</span><b>${money(current.value)}</b><small>${esc(current.fullLabel||monthLabel(current.monthKey))} • ${periodStateLabel}.</small></div>
+          <div class="perfCard perfKpi isMissing"><span class="muted">${missingTitle}</span><b class="${diffClass}">${missingValue}</b><small>${missingSmallLabel}</small></div>
+          <div class="perfCard perfKpi isProjection"><span class="muted">${projectionLabel}</span><b>${money(projection)}</b><small>${projectionSmall}</small></div>
         </div>
         <div class="perfMain">
-          <div class="perfCard">
-            <div class="perfProgressTop"><div><h3>Desafio do mês analisado</h3><div class="muted" style="font-size:12px">${esc(monthLabel(selectedMonthKey))} tentando superar ${esc(monthLabel(previous.monthKey))}</div></div><b>${progress.toFixed(1).replace('.',',')}%</b></div>
+          <div class="perfCard perfStatusCard" style="--status-color:${monthStatus.tone}">
+            <div class="perfStatusBadge">● ${monthStatus.label}</div>
+            <div class="perfProgressTop"><div><h3>Desafio do mês</h3><div class="muted" style="font-size:12px">${esc(monthLabel(selectedMonthKey))} tentando superar ${esc(monthLabel(previous.monthKey))}</div></div><b>${progress.toFixed(1).replace('.',',')}%</b></div>
             <div class="perfBar" title="${esc(progress.toFixed(1).replace('.',','))}% do mês anterior alcançado"><div class="perfBarFill" style="width:${progressWidth}%;background-size:${progressGradientSize}"></div>${progress>100?`<div class="perfBarOver">+${(progress-100).toFixed(1).replace('.',',')}%</div>`:''}</div>
-            <div class="perfInsight">${esc(statusText(progress,current.value,previous.value,projection,dailyNeeded,remaining))}</div>
-            <div class="perfGrid" style="grid-template-columns:1fr 1fr;margin-top:12px">
-              <div class="perfKpi"><span class="muted">Falta para superar</span><b>${money(missing)}</b><small>${missingSmall}</small></div>
-              <div class="perfKpi"><span class="muted">${supportTitle}</span><b class="${analysisIsCurrent?'':diffClass}">${supportValue}</b><small>${supportSmall}</small></div>
+            <div class="perfInsight perfRead"><div class="perfReadHead"><span class="perfReadIcon">${perfIconSvg("reading")}</span>Leitura do Cronos</div><p>${esc(readingText)}</p></div>
+            <div class="perfMetricPair">
+              <div class="perfMetricBox"><span>Média atual por dia</span><b>${money(avgReference)}</b><small>${analysisIsCurrent?'Calculada até hoje.':'Média do mês fechado.'}</small></div>
+              <div class="perfMetricBox"><span>${supportTitle}</span><b class="${analysisIsCurrent?'':diffClass}">${supportValue}</b><small>${supportSmall}</small></div>
+              <div class="perfMetricBox"><span>Falta para superar</span><b>${money(missing)}</b><small>${missingSmall}</small></div>
+              <div class="perfMetricBox"><span>Status comercial</span><b style="color:${monthStatus.tone}">${monthStatus.label}</b><small>Baseado no acumulado e na projeção.</small></div>
             </div>
           </div>
           <div class="perfCard">
@@ -559,12 +612,13 @@
               <div class="muted" style="font-size:12px">Melhor mês: <b>${best?esc(best.fullLabel):'—'}</b> • ${best?money(best.value):money(0)}</div>
             </div>
             <div class="perfChartWrap"><canvas id="perfHistoryChart" class="perfChart"></canvas></div>
-            <div class="perfLegend"><span>↑ ${monthsUp} mês(es) subiram</span><span>↓ ${monthsDown} mês(es) caíram</span><span>12 meses no ano</span></div>
+            <div class="perfLegend"><span><i class="perfDot" style="--dot-color:var(--ok)"></i>Subiu</span><span><i class="perfDot" style="--dot-color:var(--danger)"></i>Caiu</span><span><i class="perfDot" style="--dot-color:var(--accent)"></i>Mês analisado</span><span><i class="perfDot" style="--dot-color:var(--muted)"></i>Em espera</span></div>
+            <div class="perfTrendSummary"><span>Tendência do ano:</span><b><em class="up">↑ ${monthsUp}</em> subiram</b><span>•</span><b><em class="down">↓ ${monthsDown}</em> caíram</b></div>
           </div>
         </div>
         <div class="perfCard">
           <h3 style="margin:0 0 4px">Sobe e desce mensal</h3>
-          <div class="muted" style="font-size:13px;margin-bottom:10px">Janeiro a dezembro do ano selecionado. O mês analisado fica destacado e os meses seguintes ficam em espera — sem fingir que junho já trabalhou, coitado.</div>
+          <div class="muted" style="font-size:13px;margin-bottom:10px">Janeiro a dezembro do ano selecionado. O mês analisado fica destacado e o cabeçalho acompanha a rolagem para não virar caça-palavra financeiro.</div>
           ${rows.length?`<div class="perfTableScroll"><table class="perfTable"><thead><tr><th>Mês</th><th class="right">Recebido</th><th class="right">Termômetro</th><th class="right">Variação</th><th class="center">Status</th></tr></thead><tbody>${rows.map((x,idx)=>{
             const baseIndex=series.findIndex(s=>s.monthKey===x.monthKey);
             const first = baseIndex===0;

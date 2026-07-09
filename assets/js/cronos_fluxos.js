@@ -668,6 +668,22 @@
     toast("Fluxo excluído");
   }
 
+  function flowButtonHTML(label=true){
+    return `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7h5a4 4 0 0 1 4 4v1"></path><path d="M10 4 7 7l3 3"></path><path d="M17 17h-5a4 4 0 0 1-4-4v-1"></path><path d="m14 20 3-3-3-3"></path><circle cx="7" cy="7" r="2"></circle><circle cx="17" cy="17" r="2"></circle></svg>${label ? `<span>Fluxo assistido</span>` : ``}`;
+  }
+
+  function extractEntryIdFromLeadCard(card){
+    if(!card) return "";
+    const sourceBtn = qs("[onclick*='openLeadEntry']", card) || qs("[data-ficha-entry]", card);
+    let entryId = sourceBtn?.getAttribute?.("data-ficha-entry") || "";
+    if(!entryId){
+      const onclick = String(sourceBtn?.getAttribute?.("onclick") || "");
+      const m = onclick.match(/openLeadEntry\(['\"]([^'\"]+)['\"]\)/);
+      if(m) entryId = m[1];
+    }
+    return entryId || "";
+  }
+
   function injectLeadButtons(root=document){
     if(!canOpenFlows()){
       qsa(".cronos-action-flow", root).forEach(btn=>btn.remove());
@@ -675,22 +691,46 @@
       return;
     }
     qsa(".leadCard", root).forEach(card=>{
-      if(card.dataset.flowInjected === "1") return;
+      if(card.dataset.flowInjected === "1" && qs(".cronos-action-flow", card)) return;
+
+      const entryId = extractEntryIdFromLeadCard(card);
+      if(!entryId) return;
+
+      // Cards novos: Fluxo assistido é ação auxiliar, junto da fileira horizontal.
+      const secondaryActions = qs(".leadSecondaryActions", card);
+      if(secondaryActions){
+        qsa(".cronos-action-flow", secondaryActions).forEach(btn=>btn.remove());
+        qsa(".cronos-action-flow", qs(".leadPrimaryActions", card) || card).forEach(btn=>btn.remove());
+
+        const btn = document.createElement("button");
+        btn.className = "leadActionSmall leadFlowSmall cronos-action-flow";
+        btn.type = "button";
+        btn.title = "Ativar fluxo assistido";
+        btn.innerHTML = flowButtonHTML(false) + `<span>Fluxo</span>`;
+        btn.addEventListener("click", (ev)=>{
+          ev.preventDefault();
+          ev.stopPropagation();
+          openActivateFlow(entryId);
+        });
+
+        const taskBtn = Array.from(secondaryActions.querySelectorAll("button"))
+          .find(b=>String(b.getAttribute("title") || "").toLowerCase().includes("tarefa"));
+        if(taskBtn) secondaryActions.insertBefore(btn, taskBtn);
+        else secondaryActions.appendChild(btn);
+
+        card.dataset.flowInjected = "1";
+        return;
+      }
+
+      // Fallback para cards antigos.
       const actionRow = qs(".leadActionsRow", card);
       if(!actionRow) return;
-      const sourceBtn = qs("[onclick*='openLeadEntry']", actionRow) || qs("[data-ficha-entry]", actionRow);
-      let entryId = sourceBtn?.getAttribute?.("data-ficha-entry") || "";
-      if(!entryId){
-        const onclick = String(sourceBtn?.getAttribute?.("onclick") || "");
-        const m = onclick.match(/openLeadEntry\(['\"]([^'\"]+)['\"]\)/);
-        if(m) entryId = m[1];
-      }
-      if(!entryId) return;
+      qsa(".cronos-action-flow", actionRow).forEach(btn=>btn.remove());
       const btn = document.createElement("button");
       btn.className = "iconBtn flowLeadBtn cronos-action-flow";
       btn.type = "button";
       btn.title = "Ativar fluxo assistido";
-      btn.innerHTML = `<svg class="cronos-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7h5a4 4 0 0 1 4 4v1"></path><path d="M10 4 7 7l3 3"></path><path d="M17 17h-5a4 4 0 0 1-4-4v-1"></path><path d="m14 20 3-3-3-3"></path><circle cx="7" cy="7" r="2"></circle><circle cx="17" cy="17" r="2"></circle></svg>`;
+      btn.innerHTML = flowButtonHTML(false);
       btn.addEventListener("click", (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();

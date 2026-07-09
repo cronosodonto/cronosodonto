@@ -12,12 +12,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root{
-      --bg:#0b0f17;
+      --bg:#060d1f;
       --line:rgba(255,255,255,.08);
-      --text:#eef2ff;
-      --muted:#9aa6bd;
-      --primary:#7c5cff;
-      --primary-2:#5f3fff;
+      --text:#eef6ff;
+      --muted:#9cb3d9;
+      --primary:#1677ff;
+      --primary-2:#19c6ff;
       --danger:#fb7185;
       --info:#60a5fa;
       --success:#34d399;
@@ -45,7 +45,7 @@
     }
     .btn:hover{transform:translateY(-1px)}
     .btn:disabled{opacity:.65;cursor:not-allowed;transform:none}
-    .btn-primary{background:linear-gradient(180deg,var(--primary),var(--primary-2));border:none;box-shadow:var(--shadow)}
+    .btn-primary{background:linear-gradient(135deg,var(--primary) 0%, var(--primary-2) 54%, #2ee6a6 100%);border:none;box-shadow:var(--shadow)}
     .btn-ghost{background:rgba(255,255,255,.055)}
     .btn-danger{background:linear-gradient(180deg,#ff849a,#f43f5e);border:none;box-shadow:var(--shadow)}
     .btn-info{background:linear-gradient(180deg,#4f8dfd,#2563eb);border:none;box-shadow:var(--shadow)}
@@ -106,7 +106,7 @@
     .badge-expired{background:rgba(251,191,36,.16);color:#ffd76b}
     .badge-trial{background:rgba(96,165,250,.16);color:#9ec8ff}
     .badge-inactive{background:rgba(148,163,184,.16);color:#d0d8e6}
-    .badge-scheduled{background:rgba(168,85,247,.16);color:#d8b4fe}
+    .badge-scheduled{background:rgba(25,198,255,.16);color:#8eeeff}
     .row-actions{display:flex;flex-wrap:wrap;gap:8px}
     .empty{padding:28px;text-align:center;color:var(--muted)}
     .detail-loading{display:grid;gap:14px;padding:8px 0}
@@ -338,9 +338,9 @@
     .super-mark{
       width:42px;height:42px;border-radius:16px;
       display:grid;place-items:center;
-      background:linear-gradient(135deg,var(--primary),#2ee59d);
+      background:linear-gradient(135deg,var(--primary),#2ee6a6);
       font-weight:950;color:#fff;
-      box-shadow:0 14px 30px rgba(124,92,255,.22);
+      box-shadow:0 14px 30px rgba(22,119,255,.22);
     }
     .super-brand strong{display:block;font-size:16px;line-height:1.1}
     .super-brand span{display:block;font-size:12px;color:var(--muted);margin-top:2px}
@@ -372,8 +372,8 @@
     }
     .super-nav button.active{
       color:#fff;
-      background:linear-gradient(135deg,rgba(124,92,255,.30),rgba(46,229,157,.13));
-      border-color:rgba(124,92,255,.55);
+      background:linear-gradient(135deg,rgba(22,119,255,.30),rgba(46,230,166,.13));
+      border-color:rgba(22,119,255,.55);
       box-shadow:0 12px 28px rgba(0,0,0,.22);
     }
     .super-nav small{
@@ -475,12 +475,12 @@
     }
     .stat:hover{
       transform:translateY(-2px);
-      border-color:rgba(124,92,255,.45);
+      border-color:rgba(22,119,255,.45);
     }
     .stat.active{
-      border-color:rgba(124,92,255,.75);
-      box-shadow:0 18px 44px rgba(124,92,255,.18);
-      background:linear-gradient(180deg,rgba(124,92,255,.14),rgba(255,255,255,.035));
+      border-color:rgba(22,119,255,.75);
+      box-shadow:0 18px 44px rgba(22,119,255,.18);
+      background:linear-gradient(180deg,rgba(22,119,255,.14),rgba(255,255,255,.035));
     }
     .stat.active::after{
       content:"";
@@ -490,7 +490,7 @@
       bottom:0;
       height:3px;
       border-radius:999px 999px 0 0;
-      background:linear-gradient(90deg,var(--primary),#2ee59d);
+      background:linear-gradient(90deg,var(--primary),#2ee6a6);
     }
     .super-dashboard-panel{
       padding:16px;
@@ -596,12 +596,12 @@
     }
     .finance-card-clickable:hover{
       transform:translateY(-2px);
-      border-color:rgba(46,229,157,.42);
+      border-color:rgba(46,230,166,.42);
     }
     .finance-card-clickable.active{
-      border-color:rgba(46,229,157,.72);
-      box-shadow:0 18px 44px rgba(46,229,157,.12);
-      background:linear-gradient(180deg,rgba(46,229,157,.12),rgba(255,255,255,.035));
+      border-color:rgba(46,230,166,.72);
+      box-shadow:0 18px 44px rgba(46,230,166,.12);
+      background:linear-gradient(180deg,rgba(46,230,166,.12),rgba(255,255,255,.035));
     }
     .finance-card-clickable.active::after{
       content:"";
@@ -611,7 +611,7 @@
       bottom:0;
       height:3px;
       border-radius:999px 999px 0 0;
-      background:linear-gradient(90deg,#2ee59d,#38bdf8);
+      background:linear-gradient(90deg,#2ee6a6,#38bdf8);
     }
     .finance-mini-card p{
       margin:7px 0 0;
@@ -736,8 +736,8 @@
     }
     .clinic-search-option:hover,
     .clinic-search-option.active{
-      border-color:rgba(46,229,157,.45);
-      background:linear-gradient(135deg,rgba(46,229,157,.16),rgba(96,165,250,.10));
+      border-color:rgba(46,230,166,.45);
+      background:linear-gradient(135deg,rgba(46,230,166,.16),rgba(96,165,250,.10));
       transform:translateY(-1px);
     }
     .clinic-search-option strong{
@@ -777,7 +777,40 @@
       animation:bootSpin .8s linear infinite;
     }
 
-</style>
+
+    .sitechat-settings-card{padding:16px;margin-bottom:16px}
+    .sitechat-shell{display:grid;grid-template-columns:minmax(320px,380px) minmax(0,1fr);gap:16px;align-items:start}
+    .sitechat-sidebar,.sitechat-detail{padding:16px}
+    .sitechat-toolbar{display:grid;grid-template-columns:1fr 180px auto;gap:10px;margin-bottom:14px}
+    .sitechat-list{display:grid;gap:10px;max-height:68vh;overflow:auto}
+    .sitechat-list-item{width:100%;text-align:left;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);border-radius:16px;padding:12px;cursor:pointer;color:var(--text);font:inherit}
+    .sitechat-list-item.active{border-color:rgba(22,119,255,.72);box-shadow:0 14px 34px rgba(22,119,255,.14);background:rgba(22,119,255,.1)}
+    .sitechat-list-head,.sitechat-list-meta{display:flex;align-items:center;justify-content:space-between;gap:10px}.sitechat-list-head strong{font-size:14px}.sitechat-counter{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:linear-gradient(135deg,#1677ff,#19c6ff);color:#fff;font-size:11px;font-weight:900}
+    .sitechat-list-sub{color:#dbeafe;font-size:12px;margin-top:4px}.sitechat-list-snippet{font-size:13px;color:var(--muted);margin-top:8px;line-height:1.4}.sitechat-list-meta{font-size:11px;color:#9cb3d9;margin-top:9px;text-transform:uppercase;letter-spacing:.05em}
+    .sitechat-empty{border:1px dashed rgba(255,255,255,.14);border-radius:16px;padding:18px;color:var(--muted);line-height:1.5}
+    .sitechat-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}.sitechat-detail-head h3{margin:0 0 4px;font-size:24px}.sitechat-detail-head p{margin:0;color:var(--muted);line-height:1.45}
+    .sitechat-detail-actions{display:flex;gap:8px;flex-wrap:wrap}.sitechat-transcript{display:grid;gap:12px;max-height:50vh;overflow:auto;padding-right:4px;margin:16px 0}
+    .sitechat-msg{display:grid;gap:6px}.sitechat-msg-meta{display:flex;justify-content:space-between;gap:12px;color:#9cb3d9;font-size:11px}.sitechat-msg-bubble{padding:12px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.05);line-height:1.45}.sitechat-msg.visitor .sitechat-msg-bubble{background:rgba(25,198,255,.12);border-color:rgba(25,198,255,.28)}.sitechat-msg.admin .sitechat-msg-bubble{background:rgba(46,230,166,.12);border-color:rgba(46,230,166,.26)}
+    .sitechat-reply{display:grid;gap:10px}.sitechat-reply textarea{min-height:110px}
+    .sitechat-status-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+    @media(max-width:980px){.sitechat-shell{grid-template-columns:1fr}.sitechat-toolbar{grid-template-columns:1fr}}
+
+  
+    .sitechat-settings-card{padding:16px;margin-bottom:16px}
+    .sitechat-flow-grid .field textarea{min-height:74px}
+    .sitechat-flow-grid code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:2px 6px}
+
+  
+    .today-config-card{padding:16px;margin-bottom:16px}
+    .today-config-grid .field textarea{min-height:96px}
+    .today-config-preview{margin-top:16px;border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:14px;background:rgba(255,255,255,.025)}
+    .today-preview-card{max-width:420px;border:1px solid rgba(148,163,184,.20);border-radius:18px;padding:14px;background:linear-gradient(135deg,rgba(22,119,255,.10),rgba(46,230,166,.05));display:grid;gap:12px}
+    .today-preview-title{font-weight:950;font-size:15px;color:var(--text)}
+    .today-preview-body{display:grid;grid-template-columns:54px 1fr;gap:12px;align-items:center;color:var(--text);font-weight:800;line-height:1.35}
+    .today-preview-icon{width:54px;height:54px;border-radius:18px;display:grid;place-items:center;overflow:hidden;background:linear-gradient(135deg,rgba(22,119,255,.24),rgba(46,230,166,.12));border:1px solid rgba(25,198,255,.18);font-size:28px}
+    .today-preview-icon img{width:100%;height:100%;object-fit:contain;display:block}
+
+  </style>
   <link rel="canonical" href="https://cronosodonto.com/superadmin/" />
 
 <body>
@@ -852,6 +885,9 @@
           <button type="button" data-super-view="plans"><span>Planos e Módulos</span><small>acesso</small></button>
           <button type="button" data-super-view="finance"><span>Financeiro</span><small>receita</small></button>
           <button type="button" data-super-view="support"><span>Suporte</span><small>WhatsApp</small></button>
+          <button type="button" data-super-view="siteChats"><span>Chats do site</span><small>leads</small></button>
+          <button type="button" data-super-view="siteChatConfig"><span>Config. Chat</span><small>fluxo</small></button>
+          <button type="button" data-super-view="todayConfig"><span>Config. Hoje</span><small>sugestão</small></button>
           <button type="button" data-super-view="logs"><span>Logs</span><small>auditoria</small></button>
           <button type="button" data-super-view="settings"><span>Configurações</span><small>global</small></button>
         </nav>
@@ -1019,6 +1055,224 @@
             <div class="support-preview" id="supportPreview">Preencha o WhatsApp para gerar a prévia.</div>
           </div>
         </section>
+
+        
+<section class="super-view hidden" data-super-panel="siteChats">
+  <div class="super-section-head">
+    <div>
+      <h2>Chats do site</h2>
+      <p>Leads que chamaram pelo botão do Cronos na landing. Aqui você lê a conversa, responde e continua o atendimento sem depender de fumaça de sinal.</p>
+    </div>
+  </div>
+  <div class="sitechat-shell">
+    <div class="card sitechat-sidebar">
+      <div class="sitechat-toolbar">
+        <input class="input" id="siteChatSearch" placeholder="Buscar por nome, clínica, cidade, WhatsApp..." />
+        <select class="select" id="siteChatFilterStatus">
+          <option value="all">Todos os status</option>
+          <option value="novo">Novo</option>
+          <option value="em_atendimento">Em atendimento</option>
+          <option value="qualificado">Qualificado</option>
+          <option value="encerrado">Encerrado</option>
+        </select>
+        <button class="btn btn-ghost" id="btnSiteChatRefresh" type="button">Atualizar</button>
+      </div>
+      <div class="sitechat-list" id="siteChatList"><div class="sitechat-empty">Abra a aba para carregar os chats do site.</div></div>
+    </div>
+    <div class="card sitechat-detail">
+      <div id="siteChatDetailEmpty" class="sitechat-empty">Selecione um chat para ver a conversa, responder e tocar o atendimento dali mesmo.</div>
+      <div id="siteChatDetail" class="hidden">
+        <div class="sitechat-detail-head">
+          <div>
+            <h3 id="siteChatDentist">Dentista</h3>
+            <p id="siteChatClinic">Clínica</p>
+            <p id="siteChatMeta">Cidade • WhatsApp • Interesse</p>
+          </div>
+          <div class="sitechat-detail-actions">
+            <button class="btn btn-ghost" id="btnSiteChatCopyPhone" type="button">Copiar WhatsApp</button>
+            <button class="btn btn-success" id="btnSiteChatOpenWhatsapp" type="button">Abrir WhatsApp</button>
+          </div>
+        </div>
+        <div class="sitechat-status-row">
+          <strong>Status:</strong>
+          <select class="select" id="siteChatStatus" style="max-width:220px">
+            <option value="novo">Novo</option>
+            <option value="em_atendimento">Em atendimento</option>
+            <option value="qualificado">Qualificado</option>
+            <option value="encerrado">Encerrado</option>
+          </select>
+        </div>
+        <div class="sitechat-transcript" id="siteChatTranscript"></div>
+        <div class="sitechat-reply">
+          <label for="siteChatReply">Responder no chat</label>
+          <textarea class="textarea" id="siteChatReply" placeholder="Digite a resposta. Dica civilizada: Ctrl + Enter envia."></textarea>
+          <div class="row-actions">
+            <button class="btn btn-primary" id="btnSiteChatSend" type="button">Enviar resposta</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+        <section class="super-view hidden" data-super-panel="siteChatConfig">
+          <div class="super-section-head">
+            <div>
+              <h2>Configuração do Chat</h2>
+              <p>Controle a aparência, o WhatsApp e o fluxo de mensagens do chat da landing sem mexer no código. Porque editar frase comercial dentro de arquivo HTML é castigo, não processo.</p>
+            </div>
+          </div>
+
+          <div class="card sitechat-settings-card">
+            <div class="section-intro">
+              <strong>Aparência e WhatsApp</strong>
+              <div class="helper">Defina a foto/ícone do Cronos no chat, o número do WhatsApp flutuante e a mensagem padrão usada no link.</div>
+            </div>
+            <div class="super-form-grid" style="margin-top:14px">
+              <div class="field">
+                <label for="siteChatAvatarUrl">Foto/ícone do Cronos no chat</label>
+                <input class="input" id="siteChatAvatarUrl" placeholder="Ex.: assets/brand/cronos-symbol-2d.png ou URL da imagem" />
+              </div>
+              <div class="field">
+                <label for="siteChatWhatsapp">WhatsApp do botão da landing</label>
+                <input class="input" id="siteChatWhatsapp" placeholder="Ex.: 5598999999999" />
+              </div>
+              <div class="field full">
+                <label for="siteChatWhatsappMessage">Mensagem padrão do WhatsApp</label>
+                <textarea class="textarea" id="siteChatWhatsappMessage" rows="2">Olá! Vim pelo site do Cronos Odonto e quero saber mais sobre o sistema.</textarea>
+              </div>
+            </div>
+
+            <div class="section-intro" style="margin-top:20px">
+              <strong>Fluxo de mensagens do Cronos</strong>
+              <div class="helper">Edite as falas do chat. Use <code>{nome}</code> na mensagem de interesse para inserir o primeiro nome informado pelo dentista.</div>
+            </div>
+
+            <div class="super-form-grid sitechat-flow-grid" style="margin-top:14px">
+              <div class="field">
+                <label for="siteChatFlowWelcome1">Mensagem inicial 1</label>
+                <textarea class="textarea" id="siteChatFlowWelcome1" rows="2"></textarea>
+              </div>
+              <div class="field">
+                <label for="siteChatFlowWelcome2">Mensagem inicial 2 / pergunta do nome</label>
+                <textarea class="textarea" id="siteChatFlowWelcome2" rows="2"></textarea>
+              </div>
+              <div class="field">
+                <label for="siteChatFlowAskInterest">Após informar o nome</label>
+                <textarea class="textarea" id="siteChatFlowAskInterest" rows="2"></textarea>
+              </div>
+              <div class="field">
+                <label for="siteChatFlowAskClinic">Pergunta da clínica</label>
+                <textarea class="textarea" id="siteChatFlowAskClinic" rows="2"></textarea>
+              </div>
+              <div class="field">
+                <label for="siteChatFlowAskPhone">Pergunta do WhatsApp</label>
+                <textarea class="textarea" id="siteChatFlowAskPhone" rows="2"></textarea>
+              </div>
+              <div class="field">
+                <label for="siteChatFlowAskCity">Pergunta da cidade</label>
+                <textarea class="textarea" id="siteChatFlowAskCity" rows="2"></textarea>
+              </div>
+              <div class="field full">
+                <label for="siteChatFlowAskFree">Mensagem final antes do atendimento</label>
+                <textarea class="textarea" id="siteChatFlowAskFree" rows="3"></textarea>
+              </div>
+              <div class="field">
+                <label for="siteChatFlowAttendantLabel">Texto do botão de atendimento humano</label>
+                <input class="input" id="siteChatFlowAttendantLabel" placeholder="Falar com atendente" />
+              </div>
+              <div class="field">
+                <label for="siteChatFlowHandoff">Resposta ao clicar em atendimento humano</label>
+                <textarea class="textarea" id="siteChatFlowHandoff" rows="2"></textarea>
+              </div>
+              <div class="field full">
+                <label for="siteChatFlowQuickActions">Botões rápidos iniciais</label>
+                <textarea class="textarea" id="siteChatFlowQuickActions" rows="4" placeholder="Um botão por linha"></textarea>
+                <span class="helper">Um botão por linha. Ex.: Quero uma demonstração</span>
+              </div>
+            </div>
+
+            <div class="feature-save-actions">
+              <button class="btn btn-ghost" id="btnSiteChatUseSupportWhatsapp" type="button">Usar WhatsApp do suporte</button>
+              <button class="btn btn-warning" id="btnSiteChatResetFlow" type="button">Restaurar fluxo padrão</button>
+              <button class="btn btn-primary" id="btnSiteChatSaveSettings" type="button">Salvar configurações do chat</button>
+            </div>
+            <div class="support-preview" id="siteChatSettingsPreview">Configurações do chat da landing serão carregadas aqui.</div>
+          </div>
+        </section>
+
+
+
+        <section class="super-view hidden" data-super-panel="todayConfig">
+          <div class="super-section-head">
+            <div>
+              <h2>Configuração do Hoje no Cronos</h2>
+              <p>Personalize o card de sugestão da tela Hoje no Cronos: ícone, texto, botão e ação. Porque até sugestão precisa obedecer identidade visual, senão vira PowerPoint de condomínio.</p>
+            </div>
+          </div>
+
+          <div class="card today-config-card">
+            <div class="section-intro">
+              <strong>Sugestão do Cronos</strong>
+              <div class="helper">Essas configurações aparecem no card de recomendação da tela Hoje no Cronos.</div>
+            </div>
+
+            <div class="super-form-grid today-config-grid" style="margin-top:14px">
+              <div class="field">
+                <label for="todaySuggestionIconMode">Ícone da sugestão</label>
+                <select class="select" id="todaySuggestionIconMode">
+                  <option value="mascot">Usar mascote padrão</option>
+                  <option value="logo">Usar logo do Cronos</option>
+                  <option value="custom">Usar imagem personalizada</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="todaySuggestionIconUrl">URL ou caminho da imagem personalizada</label>
+                <input class="input" id="todaySuggestionIconUrl" placeholder="Ex.: assets/brand/cronos-mascote-rosto.png" />
+              </div>
+              <div class="field">
+                <label for="todaySuggestionTitle">Título do card</label>
+                <input class="input" id="todaySuggestionTitle" placeholder="Sugestão do Cronos" />
+              </div>
+              <div class="field">
+                <label for="todaySuggestionButtonText">Texto do botão</label>
+                <input class="input" id="todaySuggestionButtonText" placeholder="Entendi" />
+              </div>
+              <div class="field">
+                <label for="todaySuggestionButtonAction">Ação do botão</label>
+                <select class="select" id="todaySuggestionButtonAction">
+                  <option value="overdue">Filtrar atrasados</option>
+                  <option value="tasks">Filtrar tarefas</option>
+                  <option value="appointments">Filtrar agendamentos</option>
+                  <option value="none">Não fazer nada</option>
+                </select>
+              </div>
+              <div class="field full">
+                <label for="todaySuggestionMessage">Texto da sugestão</label>
+                <textarea class="textarea" id="todaySuggestionMessage" rows="4"></textarea>
+                <span class="helper">Variáveis: {agendamentos_vencidos}, {tarefas_abertas}, {recebimentos_pendentes}, {total_atrasados}, {data_hoje}</span>
+              </div>
+            </div>
+
+            <div class="today-config-preview" id="todaySuggestionPreview">
+              <div class="today-preview-card">
+                <div class="today-preview-title">✦ Sugestão do Cronos</div>
+                <div class="today-preview-body">
+                  <div class="today-preview-icon" id="todaySuggestionPreviewIcon">🤖</div>
+                  <div id="todaySuggestionPreviewMessage">Comece pelos 2 agendamentos vencidos e pelas tarefas com WhatsApp disponível.</div>
+                </div>
+                <button class="btn btn-ghost" type="button" id="todaySuggestionPreviewBtn">Entendi</button>
+              </div>
+            </div>
+
+            <div class="feature-save-actions">
+              <button class="btn btn-warning" id="btnTodaySuggestionReset" type="button">Restaurar padrão</button>
+              <button class="btn btn-primary" id="btnTodaySuggestionSave" type="button">Salvar sugestão</button>
+            </div>
+            <div class="support-preview" id="todaySuggestionStatus">Configurações serão carregadas aqui.</div>
+          </div>
+        </section>
+
 
         <section class="super-view hidden" data-super-panel="logs">
           <div class="super-section-head">
@@ -1824,12 +2078,12 @@
         <svg class="super-kpi-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Gráfico das KPIs do Superadmin">
           <defs>
             <linearGradient id="superKpiLine" x1="0" x2="1">
-              <stop offset="0%" stop-color="#7c5cff"/>
-              <stop offset="100%" stop-color="#2ee59d"/>
+              <stop offset="0%" stop-color="#1677ff"/>
+              <stop offset="100%" stop-color="#2ee6a6"/>
             </linearGradient>
             <linearGradient id="superKpiArea" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stop-color="#7c5cff" stop-opacity=".26"/>
-              <stop offset="100%" stop-color="#2ee59d" stop-opacity=".02"/>
+              <stop offset="0%" stop-color="#1677ff" stop-opacity=".26"/>
+              <stop offset="100%" stop-color="#2ee6a6" stop-opacity=".02"/>
             </linearGradient>
           </defs>
           <polygon points="${area}" fill="url(#superKpiArea)"></polygon>
@@ -1837,7 +2091,7 @@
           ${points.map(p=>`
             <g>
               <line x1="${p.x}" y1="${height-padY}" x2="${p.x}" y2="${p.y}" stroke="rgba(255,255,255,.10)" stroke-width="2"/>
-              <circle cx="${p.x}" cy="${p.y}" r="${p.key===activeKey?8:6}" fill="${p.key===activeKey?'#2ee59d':'#7c5cff'}" stroke="rgba(255,255,255,.85)" stroke-width="2"/>
+              <circle cx="${p.x}" cy="${p.y}" r="${p.key===activeKey?8:6}" fill="${p.key===activeKey?'#2ee6a6':'#1677ff'}" stroke="rgba(255,255,255,.85)" stroke-width="2"/>
               <text x="${p.x}" y="${p.y-14}" text-anchor="middle" fill="#eef2ff" font-size="16" font-weight="900">${p.value}</text>
               <text x="${p.x}" y="${height-4}" text-anchor="middle" fill="#9aa6bd" font-size="11" font-weight="800">${escapeHtml(p.label).replace("Bloqueadas / Vencidas","Bloq./Venc.")}</text>
             </g>
@@ -3908,6 +4162,9 @@
     if(view === 'finance') setTimeout(()=>renderFinanceDashboard(state.financeKpi || 'month'), 0);
     if(view === 'settings') setTimeout(refreshConfigClinicSelect, 0);
     if(view === 'support') setTimeout(()=>loadSupportSettingsCloud(true), 0);
+    if(view === 'siteChats' && window.CRONOS_SITECHAT_ADMIN) setTimeout(()=>window.CRONOS_SITECHAT_ADMIN.load(false), 0);
+    if(view === 'siteChatConfig' && window.CRONOS_SITECHAT_ADMIN?.loadLandingSettings) setTimeout(()=>window.CRONOS_SITECHAT_ADMIN.loadLandingSettings(), 0);
+    if(view === 'todayConfig' && window.CRONOS_TODAY_CONFIG_ADMIN?.load) setTimeout(()=>window.CRONOS_TODAY_CONFIG_ADMIN.load(), 0);
     }catch(_){}
   }
 
@@ -4355,7 +4612,7 @@
       <svg class="finance-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Recebido mês a mês">
         <defs>
           <linearGradient id="financeBarGrad" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#2ee59d"/>
+            <stop offset="0%" stop-color="#2ee6a6"/>
             <stop offset="100%" stop-color="#38bdf8"/>
           </linearGradient>
         </defs>
@@ -4582,8 +4839,11 @@
     save: saveSupportSettings,
     link: buildWhatsLink
   };
+  window.__CRONOS_SUPERADMIN_SHARED__ = { CONFIG, state, supabaseClient, toast, loadSupportSettingsCloud, loadSupportSettings };
 })();
 </script>
+<script src="../assets/js/superadmin-site-chat.js"></script>
+<script src="../assets/js/superadmin-today-config.js"></script>
 
 </body>
 </html>
