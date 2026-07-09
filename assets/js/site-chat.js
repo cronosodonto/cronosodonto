@@ -79,13 +79,17 @@
     pollTimer: null
   };
 
+  let settingsReady = Promise.resolve(siteSettings);
+
   injectMarkup();
   const els = bindElements();
   hydrateUi();
   bindEvents();
   bootstrapConversation();
   startPolling();
-  loadPublicSettings().then(syncWidgetSettings).catch(syncWidgetSettings);
+  settingsReady = loadPublicSettings()
+    .then((settings)=>{ syncWidgetSettings(); return settings || siteSettings; })
+    .catch((err)=>{ console.warn('site chat settings bootstrap', err); syncWidgetSettings(); return siteSettings; });
   syncWhatsAppButton();
 
   function injectMarkup(){
@@ -161,11 +165,21 @@
     if (els.form) els.form.addEventListener('submit', onSubmit);
     if (els.quick) els.quick.addEventListener('click', onQuickClick);
     if (els.whatsapp) {
-      els.whatsapp.addEventListener('click', function(ev){
-        if (CONFIG.whatsappNumber) return;
+      els.whatsapp.addEventListener('click', async function(ev){
         ev.preventDefault();
+        try { await settingsReady; } catch (_) {}
+        const phone = getConfiguredWhatsappNumber();
+        if (phone) {
+          clearStatus();
+          const url = buildWhatsappUrl(phone);
+          els.whatsapp.href = url;
+          els.whatsapp.target = '_blank';
+          els.whatsapp.rel = 'noopener noreferrer';
+          window.open(url, '_blank', 'noopener,noreferrer');
+          return;
+        }
         togglePanel(true);
-        flashStatus('O WhatsApp oficial ainda não foi configurado no script da landing. Enquanto isso, manda por aqui mesmo.', 'warn');
+        flashStatus('O WhatsApp oficial ainda não foi configurado. Enquanto isso, manda por aqui mesmo.', 'warn');
       });
     }
   }
@@ -311,15 +325,15 @@
     try {
       const { data, error } = await client
         .from(CONFIG.settingsTable)
-        .select('avatar_url, whatsapp, whatsapp_message, flow_config, updated_at')
+        .select('avatar_url, whatsapp, whatsapp_number, phone, telefone, whatsapp_message, wa_message, flow_config, updated_at')
         .eq('id', 'default')
         .maybeSingle();
       if (error || !data) return siteSettings;
       applyFlowConfig(data.flow_config);
       siteSettings = {
         avatarUrl: data.avatar_url || 'assets/brand/cronos-symbol-2d.png',
-        whatsappNumber: String(data.whatsapp || CONFIG.whatsappNumber || '').replace(/\D/g, ''),
-        whatsappMessage: data.whatsapp_message || CONFIG.whatsappMessage
+        whatsappNumber: String(data.whatsapp || data.whatsapp_number || data.phone || data.telefone || CONFIG.whatsappNumber || '').replace(/\D/g, ''),
+        whatsappMessage: data.whatsapp_message || data.wa_message || CONFIG.whatsappMessage
       };
       return siteSettings;
     } catch (error) {
@@ -336,16 +350,32 @@
     syncWhatsAppButton();
   }
 
+  function getConfiguredWhatsappNumber(){
+    return String(
+      (siteSettings && siteSettings.whatsappNumber) ||
+      CONFIG.whatsappNumber ||
+      ''
+    ).replace(/\D/g, '');
+  }
+
+  function buildWhatsappUrl(phone){
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    const msg = (siteSettings && siteSettings.whatsappMessage) || CONFIG.whatsappMessage || '';
+    return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+  }
+
   function syncWhatsAppButton(){
     if (!els.whatsapp) return;
-    const phone = String(siteSettings.whatsappNumber || CONFIG.whatsappNumber || '').replace(/\D/g, '');
-    const msg = siteSettings.whatsappMessage || CONFIG.whatsappMessage;
+    const phone = getConfiguredWhatsappNumber();
     if (phone) {
-      els.whatsapp.href = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+      els.whatsapp.href = buildWhatsappUrl(phone);
       els.whatsapp.target = '_blank';
       els.whatsapp.rel = 'noopener noreferrer';
+      clearStatus();
     } else {
       els.whatsapp.href = '#';
+      els.whatsapp.removeAttribute('target');
+      els.whatsapp.removeAttribute('rel');
     }
   }
 

@@ -7295,10 +7295,37 @@ async function ensureCloudDBLoaded(force=false){
     if(ctx?.row?.data){
       const localBeforePull = normalizeDBShape(getLegacyLocalDB() || freshDB());
       const cloudBeforePull = normalizeDBShape(ctx.row.data);
+      // V118: rollback da estratégia agressiva da V117.
+      // A nuvem continua sendo consultada, mas o Cronos NÃO pode aceitar um pull destrutivo
+      // que venha sem leads/contatos quando o cache local ainda tem base válida.
+      // Isso evita zerar dashboard e quebrar vínculos de tarefas quando as tabelas V2 vêm vazias.
       let loaded = mergeCloudAndLocalDB(cloudBeforePull, localBeforePull);
       if(usesAnyClinicTableV2()){
         loaded = await hydrateClinicArraysFromTables(loaded);
         loaded = applyPendingV2Patches(loaded);
+
+        // V118: trava anti-pull destrutivo. Se a hidratação V2 voltar vazia,
+        // mas o cache local tinha leads/contatos, preserva o local e tenta replantar no V2.
+        try{
+          const localEntriesCount = Array.isArray(localBeforePull.entries) ? localBeforePull.entries.length : 0;
+          const loadedEntriesCount = Array.isArray(loaded.entries) ? loaded.entries.length : 0;
+          const localContactsCount = Array.isArray(localBeforePull.contacts) ? localBeforePull.contacts.length : 0;
+          const loadedContactsCount = Array.isArray(loaded.contacts) ? loaded.contacts.length : 0;
+
+          if(isClinicSourceV2("entries") && localEntriesCount > 0 && loadedEntriesCount === 0){
+            console.warn("Cronos V118: pull V2 de leads veio zerado; preservando cache local e resemeando tabela.");
+            loaded.entries = __cronosMergeArrayById(loaded.entries, localBeforePull.entries);
+            try{ await seedV2FromLegacyIfEmpty(CLOUD_LEADS_V2_TABLE, loaded.entries, leadToV2Row, "leads"); }catch(seedErr){ console.warn("Cronos V118: não consegui reseed leads V2.", seedErr); }
+          }
+
+          if(isClinicSourceV2("contacts") && localContactsCount > 0 && loadedContactsCount === 0){
+            console.warn("Cronos V118: pull V2 de contatos veio zerado; preservando cache local e resemeando tabela.");
+            loaded.contacts = __cronosMergeArrayById(loaded.contacts, localBeforePull.contacts);
+            try{ await seedV2FromLegacyIfEmpty(CLOUD_CONTACTS_V2_TABLE, loaded.contacts, contactToV2Row, "contatos"); }catch(seedErr){ console.warn("Cronos V118: não consegui reseed contatos V2.", seedErr); }
+          }
+        }catch(rescueErr){
+          console.warn("Cronos V118: guarda anti-pull destrutivo falhou.", rescueErr);
+        }
       }
       try{ loaded = applyPendingTaskPatches(loaded); }catch(e){ console.warn("Cronos autosave tarefas: patch não aplicado no carregamento.", e); }
       loaded = ensureMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "");
@@ -10428,11 +10455,17 @@ async function refreshCloudDataNow({ force=false, reason="" } = {}){
   }
   const run = (async ()=>{
     try{
-      // Antes de puxar a nuvem, tenta enviar mudanças locais pendentes.
-      // Isso evita que procedimentos recém-lançados no prontuário sejam apagados por um refresh
-      // quando ainda estavam só no navegador.
+      // V117: Atualizar/abrir outra aba agora puxa a nuvem como fonte da verdade.
+      // Antes, o Cronos salvava a base local antes de puxar; um navegador com cache velho
+      // podia reenviar dados antigos e ficar diferente de outro navegador.
+      // Mantemos apenas patches/tombstones locais já registrados, sem promover cache antigo.
       if(DB && typeof supabaseClient !== "undefined" && supabaseClient?.auth){
-        try{ await scheduleCloudSave(true); }catch(err){ console.warn("Não foi possível enviar alterações locais antes do refresh:", err); }
+        try{ persistPendingV2Patches(DB); }catch(_){ }
+        try{ persistPendingTaskPatches(DB); }catch(_){ }
+        try{
+          if(__cronosFinancialMutationPromise) await __cronosFinancialMutationPromise;
+          if(__cloudSaveRunning && __cloudSavePromise) await __cloudSavePromise;
+        }catch(err){ console.warn("Cronos sync: save em andamento não confirmou antes do pull:", err); }
       }
       await ensureCloudDBLoaded(true);
       await syncCurrentCloudActor();
@@ -10456,6 +10489,29 @@ function scheduleCloudRefresh(reason="", { force=false, delay=120 } = {}){
     refreshCloudDataNow({ force, reason }).catch(err=>console.error("Falha no refresh cloud:", err));
   }, Math.max(0, Number(delay)||0));
 }
+
+
+/* === CRONOS V117 — pull seguro ao voltar para a aba === */
+window.__CRONOS_LAST_FOCUS_PULL_AT__ = window.__CRONOS_LAST_FOCUS_PULL_AT__ || 0;
+function cronosPullCloudAndRender(reason="focus"){
+  try{
+    const actor = (typeof currentActor === "function") ? currentActor() : null;
+    if(!actor || typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
+    const now = Date.now();
+    if(now - (window.__CRONOS_LAST_FOCUS_PULL_AT__ || 0) < 8000) return;
+    window.__CRONOS_LAST_FOCUS_PULL_AT__ = now;
+    refreshCloudDataNow({ force:true, reason }).then(()=>{
+      try{ renderActiveViewOnly(getCurrentMainView()); }catch(_){ try{ renderAll(); }catch(__){} }
+      try{ updateSidebarPills(); }catch(_){ }
+    }).catch(err=>console.warn("Cronos sync: pull ao focar falhou", err));
+  }catch(_){ }
+}
+try{
+  window.addEventListener("focus", ()=>cronosPullCloudAndRender("window_focus"));
+  document.addEventListener("visibilitychange", ()=>{
+    if(document.visibilityState === "visible") cronosPullCloudAndRender("tab_visible");
+  });
+}catch(_){ }
 
 function setLoadingButtonState(btn, isLoading){
   if(!btn) return;
