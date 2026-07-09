@@ -193,6 +193,23 @@ function stableInstallmentTaskId(key){
   return `task_${String(key || "").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 }
 
+function cronosIsTaskTombstoned(taskOrId, key){
+  try{
+    const tombs = (typeof loadPersistentTaskTombstones === "function") ? loadPersistentTaskTombstones() : {};
+    const id = typeof taskOrId === "string" ? taskOrId : String(taskOrId?.id || "");
+    const taskKey = key != null ? String(key || "") : String(taskOrId?.key || "");
+    const stableId = taskKey ? stableInstallmentTaskId(taskKey) : "";
+    return !!(
+      (id && tombs[id]) ||
+      (taskKey && tombs[taskKey]) ||
+      (stableId && tombs[stableId])
+    );
+  }catch(_){
+    return false;
+  }
+}
+
+
 function scrubInstallmentTasksForMaster(db, masterId){
   db.tasks = Array.isArray(db.tasks) ? db.tasks : [];
   db.entries = Array.isArray(db.entries) ? db.entries : [];
@@ -237,6 +254,7 @@ function scrubInstallmentTasksForMaster(db, masterId){
 
         const key = `INST:${e.id}:${due}:${p.number}`;
         if(createdKeys.has(key)) return;
+        if(cronosIsTaskTombstoned(stableInstallmentTaskId(key), key)) return;
         createdKeys.add(key);
 
         const c = contactsById.get(e.contactId) || {name:"(sem nome)", phone:""};
@@ -279,6 +297,7 @@ function scrubInstallmentTasksForMaster(db, masterId){
 
           const key = `FININST:${e.id}:${plan.id}:${p.id}`;
           if(createdKeys.has(key)) return;
+          if(cronosIsTaskTombstoned(stableInstallmentTaskId(key), key)) return;
           createdKeys.add(key);
 
           rebuilt.push({
@@ -308,6 +327,7 @@ function scrubInstallmentTasksForMaster(db, masterId){
 
   const seen = new Set();
   db.tasks = db.tasks.filter(t=>{
+    if(isAutomaticInstallmentTask(t) && cronosIsTaskTombstoned(t, t?.key)) return false;
     const semanticKey = isAutomaticInstallmentTask(t)
       ? String(t.key || t.id || "")
       : String(t.id || t.key || `${t.masterId||""}|${t.title||""}|${t.dueDate||""}|${t.notes||""}`);
@@ -6261,12 +6281,18 @@ function recordTaskPatch(task){
 }
 function recordTaskDeletion(taskOrId){
   try{
+    const now = new Date().toISOString();
     const id = typeof taskOrId === "string" ? taskOrId : String(taskOrId?.id || taskOrId?.key || "");
-    if(!id) return false;
+    const key = typeof taskOrId === "string" ? "" : String(taskOrId?.key || "");
+    const stableId = key ? stableInstallmentTaskId(key) : "";
+    const ids = Array.from(new Set([id, key, stableId].filter(Boolean)));
+    if(!ids.length) return false;
     const patch = loadPendingTaskPatches();
-    patch.deletedTasks[id] = { id, deletedAt:new Date().toISOString() };
-    if(patch.tasks[id]) delete patch.tasks[id];
-    try{ rememberPersistentTaskDeletion(id); }catch(_){}
+    ids.forEach(x=>{
+      patch.deletedTasks[x] = { id:x, deletedAt:now };
+      if(patch.tasks[x]) delete patch.tasks[x];
+    });
+    try{ rememberPersistentTaskDeletion(taskOrId); }catch(_){}
     return savePendingTaskPatches(patch);
   }catch(err){
     console.warn("Cronos autosave tarefas: falha ao registrar exclusão.", err);
@@ -6321,7 +6347,7 @@ function loadPersistentTaskTombstones(){
   try{
     const raw = localStorage.getItem(cronosTaskTombstoneKey());
     const data = raw ? JSON.parse(raw) : {};
-    const cutoff = Date.now() - (1000 * 60 * 60 * 24 * 14); // 14 dias
+    const cutoff = Date.now() - (1000 * 60 * 60 * 24 * 180); // 180 dias
     const out = {};
     Object.values(data || {}).forEach(t=>{
       const id = String(t?.id || "");
@@ -6339,10 +6365,14 @@ function loadPersistentTaskTombstones(){
 }
 function rememberPersistentTaskDeletion(taskOrId){
   try{
+    const now = new Date().toISOString();
     const id = typeof taskOrId === "string" ? taskOrId : String(taskOrId?.id || taskOrId?.key || "");
-    if(!id) return false;
+    const key = typeof taskOrId === "string" ? "" : String(taskOrId?.key || "");
+    const stableId = key ? stableInstallmentTaskId(key) : "";
+    const ids = Array.from(new Set([id, key, stableId].filter(Boolean)));
+    if(!ids.length) return false;
     const data = loadPersistentTaskTombstones();
-    data[id] = { id, deletedAt:new Date().toISOString() };
+    ids.forEach(x=>{ data[x] = { id:x, deletedAt:now }; });
     localStorage.setItem(cronosTaskTombstoneKey(), JSON.stringify(data));
     return true;
   }catch(err){
@@ -14252,12 +14282,10 @@ function deleteTask(taskId){
   if(idx < 0) return toast("Tarefa não encontrada");
 
   const t = db.tasks[idx];
-  if(t.key && String(t.key).startsWith("INST:")){
-    return toast("Tarefa automática", "Essa tarefa é vinculada ao recebimento. Para remover, ajuste o recebimento.");
-  }
+  const isAutoTask = isAutomaticInstallmentTask(t);
 
   const label = String(t.title || "esta tarefa").trim();
-  if(!confirm(`Apagar a tarefa "${label}"?\n\nEssa ação remove apenas a tarefa, não apaga o lead.`)) return;
+  if(!confirm(`Apagar a tarefa "${label}"?\n\nEssa ação remove apenas a tarefa, não apaga o lead.${isAutoTask ? "\nSe for tarefa automática de recebimento, ela também será ignorada nas próximas sincronizações." : ""}`)) return;
 
   try{ recordTaskDeletion(t); }catch(_){}
   db.tasks.splice(idx, 1);
