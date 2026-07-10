@@ -5438,6 +5438,7 @@ let CLOUD_OWNER_UID = null;
 let CLOUD_OWNER_EMAIL = "";
 let CLOUD_CLINIC_OWNER_UID = null;
 let CLOUD_CLINIC_OWNER_EMAIL = "";
+let CLOUD_CLINIC_NAME = "";
 let CLOUD_ACCESS_KIND = "guest"; // owner | member | guest
 let CLOUD_MEMBER_INFO = null;
 let __localMemoryDB = null; // fallback para clínicas grandes quando localStorage estoura
@@ -5459,6 +5460,61 @@ let CLOUD_DATA_SOURCES = {
   tasks_source: "legacy_json",
   patient_files_source: "legacy_json"
 };
+
+// V123 — Resgate Mundo Odonto: a fonte V2 correta foi identificada em produção.
+// Mantém a correção restrita à Mundo Odonto; clínicas novas ou outras clínicas
+// seguem o fluxo normal pelo mapa clinic_data_sources/RLS. A chave a33... fica
+// isolada como lista de dentistas/teste e não deve ser lida como MO.
+const CRONOS_MO_V2_CLINIC_ID = "2674f63e-36ef-4bf2-a8e8-50f317471708";
+const CRONOS_DENTIST_LIST_CLINIC_ID = "a33fb656-c148-4590-bb35-3c1cbe16d95d";
+const CRONOS_MO_OWNER_EMAIL = "mundoodonto.slzma@gmail.com";
+
+function cronosNormKey(value){
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+function cronosIsMundoOdontoContext(){
+  const emailBits = [CLOUD_CLINIC_OWNER_EMAIL, CLOUD_OWNER_EMAIL].map(x=>String(x||"").toLowerCase());
+  if(emailBits.includes(CRONOS_MO_OWNER_EMAIL)) return true;
+  const name = cronosNormKey(CLOUD_CLINIC_NAME || "");
+  return name === "mundo odonto" || name.includes("mundoodonto") || name.includes("mundo odonto");
+}
+function cronosIsMundoOdontoRow(row){
+  if(!row) return false;
+  if(String(row.clinic_id || "") === CRONOS_MO_V2_CLINIC_ID) return true;
+  const name = cronosNormKey(row.clinic_name || "");
+  return name === "mundo odonto" || name.includes("mundo odonto") || name.includes("mundoodonto");
+}
+function cronosSelectDataSourceRow(rows){
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if(!list.length) return null;
+  if(list.length === 1) return list[0];
+
+  if(cronosIsMundoOdontoContext()){
+    const official = list.find(row => String(row.clinic_id || "") === CRONOS_MO_V2_CLINIC_ID)
+      || list.find(cronosIsMundoOdontoRow);
+    if(official) return official;
+  }
+
+  const clinicName = cronosNormKey(CLOUD_CLINIC_NAME || "");
+  if(clinicName){
+    const exact = list.find(row => cronosNormKey(row.clinic_name || "") === clinicName);
+    if(exact) return exact;
+  }
+
+  // Se há mais de uma fonte e não é Mundo Odonto, não chutamos. O fallback legado
+  // é mais seguro do que apontar uma clínica nova para a gaveta errada.
+  return null;
+}
+function cronosMoV2RescueActive(){
+  return String(CLOUD_CLINIC_ID || "") === CRONOS_MO_V2_CLINIC_ID;
+}
+
 let __v2Snapshots = { contacts: new Map(), entries: new Map() };
 let __cloudSaveTimer = null;
 let __cloudSavePromise = null;
@@ -5986,6 +6042,7 @@ function resetCloudContext(){
   CLOUD_OWNER_EMAIL = "";
   CLOUD_CLINIC_OWNER_UID = null;
   CLOUD_CLINIC_OWNER_EMAIL = "";
+  CLOUD_CLINIC_NAME = "";
   CLOUD_ACCESS_KIND = "guest";
   CLOUD_MEMBER_INFO = null;
   CLOUD_LOAD_TEMPORARY_FAILURE = false;
@@ -6021,10 +6078,6 @@ function normalizeDBShape(db){
 }
 
 function isClinicSourceV2(kind){
-  // CRONOS V119 — modo resgate: contatos e leads voltam a ser lidos do clinic_state.data.
-  // Motivo: as tabelas V2 podem ficar incompletas/desalinhadas após sync entre navegadores,
-  // enquanto o clinic_state restaurado contém a base íntegra (contacts/entries/tasks/payments).
-  if(kind === "contacts" || kind === "entries") return false;
   const key = kind === "contacts" ? "contacts_source" : "leads_source";
   return String(CLOUD_DATA_SOURCES?.[key] || "legacy_json") === "tables_v2";
 }
@@ -6113,6 +6166,11 @@ function persistPendingV2Patches(db){
       const deletedBucket = kind === "contacts" ? patch.deletedContacts : patch.deletedEntries;
       const current = new Map((Array.isArray(list) ? list : []).filter(x=>x && x.id).map(x=>[String(x.id), x]));
 
+      if(cronosMoV2RescueActive() && snapshotMap && snapshotMap.size > 100 && current.size === 0){
+        console.warn(`Cronos V123: salvamento vazio de ${kind} ignorado para proteger a base recuperada da Mundo Odonto.`);
+        return;
+      }
+
       current.forEach((item, id)=>{
         const fp = v2Fingerprint(item);
         if(snapshotMap.get(id) !== fp){
@@ -6147,6 +6205,11 @@ function applyPendingV2Patches(db){
     const hasPatch = Object.keys(patch.contacts || {}).length || Object.keys(patch.entries || {}).length || Object.keys(patch.deletedContacts || {}).length || Object.keys(patch.deletedEntries || {}).length;
     const out = normalizeDBShape(db || freshDB());
     if(!hasPatch) return out;
+
+    if(cronosMoV2RescueActive() && (((out.contacts || []).length > 100) || ((out.entries || []).length > 100))){
+      console.warn("Cronos V123: patches locais V2 ignorados para Mundo Odonto recuperada, evitando reaplicar lixo/cache antigo.");
+      return out;
+    }
 
     function apply(kind, active){
       if(!active) return;
@@ -6461,6 +6524,79 @@ function leadToV2Row(entry){
     legacy_payload: entry
   };
 }
+function v2Number(value){
+  if(value === null || value === undefined || String(value).trim() === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+function v2DateString(value){
+  const raw = String(value || "").trim();
+  if(!raw) return "";
+  return raw.slice(0, 10);
+}
+function contactV2RowToPayload(row){
+  const legacy = row?.legacy_payload && typeof row.legacy_payload === "object" ? { ...row.legacy_payload } : {};
+  const phone = legacy.phone || row?.phone || "";
+  const cpf = legacy.cpf || row?.cpf || "";
+  return {
+    ...legacy,
+    id: String(legacy.id || row?.id || ""),
+    name: String(legacy.name || row?.name || ""),
+    phone: String(phone || ""),
+    phoneDigits: String(legacy.phoneDigits || row?.phone_digits || phone || "").replace(/\D+/g, ""),
+    cpf: String(cpf || ""),
+    cpfDigits: String(legacy.cpfDigits || row?.cpf_digits || cpf || "").replace(/\D+/g, ""),
+    birthDate: legacy.birthDate || v2DateString(row?.birth_date),
+    email: String(legacy.email || row?.email || ""),
+    createdAt: legacy.createdAt || row?.created_at || new Date().toISOString(),
+    updatedAt: legacy.updatedAt || row?.updated_at || row?.created_at || "",
+    firstSeenAt: legacy.firstSeenAt || row?.created_at || "",
+    lastSeenAt: legacy.lastSeenAt || row?.updated_at || row?.created_at || ""
+  };
+}
+function leadV2RowToPayload(row){
+  const legacy = row?.legacy_payload && typeof row.legacy_payload === "object" ? { ...row.legacy_payload } : {};
+  const first = legacy.firstContactAt || v2DateString(row?.first_contact_at) || v2DateString(row?.created_at);
+  const budget = v2Number(row?.budget_value);
+  const paid = v2Number(row?.paid_value);
+  const closed = v2Number(row?.closed_value);
+  const tags = Array.isArray(legacy.tags) ? legacy.tags : (Array.isArray(row?.tags) ? row.tags : []);
+  const statusLog = Array.isArray(legacy.statusLog) ? legacy.statusLog : (Array.isArray(row?.status_log) ? row.status_log : []);
+  return {
+    ...legacy,
+    id: String(legacy.id || row?.id || ""),
+    contactId: String(legacy.contactId || row?.contact_id || ""),
+    status: String(legacy.status || row?.status || ""),
+    origin: String(legacy.origin || row?.origin || ""),
+    originOther: String(legacy.originOther || row?.origin_other || ""),
+    treatment: String(legacy.treatment || row?.treatment || ""),
+    treatmentOther: String(legacy.treatmentOther || row?.treatment_other || ""),
+    priority: String(legacy.priority || row?.priority || ""),
+    firstContactAt: first,
+    apptDate: legacy.apptDate || v2DateString(row?.appointment_date),
+    apptTime: legacy.apptTime || String(row?.appointment_time || "").slice(0,5),
+    monthKey: legacy.monthKey || row?.month_key || (first ? first.slice(0,7) : cronosLocalMonthKey()),
+    city: String(legacy.city || row?.city || ""),
+    valueBudget: legacy.valueBudget ?? legacy.valueEstimated ?? budget,
+    valueEstimated: legacy.valueEstimated ?? legacy.valueBudget ?? budget,
+    valuePaid: legacy.valuePaid ?? paid,
+    valueClosed: legacy.valueClosed ?? closed,
+    notes: String(legacy.notes || row?.notes || ""),
+    tags,
+    statusLog,
+    createdAt: legacy.createdAt || row?.created_at || new Date().toISOString(),
+    lastUpdateAt: legacy.lastUpdateAt || row?.updated_at || row?.created_at || "",
+    updatedAt: legacy.updatedAt || row?.updated_at || row?.created_at || ""
+  };
+}
+function v2RowToPayload(tableName, row){
+  if(tableName === CLOUD_CONTACTS_V2_TABLE) return contactV2RowToPayload(row);
+  if(tableName === CLOUD_LEADS_V2_TABLE) return leadV2RowToPayload(row);
+  const payload = row?.legacy_payload && typeof row.legacy_payload === "object" ? { ...row.legacy_payload } : {};
+  payload.id = payload.id || row?.id;
+  return payload;
+}
+
 async function loadCurrentClinicDataSources(){
   if(isSupportMode()){
     const support = getSupportContext();
@@ -6469,20 +6605,23 @@ async function loadCurrentClinicDataSources(){
   }
   const { data, error } = await supabaseClient
     .from(CLOUD_DATA_SOURCES_TABLE)
-    .select("clinic_id, clinic_name, contacts_source, leads_source, payments_source, tasks_source, patient_files_source")
-    .limit(2);
+    .select("clinic_id, clinic_name, contacts_source, leads_source, payments_source, tasks_source, patient_files_source, updated_at")
+    .limit(20);
   if(error) throw error;
   const rows = Array.isArray(data) ? data : [];
-  if(rows.length === 1){
-    setCloudDataSourcesFromRow(rows[0], rows[0].clinic_id);
+  const chosen = cronosSelectDataSourceRow(rows);
+  if(chosen){
+    setCloudDataSourcesFromRow(chosen, chosen.clinic_id);
+    console.info("Cronos V123: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
   }else if(rows.length === 0){
     setCloudDataSourcesFromRow(null, "");
   }else{
-    console.warn("Cronos V2: mais de uma fonte acessível no app clínico. Mantendo legacy_json por segurança.", rows);
+    console.warn("Cronos V123: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
     setCloudDataSourcesFromRow(null, "");
   }
   return CLOUD_DATA_SOURCES;
 }
+
 async function fetchAllV2Payloads(tableName){
   if(!CLOUD_CLINIC_ID) throw new Error("clinic_id não resolvido para leitura V2.");
 
@@ -6492,18 +6631,19 @@ async function fetchAllV2Payloads(tableName){
 
   const pushRows = (rows)=>{
     (Array.isArray(rows) ? rows : []).forEach(row=>{
-      const payload = row?.legacy_payload && typeof row.legacy_payload === "object"
-        ? { ...row.legacy_payload }
-        : {};
-      payload.id = payload.id || row.id;
-      output.push(payload);
+      const payload = v2RowToPayload(tableName, row);
+      if(payload && payload.id) output.push(payload);
     });
   };
+
+  const selectColumns = tableName === CLOUD_CONTACTS_V2_TABLE
+    ? "id, clinic_id, name, phone, phone_digits, cpf, cpf_digits, birth_date, email, legacy_payload, created_at, updated_at"
+    : "id, clinic_id, contact_id, status, origin, origin_other, treatment, treatment_other, priority, first_contact_at, appointment_date, appointment_time, month_key, city, budget_value, paid_value, closed_value, notes, tags, status_log, legacy_payload, created_at, updated_at";
 
   const fetchPage = async (start, withCount=false)=>{
     const query = supabaseClient
       .from(tableName)
-      .select("id, legacy_payload", withCount ? { count:"exact" } : undefined)
+      .select(selectColumns, withCount ? { count:"exact" } : undefined)
       .eq("clinic_id", CLOUD_CLINIC_ID)
       .range(start, start + pageSize - 1);
 
@@ -6659,22 +6799,30 @@ async function syncManagedCollectionsToV2(db){
 
   if(isClinicSourceV2("contacts")){
     const currentMap = new Map((normalized.contacts || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
-    const changed = Array.from(currentMap.entries())
-      .filter(([id, item])=>__v2Snapshots.contacts.get(id) !== v2Fingerprint(item))
-      .map(([, item])=>contactToV2Row(item));
-    const removed = Array.from(__v2Snapshots.contacts.keys()).filter(id=>!currentMap.has(id));
-    if(changed.length) await upsertV2Rows(CLOUD_CONTACTS_V2_TABLE, changed);
-    if(removed.length) await deleteV2Ids(CLOUD_CONTACTS_V2_TABLE, removed);
+    if(cronosMoV2RescueActive() && (__v2Snapshots.contacts?.size || 0) > 100 && currentMap.size === 0){
+      console.warn("Cronos V123: sync V2 de contatos vazio bloqueado para proteger a Mundo Odonto recuperada.");
+    }else{
+      const changed = Array.from(currentMap.entries())
+        .filter(([id, item])=>__v2Snapshots.contacts.get(id) !== v2Fingerprint(item))
+        .map(([, item])=>contactToV2Row(item));
+      const removed = Array.from(__v2Snapshots.contacts.keys()).filter(id=>!currentMap.has(id));
+      if(changed.length) await upsertV2Rows(CLOUD_CONTACTS_V2_TABLE, changed);
+      if(removed.length) await deleteV2Ids(CLOUD_CONTACTS_V2_TABLE, removed);
+    }
   }
 
   if(isClinicSourceV2("entries")){
     const currentMap = new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
-    const changed = Array.from(currentMap.entries())
-      .filter(([id, item])=>__v2Snapshots.entries.get(id) !== v2Fingerprint(item))
-      .map(([, item])=>leadToV2Row(item));
-    const removed = Array.from(__v2Snapshots.entries.keys()).filter(id=>!currentMap.has(id));
-    if(changed.length) await upsertV2Rows(CLOUD_LEADS_V2_TABLE, changed);
-    if(removed.length) await deleteV2Ids(CLOUD_LEADS_V2_TABLE, removed);
+    if(cronosMoV2RescueActive() && (__v2Snapshots.entries?.size || 0) > 100 && currentMap.size === 0){
+      console.warn("Cronos V123: sync V2 de leads vazio bloqueado para proteger a Mundo Odonto recuperada.");
+    }else{
+      const changed = Array.from(currentMap.entries())
+        .filter(([id, item])=>__v2Snapshots.entries.get(id) !== v2Fingerprint(item))
+        .map(([, item])=>leadToV2Row(item));
+      const removed = Array.from(__v2Snapshots.entries.keys()).filter(id=>!currentMap.has(id));
+      if(changed.length) await upsertV2Rows(CLOUD_LEADS_V2_TABLE, changed);
+      if(removed.length) await deleteV2Ids(CLOUD_LEADS_V2_TABLE, removed);
+    }
   }
 
   captureV2Snapshots(normalized);
@@ -6921,6 +7069,7 @@ async function applyCloudAccessContext(user){
   CLOUD_OWNER_EMAIL = String(user?.email || "").trim().toLowerCase();
   CLOUD_CLINIC_OWNER_UID = ctx.ownerUid || null;
   CLOUD_CLINIC_OWNER_EMAIL = String(ctx.ownerEmail || "").trim().toLowerCase();
+  CLOUD_CLINIC_NAME = String(ctx.row?.clinic_name || "").trim();
   CLOUD_ACCESS_KIND = ctx.kind || "guest";
   CLOUD_MEMBER_INFO = ctx.member || null;
   CLOUD_ROW_ID = ctx.row?.id || null;
@@ -7275,6 +7424,7 @@ async function ensureCloudDBLoaded(force=false){
     CLOUD_OWNER_EMAIL = "";
     CLOUD_CLINIC_OWNER_UID = support.owner_uid || null;
     CLOUD_CLINIC_OWNER_EMAIL = String(support.owner_email || "").trim().toLowerCase();
+    CLOUD_CLINIC_NAME = String(support.clinic_name || "").trim();
     CLOUD_ACCESS_KIND = "support";
     CLOUD_MEMBER_INFO = null;
     return DB;
@@ -7299,37 +7449,10 @@ async function ensureCloudDBLoaded(force=false){
     if(ctx?.row?.data){
       const localBeforePull = normalizeDBShape(getLegacyLocalDB() || freshDB());
       const cloudBeforePull = normalizeDBShape(ctx.row.data);
-      // V118: rollback da estratégia agressiva da V117.
-      // A nuvem continua sendo consultada, mas o Cronos NÃO pode aceitar um pull destrutivo
-      // que venha sem leads/contatos quando o cache local ainda tem base válida.
-      // Isso evita zerar dashboard e quebrar vínculos de tarefas quando as tabelas V2 vêm vazias.
       let loaded = mergeCloudAndLocalDB(cloudBeforePull, localBeforePull);
       if(usesAnyClinicTableV2()){
         loaded = await hydrateClinicArraysFromTables(loaded);
         loaded = applyPendingV2Patches(loaded);
-
-        // V118: trava anti-pull destrutivo. Se a hidratação V2 voltar vazia,
-        // mas o cache local tinha leads/contatos, preserva o local e tenta replantar no V2.
-        try{
-          const localEntriesCount = Array.isArray(localBeforePull.entries) ? localBeforePull.entries.length : 0;
-          const loadedEntriesCount = Array.isArray(loaded.entries) ? loaded.entries.length : 0;
-          const localContactsCount = Array.isArray(localBeforePull.contacts) ? localBeforePull.contacts.length : 0;
-          const loadedContactsCount = Array.isArray(loaded.contacts) ? loaded.contacts.length : 0;
-
-          if(isClinicSourceV2("entries") && localEntriesCount > 0 && loadedEntriesCount === 0){
-            console.warn("Cronos V118: pull V2 de leads veio zerado; preservando cache local e resemeando tabela.");
-            loaded.entries = __cronosMergeArrayById(loaded.entries, localBeforePull.entries);
-            try{ await seedV2FromLegacyIfEmpty(CLOUD_LEADS_V2_TABLE, loaded.entries, leadToV2Row, "leads"); }catch(seedErr){ console.warn("Cronos V118: não consegui reseed leads V2.", seedErr); }
-          }
-
-          if(isClinicSourceV2("contacts") && localContactsCount > 0 && loadedContactsCount === 0){
-            console.warn("Cronos V118: pull V2 de contatos veio zerado; preservando cache local e resemeando tabela.");
-            loaded.contacts = __cronosMergeArrayById(loaded.contacts, localBeforePull.contacts);
-            try{ await seedV2FromLegacyIfEmpty(CLOUD_CONTACTS_V2_TABLE, loaded.contacts, contactToV2Row, "contatos"); }catch(seedErr){ console.warn("Cronos V118: não consegui reseed contatos V2.", seedErr); }
-          }
-        }catch(rescueErr){
-          console.warn("Cronos V118: guarda anti-pull destrutivo falhou.", rescueErr);
-        }
       }
       try{ loaded = applyPendingTaskPatches(loaded); }catch(e){ console.warn("Cronos autosave tarefas: patch não aplicado no carregamento.", e); }
       loaded = ensureMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "");
@@ -10459,17 +10582,11 @@ async function refreshCloudDataNow({ force=false, reason="" } = {}){
   }
   const run = (async ()=>{
     try{
-      // V117: Atualizar/abrir outra aba agora puxa a nuvem como fonte da verdade.
-      // Antes, o Cronos salvava a base local antes de puxar; um navegador com cache velho
-      // podia reenviar dados antigos e ficar diferente de outro navegador.
-      // Mantemos apenas patches/tombstones locais já registrados, sem promover cache antigo.
+      // Antes de puxar a nuvem, tenta enviar mudanças locais pendentes.
+      // Isso evita que procedimentos recém-lançados no prontuário sejam apagados por um refresh
+      // quando ainda estavam só no navegador.
       if(DB && typeof supabaseClient !== "undefined" && supabaseClient?.auth){
-        try{ persistPendingV2Patches(DB); }catch(_){ }
-        try{ persistPendingTaskPatches(DB); }catch(_){ }
-        try{
-          if(__cronosFinancialMutationPromise) await __cronosFinancialMutationPromise;
-          if(__cloudSaveRunning && __cloudSavePromise) await __cloudSavePromise;
-        }catch(err){ console.warn("Cronos sync: save em andamento não confirmou antes do pull:", err); }
+        try{ await scheduleCloudSave(true); }catch(err){ console.warn("Não foi possível enviar alterações locais antes do refresh:", err); }
       }
       await ensureCloudDBLoaded(true);
       await syncCurrentCloudActor();
@@ -10493,29 +10610,6 @@ function scheduleCloudRefresh(reason="", { force=false, delay=120 } = {}){
     refreshCloudDataNow({ force, reason }).catch(err=>console.error("Falha no refresh cloud:", err));
   }, Math.max(0, Number(delay)||0));
 }
-
-
-/* === CRONOS V117 — pull seguro ao voltar para a aba === */
-window.__CRONOS_LAST_FOCUS_PULL_AT__ = window.__CRONOS_LAST_FOCUS_PULL_AT__ || 0;
-function cronosPullCloudAndRender(reason="focus"){
-  try{
-    const actor = (typeof currentActor === "function") ? currentActor() : null;
-    if(!actor || typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
-    const now = Date.now();
-    if(now - (window.__CRONOS_LAST_FOCUS_PULL_AT__ || 0) < 8000) return;
-    window.__CRONOS_LAST_FOCUS_PULL_AT__ = now;
-    refreshCloudDataNow({ force:true, reason }).then(()=>{
-      try{ renderActiveViewOnly(getCurrentMainView()); }catch(_){ try{ renderAll(); }catch(__){} }
-      try{ updateSidebarPills(); }catch(_){ }
-    }).catch(err=>console.warn("Cronos sync: pull ao focar falhou", err));
-  }catch(_){ }
-}
-try{
-  window.addEventListener("focus", ()=>cronosPullCloudAndRender("window_focus"));
-  document.addEventListener("visibilitychange", ()=>{
-    if(document.visibilityState === "visible") cronosPullCloudAndRender("tab_visible");
-  });
-}catch(_){ }
 
 function setLoadingButtonState(btn, isLoading){
   if(!btn) return;

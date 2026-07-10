@@ -46,3 +46,15 @@ A página inicial foi redesenhada com foco comercial/institucional, removendo te
 ## Ajuste de favicon e sitemap
 - Sitemap XML removido da versão publicada.
 - Favicon adicionado na raiz do site (`/favicon.ico`, `/favicon-48x48.png`, `/favicon-192x192.png`, `/apple-touch-icon.png`) para facilitar o reconhecimento pelo Google.
+
+
+## v123 — Mundo Odonto V2 repoint seguro
+
+Base: v116 estável.
+
+Correção aplicada:
+- Mundo Odonto (`mundoodonto.slzma@gmail.com`) passa a selecionar a fonte V2 correta `2674f63e-36ef-4bf2-a8e8-50f317471708`.
+- A fonte `a33fb656-c148-4590-bb35-3c1cbe16d95d` fica isolada como Clínica Teste / Lista dentistas.
+- Contatos e leads são lidos das colunas reais de `clinic_contacts` e `clinic_leads`, com fallback para `legacy_payload`.
+- Proteções contra salvar arrays vazios por cima da base recuperada da Mundo Odonto.
+- Outras clínicas continuam usando o fluxo normal de `clinic_data_sources`/legado; não há redirecionamento global.
