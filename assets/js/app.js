@@ -6167,7 +6167,7 @@ function persistPendingV2Patches(db){
       const current = new Map((Array.isArray(list) ? list : []).filter(x=>x && x.id).map(x=>[String(x.id), x]));
 
       if(cronosMoV2RescueActive() && snapshotMap && snapshotMap.size > 100 && current.size === 0){
-        console.warn(`Cronos V125: salvamento vazio de ${kind} ignorado para proteger a base recuperada da Mundo Odonto.`);
+        console.warn(`Cronos V127: salvamento vazio de ${kind} ignorado para proteger a base recuperada da Mundo Odonto.`);
         return;
       }
 
@@ -6207,7 +6207,7 @@ function applyPendingV2Patches(db){
     if(!hasPatch) return out;
 
     if(cronosMoV2RescueActive() && (((out.contacts || []).length > 100) || ((out.entries || []).length > 100))){
-      console.warn("Cronos V125: patches locais V2 ignorados para Mundo Odonto recuperada, evitando reaplicar lixo/cache antigo.");
+      console.warn("Cronos V127: patches locais V2 ignorados para Mundo Odonto recuperada, evitando reaplicar lixo/cache antigo.");
       return out;
     }
 
@@ -6536,7 +6536,7 @@ function v2DateString(value){
 }
 
 function cronosResolvedV2MasterId(){
-  // V125: as tabelas V2 não guardam masterId legado. A UI do Cronos filtra
+  // V127: as tabelas V2 não guardam masterId legado. A UI do Cronos filtra
   // leads/contatos por actor.masterId; sem esse campo a base aparecia como zero
   // mesmo com 4974 leads carregáveis no Supabase. Para a MO resgatada, o master
   // oficial é a conta principal mundoodonto.slzma. Para outras clínicas, usamos
@@ -6551,7 +6551,7 @@ function contactV2RowToPayload(row){
   const cpf = legacy.cpf || row?.cpf || "";
   return {
     ...legacy,
-    masterId: String(legacy.masterId || cronosResolvedV2MasterId() || ""),
+    masterId: String(cronosMoV2RescueActive() ? (cronosResolvedV2MasterId() || "") : (legacy.masterId || cronosResolvedV2MasterId() || "")),
     id: String(legacy.id || row?.id || ""),
     name: String(legacy.name || row?.name || ""),
     phone: String(phone || ""),
@@ -6576,7 +6576,7 @@ function leadV2RowToPayload(row){
   const statusLog = Array.isArray(legacy.statusLog) ? legacy.statusLog : (Array.isArray(row?.status_log) ? row.status_log : []);
   return {
     ...legacy,
-    masterId: String(legacy.masterId || cronosResolvedV2MasterId() || ""),
+    masterId: String(cronosMoV2RescueActive() ? (cronosResolvedV2MasterId() || "") : (legacy.masterId || cronosResolvedV2MasterId() || "")),
     id: String(legacy.id || row?.id || ""),
     contactId: String(legacy.contactId || row?.contact_id || ""),
     status: String(legacy.status || row?.status || ""),
@@ -6608,6 +6608,74 @@ function v2RowToPayload(tableName, row){
   const payload = row?.legacy_payload && typeof row.legacy_payload === "object" ? { ...row.legacy_payload } : {};
   payload.id = payload.id || row?.id;
   return payload;
+}
+
+function cronosMoV2NormalizeHydratedCollections(db){
+  if(!db || !cronosMoV2RescueActive()) return db;
+  const masterId = String(cronosResolvedV2MasterId() || CRONOS_MO_OWNER_EMAIL || '').trim().toLowerCase();
+  if(!masterId) return db;
+
+  const contacts = Array.isArray(db.contacts) ? db.contacts : [];
+  const entries = Array.isArray(db.entries) ? db.entries : [];
+
+  db.contacts = contacts.map(contact => {
+    const copy = { ...(contact || {}) };
+    copy.id = String(copy.id || '');
+    copy.masterId = masterId;
+    copy.name = String(copy.name || copy.nome || copy.patientName || '').trim();
+    copy.phone = String(copy.phone || copy.telefone || copy.whatsapp || '').trim();
+    copy.phoneDigits = String(copy.phoneDigits || copy.phone_digits || copy.phone || '').replace(/\D+/g, '');
+    copy.cpf = String(copy.cpf || '').trim();
+    copy.cpfDigits = String(copy.cpfDigits || copy.cpf_digits || copy.cpf || '').replace(/\D+/g, '');
+    return copy;
+  }).filter(c => c.id);
+
+  const contactsById = new Map(db.contacts.map(c => [String(c.id), c]));
+  let linked = 0;
+  db.entries = entries.map(entry => {
+    const copy = { ...(entry || {}) };
+    copy.id = String(copy.id || '');
+    copy.masterId = masterId;
+    copy.contactId = String(copy.contactId || copy.contact_id || '').trim();
+    const contact = contactsById.get(String(copy.contactId || '')) || null;
+    if(contact) linked++;
+
+    // A UI antiga procura nome/telefone tanto no contact quanto no entry.
+    // Para a MO recuperada, repetimos os dados do contato no entry como redundância
+    // para impedir cards sem nome quando o mapa local de contatos ainda não foi reconstruído.
+    if(contact){
+      copy.name = String(copy.name || copy.nome || contact.name || '').trim();
+      copy.nome = String(copy.nome || copy.name || contact.name || '').trim();
+      copy.lead = String(copy.lead || copy.name || contact.name || '').trim();
+      copy.patientName = String(copy.patientName || copy.name || contact.name || '').trim();
+      copy.contactName = String(copy.contactName || copy.name || contact.name || '').trim();
+      copy.phone = String(copy.phone || copy.telefone || contact.phone || '').trim();
+      copy.telefone = String(copy.telefone || copy.phone || contact.phone || '').trim();
+      copy.whatsapp = String(copy.whatsapp || copy.phone || contact.phone || '').trim();
+      copy.contato = String(copy.contato || contact.phoneDigits || contact.phone || '').trim();
+      copy.cpf = String(copy.cpf || contact.cpf || '').trim();
+      copy.cpfDigits = String(copy.cpfDigits || contact.cpfDigits || '').replace(/\D+/g, '');
+      copy.contact = { id: contact.id, name: contact.name, phone: contact.phone, cpf: contact.cpf };
+    }
+
+    // Garante mês/ano legíveis para filtros antigos.
+    const first = String(copy.firstContactAt || copy.createdAt || copy.updatedAt || '').slice(0, 10);
+    if(!copy.monthKey && /^\d{4}-\d{2}-\d{2}$/.test(first)) copy.monthKey = first.slice(0, 7);
+    return copy;
+  }).filter(e => e.id);
+
+  try{
+    window.__CRONOS_MO_V2_DEBUG__ = {
+      version: 'v127',
+      clinicId: CLOUD_CLINIC_ID,
+      contacts: db.contacts.length,
+      entries: db.entries.length,
+      linkedContacts: linked,
+      masterId
+    };
+    console.info('Cronos V127 MO V2 debug', window.__CRONOS_MO_V2_DEBUG__);
+  }catch(_){ }
+  return db;
 }
 
 async function loadCurrentClinicDataSources(){
@@ -6652,16 +6720,16 @@ async function loadCurrentClinicDataSources(){
 
       if(!moError && moRow){
         setCloudDataSourcesFromRow({ ...forcedRow, ...moRow, contacts_source:"tables_v2", leads_source:"tables_v2" }, CRONOS_MO_V2_CLINIC_ID);
-        console.info("Cronos V125: Mundo Odonto usando fonte V2 resgatada", CRONOS_MO_V2_CLINIC_ID);
+        console.info("Cronos V127: Mundo Odonto usando fonte V2 resgatada", CRONOS_MO_V2_CLINIC_ID);
         return CLOUD_DATA_SOURCES;
       }
-      if(moError) console.warn("Cronos V125: não consegui ler clinic_data_sources da MO; usando fonte V2 forçada segura.", moError);
+      if(moError) console.warn("Cronos V127: não consegui ler clinic_data_sources da MO; usando fonte V2 forçada segura.", moError);
     }catch(err){
-      console.warn("Cronos V125: falha ao consultar mapa da MO; usando fonte V2 forçada segura.", err);
+      console.warn("Cronos V127: falha ao consultar mapa da MO; usando fonte V2 forçada segura.", err);
     }
 
     setCloudDataSourcesFromRow(forcedRow, CRONOS_MO_V2_CLINIC_ID);
-    console.info("Cronos V125: Mundo Odonto usando fonte V2 forçada", CRONOS_MO_V2_CLINIC_ID);
+    console.info("Cronos V127: Mundo Odonto usando fonte V2 forçada", CRONOS_MO_V2_CLINIC_ID);
     return CLOUD_DATA_SOURCES;
   }
 
@@ -6674,11 +6742,11 @@ async function loadCurrentClinicDataSources(){
   const chosen = cronosSelectDataSourceRow(rows);
   if(chosen){
     setCloudDataSourcesFromRow(chosen, chosen.clinic_id);
-    console.info("Cronos V125: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
+    console.info("Cronos V127: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
   }else if(rows.length === 0){
     setCloudDataSourcesFromRow(null, "");
   }else{
-    console.warn("Cronos V125: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
+    console.warn("Cronos V127: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
     setCloudDataSourcesFromRow(null, "");
   }
   return CLOUD_DATA_SOURCES;
@@ -6813,6 +6881,7 @@ async function hydrateClinicArraysFromTables(db){
     await Promise.all(jobs);
   }
 
+  cronosMoV2NormalizeHydratedCollections(loaded);
   captureV2Snapshots(loaded);
   return loaded;
 }
@@ -6862,7 +6931,7 @@ async function syncManagedCollectionsToV2(db){
   if(isClinicSourceV2("contacts")){
     const currentMap = new Map((normalized.contacts || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
     if(cronosMoV2RescueActive() && (__v2Snapshots.contacts?.size || 0) > 100 && currentMap.size === 0){
-      console.warn("Cronos V125: sync V2 de contatos vazio bloqueado para proteger a Mundo Odonto recuperada.");
+      console.warn("Cronos V127: sync V2 de contatos vazio bloqueado para proteger a Mundo Odonto recuperada.");
     }else{
       const changed = Array.from(currentMap.entries())
         .filter(([id, item])=>__v2Snapshots.contacts.get(id) !== v2Fingerprint(item))
@@ -6876,7 +6945,7 @@ async function syncManagedCollectionsToV2(db){
   if(isClinicSourceV2("entries")){
     const currentMap = new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
     if(cronosMoV2RescueActive() && (__v2Snapshots.entries?.size || 0) > 100 && currentMap.size === 0){
-      console.warn("Cronos V125: sync V2 de leads vazio bloqueado para proteger a Mundo Odonto recuperada.");
+      console.warn("Cronos V127: sync V2 de leads vazio bloqueado para proteger a Mundo Odonto recuperada.");
     }else{
       const changed = Array.from(currentMap.entries())
         .filter(([id, item])=>__v2Snapshots.entries.get(id) !== v2Fingerprint(item))
@@ -15371,6 +15440,13 @@ function cronosGetCurrentVisibleView(){
 function cronosBootFromLocalCacheAfterF5(session){
   try{
     if(isSupportMode()) return false;
+    // V127: para a Mundo Odonto resgatada, não iniciamos a tela por cache local.
+    // O cache pode estar sem as coleções V2 e faz a UI parecer zerada antes da nuvem hidratar.
+    const sessionEmail = String(session?.user?.email || "").trim().toLowerCase();
+    if(sessionEmail === CRONOS_MO_OWNER_EMAIL || sessionEmail === "mundoodonto.admslz@gmail.com"){
+      console.info("Cronos V127: fast resume local desativado para Mundo Odonto; carregando direto da nuvem V2.");
+      return false;
+    }
 
     const local = getLegacyLocalDB();
     if(!cronosHasUsableLocalCache(local)) return false;

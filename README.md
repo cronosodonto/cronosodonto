@@ -1,16 +1,13 @@
-# Cronos Odonto v125 — Mundo Odonto V2 masterId fix
+# Cronos Odonto v127 — Mundo Odonto V2 join contatos + cache seguro
 
-Base: v124/v116 estável.
+Base: v126/v116.
 
-Correção principal:
-- Mantém a Mundo Odonto apontada para clinic_id 2674f63e-36ef-4bf2-a8e8-50f317471708.
-- Corrige a hidratação V2 para atribuir `masterId` aos contatos/leads carregados de `clinic_contacts` e `clinic_leads`.
-- Isso evita que a interface filtre todos os leads como se fossem de outro master e mostre zero.
-- Não importa CSV e não altera dados do Supabase.
+Correções:
+- Desativa fast-resume/local cache para logins Mundo Odonto, forçando leitura real da nuvem V2.
+- Mantém Mundo Odonto na chave V2 recuperada `2674f63e-36ef-4bf2-a8e8-50f317471708`.
+- Reforça a ligação `clinic_leads.contact_id -> clinic_contacts.id`.
+- Copia nome/telefone do contato para o lead em memória, evitando cards sem nome/telefone.
+- Mantém outras clínicas no fluxo normal.
+- Não importa CSV e não altera banco.
 
-Teste recomendado:
-1. Subir conteúdo do ZIP na raiz do GitHub Pages.
-2. Abrir aba anônima em /app/.
-3. Login Mundo Odonto.
-4. Mês = Todos.
-5. Buscar Rostivan.
+Debug no console: `window.__CRONOS_MO_V2_DEBUG__`.
