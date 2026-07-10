@@ -6167,7 +6167,7 @@ function persistPendingV2Patches(db){
       const current = new Map((Array.isArray(list) ? list : []).filter(x=>x && x.id).map(x=>[String(x.id), x]));
 
       if(cronosMoV2RescueActive() && snapshotMap && snapshotMap.size > 100 && current.size === 0){
-        console.warn(`Cronos V124: salvamento vazio de ${kind} ignorado para proteger a base recuperada da Mundo Odonto.`);
+        console.warn(`Cronos V125: salvamento vazio de ${kind} ignorado para proteger a base recuperada da Mundo Odonto.`);
         return;
       }
 
@@ -6207,7 +6207,7 @@ function applyPendingV2Patches(db){
     if(!hasPatch) return out;
 
     if(cronosMoV2RescueActive() && (((out.contacts || []).length > 100) || ((out.entries || []).length > 100))){
-      console.warn("Cronos V124: patches locais V2 ignorados para Mundo Odonto recuperada, evitando reaplicar lixo/cache antigo.");
+      console.warn("Cronos V125: patches locais V2 ignorados para Mundo Odonto recuperada, evitando reaplicar lixo/cache antigo.");
       return out;
     }
 
@@ -6534,12 +6534,24 @@ function v2DateString(value){
   if(!raw) return "";
   return raw.slice(0, 10);
 }
+
+function cronosResolvedV2MasterId(){
+  // V125: as tabelas V2 não guardam masterId legado. A UI do Cronos filtra
+  // leads/contatos por actor.masterId; sem esse campo a base aparecia como zero
+  // mesmo com 4974 leads carregáveis no Supabase. Para a MO resgatada, o master
+  // oficial é a conta principal mundoodonto.slzma. Para outras clínicas, usamos
+  // o owner resolvido pelo contexto da nuvem.
+  if(cronosMoV2RescueActive()) return CRONOS_MO_OWNER_EMAIL;
+  return String(CLOUD_CLINIC_OWNER_EMAIL || CLOUD_OWNER_EMAIL || CLOUD_CLINIC_ID || '').trim().toLowerCase();
+}
+
 function contactV2RowToPayload(row){
   const legacy = row?.legacy_payload && typeof row.legacy_payload === "object" ? { ...row.legacy_payload } : {};
   const phone = legacy.phone || row?.phone || "";
   const cpf = legacy.cpf || row?.cpf || "";
   return {
     ...legacy,
+    masterId: String(legacy.masterId || cronosResolvedV2MasterId() || ""),
     id: String(legacy.id || row?.id || ""),
     name: String(legacy.name || row?.name || ""),
     phone: String(phone || ""),
@@ -6564,6 +6576,7 @@ function leadV2RowToPayload(row){
   const statusLog = Array.isArray(legacy.statusLog) ? legacy.statusLog : (Array.isArray(row?.status_log) ? row.status_log : []);
   return {
     ...legacy,
+    masterId: String(legacy.masterId || cronosResolvedV2MasterId() || ""),
     id: String(legacy.id || row?.id || ""),
     contactId: String(legacy.contactId || row?.contact_id || ""),
     status: String(legacy.status || row?.status || ""),
@@ -6639,16 +6652,16 @@ async function loadCurrentClinicDataSources(){
 
       if(!moError && moRow){
         setCloudDataSourcesFromRow({ ...forcedRow, ...moRow, contacts_source:"tables_v2", leads_source:"tables_v2" }, CRONOS_MO_V2_CLINIC_ID);
-        console.info("Cronos V124: Mundo Odonto usando fonte V2 resgatada", CRONOS_MO_V2_CLINIC_ID);
+        console.info("Cronos V125: Mundo Odonto usando fonte V2 resgatada", CRONOS_MO_V2_CLINIC_ID);
         return CLOUD_DATA_SOURCES;
       }
-      if(moError) console.warn("Cronos V124: não consegui ler clinic_data_sources da MO; usando fonte V2 forçada segura.", moError);
+      if(moError) console.warn("Cronos V125: não consegui ler clinic_data_sources da MO; usando fonte V2 forçada segura.", moError);
     }catch(err){
-      console.warn("Cronos V124: falha ao consultar mapa da MO; usando fonte V2 forçada segura.", err);
+      console.warn("Cronos V125: falha ao consultar mapa da MO; usando fonte V2 forçada segura.", err);
     }
 
     setCloudDataSourcesFromRow(forcedRow, CRONOS_MO_V2_CLINIC_ID);
-    console.info("Cronos V124: Mundo Odonto usando fonte V2 forçada", CRONOS_MO_V2_CLINIC_ID);
+    console.info("Cronos V125: Mundo Odonto usando fonte V2 forçada", CRONOS_MO_V2_CLINIC_ID);
     return CLOUD_DATA_SOURCES;
   }
 
@@ -6661,11 +6674,11 @@ async function loadCurrentClinicDataSources(){
   const chosen = cronosSelectDataSourceRow(rows);
   if(chosen){
     setCloudDataSourcesFromRow(chosen, chosen.clinic_id);
-    console.info("Cronos V124: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
+    console.info("Cronos V125: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
   }else if(rows.length === 0){
     setCloudDataSourcesFromRow(null, "");
   }else{
-    console.warn("Cronos V124: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
+    console.warn("Cronos V125: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
     setCloudDataSourcesFromRow(null, "");
   }
   return CLOUD_DATA_SOURCES;
@@ -6849,7 +6862,7 @@ async function syncManagedCollectionsToV2(db){
   if(isClinicSourceV2("contacts")){
     const currentMap = new Map((normalized.contacts || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
     if(cronosMoV2RescueActive() && (__v2Snapshots.contacts?.size || 0) > 100 && currentMap.size === 0){
-      console.warn("Cronos V124: sync V2 de contatos vazio bloqueado para proteger a Mundo Odonto recuperada.");
+      console.warn("Cronos V125: sync V2 de contatos vazio bloqueado para proteger a Mundo Odonto recuperada.");
     }else{
       const changed = Array.from(currentMap.entries())
         .filter(([id, item])=>__v2Snapshots.contacts.get(id) !== v2Fingerprint(item))
@@ -6863,7 +6876,7 @@ async function syncManagedCollectionsToV2(db){
   if(isClinicSourceV2("entries")){
     const currentMap = new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
     if(cronosMoV2RescueActive() && (__v2Snapshots.entries?.size || 0) > 100 && currentMap.size === 0){
-      console.warn("Cronos V124: sync V2 de leads vazio bloqueado para proteger a Mundo Odonto recuperada.");
+      console.warn("Cronos V125: sync V2 de leads vazio bloqueado para proteger a Mundo Odonto recuperada.");
     }else{
       const changed = Array.from(currentMap.entries())
         .filter(([id, item])=>__v2Snapshots.entries.get(id) !== v2Fingerprint(item))
