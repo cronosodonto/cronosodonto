@@ -6167,7 +6167,7 @@ function persistPendingV2Patches(db){
       const current = new Map((Array.isArray(list) ? list : []).filter(x=>x && x.id).map(x=>[String(x.id), x]));
 
       if(cronosMoV2RescueActive() && snapshotMap && snapshotMap.size > 100 && current.size === 0){
-        console.warn(`Cronos V123: salvamento vazio de ${kind} ignorado para proteger a base recuperada da Mundo Odonto.`);
+        console.warn(`Cronos V124: salvamento vazio de ${kind} ignorado para proteger a base recuperada da Mundo Odonto.`);
         return;
       }
 
@@ -6207,7 +6207,7 @@ function applyPendingV2Patches(db){
     if(!hasPatch) return out;
 
     if(cronosMoV2RescueActive() && (((out.contacts || []).length > 100) || ((out.entries || []).length > 100))){
-      console.warn("Cronos V123: patches locais V2 ignorados para Mundo Odonto recuperada, evitando reaplicar lixo/cache antigo.");
+      console.warn("Cronos V124: patches locais V2 ignorados para Mundo Odonto recuperada, evitando reaplicar lixo/cache antigo.");
       return out;
     }
 
@@ -6603,6 +6603,55 @@ async function loadCurrentClinicDataSources(){
     setCloudDataSourcesFromRow(support?.data_sources || null, support?.clinic_id || "");
     return CLOUD_DATA_SOURCES;
   }
+
+  // V124 — correção final Mundo Odonto:
+  // depois do resgate, a conta mundoodonto.slzma foi vinculada ao clinic_id 2674...
+  // e o mapa em clinic_data_sources também foi corrigido. Ainda assim, algumas abas
+  // podiam cair no fallback legado antes de hidratar V2. Para a MO, a fonte correta
+  // agora é explícita e restrita a essa clínica. Outras clínicas seguem o mapa normal.
+  let currentUserEmail = "";
+  try{
+    const user = await getCurrentSupabaseUser();
+    currentUserEmail = String(user?.email || "").trim().toLowerCase();
+  }catch(_){ }
+
+  const isMundoOdontoLogin = currentUserEmail === CRONOS_MO_OWNER_EMAIL
+    || currentUserEmail === "mundoodonto.admslz@gmail.com"
+    || cronosIsMundoOdontoContext();
+
+  if(isMundoOdontoLogin){
+    const forcedRow = {
+      clinic_id: CRONOS_MO_V2_CLINIC_ID,
+      clinic_name: "Mundo Odonto",
+      contacts_source: "tables_v2",
+      leads_source: "tables_v2",
+      payments_source: "legacy_json",
+      tasks_source: "legacy_json",
+      patient_files_source: "legacy_json"
+    };
+
+    try{
+      const { data: moRow, error: moError } = await supabaseClient
+        .from(CLOUD_DATA_SOURCES_TABLE)
+        .select("clinic_id, clinic_name, contacts_source, leads_source, payments_source, tasks_source, patient_files_source, updated_at")
+        .eq("clinic_id", CRONOS_MO_V2_CLINIC_ID)
+        .maybeSingle();
+
+      if(!moError && moRow){
+        setCloudDataSourcesFromRow({ ...forcedRow, ...moRow, contacts_source:"tables_v2", leads_source:"tables_v2" }, CRONOS_MO_V2_CLINIC_ID);
+        console.info("Cronos V124: Mundo Odonto usando fonte V2 resgatada", CRONOS_MO_V2_CLINIC_ID);
+        return CLOUD_DATA_SOURCES;
+      }
+      if(moError) console.warn("Cronos V124: não consegui ler clinic_data_sources da MO; usando fonte V2 forçada segura.", moError);
+    }catch(err){
+      console.warn("Cronos V124: falha ao consultar mapa da MO; usando fonte V2 forçada segura.", err);
+    }
+
+    setCloudDataSourcesFromRow(forcedRow, CRONOS_MO_V2_CLINIC_ID);
+    console.info("Cronos V124: Mundo Odonto usando fonte V2 forçada", CRONOS_MO_V2_CLINIC_ID);
+    return CLOUD_DATA_SOURCES;
+  }
+
   const { data, error } = await supabaseClient
     .from(CLOUD_DATA_SOURCES_TABLE)
     .select("clinic_id, clinic_name, contacts_source, leads_source, payments_source, tasks_source, patient_files_source, updated_at")
@@ -6612,11 +6661,11 @@ async function loadCurrentClinicDataSources(){
   const chosen = cronosSelectDataSourceRow(rows);
   if(chosen){
     setCloudDataSourcesFromRow(chosen, chosen.clinic_id);
-    console.info("Cronos V123: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
+    console.info("Cronos V124: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
   }else if(rows.length === 0){
     setCloudDataSourcesFromRow(null, "");
   }else{
-    console.warn("Cronos V123: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
+    console.warn("Cronos V124: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
     setCloudDataSourcesFromRow(null, "");
   }
   return CLOUD_DATA_SOURCES;
@@ -6800,7 +6849,7 @@ async function syncManagedCollectionsToV2(db){
   if(isClinicSourceV2("contacts")){
     const currentMap = new Map((normalized.contacts || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
     if(cronosMoV2RescueActive() && (__v2Snapshots.contacts?.size || 0) > 100 && currentMap.size === 0){
-      console.warn("Cronos V123: sync V2 de contatos vazio bloqueado para proteger a Mundo Odonto recuperada.");
+      console.warn("Cronos V124: sync V2 de contatos vazio bloqueado para proteger a Mundo Odonto recuperada.");
     }else{
       const changed = Array.from(currentMap.entries())
         .filter(([id, item])=>__v2Snapshots.contacts.get(id) !== v2Fingerprint(item))
@@ -6814,7 +6863,7 @@ async function syncManagedCollectionsToV2(db){
   if(isClinicSourceV2("entries")){
     const currentMap = new Map((normalized.entries || []).filter(x=>x?.id).map(x=>[String(x.id), x]));
     if(cronosMoV2RescueActive() && (__v2Snapshots.entries?.size || 0) > 100 && currentMap.size === 0){
-      console.warn("Cronos V123: sync V2 de leads vazio bloqueado para proteger a Mundo Odonto recuperada.");
+      console.warn("Cronos V124: sync V2 de leads vazio bloqueado para proteger a Mundo Odonto recuperada.");
     }else{
       const changed = Array.from(currentMap.entries())
         .filter(([id, item])=>__v2Snapshots.entries.get(id) !== v2Fingerprint(item))
