@@ -112,7 +112,7 @@
       return true;
     }catch(error){
       console.error("Cronos V4: não foi possível preservar a fila local.", error);
-      notify("Falha no cofre local", "A alteração ainda será enviada à nuvem, mas o navegador não conseguiu criar a cópia temporária.");
+      notify("Não foi possível preparar o salvamento", "O navegador não conseguiu criar a cópia temporária. Tente novamente.");
       return false;
     }
   }
@@ -216,16 +216,20 @@
       node.style.color = palette[1];
       node.querySelector("[data-v4-dot]").style.background = palette[2];
       node.querySelector("[data-v4-text]").textContent = String(text || "");
+      // O indicador da persistência comunica somente estados que exigem espera
+      // ou atenção. A confirmação final da ação já é exibida pelo toast do módulo.
+      // Mostrar os dois no mesmo canto gerava avisos duplicados e sobrepostos.
+      if(kind === "saved"){
+        node.querySelector("[data-v4-text]").textContent = String(text || "Salvo");
+        node.style.opacity = "0";
+        node.style.transform = "translateY(6px)";
+        node.style.display = "none";
+        return;
+      }
+
       node.style.display = "flex";
       node.style.opacity = "1";
       node.style.transform = "translateY(0)";
-      if(kind === "saved"){
-        indicatorHideTimer = setTimeout(()=>{
-          node.style.opacity = "0";
-          node.style.transform = "translateY(6px)";
-          setTimeout(()=>{ node.style.display = "none"; }, 220);
-        }, 1600);
-      }
     }catch(_){ }
   }
 
@@ -465,7 +469,7 @@
     if(state.processing || state.blocked || !state.enabled || !state.queue.length) return;
     state.processing = true;
     emit("cronos:persistence-saving", { count:state.queue.length });
-    updateIndicator("saving", "Salvando no servidor...");
+    updateIndicator("saving", "Salvando...");
 
     try{
       while(state.queue.length && !state.blocked){
@@ -478,7 +482,7 @@
           persistQueue();
           resolveWaiter(mutation.operationId, true);
           emit("cronos:persistence-saved", { operationId:mutation.operationId, result });
-          updateIndicator("saved", "Salvo no servidor");
+          updateIndicator("saved", "Salvo");
         }catch(error){
           state.lastError = error;
           const conflict = isConflictError(error);
@@ -507,7 +511,7 @@
           const wrapped = new CronosPersistenceError(
             conflict
               ? "Este registro foi alterado em outro computador. Recarregue antes de salvar novamente."
-              : "A nuvem não confirmou a alteração.",
+              : "Não foi possível salvar a alteração.",
             {
               code:conflict ? "VERSION_CONFLICT" : (error?.code || "RPC_ERROR"),
               cause:error,
@@ -518,7 +522,7 @@
           );
           state.lastError = wrapped;
           emit(conflict ? "cronos:persistence-conflict" : "cronos:persistence-error", { error:wrapped, mutation });
-          updateIndicator(conflict ? "error" : "pending", conflict ? "Conflito: recarregue a página" : "Pendente de sincronização");
+          updateIndicator(conflict ? "error" : "pending", conflict ? "Conflito: recarregue a página" : "Não foi possível salvar");
           notify(
             conflict ? "Alteração concorrente detectada" : "Alteração ainda não confirmada",
             conflict
@@ -540,7 +544,7 @@
       throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
     }
     if(state.blocked){
-      notify("Sincronização bloqueada", "Recarregue a página antes de fazer outra alteração. Nenhum dado antigo será sobrescrito.");
+      notify("Alteração bloqueada", "Recarregue a página antes de fazer outra alteração. Nenhum dado antigo será sobrescrito.");
       return false;
     }
 
@@ -583,7 +587,7 @@
     }
     if(state.processing || state.queue.length || state.blocked){
       throw new CronosPersistenceError(
-        "Existe outra alteração aguardando confirmação. Espere o salvamento terminar antes de excluir.",
+        "Existe outra alteração sendo salva. Aguarde antes de excluir.",
         { code:"PENDING_MUTATION" }
       );
     }
@@ -604,7 +608,7 @@
     }
 
     const operationId = String(options.operationId || newOperationId());
-    updateIndicator("saving", "Excluindo Lead e vínculos...");
+    updateIndicator("saving", "Excluindo...");
     emit("cronos:persistence-saving", { operationId, command:"delete_lead_cascade" });
 
     try{
@@ -630,7 +634,7 @@
         command:"delete_lead_cascade",
         result
       });
-      updateIndicator("saved", "Lead e vínculos excluídos");
+      updateIndicator("saved", "Excluído");
 
       return {
         ...(result && typeof result === "object" ? result : {}),
@@ -643,7 +647,7 @@
       const wrapped = new CronosPersistenceError(
         conflict
           ? "Este Lead foi alterado em outro computador. Recarregue antes de excluir."
-          : String(error?.message || "A exclusão não foi confirmada pelo servidor."),
+          : String(error?.message || "Não foi possível excluir."),
         {
           code:conflict ? "VERSION_CONFLICT" : (error?.code || "DELETE_CASCADE_ERROR"),
           cause:error,

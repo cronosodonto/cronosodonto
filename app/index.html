@@ -37,6 +37,62 @@ body.light #view-leads .leadsPaginationInfo,
 body.light #view-leads .leadsPageSize,
 body.light #view-leads .leadsPageTotal{color:#475569!important;}
 </style>
+
+<style id="cronos-v412-prontuario-light-fix">
+/* V4.1.2 — contraste correto do prontuário no modo claro */
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.active .toothLine,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.active .toothLine,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.active .toothLine{
+  fill:#1677ff!important;
+  opacity:1!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.paid .toothLine,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.plan .toothLine,
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.closed .toothLine,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.paid .toothLine,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.plan .toothLine,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.closed .toothLine,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.paid .toothLine,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.plan .toothLine,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.closed .toothLine{
+  fill:#d79a00!important;
+  opacity:1!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.done .toothLine,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.done .toothLine,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.done .toothLine{
+  fill:#16a34a!important;
+  opacity:1!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.absent .toothLine,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.absent .toothLine,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .odontoStatusLayer .odontogramaTooth.absent .toothLine{
+  fill:#e11d48!important;
+  opacity:1!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid b,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid b,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid b{
+  color:#07152f!important;
+  -webkit-text-fill-color:#07152f!important;
+  opacity:1!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid span,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid span,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .panelMiniGrid span{
+  color:#4b5b74!important;
+  -webkit-text-fill-color:#4b5b74!important;
+}
+html.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
+body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
+:root.light body.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip{
+  color:#0f172a!important;
+  -webkit-text-fill-color:#0f172a!important;
+  background:#eef6ff!important;
+  border-color:rgba(37,99,235,.20)!important;
+}
+</style>
+
 </head>
 
 
@@ -1242,8 +1298,8 @@ body.light #view-leads .leadsPageTotal{color:#475569!important;}
 
 
 
-<script src="../assets/js/core/cronos-repository.js?build=v4-1-cascade-20260715"></script>
-<script src="../assets/js/app.js?build=v130-exclusao-cascata-20260715"></script>
+<script src="../assets/js/core/cronos-repository.js?build=v4-1-2-ui-prontuario-20260715"></script>
+<script src="../assets/js/app.js?build=v131-ui-prontuario-light-20260715"></script>
 <script src="../assets/js/hoje_no_cronos.js?build=v82-hoje-conteudo-atualizando"></script>
 <script src="../assets/js/cronos_fluxos.js?build=public"></script>
 <script src="../assets/js/simulador_credito.js?build=v82-hoje-conteudo-atualizando"></script>

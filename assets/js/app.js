@@ -1967,8 +1967,8 @@ function setFinancialPaymentUIState(payment, state=""){
 }
 function financialMutationBusyText(){
   return __cronosFinancialMutationLabel
-    ? `Já existe ${__cronosFinancialMutationLabel} sendo confirmada na nuvem.`
-    : "Já existe uma alteração financeira sendo confirmada na nuvem.";
+    ? `Já existe ${__cronosFinancialMutationLabel} sendo salva.`
+    : "Já existe uma alteração financeira sendo salva.";
 }
 function startFinancialMutationWait(label="uma alteração financeira"){
   __cronosFinancialMutationBusy = true;
@@ -2099,7 +2099,7 @@ async function commitFinancialMutationCloud(db, entry){
     });
     if(error) throw error;
     if(!data || data.ok !== true){
-      throw new Error(data?.error || "A nuvem não confirmou a alteração financeira.");
+      throw new Error(data?.error || "Não foi possível salvar a alteração financeira.");
     }
 
     // Daqui em diante o banco JÁ confirmou. Qualquer falha de cache/render local
@@ -2129,7 +2129,7 @@ async function saveConfirmedFinancialChange(db, entry, before, labels={}){
   const finishMutation = startFinancialMutationWait(labels.operationLabel || "uma alteração financeira");
   toast(
     labels.pendingTitle || "Salvando alteração...",
-    labels.pendingMessage || "Aguarde a confirmação da nuvem antes de atualizar a página."
+    labels.pendingMessage || "Aguarde a conclusão antes de atualizar a página."
   );
 
   let cloudOk = false;
@@ -2145,7 +2145,7 @@ async function saveConfirmedFinancialChange(db, entry, before, labels={}){
     restoreCronosCriticalSnapshot(before);
     toast(
       labels.failTitle || "Alteração não registrada",
-      labels.failMessage || "A nuvem não confirmou a operação. O estado anterior foi restaurado."
+      labels.failMessage || "Não foi possível concluir. O estado anterior foi restaurado."
     );
     return false;
   }
@@ -2425,7 +2425,7 @@ async function saveFichaMutation(db, entry, options={}){
       console.error("Falha ao salvar prontuário na persistência V4:", error);
     }
     if(!options.silent){
-      toast("Prontuário não salvo", "A nuvem não confirmou esta alteração. O estado anterior será preservado.");
+      toast("Prontuário não salvo", "Não foi possível salvar esta alteração. O estado anterior será preservado.");
     }
     return false;
   }
@@ -2445,7 +2445,7 @@ async function saveFichaMutation(db, entry, options={}){
     }catch(error){
       console.error("Falha ao salvar ficha em tables_v2:", error);
       if(!options.silent){
-        toast("Prontuário não salvo", "A nuvem não confirmou esta alteração. Tente novamente antes de sair do prontuário.");
+        toast("Prontuário não salvo", "Não foi possível salvar esta alteração. Tente novamente antes de sair do prontuário.");
       }
       return false;
     }
@@ -2456,7 +2456,7 @@ async function saveFichaMutation(db, entry, options={}){
 
 async function confirmFichaMutation(db, entry, before, successTitle="", successMessage=""){
   const revision = ++__cronosFichaMutationRevision;
-  toast("Salvando ficha...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
+  toast("Salvando...", "Aguarde a conclusão antes de atualizar a página.");
   const ok = await saveFichaMutation(db, entry, { silent:true });
   if(!ok){
     // Se houve outra mudança depois desta, não voltamos a ficha inteira para
@@ -2464,7 +2464,7 @@ async function confirmFichaMutation(db, entry, before, successTitle="", successM
     if(revision === __cronosFichaMutationRevision){
       restoreCronosCriticalSnapshot(before);
       try{ window.__cronosRenderFichaApp?.(); }catch(_){ }
-      toast("Alteração não salva", "A nuvem não confirmou. O prontuário voltou ao estado anterior.");
+      toast("Alteração não salva", "Não foi possível salvar. O prontuário voltou ao estado anterior.");
     }else{
       toast("Uma alteração anterior não foi confirmada", "Mantive a edição mais recente. Aguarde o salvamento e confira antes de atualizar.");
     }
@@ -2798,7 +2798,7 @@ function openCreditAnticipationModal(){
     confirmBtn.dataset.busy = "1";
     confirmBtn.disabled = true;
     confirmBtn.textContent = "Processando...";
-    toast("Processando antecipação", "Aguarde a confirmação da baixa e da sincronização na nuvem.");
+    toast("Processando antecipação", "Aguarde a conclusão da baixa.");
 
     try{
       await applyCreditAnticipation(db, selected, date, feePercent);
@@ -2961,7 +2961,7 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
   if(cloudOk){
     toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
   }else{
-    toast("Antecipação pendente", "A nuvem ainda não confirmou. O estado anterior foi mantido até a confirmação.");
+    toast("Antecipação pendente", "Não foi possível concluir. O estado anterior foi mantido.");
   }
   renderAll();
 }
@@ -2992,7 +2992,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
   // O usuário vê que a ação está em andamento desde o primeiro segundo,
   // inclusive enquanto uma gravação anterior termina.
   showFinancialMutationPreview(db);
-  toast("Salvando baixa...", "Confirmando a operação na nuvem.");
+  toast("Salvando baixa...", "Aguarde a conclusão.");
 
   let before = cloneCronosCriticalSnapshot(db);
   let commitDB = null;
@@ -3108,11 +3108,11 @@ async function payFinancialPayment(entryId, planId, paymentId){
   }else if(cloudOk === null){
     // Não permite nova baixa como se nada tivesse sido enviado.
     // A operação demorou além do normal; uma recarga posterior trará a confirmação real.
-    toast("Baixa não confirmada", "A operação não recebeu confirmação da nuvem.");
+    toast("Baixa não confirmada", "Não foi possível concluir a operação.");
     refreshFinancialUIAfterPayment();
   }else{
     restoreCronosCriticalSnapshot(before);
-    toast("Baixa não registrada", "A nuvem não confirmou a operação. O pagamento continua pendente; tente novamente.");
+    toast("Baixa não registrada", "Não foi possível registrar a baixa. O pagamento continua pendente; tente novamente.");
   }
 }
 
@@ -3150,7 +3150,7 @@ async function undoFinancialPayment(entryId, planId, paymentId){
   setFinancialPaymentUIState(initialPayment, "undo");
   const finishMutation = startFinancialMutationWait("uma baixa sendo desfeita");
   showFinancialMutationPreview(db);
-  toast("Desfazendo baixa...", "Confirmando a operação na nuvem.");
+  toast("Desfazendo baixa...", "Aguarde a conclusão.");
 
   const before = cloneCronosCriticalSnapshot(db);
   const commitDB = cloneCronosCriticalSnapshot(db);
@@ -3202,11 +3202,11 @@ async function undoFinancialPayment(entryId, planId, paymentId){
     refreshFinancialUIAfterPayment();
     toast("Baixa desfeita", "Pagamento voltou para pendente.");
   }else if(cloudOk === null){
-    toast("Desfazimento não confirmado", "A operação não recebeu confirmação da nuvem.");
+    toast("Desfazimento não confirmado", "Não foi possível concluir a operação.");
     refreshFinancialUIAfterPayment();
   }else{
     restoreCronosCriticalSnapshot(before);
-    toast("Baixa não desfeita", "A nuvem não confirmou. O pagamento permanece baixado.");
+    toast("Baixa não desfeita", "Não foi possível desfazer. O pagamento permanece baixado.");
   }
 }
 
@@ -3250,17 +3250,17 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
   await saveConfirmedFinancialChange(db, entry, before, {
     operationLabel: "uma data sendo transferida",
     pendingTitle: "Transferindo data...",
-    pendingMessage: "Aguarde a confirmação da nuvem.",
+    pendingMessage: "Aguarde a conclusão.",
     consoleLabel: "Falha ao salvar transferência financeira:",
     failTitle: "Data não transferida",
-    failMessage: "A nuvem não confirmou. A data anterior foi mantida.",
+    failMessage: "Não foi possível salvar. A data anterior foi mantida.",
     successTitle: "Data transferida ✅",
     successMessage: `Caixa: ${fmtBR(next)}`
   });
 }
 async function deleteFinancialPayment(entryId, planId, paymentId){
   if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
-  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva na nuvem.");
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva.");
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
   if(!confirm("Excluir este pagamento/parcela?")) return;
@@ -3286,10 +3286,10 @@ async function deleteFinancialPayment(entryId, planId, paymentId){
 
   await saveConfirmedFinancialChange(db, entry, snapshot, {
     pendingTitle: "Excluindo pagamento...",
-    pendingMessage: "Aguarde a confirmação da nuvem.",
+    pendingMessage: "Aguarde a conclusão.",
     consoleLabel: "Falha ao salvar exclusão de pagamento:",
     failTitle: "Pagamento não removido",
-    failMessage: "A nuvem não confirmou. A parcela foi restaurada.",
+    failMessage: "Não foi possível excluir. A parcela foi restaurada.",
     successTitle: "Pagamento removido",
     successMessage: ""
   });
@@ -3796,7 +3796,7 @@ window.CRONOS_NEW_FIN_UI = {
   },
   async createPlan(){
     if(!canOperateRecebimentos(currentActor())) return blockedRecebimentosAction();
-    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva.");
     const actor = currentActor();
     const db = loadDB();
     const st = window.__newFinancialInstallmentState || {};
@@ -3840,10 +3840,10 @@ window.CRONOS_NEW_FIN_UI = {
     const ok = await saveConfirmedFinancialChange(db, entry, before, {
       operationLabel: "um recebimento sendo salvo",
       pendingTitle: "Salvando recebimento...",
-      pendingMessage: "Aguarde a confirmação da nuvem antes de adicionar parcelas.",
+      pendingMessage: "Aguarde a conclusão antes de adicionar parcelas.",
       consoleLabel: "Falha ao criar recebimento:",
       failTitle: "Recebimento não criado",
-      failMessage: "A nuvem não confirmou. Nenhum recebimento foi gravado.",
+      failMessage: "Não foi possível salvar. Nenhum recebimento foi gravado.",
       successTitle: "Recebimento criado ✅",
       successMessage: `${plan.title} • ${moneyBR(plan.amount)}`
     });
@@ -3860,7 +3860,7 @@ window.CRONOS_NEW_FIN_UI = {
     renderNewFinancialInstallmentApp();
   },
   async approvePlan(planId){
-    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva.");
     const actor = currentActor();
     if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
     const db = loadDB();
@@ -3874,10 +3874,10 @@ window.CRONOS_NEW_FIN_UI = {
 
     const ok = await saveConfirmedFinancialChange(db, entry, before, {
       pendingTitle: "Aprovando recebimento...",
-      pendingMessage: "Aguarde a confirmação da nuvem.",
+      pendingMessage: "Aguarde a conclusão.",
       consoleLabel: "Falha ao aprovar recebimento:",
       failTitle: "Recebimento não aprovado",
-      failMessage: "A nuvem não confirmou a aprovação.",
+      failMessage: "Não foi possível aprovar.",
       successTitle: "Recebimento aprovado ✅",
       successMessage: ""
     });
@@ -3887,7 +3887,7 @@ window.CRONOS_NEW_FIN_UI = {
     }
   },
   async removePlan(planId){
-    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva.");
     const actor = currentActor();
     if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
     if(!confirm("Excluir este recebimento e todos os pagamentos vinculados?")) return;
@@ -3922,10 +3922,10 @@ window.CRONOS_NEW_FIN_UI = {
 
     const ok = await saveConfirmedFinancialChange(db, entry, before, {
       pendingTitle: "Excluindo recebimento...",
-      pendingMessage: "Aguarde a confirmação da nuvem.",
+      pendingMessage: "Aguarde a conclusão.",
       consoleLabel: "Falha ao excluir recebimento:",
       failTitle: "Recebimento não removido",
-      failMessage: "A nuvem não confirmou. O recebimento foi restaurado.",
+      failMessage: "Não foi possível excluir. O recebimento foi restaurado.",
       successTitle: removedPlan?.source === "legacyInstallments" ? "Recebimento legado removido" : "Recebimento removido",
       successMessage: ""
     });
@@ -3970,7 +3970,7 @@ window.CRONOS_NEW_FIN_UI = {
     }) : "";
     if(paidInitially && !initialCashDate) return;
 
-    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo confirmada na nuvem.");
+    if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma alteração financeira sendo salva.");
     const paymentMutationBefore = cloneCronosCriticalSnapshot(db);
 
     plan.payments = Array.isArray(plan.payments) ? plan.payments : [];
@@ -4034,10 +4034,10 @@ window.CRONOS_NEW_FIN_UI = {
     const ok = await saveConfirmedFinancialChange(db, entry, paymentMutationBefore, {
       operationLabel: "uma parcela sendo salva",
       pendingTitle: "Salvando parcela...",
-      pendingMessage: "Aguarde a confirmação da nuvem antes de dar baixa.",
+      pendingMessage: "Aguarde a conclusão antes de dar baixa.",
       consoleLabel: "Falha ao lançar parcela:",
       failTitle: "Parcela não lançada",
-      failMessage: "A nuvem não confirmou. Reabra o recebimento antes de tentar novamente.",
+      failMessage: "Não foi possível salvar. Reabra o recebimento antes de tentar novamente.",
       successTitle: "Pagamento lançado ✅",
       successMessage: `${count} parcela(s) • ${moneyBR(amount)}`
     });
@@ -4458,7 +4458,7 @@ function waChargeLink(phone, nome, entry, parcela){
 }
 
 async function payInstallment(entryId, number){
-  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma baixa sendo salva na nuvem.");
+  if(__cronosFinancialMutationBusy) return toast("Aguarde", "Já existe uma baixa sendo salva.");
   window.__instOpen = window.__instOpen || {};
   window.__instOpen[entryId] = true;
   const actor = currentActor();
@@ -4517,7 +4517,7 @@ async function payInstallment(entryId, number){
   cronosAuditAction(db, { action:"payment_paid", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:parseMoney(p.amount), details:`Parcela ${p.number}/${p.total} • caixa ${fmtBR(payDate)}` });
 
   __cronosFinancialMutationBusy = true;
-  toast("Salvando baixa...", "Aguarde a confirmação da nuvem antes de atualizar a página.");
+  toast("Salvando baixa...", "Aguarde a conclusão antes de atualizar a página.");
   let cloudOk = false;
   try{
     cloudOk = await commitFinancialMutationCloud(db, entry);
@@ -4532,7 +4532,7 @@ async function payInstallment(entryId, number){
     toast("Baixa feita ✅", `Parcela ${number}/${p.total} • ${moneyBR(p.amount)} • caixa em ${fmtBR(payDate)}`);
   }else{
     restoreCronosCriticalSnapshot(before);
-    toast("Baixa não registrada", "A nuvem não confirmou a operação. A parcela continua pendente; tente novamente.");
+    toast("Baixa não registrada", "Não foi possível registrar a baixa. A parcela continua pendente; tente novamente.");
   }
 }
 try{ window.payInstallment = payInstallment; }catch(_){ }
@@ -4590,7 +4590,7 @@ async function undoInstallmentPay(entryId, number){
   }
   refreshFinancialUIAfterPayment();
   if(cloudOk) toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
-  else toast("Baixa não confirmada", "A nuvem ainda não confirmou; o estado anterior foi mantido.");
+  else toast("Baixa não confirmada", "Não foi possível concluir; o estado anterior foi mantido.");
 }
 async function transferInstallmentCashDate(entryId, number){
   const actor = currentActor();
@@ -4644,7 +4644,7 @@ async function transferInstallmentCashDate(entryId, number){
   }
   refreshFinancialUIAfterPayment();
   if(cloudOk) toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
-  else toast("Transferência não confirmada", "A nuvem ainda não confirmou; o estado anterior foi mantido.");
+  else toast("Transferência não confirmada", "Não foi possível concluir; o estado anterior foi mantido.");
 }
 function normalizeInstallmentsAfterMutation(entry){
   entry.installments = Array.isArray(entry.installments) ? entry.installments : [];
@@ -4963,7 +4963,7 @@ window.CRONOS_APPLY_ROLE_VISIBILITY = applyRoleVisibility;
 
 const el = (id)=>document.getElementById(id);
 
-function showBootSplash(message="Sincronizando seu ambiente..."){
+function showBootSplash(message="Atualizando informações..."){
   const boot = document.getElementById("bootSplashView");
   const text = document.getElementById("bootSplashText");
   if(text && message) text.textContent = message;
@@ -7479,7 +7479,7 @@ async function flushCloudSave(dbToSave){
   }catch(error){
     console.error("Erro ao salvar contatos/leads nas tabelas V2:", error);
     if(!shouldSuppressCloudFailureToast()){
-      toast("Falha ao salvar leads na nuvem", "A atualização nas tabelas não foi concluída. Tente novamente.");
+      toast("Falha ao salvar Leads", "A atualização não foi concluída. Tente novamente.");
     }
     return false;
   }
@@ -7518,7 +7518,7 @@ async function flushCloudSave(dbToSave){
   if(error){
     console.error("Erro ao salvar no Supabase:", error);
     if(!shouldSuppressCloudFailureToast()){
-      toast("Falha ao salvar na nuvem", "Os dados operacionais foram tratados, mas o estado geral não foi sincronizado.");
+      toast("Falha ao salvar", "Os dados operacionais foram tratados, mas a atualização geral não foi concluída.");
     }
     return false;
   }
@@ -7732,7 +7732,7 @@ async function ensureCloudDBLoaded(force=false){
     DB = ensureMemberMirror(DB, ctx.member);
     CLOUD_DB_READY = false;
     safeSetLocalDB(DB);
-    toast("Acesso sem base da clínica", "Peça para o master entrar primeiro para criar a base na nuvem.");
+    toast("Acesso sem base da clínica", "Peça para o Master entrar primeiro para preparar os dados da clínica.");
     return DB;
   }
 
@@ -7799,12 +7799,12 @@ function saveDB(db, options={}){
       keepPendingOnFailure:options.keepPendingOnFailure !== false
     }).then(ok=>{
       if(!ok && !options.silent){
-        toast("Alteração não confirmada", "A nuvem não confirmou o salvamento. Não atualize a página antes de resolver o aviso.");
+        toast("Alteração não confirmada", "Não foi possível salvar. Não atualize a página antes de resolver o aviso.");
       }
       return !!ok;
     }).catch(error=>{
       console.error("Cronos V4: falha no saveDB central:", error);
-      if(!options.silent) toast("Falha ao salvar", "A alteração não foi confirmada no servidor.");
+      if(!options.silent) toast("Falha ao salvar", "Não foi possível salvar a alteração.");
       return false;
     });
   }
@@ -10883,7 +10883,7 @@ async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
       renderAll();
       cronosRefreshSidebarCountersNow({ reason:"manual_refresh", repeat:true });
     }
-    toast("Atualizado", "Dados verificados na nuvem.");
+    toast("Atualizado", "Dados atualizados.");
   }catch(error){
     console.error("Falha ao atualizar manualmente:", error);
     toast("Falha ao atualizar", "Não foi possível buscar os dados agora.");
@@ -12801,19 +12801,19 @@ function wireLeadModal(actor, editingEntryId, isNew){
     closeModal({ force:true });
     ensureMonthOptions(); // in case new month
     const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
-    toast("Lead salvo ✅", `${name} • ${savedMonthLabel} • sincronizando na nuvem...`);
+    toast("Salvo", `${name} • ${savedMonthLabel}`);
     renderAll();
 
     Promise.resolve(cloudPromise).then((cloudOk)=>{
       if(cloudOk){
-        toast("Salvo na nuvem ✅", `${name} • ${savedMonthLabel}`);
+        toast("Salvo", `${name} • ${savedMonthLabel}`);
         try{ renderAll(); }catch(_){}
       }else{
-        toast("Alteração pendente", `${name} • ${savedMonthLabel} • o Cronos preservou a tentativa e ainda aguarda confirmação da nuvem`);
+        toast("Alteração pendente", `${name} • ${savedMonthLabel} • não foi possível concluir o salvamento`);
       }
     }).catch((err)=>{
       console.error("Falha ao confirmar lead na nuvem:", err);
-      toast("Alteração pendente", `${name} • ${savedMonthLabel} • o Cronos preservou a tentativa e ainda aguarda confirmação da nuvem`);
+      toast("Alteração pendente", `${name} • ${savedMonthLabel} • não foi possível concluir o salvamento`);
     });
   });
 }
@@ -13057,7 +13057,7 @@ async function deleteEntry(entryId){
 
   const patientName = String(contact?.name || entry?.name || "Paciente sem nome");
   const accepted = confirm(
-    `Excluir definitivamente este Lead de ${patientName}?\n\n${consequences}\n\nA exclusão será confirmada no servidor antes de desaparecer da tela.`
+    `Excluir definitivamente este Lead de ${patientName}?\n\n${consequences}\n\nA exclusão será concluída antes de desaparecer da tela.`
   );
   if(!accepted) return false;
 
@@ -13066,7 +13066,7 @@ async function deleteEntry(entryId){
   try{
     if(window.CronosRepository?.isEnabled?.()){
       const result = await window.CronosRepository.deleteLeadCascade(id);
-      if(!result?.ok) throw new Error("A exclusão não foi confirmada pelo servidor.");
+      if(!result?.ok) throw new Error("Não foi possível concluir a exclusão.");
 
       DB = normalizeDBShape(result.state || freshDB());
       window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
@@ -13127,7 +13127,7 @@ async function deleteEntry(entryId){
     console.error("Cronos: falha na exclusão em cascata do Lead.", error);
     toast(
       "Exclusão não concluída",
-      String(error?.message || "O servidor não confirmou a exclusão. O Lead continua preservado.")
+      String(error?.message || "Não foi possível excluir. O Lead continua preservado.")
     );
     return false;
   }finally{
@@ -13167,7 +13167,7 @@ function userFormHTML(user){
       <div class="muted" style="font-size:12px; grid-column:1/-1">
         ${
           isCloudUser
-            ? 'Este acesso já existe na nuvem. Aqui você pode alterar <b>nome</b> e <b>nível</b>. Login e senha de outro usuário cloud exigem uma rota administrativa segura.'
+            ? 'Este acesso já existe no sistema. Aqui você pode alterar <b>nome</b> e <b>nível</b>. Login e senha de outro usuário exigem uma rota administrativa segura.'
             : 'Se preencher <b>usuário</b>, ele vira o login principal. O <b>e-mail</b> fica como contato. Se deixar o usuário vazio, o login será pelo e-mail.'
         }
       </div>
@@ -13689,7 +13689,7 @@ function importJSON(file){
       if(!data || typeof data!=="object") throw new Error("invalid");
       if(!Array.isArray(data.masters) || !Array.isArray(data.entries)) throw new Error("invalid");
       saveDB(normalizeDBShape(data), { immediate:true });
-      toast("Backup importado ✅", "Se a sessão estiver ativa, já sobe para a nuvem.");
+      toast("Backup importado", "Os dados serão atualizados na sessão ativa.");
       await boot();
     }catch(e){
       toast("Falha ao importar", "Arquivo inválido.");
@@ -14804,7 +14804,7 @@ function deleteTask(taskId){
   const isAutoTask = isAutomaticInstallmentTask(t);
 
   const label = String(t.title || "esta tarefa").trim();
-  if(!confirm(`Apagar a tarefa "${label}"?\n\nEssa ação remove apenas a tarefa, não apaga o lead.${isAutoTask ? "\nSe for tarefa automática de recebimento, ela também será ignorada nas próximas sincronizações." : ""}`)) return;
+  if(!confirm(`Apagar a tarefa "${label}"?\n\nEssa ação remove apenas a tarefa, não apaga o lead.${isAutoTask ? "\nSe for tarefa automática de recebimento, ela também será ignorada nas próximas atualizações." : ""}`)) return;
 
   try{ recordTaskDeletion(t); }catch(_){}
   db.tasks.splice(idx, 1);
@@ -15192,7 +15192,7 @@ async function boot(){
     const app = document.getElementById("appView");
     if(auth) auth.classList.add("hidden");
     if(app) app.classList.add("hidden");
-    showBootSplash("Sincronizando seu ambiente...");
+    showBootSplash("Atualizando informações...");
   }catch(_){ }
 })();
 
@@ -15614,7 +15614,7 @@ async function ensureCloudDBForLoginWithRetry(maxAttempts=3){
 
     if(attempt < maxAttempts){
       const nextAttempt = attempt + 1;
-      setLoginLoading(true, `Nuvem ocupada. Tentando novamente (${nextAttempt}/${maxAttempts})...`);
+      setLoginLoading(true, `Sistema ocupado. Tentando novamente (${nextAttempt}/${maxAttempts})...`);
       await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
     }
   }
@@ -15868,7 +15868,7 @@ function cronosRefreshCloudAfterFastResume(){
     }catch(error){
       console.warn("Cronos: atualização após F5 falhou.", error);
       // Se a nuvem falhar, libera o cache local com aviso leve. Melhor do que travar o usuário.
-      try{ toast("Nuvem demorou", "Abri com os dados locais. Atualize de novo em alguns segundos se as contagens parecerem antigas."); }catch(_){ }
+      try{ toast("Atualização demorou", "Abri com os dados disponíveis. Atualize novamente em alguns segundos se as contagens parecerem antigas."); }catch(_){ }
     }finally{
       window.__CRONOS_FAST_RESUME_REFRESHING__ = false;
       try{ hideBootSplash(); }catch(_){ }
@@ -15934,7 +15934,7 @@ async function finalizeCloudLogin(){
     }else{
       document.getElementById("authView").classList.add("hidden");
       setLoginLoading(false);
-      showBootSplash("Sincronizando seu ambiente...");
+      showBootSplash("Atualizando informações...");
     }
 
     const cloudLoaded = await ensureCloudDBForLoginWithRetry(3);
@@ -15945,7 +15945,7 @@ async function finalizeCloudLogin(){
       document.getElementById("appView").classList.add("hidden");
       document.getElementById("authView").classList.remove("hidden");
       toast(
-        "Nuvem temporariamente lenta",
+        "Sistema temporariamente lento",
         "Seu login foi autenticado, mas os dados da clínica não responderam agora. Aguarde alguns segundos e tente novamente."
       );
       return;
@@ -16051,7 +16051,7 @@ async function verificarSessao() {
     const app = document.getElementById("appView");
     if(app) app.classList.add("hidden");
     if(auth) auth.classList.add("hidden");
-    showBootSplash("Sincronizando seu ambiente...");
+    showBootSplash("Atualizando informações...");
     setSupportEntryLoading(false);
     setLoginLoading(false);
   }catch(_){}
@@ -18399,8 +18399,8 @@ window.CRONOS_PROC_UI = {
         injectProcedureSettingsCard();
         if(cloudSave && typeof cloudSave.then === 'function'){
           cloudSave.then(ok=>{
-            if(ok) toast('Procedimento salvo na nuvem ✅', nome);
-            else toast('Alteração pendente', 'O Cronos preservou a tentativa, mas a nuvem ainda não confirmou. Confira a conexão antes de sair.');
+            if(ok) toast('Procedimento salvo', nome);
+            else toast('Alteração pendente', 'Não foi possível concluir. Confira a conexão antes de sair.');
           });
         }else{
           toast('Procedimento salvo ✅', nome);
@@ -18423,8 +18423,8 @@ window.CRONOS_PROC_UI = {
         injectProcedureSettingsCard();
         if(cloudSave && typeof cloudSave.then === 'function'){
           cloudSave.then(ok=>{
-            if(ok) toast('Procedimento inativado na nuvem.');
-            else toast('Procedimento inativado neste navegador', 'Não consegui confirmar a nuvem agora.');
+            if(ok) toast('Procedimento inativado.');
+            else toast('Procedimento inativado neste navegador', 'Não foi possível concluir agora.');
           });
         }else{
           toast('Procedimento inativado.');
@@ -19549,7 +19549,7 @@ window.CRONOS_PROC_UI = {
         const ficha = ensureFicha(entry);
         ficha.plano = ficha.plano.filter(x=>x.id!==itemId);
         renderFichaApp();
-        const ok = await confirmFichaMutation(db, entry, before, 'Procedimento excluído', 'Alteração salva na nuvem.');
+        const ok = await confirmFichaMutation(db, entry, before, 'Procedimento excluído', 'Alteração salva.');
         if(ok){ try{ renderLeadsTable(filteredEntries()); }catch(_){ } }
       },
       pickTooth(tooth){ const s = getFichaState(); if(!s) return; s.selectedTooth = tooth; renderFichaApp(); },
@@ -19572,7 +19572,7 @@ window.CRONOS_PROC_UI = {
         else odonto[key] = meta;
         s.selectedTooth = key;
         renderFichaApp();
-        await confirmFichaMutation(db, entry, before, 'Odontograma salvo ✅', 'A cor foi confirmada na nuvem.');
+        await confirmFichaMutation(db, entry, before, 'Odontograma salvo ✅', 'Cor salva.');
       },
       toggleAbsent(tooth){
         const s = getFichaState(); if(!s) return;
@@ -19679,7 +19679,7 @@ window.CRONOS_PROC_UI = {
         s.selectedTeeth = [];
         s.selectedTooth = null;
         renderFichaApp();
-        await confirmFichaMutation(db, entry, before, allAbsent ? 'Ausência removida' : 'Dente ausente salvo ✅', 'Alteração confirmada na nuvem.');
+        await confirmFichaMutation(db, entry, before, allAbsent ? 'Ausência removida' : 'Dente ausente salvo ✅', 'Alteração salva.');
       },
       saveToothMeta(){
         const s = getFichaState(); if(!s || !s.selectedTooth) return;
@@ -19723,7 +19723,7 @@ window.CRONOS_PROC_UI = {
         s.selectedTeeth = [];
         s.selectedTooth = null;
         renderFichaApp();
-        await confirmFichaMutation(db, entry, before, 'Marcação removida', 'Alteração salva na nuvem.');
+        await confirmFichaMutation(db, entry, before, 'Marcação removida', 'Alteração salva.');
       }
     };
 
