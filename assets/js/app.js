@@ -2067,6 +2067,26 @@ async function commitFinancialMutationCloud(db, entry){
     return false;
   }
 
+  // V4: lead, ficha, plano, parcela, pagamento e tarefas relacionadas são gravados
+  // em uma única transação. A tela só confirma depois do commit do PostgreSQL.
+  if(window.CronosRepository?.isEnabled?.()){
+    try{
+      const ok = await window.CronosRepository.saveOperationalState(db, {
+        keepPendingOnFailure:false
+      });
+      if(!ok) return false;
+      DB = normalizeDBShape(db || DB || freshDB());
+      window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      safeSetLocalDB(DB);
+      CLOUD_DB_READY = true;
+      return true;
+    }catch(error){
+      console.error("Falha financeira na persistência V4:", error);
+      return false;
+    }
+  }
+
   // Pagamentos ainda usam clinic_state, enquanto a ficha/lead já usa clinic_leads.
   // Esta RPC grava os dois pontos numa única transação no banco.
   if(typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID && entry?.id){
@@ -2386,6 +2406,29 @@ async function queueFichaV2LeadSave(entry){
 
 async function saveFichaMutation(db, entry, options={}){
   try{ markFichaMutation(entry); }catch(_){ }
+
+  // Persistência definitiva: prontuário, odontograma, plano e financeiro do lead
+  // são confirmados na mesma transação, sem depender do HTML que originou a ação.
+  if(!isSupportMode() && window.CronosRepository?.isEnabled?.()){
+    try{
+      const ok = await window.CronosRepository.saveOperationalState(db, {
+        keepPendingOnFailure:false
+      });
+      if(ok){
+        DB = normalizeDBShape(db || DB || freshDB());
+        window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+        window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+        safeSetLocalDB(DB);
+        return true;
+      }
+    }catch(error){
+      console.error("Falha ao salvar prontuário na persistência V4:", error);
+    }
+    if(!options.silent){
+      toast("Prontuário não salvo", "A nuvem não confirmou esta alteração. O estado anterior será preservado.");
+    }
+    return false;
+  }
 
   // Em tables_v2, a Ficha mora dentro do lead em clinic_leads.
   // Salvar a ficha não deve depender do clinic_state (tarefas/recebimentos/configurações),
@@ -2918,7 +2961,7 @@ async function applyCreditAnticipation(db, candidates, settlementDate, feePercen
   if(cloudOk){
     toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
   }else{
-    toast("Antecipação salva no navegador", "A nuvem ainda não confirmou. Clique em Atualizar depois de alguns segundos para conferir a sincronização.");
+    toast("Antecipação pendente", "A nuvem ainda não confirmou. O estado anterior foi mantido até a confirmação.");
   }
   renderAll();
 }
@@ -4547,7 +4590,7 @@ async function undoInstallmentPay(entryId, number){
   }
   refreshFinancialUIAfterPayment();
   if(cloudOk) toast("Baixa desfeita", `Parcela ${number}/${p.total} voltou para pendente.`);
-  else toast("Baixa desfeita no navegador", "A nuvem ainda não confirmou.");
+  else toast("Baixa não confirmada", "A nuvem ainda não confirmou; o estado anterior foi mantido.");
 }
 async function transferInstallmentCashDate(entryId, number){
   const actor = currentActor();
@@ -4601,7 +4644,7 @@ async function transferInstallmentCashDate(entryId, number){
   }
   refreshFinancialUIAfterPayment();
   if(cloudOk) toast("Data transferida ✅", `Caixa: ${fmtBR(next)}`);
-  else toast("Data transferida no navegador", "A nuvem ainda não confirmou.");
+  else toast("Transferência não confirmada", "A nuvem ainda não confirmou; o estado anterior foi mantido.");
 }
 function normalizeInstallmentsAfterMutation(entry){
   entry.installments = Array.isArray(entry.installments) ? entry.installments : [];
@@ -6056,6 +6099,8 @@ function resetCloudContext(){
     patient_files_source: "legacy_json"
   };
   __v2Snapshots = { contacts: new Map(), entries: new Map() };
+  try{ window.__CRONOS_CLINIC_ID__ = ""; }catch(_){ }
+  try{ window.CronosRepository?.clearContext?.(); }catch(_){ }
 }
 
 function normalizeDBShape(db){
@@ -6086,6 +6131,8 @@ function usesAnyClinicTableV2(){
 }
 function setCloudDataSourcesFromRow(row, clinicId=""){
   CLOUD_CLINIC_ID = String(clinicId || row?.clinic_id || CLOUD_CLINIC_ID || "").trim();
+  try{ window.__CRONOS_CLINIC_ID__ = CLOUD_CLINIC_ID; }catch(_){ }
+  try{ window.CronosRepository?.setClinicId?.(CLOUD_CLINIC_ID); }catch(_){ }
   CLOUD_DATA_SOURCES = {
     contacts_source: String(row?.contacts_source || "legacy_json"),
     leads_source: String(row?.leads_source || "legacy_json"),
@@ -6964,6 +7011,13 @@ function safeSetLocalDB(db){
   const normalized = normalizeDBShape(db || freshDB());
   __localMemoryDB = normalized;
 
+  // Na V4, o cache local não é fonte de dados e nunca participa de merge.
+  // A fila transacional do CronosRepository preserva somente mutações pendentes.
+  if(window.CronosRepository?.isEnabled?.()){
+    try{ localStorage.removeItem(DBKEY); }catch(_){ }
+    return true;
+  }
+
   // Depois que uma clínica grande estoura a cota do localStorage, não adianta tentar
   // gravar o mesmo pacotão toda vez que a tela renderiza. Mantemos a base em memória
   // da aba e paramos de bater no localStorage, evitando travas e spam no console.
@@ -7386,6 +7440,20 @@ async function flushCloudSave(dbToSave){
   const user = await getCurrentSupabaseUser();
   if(!user) return false;
 
+  // A V4 ignora completamente o merge legado e sincroniza apenas as entidades
+  // realmente alteradas, com versão por registro e commit transacional.
+  if(window.CronosRepository?.isEnabled?.()){
+    try{
+      return await window.CronosRepository.saveOperationalState(
+        normalizeDBShape(dbToSave || DB || freshDB()),
+        { keepPendingOnFailure:true }
+      );
+    }catch(error){
+      console.error("Cronos V4: falha ao confirmar alterações:", error);
+      return false;
+    }
+  }
+
   const ctx = await applyCloudAccessContext(user);
   await loadCurrentClinicDataSources();
   const ownerEmail = String(ctx?.ownerEmail || user.email || "").trim().toLowerCase();
@@ -7577,6 +7645,34 @@ async function ensureCloudDBLoaded(force=false){
     ctx = await applyCloudAccessContext(user);
     await loadCurrentClinicDataSources();
 
+    // Persistência definitiva: carrega somente o estado oficial montado pelo banco.
+    // Não há merge com localStorage, portanto um computador antigo não ressuscita dados.
+    if(window.CronosRepository && CLOUD_CLINIC_ID){
+      try{
+        window.CronosRepository.setClient?.(supabaseClient);
+        window.CronosRepository.setClinicId?.(CLOUD_CLINIC_ID);
+        const v4 = await window.CronosRepository.loadOperationalState({ clinicId:CLOUD_CLINIC_ID });
+        if(v4?.enabled){
+          let loaded = normalizeDBShape(v4.state || freshDB());
+          loaded = ensureMasterRecordByEmail(loaded, ctx?.ownerEmail || user.email || "");
+          const cloudClinicName = String(ctx?.row?.clinic_name || "").trim();
+          if(cloudClinicName){
+            const master = getMasterRecordByEmail(loaded, ctx?.ownerEmail || user.email || "") || loaded.masters?.[0];
+            if(master) master.name = cloudClinicName;
+          }
+          if(ctx?.member) loaded = ensureMemberMirror(loaded, ctx.member);
+          DB = loaded;
+          CLOUD_DB_READY = true;
+          try{ cronosMarkCloudDBHydrated("v4_loaded"); }catch(_){ }
+          safeSetLocalDB(DB);
+          return DB;
+        }
+      }catch(error){
+        console.error("Cronos V4: não foi possível carregar o estado oficial.", error);
+        throw error;
+      }
+    }
+
     if(ctx?.row?.data){
       const localBeforePull = normalizeDBShape(getLegacyLocalDB() || freshDB());
       const cloudBeforePull = normalizeDBShape(ctx.row.data);
@@ -7692,6 +7788,26 @@ function saveDB(db, options={}){
   DB = incoming;
   window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
   window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+
+  if(window.CronosRepository?.isEnabled?.()){
+    safeSetLocalDB(DB);
+    try{ updateSidebarPills(); }catch(_){ }
+    // Na V4 não existe mais "salvar só localmente". Chamadas antigas com
+    // skipCloud também passam pela camada central; se não houver diferença,
+    // o repositório retorna imediatamente sem gerar operação.
+    return window.CronosRepository.saveOperationalState(DB, {
+      keepPendingOnFailure:options.keepPendingOnFailure !== false
+    }).then(ok=>{
+      if(!ok && !options.silent){
+        toast("Alteração não confirmada", "A nuvem não confirmou o salvamento. Não atualize a página antes de resolver o aviso.");
+      }
+      return !!ok;
+    }).catch(error=>{
+      console.error("Cronos V4: falha no saveDB central:", error);
+      if(!options.silent) toast("Falha ao salvar", "A alteração não foi confirmada no servidor.");
+      return false;
+    });
+  }
 
   try{ persistPendingV2Patches(DB); }catch(e){ console.warn("Cronos autosave: patches locais não foram atualizados.", e); }
   try{ persistPendingTaskPatches(DB); }catch(e){ console.warn("Cronos autosave tarefas: patches locais não foram atualizados.", e); }
@@ -12693,11 +12809,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
         toast("Salvo na nuvem ✅", `${name} • ${savedMonthLabel}`);
         try{ renderAll(); }catch(_){}
       }else{
-        toast("Lead salvo neste navegador", `${name} • ${savedMonthLabel} • a nuvem não confirmou agora`);
+        toast("Alteração pendente", `${name} • ${savedMonthLabel} • o Cronos preservou a tentativa e ainda aguarda confirmação da nuvem`);
       }
     }).catch((err)=>{
       console.error("Falha ao confirmar lead na nuvem:", err);
-      toast("Lead salvo neste navegador", `${name} • ${savedMonthLabel} • a nuvem não confirmou agora`);
+      toast("Alteração pendente", `${name} • ${savedMonthLabel} • o Cronos preservou a tentativa e ainda aguarda confirmação da nuvem`);
     });
   });
 }
@@ -15362,6 +15478,8 @@ const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey, {
     detectSessionInUrl: false
   }
 });
+window.__CRONOS_SUPABASE_CLIENT__ = supabaseClient;
+try{ window.CronosRepository?.setClient?.(supabaseClient); }catch(_){ }
 window.__SUPABASE_CLOUD_LOGIN__ = true;
 window.__SUPABASE_MASTER_LOGIN__ = false;
 window.__CRONOS_LOGIN_BUSY__ = false;
@@ -18164,7 +18282,7 @@ window.CRONOS_PROC_UI = {
         if(cloudSave && typeof cloudSave.then === 'function'){
           cloudSave.then(ok=>{
             if(ok) toast('Procedimento salvo na nuvem ✅', nome);
-            else toast('Procedimento salvo neste navegador', 'Não consegui confirmar a nuvem agora. Clique em Atualizar depois para sincronizar.');
+            else toast('Alteração pendente', 'O Cronos preservou a tentativa, mas a nuvem ainda não confirmou. Confira a conexão antes de sair.');
           });
         }else{
           toast('Procedimento salvo ✅', nome);

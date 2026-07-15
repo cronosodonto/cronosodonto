@@ -1,0 +1,648 @@
+/*
+ * CronosRepository V4 — persistência central, transacional e concorrente.
+ *
+ * Regras:
+ * - o servidor é a única fonte oficial;
+ * - cache local nunca é mesclado silenciosamente com a nuvem;
+ * - cada entidade possui versão própria;
+ * - alterações de uma mesma ação são confirmadas em uma única transação;
+ * - operation_id torna reenvios idempotentes;
+ * - conflitos não sobrescrevem dados: são rejeitados e exibidos ao usuário.
+ */
+(function initCronosRepository(global){
+  "use strict";
+
+  const COLLECTIONS = Object.freeze(["contacts", "entries", "tasks", "payments", "activityLog"]);
+  const STORAGE_PREFIX = "cronos_v4_pending";
+  const CONFLICT_PREFIX = "cronos_v4_conflict";
+
+  const state = {
+    client: null,
+    clinicId: "",
+    enabled: false,
+    loaded: false,
+    baseline: null,
+    working: null,
+    versions: emptyVersions(),
+    workingVersions: emptyVersions(),
+    queue: [],
+    processing: false,
+    blocked: false,
+    lastError: null,
+    waiters: new Map()
+  };
+
+  class CronosPersistenceError extends Error {
+    constructor(message, options={}){
+      super(String(message || "Falha de persistência."));
+      this.name = "CronosPersistenceError";
+      this.code = options.code || "PERSISTENCE_ERROR";
+      this.cause = options.cause;
+      this.operationId = options.operationId || "";
+      this.details = options.details || null;
+      this.conflict = options.conflict === true;
+    }
+  }
+
+  function emptyVersions(){
+    return { contacts:{}, entries:{}, tasks:{}, payments:{}, activityLog:{}, meta:0 };
+  }
+
+  function clone(value){
+    if(value == null) return value;
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function freshState(){
+    return {
+      masters:[], users:[], contacts:[], entries:[], tasks:[], payments:[],
+      activityLog:[], settings:{}, version:"v4", createdAt:new Date().toISOString()
+    };
+  }
+
+  function normalizeState(value){
+    const input = value && typeof value === "object" ? value : {};
+    const out = { ...freshState(), ...clone(input) };
+    COLLECTIONS.forEach(name=>{ if(!Array.isArray(out[name])) out[name] = []; });
+    if(!Array.isArray(out.masters)) out.masters = [];
+    if(!Array.isArray(out.users)) out.users = [];
+    if(!Array.isArray(out.activityLog)) out.activityLog = [];
+    if(!out.settings || typeof out.settings !== "object" || Array.isArray(out.settings)) out.settings = {};
+    return out;
+  }
+
+  function normalizeVersions(value){
+    const input = value && typeof value === "object" ? value : {};
+    const out = emptyVersions();
+    COLLECTIONS.forEach(name=>{
+      const map = input[name] && typeof input[name] === "object" ? input[name] : {};
+      Object.keys(map).forEach(id=>{ out[name][String(id)] = Number(map[id] || 0); });
+    });
+    out.meta = Number(input.meta || 0);
+    return out;
+  }
+
+  function getClient(){
+    return state.client || global.__CRONOS_SUPABASE_CLIENT__ || null;
+  }
+
+  function newOperationId(){
+    if(global.crypto?.randomUUID) return global.crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, char=>{
+      const random = Math.random() * 16 | 0;
+      const value = char === "x" ? random : (random & 0x3 | 0x8);
+      return value.toString(16);
+    });
+  }
+
+  function sleep(ms){ return new Promise(resolve=>setTimeout(resolve, ms)); }
+
+  function storageKey(){
+    return `${STORAGE_PREFIX}:${String(state.clinicId || "unknown")}`;
+  }
+
+  function persistQueue(){
+    if(!state.clinicId) return false;
+    try{
+      if(!state.queue.length){
+        localStorage.removeItem(storageKey());
+        return true;
+      }
+      localStorage.setItem(storageKey(), JSON.stringify({ version:4, queue:state.queue }));
+      return true;
+    }catch(error){
+      console.error("Cronos V4: não foi possível preservar a fila local.", error);
+      notify("Falha no cofre local", "A alteração ainda será enviada à nuvem, mas o navegador não conseguiu criar a cópia temporária.");
+      return false;
+    }
+  }
+
+  function readQueue(){
+    if(!state.clinicId) return [];
+    try{
+      const raw = localStorage.getItem(storageKey());
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed?.queue) ? parsed.queue.filter(item=>item?.operationId && item?.changes) : [];
+    }catch(error){
+      console.warn("Cronos V4: fila local inválida foi ignorada.", error);
+      return [];
+    }
+  }
+
+  function conflictStorageKey(){
+    return `${CONFLICT_PREFIX}:${String(state.clinicId || "unknown")}`;
+  }
+
+  function archiveConflict(mutation, error){
+    if(!state.clinicId) return false;
+    try{
+      const existingRaw = localStorage.getItem(conflictStorageKey());
+      const existing = existingRaw ? JSON.parse(existingRaw) : null;
+      const records = Array.isArray(existing?.records) ? existing.records : [];
+      records.push({
+        archivedAt:new Date().toISOString(),
+        clinicId:state.clinicId,
+        operationId:String(mutation?.operationId || ""),
+        changes:clone(mutation?.changes || {}),
+        error:{
+          code:String(error?.code || "VERSION_CONFLICT"),
+          message:String(error?.message || error || "Conflito de versão."),
+          details:error?.details || null
+        }
+      });
+      localStorage.setItem(conflictStorageKey(), JSON.stringify({ version:4, records:records.slice(-20) }));
+      return true;
+    }catch(archiveError){
+      console.error("Cronos V4: não foi possível arquivar o conflito localmente.", archiveError);
+      return false;
+    }
+  }
+
+  function getConflictArchive(){
+    if(!state.clinicId) return [];
+    try{
+      const raw = localStorage.getItem(conflictStorageKey());
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed?.records) ? clone(parsed.records) : [];
+    }catch(_){
+      return [];
+    }
+  }
+
+  function clearConflictArchive(){
+    if(!state.clinicId) return false;
+    try{
+      localStorage.removeItem(conflictStorageKey());
+      return true;
+    }catch(_){
+      return false;
+    }
+  }
+
+  function notify(title, message){
+    try{
+      if(typeof global.toast === "function") global.toast(title, message || "");
+    }catch(_){ }
+  }
+
+  let indicatorHideTimer = null;
+  function updateIndicator(kind, text){
+    try{
+      if(!global.document?.body) return;
+      let node = global.document.getElementById("cronosPersistenceIndicator");
+      if(!node){
+        node = global.document.createElement("div");
+        node.id = "cronosPersistenceIndicator";
+        node.setAttribute("role", "status");
+        node.setAttribute("aria-live", "polite");
+        node.style.cssText = [
+          "position:fixed", "right:18px", "bottom:18px", "z-index:100000",
+          "display:none", "align-items:center", "gap:8px", "padding:9px 12px",
+          "border-radius:12px", "font:700 12px/1.2 system-ui,-apple-system,Segoe UI,sans-serif",
+          "box-shadow:0 10px 30px rgba(15,23,42,.22)", "backdrop-filter:blur(12px)",
+          "transition:opacity .2s ease, transform .2s ease"
+        ].join(";");
+        node.innerHTML = '<span data-v4-dot style="width:8px;height:8px;border-radius:999px;display:block"></span><span data-v4-text></span>';
+        global.document.body.appendChild(node);
+      }
+      if(indicatorHideTimer){ clearTimeout(indicatorHideTimer); indicatorHideTimer = null; }
+      const palette = {
+        saving:["rgba(15,23,42,.94)", "#fff", "#38bdf8"],
+        saved:["rgba(6,78,59,.94)", "#fff", "#34d399"],
+        error:["rgba(127,29,29,.96)", "#fff", "#fca5a5"],
+        pending:["rgba(120,53,15,.96)", "#fff", "#fbbf24"]
+      }[kind] || ["rgba(15,23,42,.94)", "#fff", "#94a3b8"];
+      node.style.background = palette[0];
+      node.style.color = palette[1];
+      node.querySelector("[data-v4-dot]").style.background = palette[2];
+      node.querySelector("[data-v4-text]").textContent = String(text || "");
+      node.style.display = "flex";
+      node.style.opacity = "1";
+      node.style.transform = "translateY(0)";
+      if(kind === "saved"){
+        indicatorHideTimer = setTimeout(()=>{
+          node.style.opacity = "0";
+          node.style.transform = "translateY(6px)";
+          setTimeout(()=>{ node.style.display = "none"; }, 220);
+        }, 1600);
+      }
+    }catch(_){ }
+  }
+
+  function emit(type, detail={}){
+    try{ global.dispatchEvent(new CustomEvent(type, { detail })); }catch(_){ }
+  }
+
+  function metaFromState(db){
+    const meta = clone(normalizeState(db));
+    COLLECTIONS.forEach(name=>{ delete meta[name]; });
+    delete meta.lastMergedAt;
+    delete meta.lastLocalPatchAppliedAt;
+    return meta;
+  }
+
+  function fingerprint(value){
+    try{ return JSON.stringify(value); }catch(_){ return String(value); }
+  }
+
+  function mapById(list){
+    const map = new Map();
+    (Array.isArray(list) ? list : []).forEach(item=>{
+      const id = String(item?.id || "").trim();
+      if(id) map.set(id, item);
+    });
+    return map;
+  }
+
+  function buildCollectionChanges(name, beforeList, afterList, versionMap){
+    const before = mapById(beforeList);
+    const after = mapById(afterList);
+    const upserts = [];
+    const deletes = [];
+
+    after.forEach((item, id)=>{
+      const previous = before.get(id);
+      if(!previous || fingerprint(previous) !== fingerprint(item)){
+        upserts.push({
+          payload: clone(item),
+          expected_version: Number(versionMap?.[id] || 0)
+        });
+      }
+    });
+
+    before.forEach((_, id)=>{
+      if(!after.has(id)){
+        deletes.push({ id, expected_version:Number(versionMap?.[id] || 0) });
+      }
+    });
+
+    return { upserts, deletes };
+  }
+
+  function buildChanges(beforeState, afterState, versions){
+    const before = normalizeState(beforeState);
+    const after = normalizeState(afterState);
+    const changes = {};
+
+    COLLECTIONS.forEach(name=>{
+      const part = buildCollectionChanges(name, before[name], after[name], versions[name]);
+      if(part.upserts.length || part.deletes.length) changes[name] = part;
+    });
+
+    const beforeMeta = metaFromState(before);
+    const afterMeta = metaFromState(after);
+    if(fingerprint(beforeMeta) !== fingerprint(afterMeta)){
+      changes.meta = { payload:afterMeta, expected_version:Number(versions.meta || 0) };
+    }
+
+    return changes;
+  }
+
+  function hasChanges(changes){
+    if(!changes || typeof changes !== "object") return false;
+    if(changes.meta) return true;
+    return COLLECTIONS.some(name=>
+      Array.isArray(changes?.[name]?.upserts) && changes[name].upserts.length ||
+      Array.isArray(changes?.[name]?.deletes) && changes[name].deletes.length
+    );
+  }
+
+  function applyChanges(targetState, changes){
+    const out = normalizeState(targetState);
+    COLLECTIONS.forEach(name=>{
+      const part = changes?.[name];
+      if(!part) return;
+      const map = mapById(out[name]);
+      (part.upserts || []).forEach(item=>{
+        const payload = clone(item?.payload || {});
+        const id = String(payload?.id || "").trim();
+        if(id) map.set(id, payload);
+      });
+      (part.deletes || []).forEach(item=>{
+        const id = String(item?.id || "").trim();
+        if(id) map.delete(id);
+      });
+      out[name] = Array.from(map.values());
+    });
+    if(changes?.meta?.payload){
+      const meta = clone(changes.meta.payload);
+      COLLECTIONS.forEach(name=>{ meta[name] = out[name]; });
+      return normalizeState(meta);
+    }
+    return out;
+  }
+
+  function predictVersions(versions, changes){
+    const next = normalizeVersions(versions);
+    COLLECTIONS.forEach(name=>{
+      const part = changes?.[name];
+      if(!part) return;
+      (part.upserts || []).forEach(item=>{
+        const id = String(item?.payload?.id || "");
+        if(id) next[name][id] = Number(item.expected_version || 0) + 1;
+      });
+      (part.deletes || []).forEach(item=>{
+        const id = String(item?.id || "");
+        if(id) next[name][id] = Number(item.expected_version || 0) + 1;
+      });
+    });
+    if(changes?.meta) next.meta = Number(changes.meta.expected_version || 0) + 1;
+    return next;
+  }
+
+  function mergeServerVersions(current, returned){
+    const out = normalizeVersions(current);
+    const input = returned && typeof returned === "object" ? returned : {};
+    COLLECTIONS.forEach(name=>{
+      const map = input[name] && typeof input[name] === "object" ? input[name] : {};
+      Object.keys(map).forEach(id=>{ out[name][id] = Number(map[id] || 0); });
+    });
+    if(input.meta != null) out.meta = Number(input.meta || 0);
+    return out;
+  }
+
+  function rebuildWorking(){
+    state.working = clone(state.baseline || freshState());
+    state.workingVersions = normalizeVersions(state.versions);
+    state.queue.forEach(mutation=>{
+      state.working = applyChanges(state.working, mutation.changes);
+      state.workingVersions = predictVersions(state.workingVersions, mutation.changes);
+    });
+  }
+
+  function isNetworkError(error){
+    const message = String(error?.message || error?.details || error || "").toLowerCase();
+    const status = Number(error?.status || error?.statusCode || 0);
+    return status === 408 || status === 425 || status === 429 || status >= 500 ||
+      message.includes("fetch") || message.includes("network") || message.includes("timeout") ||
+      message.includes("connection") || message.includes("temporar");
+  }
+
+  function isConflictError(error){
+    const code = String(error?.code || "");
+    const message = String(error?.message || error?.details || "");
+    return code === "40001" || message.includes("CONFLITO_V4");
+  }
+
+  async function rpc(name, args){
+    const client = getClient();
+    if(!client?.rpc) throw new CronosPersistenceError("Cliente do Supabase indisponível.", { code:"SUPABASE_UNAVAILABLE" });
+    const { data, error } = await client.rpc(name, args);
+    if(error) throw error;
+    return data;
+  }
+
+  async function checkStatus(options={}){
+    const clinicId = String(options.clinicId || state.clinicId || global.__CRONOS_CLINIC_ID__ || "").trim();
+    if(!clinicId) return { enabled:false };
+    state.clinicId = clinicId;
+    const data = await rpc("cronos_v4_status", { p_clinic_id:clinicId });
+    state.enabled = data?.enabled === true;
+    return data || { enabled:false };
+  }
+
+  async function loadOperationalState(options={}){
+    const clinicId = String(options.clinicId || state.clinicId || global.__CRONOS_CLINIC_ID__ || "").trim();
+    if(!clinicId) return { enabled:false, state:null };
+    state.clinicId = clinicId;
+
+    const data = await rpc("cronos_v4_load_operational_state", { p_clinic_id:clinicId });
+    state.enabled = data?.enabled === true;
+    state.loaded = state.enabled;
+    state.blocked = false;
+    state.lastError = null;
+
+    if(!state.enabled){
+      state.baseline = null;
+      state.working = null;
+      state.versions = emptyVersions();
+      state.workingVersions = emptyVersions();
+      state.queue = [];
+      return { enabled:false, state:null };
+    }
+
+    state.baseline = normalizeState(data?.state || freshState());
+    state.versions = normalizeVersions(data?.versions || {});
+    state.queue = readQueue();
+    rebuildWorking();
+
+    if(state.queue.length){
+      emit("cronos:persistence-pending", { count:state.queue.length });
+      updateIndicator("pending", `${state.queue.length} alteração(ões) pendente(s)`);
+      processQueue();
+    }
+
+    return { enabled:true, state:clone(state.working), versions:clone(state.workingVersions) };
+  }
+
+  function resolveWaiter(operationId, value){
+    const waiter = state.waiters.get(operationId);
+    if(!waiter) return;
+    state.waiters.delete(operationId);
+    try{ waiter.resolve(value); }catch(_){ }
+  }
+
+  async function commitMutation(mutation){
+    let lastError = null;
+    for(let attempt=1; attempt<=3; attempt++){
+      try{
+        return await rpc("cronos_v4_commit_changes", {
+          p_clinic_id:state.clinicId,
+          p_operation_id:mutation.operationId,
+          p_changes:mutation.changes
+        });
+      }catch(error){
+        lastError = error;
+        if(!isNetworkError(error) || attempt === 3) break;
+        await sleep(350 * attempt);
+      }
+    }
+    throw lastError;
+  }
+
+  async function processQueue(){
+    if(state.processing || state.blocked || !state.enabled || !state.queue.length) return;
+    state.processing = true;
+    emit("cronos:persistence-saving", { count:state.queue.length });
+    updateIndicator("saving", "Salvando no servidor...");
+
+    try{
+      while(state.queue.length && !state.blocked){
+        const mutation = state.queue[0];
+        try{
+          const result = await commitMutation(mutation);
+          state.baseline = applyChanges(state.baseline, mutation.changes);
+          state.versions = mergeServerVersions(state.versions, result?.versions || {});
+          state.queue.shift();
+          persistQueue();
+          resolveWaiter(mutation.operationId, true);
+          emit("cronos:persistence-saved", { operationId:mutation.operationId, result });
+          updateIndicator("saved", "Salvo no servidor");
+        }catch(error){
+          state.lastError = error;
+          const conflict = isConflictError(error);
+          console.error("Cronos V4: operação não confirmada.", error);
+
+          if(conflict){
+            // Um pacote com versão antiga nunca é repetido automaticamente: isso
+            // só produziria o mesmo conflito a cada F5. Arquivamos a tentativa,
+            // limpamos a fila e voltamos ao último estado confirmado do servidor.
+            archiveConflict(mutation, error);
+            state.queue = [];
+            persistQueue();
+            state.blocked = true;
+            rebuildWorking();
+            resolveWaiter(mutation.operationId, false);
+          }else if(mutation.keepPendingOnFailure === false){
+            state.queue.shift();
+            persistQueue();
+            rebuildWorking();
+            resolveWaiter(mutation.operationId, false);
+          }else{
+            state.blocked = true;
+            resolveWaiter(mutation.operationId, false);
+          }
+
+          const wrapped = new CronosPersistenceError(
+            conflict
+              ? "Este registro foi alterado em outro computador. Recarregue antes de salvar novamente."
+              : "A nuvem não confirmou a alteração.",
+            {
+              code:conflict ? "VERSION_CONFLICT" : (error?.code || "RPC_ERROR"),
+              cause:error,
+              operationId:mutation.operationId,
+              details:error?.details || null,
+              conflict
+            }
+          );
+          state.lastError = wrapped;
+          emit(conflict ? "cronos:persistence-conflict" : "cronos:persistence-error", { error:wrapped, mutation });
+          updateIndicator(conflict ? "error" : "pending", conflict ? "Conflito: recarregue a página" : "Pendente de sincronização");
+          notify(
+            conflict ? "Alteração concorrente detectada" : "Alteração ainda não confirmada",
+            conflict
+              ? "Outro computador atualizou o mesmo registro. Recarregue a página para evitar sobrescrever dados."
+              : "O Cronos preservou a tentativa neste computador. Confira sua conexão antes de sair."
+          );
+          break;
+        }
+      }
+    }finally{
+      state.processing = false;
+      if(!state.queue.length) emit("cronos:persistence-idle", {});
+    }
+  }
+
+  async function saveOperationalState(db, options={}){
+    if(!state.enabled) return false;
+    if(!state.loaded || !state.working){
+      throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
+    }
+    if(state.blocked){
+      notify("Sincronização bloqueada", "Recarregue a página antes de fazer outra alteração. Nenhum dado antigo será sobrescrito.");
+      return false;
+    }
+
+    const current = normalizeState(db);
+    const changes = buildChanges(state.working, current, state.workingVersions);
+    if(!hasChanges(changes)) return true;
+
+    const operationId = options.operationId || newOperationId();
+    const mutation = {
+      operationId,
+      changes,
+      keepPendingOnFailure:options.keepPendingOnFailure !== false,
+      createdAt:new Date().toISOString()
+    };
+
+    state.queue.push(mutation);
+    state.working = applyChanges(state.working, changes);
+    state.workingVersions = predictVersions(state.workingVersions, changes);
+    persistQueue();
+
+    if(state.blocked){
+      notify("Alteração preservada localmente", "A fila está bloqueada por uma falha anterior. Recarregue quando a conexão estiver estável.");
+      return false;
+    }
+
+    const promise = new Promise(resolve=>{
+      state.waiters.set(operationId, { resolve });
+    });
+    processQueue();
+    return promise;
+  }
+
+  function setClient(client){ state.client = client || null; }
+
+  function setClinicId(clinicId){
+    const next = String(clinicId || "").trim();
+    if(next === state.clinicId) return;
+    state.clinicId = next;
+    state.enabled = false;
+    state.loaded = false;
+    state.baseline = null;
+    state.working = null;
+    state.versions = emptyVersions();
+    state.workingVersions = emptyVersions();
+    state.queue = [];
+    state.processing = false;
+    state.blocked = false;
+  }
+
+  function clearContext(){ setClinicId(""); }
+  function isEnabled(){ return state.enabled === true; }
+  function hasPending(){ return state.queue.length > 0 || state.processing; }
+
+  function discardPending(){
+    state.queue = [];
+    state.blocked = false;
+    persistQueue();
+    rebuildWorking();
+    emit("cronos:persistence-idle", {});
+  }
+
+  function retryPending(){
+    state.blocked = false;
+    return processQueue();
+  }
+
+  function diagnostics(){
+    return {
+      clinicId:state.clinicId,
+      enabled:state.enabled,
+      loaded:state.loaded,
+      pending:state.queue.length,
+      processing:state.processing,
+      blocked:state.blocked,
+      lastError:state.lastError ? String(state.lastError.message || state.lastError) : null,
+      archivedConflicts:getConflictArchive().length
+    };
+  }
+
+  try{
+    global.addEventListener("beforeunload", event=>{
+      if(hasPending()){
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    });
+  }catch(_){ }
+
+  global.CronosRepository = Object.freeze({
+    CronosPersistenceError,
+    setClient,
+    setClinicId,
+    clearContext,
+    checkStatus,
+    loadOperationalState,
+    saveOperationalState,
+    isEnabled,
+    hasPending,
+    retryPending,
+    discardPending,
+    getConflictArchive,
+    clearConflictArchive,
+    newOperationId,
+    diagnostics
+  });
+})(window);
