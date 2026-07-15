@@ -5,7 +5,8 @@
     anonKey: 'sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ',
     table: 'site_chat_leads',
     settingsTable: 'site_chat_settings',
-    storageKey: 'cronos-site-chat-v1',
+    storageKey: 'cronos-site-chat-session-v1',
+    legacyStorageKey: 'cronos-site-chat-v1',
     whatsappNumber: String((window.CRONOS_SITE_CHAT_CONFIG && window.CRONOS_SITE_CHAT_CONFIG.whatsappNumber) || '').replace(/\D/g, ''),
     whatsappMessage: (window.CRONOS_SITE_CHAT_CONFIG && window.CRONOS_SITE_CHAT_CONFIG.whatsappMessage) || 'Olá! Vim pelo site do Cronos Odonto e quero saber mais sobre o sistema.',
     pollMs: 9000
@@ -169,17 +170,14 @@
         ev.preventDefault();
         try { await settingsReady; } catch (_) {}
         const phone = getConfiguredWhatsappNumber();
-        if (phone) {
-          clearStatus();
-          const url = buildWhatsappUrl(phone);
-          els.whatsapp.href = url;
-          els.whatsapp.target = '_blank';
-          els.whatsapp.rel = 'noopener noreferrer';
-          window.open(url, '_blank', 'noopener,noreferrer');
-          return;
-        }
-        togglePanel(true);
-        flashStatus('O WhatsApp oficial ainda não foi configurado. Enquanto isso, manda por aqui mesmo.', 'warn');
+        if (!phone) return;
+
+        clearStatus();
+        const url = buildWhatsappUrl(phone);
+        els.whatsapp.href = url;
+        els.whatsapp.target = '_blank';
+        els.whatsapp.rel = 'noopener noreferrer';
+        window.open(url, '_blank', 'noopener,noreferrer');
       });
     }
   }
@@ -367,16 +365,21 @@
   function syncWhatsAppButton(){
     if (!els.whatsapp) return;
     const phone = getConfiguredWhatsappNumber();
+    els.whatsapp.hidden = !phone;
+
     if (phone) {
       els.whatsapp.href = buildWhatsappUrl(phone);
       els.whatsapp.target = '_blank';
       els.whatsapp.rel = 'noopener noreferrer';
+      els.whatsapp.removeAttribute('aria-disabled');
       clearStatus();
-    } else {
-      els.whatsapp.href = '#';
-      els.whatsapp.removeAttribute('target');
-      els.whatsapp.removeAttribute('rel');
+      return;
     }
+
+    els.whatsapp.href = '#';
+    els.whatsapp.removeAttribute('target');
+    els.whatsapp.removeAttribute('rel');
+    els.whatsapp.setAttribute('aria-disabled', 'true');
   }
 
   async function syncLead(){
@@ -467,7 +470,7 @@
   }
 
   function persistState(){
-    localStorage.setItem(CONFIG.storageKey, JSON.stringify({
+    sessionStorage.setItem(CONFIG.storageKey, JSON.stringify({
       sessionKey: state.sessionKey,
       leadId: state.leadId,
       transcript: state.transcript,
@@ -484,7 +487,9 @@
 
   function loadPersisted(){
     try {
-      const raw = localStorage.getItem(CONFIG.storageKey);
+      // Conversas antigas não devem reaparecer em uma nova sessão do navegador.
+      localStorage.removeItem(CONFIG.legacyStorageKey);
+      const raw = sessionStorage.getItem(CONFIG.storageKey);
       return raw ? JSON.parse(raw) : {};
     } catch (_) {
       return {};
