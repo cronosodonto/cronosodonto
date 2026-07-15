@@ -1,5 +1,12 @@
 
 (function(){
+  function normalizeWhatsappNumber(value){
+    let digits = String(value || '').replace(/\D/g, '');
+    if (digits.startsWith('00')) digits = digits.slice(2);
+    if (digits.length === 10 || digits.length === 11) digits = `55${digits}`;
+    return digits;
+  }
+
   const shared = window.__CRONOS_SUPERADMIN_SHARED__;
   if (!shared || !shared.supabaseClient) return;
 
@@ -52,7 +59,7 @@
     };
 
     setVal('siteChatAvatarUrl', safe.avatar_url || 'assets/brand/cronos-symbol-2d.png');
-    setVal('siteChatWhatsapp', safe.whatsapp || '');
+    setVal('siteChatWhatsapp', normalizeWhatsappNumber(safe.whatsapp || ''));
     setVal('siteChatWhatsappMessage', safe.whatsapp_message || defaultSettings().whatsapp_message);
 
     setVal('siteChatFlowWelcome1', flow.welcome1);
@@ -68,7 +75,7 @@
 
     const preview = qs('siteChatSettingsPreview');
     if (preview) {
-      const phone = String(safe.whatsapp || '').replace(/\D/g, '');
+      const phone = normalizeWhatsappNumber(safe.whatsapp || '');
       preview.textContent = phone
         ? `Chat configurado. WhatsApp da landing: ${phone}. Fluxo com ${(flow.quickActions || []).length} botão(ões) rápido(s).`
         : 'Fluxo carregado. WhatsApp da landing ainda não configurado.';
@@ -84,7 +91,7 @@
 
     return {
       avatar_url: val('siteChatAvatarUrl', 'assets/brand/cronos-symbol-2d.png') || 'assets/brand/cronos-symbol-2d.png',
-      whatsapp: String(val('siteChatWhatsapp')).replace(/\D/g, ''),
+      whatsapp: normalizeWhatsappNumber(val('siteChatWhatsapp')),
       whatsapp_message: val('siteChatWhatsappMessage', defaultSettings().whatsapp_message),
       flow_config: {
         welcome1: val('siteChatFlowWelcome1', DEFAULT_FLOW.welcome1),
@@ -264,7 +271,7 @@
   function buildWhatsUrl(){
     const row = selectedRow();
     if (!row || !row.phone) return '';
-    const digits = String(row.phone).replace(/\D/g, '');
+    const digits = normalizeWhatsappNumber(row.phone);
     if (!digits) return '';
     return `https://wa.me/${digits}`;
   }
@@ -312,7 +319,7 @@
       let settings = null;
       if (shared.loadSupportSettingsCloud) settings = await shared.loadSupportSettingsCloud(false);
       if (!settings && shared.loadSupportSettings) settings = shared.loadSupportSettings();
-      const phone = String(settings?.whatsapp || '').replace(/\D/g, '');
+      const phone = normalizeWhatsappNumber(settings?.whatsapp || '');
       if (!phone) {
         toast('Não encontrei WhatsApp salvo no suporte.', 'error', 2600);
         return;

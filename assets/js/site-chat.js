@@ -1,5 +1,13 @@
 
 (function(){
+  function normalizeWhatsappNumber(value){
+    let digits = String(value || '').replace(/\D/g, '');
+    if (digits.startsWith('00')) digits = digits.slice(2);
+    // Número brasileiro salvo apenas com DDD + telefone: acrescenta o DDI 55.
+    if (digits.length === 10 || digits.length === 11) digits = `55${digits}`;
+    return digits;
+  }
+
   const CONFIG = {
     supabaseUrl: 'https://nsqpslierpulanxvsxaw.supabase.co',
     anonKey: 'sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ',
@@ -7,7 +15,7 @@
     settingsTable: 'site_chat_settings',
     storageKey: 'cronos-site-chat-session-v1',
     legacyStorageKey: 'cronos-site-chat-v1',
-    whatsappNumber: String((window.CRONOS_SITE_CHAT_CONFIG && window.CRONOS_SITE_CHAT_CONFIG.whatsappNumber) || '').replace(/\D/g, ''),
+    whatsappNumber: normalizeWhatsappNumber((window.CRONOS_SITE_CHAT_CONFIG && window.CRONOS_SITE_CHAT_CONFIG.whatsappNumber) || ''),
     whatsappMessage: (window.CRONOS_SITE_CHAT_CONFIG && window.CRONOS_SITE_CHAT_CONFIG.whatsappMessage) || 'Olá! Vim pelo site do Cronos Odonto e quero saber mais sobre o sistema.',
     pollMs: 9000
   };
@@ -166,18 +174,19 @@
     if (els.form) els.form.addEventListener('submit', onSubmit);
     if (els.quick) els.quick.addEventListener('click', onQuickClick);
     if (els.whatsapp) {
-      els.whatsapp.addEventListener('click', async function(ev){
-        ev.preventDefault();
-        try { await settingsReady; } catch (_) {}
+      els.whatsapp.addEventListener('click', function(ev){
         const phone = getConfiguredWhatsappNumber();
-        if (!phone) return;
+        if (!phone) {
+          ev.preventDefault();
+          return;
+        }
 
+        // Mantém a navegação nativa do link. Isso preserva o gesto do usuário
+        // e evita que o navegador bloqueie a nova aba como pop-up assíncrono.
         clearStatus();
-        const url = buildWhatsappUrl(phone);
-        els.whatsapp.href = url;
+        els.whatsapp.href = buildWhatsappUrl(phone);
         els.whatsapp.target = '_blank';
         els.whatsapp.rel = 'noopener noreferrer';
-        window.open(url, '_blank', 'noopener,noreferrer');
       });
     }
   }
@@ -330,7 +339,7 @@
       applyFlowConfig(data.flow_config);
       siteSettings = {
         avatarUrl: data.avatar_url || 'assets/brand/cronos-symbol-2d.png',
-        whatsappNumber: String(data.whatsapp || data.whatsapp_number || data.phone || data.telefone || CONFIG.whatsappNumber || '').replace(/\D/g, ''),
+        whatsappNumber: normalizeWhatsappNumber(data.whatsapp || data.whatsapp_number || data.phone || data.telefone || CONFIG.whatsappNumber || ''),
         whatsappMessage: data.whatsapp_message || data.wa_message || CONFIG.whatsappMessage
       };
       return siteSettings;
@@ -349,15 +358,15 @@
   }
 
   function getConfiguredWhatsappNumber(){
-    return String(
+    return normalizeWhatsappNumber(
       (siteSettings && siteSettings.whatsappNumber) ||
       CONFIG.whatsappNumber ||
       ''
-    ).replace(/\D/g, '');
+    );
   }
 
   function buildWhatsappUrl(phone){
-    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    const cleanPhone = normalizeWhatsappNumber(phone);
     const msg = (siteSettings && siteSettings.whatsappMessage) || CONFIG.whatsappMessage || '';
     return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
   }
