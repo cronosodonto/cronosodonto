@@ -423,7 +423,8 @@
 
     state.baseline = normalizeState(data?.state || freshState());
     state.versions = normalizeVersions(data?.versions || {});
-    state.queue = readQueue();
+    state.queue = options.restorePending === false ? [] : readQueue();
+    if(options.restorePending === false) persistQueue();
     rebuildWorking();
 
     if(state.queue.length){
@@ -572,6 +573,96 @@
     return promise;
   }
 
+  async function deleteLeadCascade(leadId, options={}){
+    const id = String(leadId || "").trim();
+    if(!id){
+      throw new CronosPersistenceError("Lead inválido para exclusão.", { code:"INVALID_LEAD_ID" });
+    }
+    if(!state.enabled || !state.loaded || !state.working){
+      throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
+    }
+    if(state.processing || state.queue.length || state.blocked){
+      throw new CronosPersistenceError(
+        "Existe outra alteração aguardando confirmação. Espere o salvamento terminar antes de excluir.",
+        { code:"PENDING_MUTATION" }
+      );
+    }
+
+    const lead = (state.working.entries || []).find(item=>String(item?.id || "") === id);
+    if(!lead){
+      throw new CronosPersistenceError("Lead não encontrado no estado confirmado.", { code:"LEAD_NOT_FOUND" });
+    }
+
+    const contactId = String(lead?.contactId || "").trim();
+    const expectedLeadVersion = Number(state.workingVersions?.entries?.[id] || 0);
+    const expectedContactVersion = contactId
+      ? Number(state.workingVersions?.contacts?.[contactId] || 0)
+      : null;
+
+    if(expectedLeadVersion < 1){
+      throw new CronosPersistenceError("A versão do Lead não foi carregada. Recarregue a página.", { code:"LEAD_VERSION_MISSING" });
+    }
+
+    const operationId = String(options.operationId || newOperationId());
+    updateIndicator("saving", "Excluindo Lead e vínculos...");
+    emit("cronos:persistence-saving", { operationId, command:"delete_lead_cascade" });
+
+    try{
+      const result = await rpc("cronos_v4_delete_lead_cascade", {
+        p_clinic_id:state.clinicId,
+        p_lead_id:id,
+        p_expected_lead_version:expectedLeadVersion,
+        p_expected_contact_version:expectedContactVersion,
+        p_operation_id:operationId
+      });
+
+      // O comando pode apagar entidades que não estavam no diff local. Por isso
+      // a interface sempre recarrega o estado oficial após a confirmação.
+      const refreshed = await loadOperationalState({
+        clinicId:state.clinicId,
+        restorePending:false
+      });
+
+      state.lastError = null;
+      state.blocked = false;
+      emit("cronos:persistence-saved", {
+        operationId,
+        command:"delete_lead_cascade",
+        result
+      });
+      updateIndicator("saved", "Lead e vínculos excluídos");
+
+      return {
+        ...(result && typeof result === "object" ? result : {}),
+        ok:result?.ok !== false,
+        state:clone(refreshed?.state || state.working),
+        versions:clone(refreshed?.versions || state.workingVersions)
+      };
+    }catch(error){
+      const conflict = isConflictError(error);
+      const wrapped = new CronosPersistenceError(
+        conflict
+          ? "Este Lead foi alterado em outro computador. Recarregue antes de excluir."
+          : String(error?.message || "A exclusão não foi confirmada pelo servidor."),
+        {
+          code:conflict ? "VERSION_CONFLICT" : (error?.code || "DELETE_CASCADE_ERROR"),
+          cause:error,
+          operationId,
+          details:error?.details || null,
+          conflict
+        }
+      );
+      state.lastError = wrapped;
+      emit(conflict ? "cronos:persistence-conflict" : "cronos:persistence-error", {
+        error:wrapped,
+        command:"delete_lead_cascade",
+        leadId:id
+      });
+      updateIndicator("error", conflict ? "Conflito: recarregue a página" : "Falha ao excluir");
+      throw wrapped;
+    }
+  }
+
   function setClient(client){ state.client = client || null; }
 
   function setClinicId(clinicId){
@@ -636,6 +727,7 @@
     checkStatus,
     loadOperationalState,
     saveOperationalState,
+    deleteLeadCascade,
     isEnabled,
     hasPending,
     retryPending,

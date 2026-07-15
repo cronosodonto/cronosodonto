@@ -12999,22 +12999,140 @@ function openWhats(entryId){
   }
 }
 
+const __cronosLeadDeleteInFlight = new Set();
+
+function cronosLinkedToLeadOrContact(item, entryId, contactId, includeContactOnly=false){
+  if(!item || typeof item !== "object") return false;
+  const linkedEntry = String(
+    item.entryId || item.leadId || item.entry_id || item.lead_id || ""
+  ).trim();
+  if(linkedEntry && linkedEntry === String(entryId || "")) return true;
+  if(!includeContactOnly || !contactId) return false;
+  const linkedContact = String(item.contactId || item.contact_id || "").trim();
+  return linkedContact === String(contactId);
+}
+
 function deleteLead(entryId){
   return deleteEntry(entryId);
 }
 
-function deleteEntry(entryId){
+async function deleteEntry(entryId){
   const actor = currentActor();
+  if(!actor) return toast("Sessão expirada", "Faça login novamente.");
   if(!actor.perms.delete) return toast("Sem permissão", "Seu nível não permite excluir.");
+
+  const id = String(entryId || "").trim();
+  if(!id || __cronosLeadDeleteInFlight.has(id)) return false;
+
   const db = loadDB();
-  const e = db.entries.find(x=>x.id===entryId);
-  if(!e) return;
-  const c = db.contacts.find(x=>x.id===e.contactId);
-  if(!confirm(`Excluir lead do mês ${monthLabel(e.monthKey)}? (${c?.name||"—"})`)) return;
-  db.entries = db.entries.filter(x=>x.id!==entryId);
-  saveDB(db);
-  toast("Excluído", "Entrada removida.");
-  renderAll();
+  const entry = (db.entries || []).find(x=>String(x?.id || "") === id);
+  if(!entry) return false;
+
+  const contactId = String(entry.contactId || "").trim();
+  const contact = (db.contacts || []).find(x=>String(x?.id || "") === contactId);
+  const otherActiveLeads = (db.entries || []).filter(x=>
+    String(x?.id || "") !== id && String(x?.contactId || "") === contactId
+  );
+  const deleteContact = !!contactId && otherActiveLeads.length === 0;
+
+  const relatedTasks = (db.tasks || []).filter(item=>
+    cronosLinkedToLeadOrContact(item, id, contactId, deleteContact)
+  ).length;
+  const relatedPayments = (db.payments || []).filter(item=>
+    cronosLinkedToLeadOrContact(item, id, contactId, deleteContact)
+  ).length;
+  const relatedActivity = (db.activityLog || []).filter(item=>
+    cronosLinkedToLeadOrContact(item, id, contactId, deleteContact)
+  ).length;
+
+  const consequences = [
+    "• o Lead e sua ficha/odontograma/plano de tratamento",
+    relatedTasks ? `• ${relatedTasks} tarefa(s) vinculada(s)` : "• tarefas vinculadas",
+    relatedPayments ? `• ${relatedPayments} pagamento(s)/parcela(s) vinculada(s)` : "• pagamentos e parcelas vinculados",
+    relatedActivity ? `• ${relatedActivity} registro(s) de atividade` : "• atividades e retornos vinculados",
+    deleteContact
+      ? "• o paciente/contato, pois este é o único Lead ativo dele"
+      : `• o paciente será mantido porque possui ${otherActiveLeads.length} outro(s) Lead(s) ativo(s)`
+  ].join("\n");
+
+  const patientName = String(contact?.name || entry?.name || "Paciente sem nome");
+  const accepted = confirm(
+    `Excluir definitivamente este Lead de ${patientName}?\n\n${consequences}\n\nA exclusão será confirmada no servidor antes de desaparecer da tela.`
+  );
+  if(!accepted) return false;
+
+  __cronosLeadDeleteInFlight.add(id);
+
+  try{
+    if(window.CronosRepository?.isEnabled?.()){
+      const result = await window.CronosRepository.deleteLeadCascade(id);
+      if(!result?.ok) throw new Error("A exclusão não foi confirmada pelo servidor.");
+
+      DB = normalizeDBShape(result.state || freshDB());
+      window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      safeSetLocalDB(DB);
+      try{ captureTaskSnapshots(DB); }catch(_){ }
+      try{ updateSidebarPills(); }catch(_){ }
+      renderAll();
+
+      const counts = result.counts || {};
+      const removedParts = [
+        Number(counts.tasks_deleted || 0) ? `${counts.tasks_deleted} tarefa(s)` : "",
+        Number(counts.payments_deleted || 0) ? `${counts.payments_deleted} pagamento(s)` : "",
+        Number(counts.activity_deleted || 0) ? `${counts.activity_deleted} atividade(s)` : "",
+        Number(counts.flows_deleted || 0) ? `${counts.flows_deleted} fluxo(s)` : ""
+      ].filter(Boolean);
+
+      toast(
+        "Lead excluído",
+        result.contact_deleted
+          ? `Lead, paciente e vínculos removidos${removedParts.length ? `: ${removedParts.join(", ")}` : "."}`
+          : `Lead e vínculos removidos. O paciente foi mantido por possuir outro Lead ativo.`
+      );
+      return true;
+    }
+
+    // Compatibilidade com clínicas ainda fora da V4: aplica a mesma regra em
+    // memória e envia um único salvamento do estado completo.
+    db.tasks = (db.tasks || []).filter(item=>
+      !cronosLinkedToLeadOrContact(item, id, contactId, deleteContact)
+    );
+    db.payments = (db.payments || []).filter(item=>
+      !cronosLinkedToLeadOrContact(item, id, contactId, deleteContact)
+    );
+    db.activityLog = (db.activityLog || []).filter(item=>
+      !cronosLinkedToLeadOrContact(item, id, contactId, deleteContact)
+    );
+
+    ["flowRuns", "assistedFlowRuns"].forEach(key=>{
+      if(Array.isArray(db[key])){
+        db[key] = db[key].filter(item=>
+          !cronosLinkedToLeadOrContact(item, id, contactId, deleteContact)
+        );
+      }
+    });
+
+    db.entries = (db.entries || []).filter(x=>String(x?.id || "") !== id);
+    if(deleteContact){
+      db.contacts = (db.contacts || []).filter(x=>String(x?.id || "") !== contactId);
+    }
+
+    const saved = await saveDB(db, { immediate:true });
+    if(saved === false) throw new Error("A exclusão não foi confirmada.");
+    toast("Lead excluído", deleteContact ? "Lead, paciente e vínculos removidos." : "Lead e vínculos removidos.");
+    renderAll();
+    return true;
+  }catch(error){
+    console.error("Cronos: falha na exclusão em cascata do Lead.", error);
+    toast(
+      "Exclusão não concluída",
+      String(error?.message || "O servidor não confirmou a exclusão. O Lead continua preservado.")
+    );
+    return false;
+  }finally{
+    __cronosLeadDeleteInFlight.delete(id);
+  }
 }
 
 /* -------- Users CRUD -------- */
