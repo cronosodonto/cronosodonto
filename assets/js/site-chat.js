@@ -332,15 +332,15 @@
     try {
       const { data, error } = await client
         .from(CONFIG.settingsTable)
-        .select('avatar_url, whatsapp, whatsapp_number, phone, telefone, whatsapp_message, wa_message, flow_config, updated_at')
+        .select('avatar_url, whatsapp, whatsapp_message, flow_config, updated_at')
         .eq('id', 'default')
         .maybeSingle();
       if (error || !data) return siteSettings;
       applyFlowConfig(data.flow_config);
       siteSettings = {
         avatarUrl: data.avatar_url || 'assets/brand/cronos-symbol-2d.png',
-        whatsappNumber: normalizeWhatsappNumber(data.whatsapp || data.whatsapp_number || data.phone || data.telefone || CONFIG.whatsappNumber || ''),
-        whatsappMessage: data.whatsapp_message || data.wa_message || CONFIG.whatsappMessage
+        whatsappNumber: normalizeWhatsappNumber(data.whatsapp || CONFIG.whatsappNumber || ''),
+        whatsappMessage: data.whatsapp_message || CONFIG.whatsappMessage
       };
       return siteSettings;
     } catch (error) {
@@ -375,6 +375,7 @@
     if (!els.whatsapp) return;
     const phone = getConfiguredWhatsappNumber();
     els.whatsapp.hidden = !phone;
+    els.whatsapp.style.display = phone ? 'flex' : 'none';
 
     if (phone) {
       els.whatsapp.href = buildWhatsappUrl(phone);
