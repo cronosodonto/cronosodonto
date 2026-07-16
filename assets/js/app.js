@@ -11498,8 +11498,8 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div class="suggest">
         <label>Telefone/WhatsApp *</label>
-        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Ex: (98) 99999-0000 ou +41 79 123 45 67" inputmode="tel" maxlength="28" autocomplete="off"/>
-        <div class="help muted" style="font-size:12px">Para números internacionais, comece com + ou 00 e informe o código do país.</div>
+        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Cadastre com DDD ou +DDI" inputmode="tel" maxlength="28" autocomplete="off"/>
+        <div class="help muted" style="font-size:12px">Para números internacionais, comece com + e informe o código do país.</div>
       </div>
 
       <div>
