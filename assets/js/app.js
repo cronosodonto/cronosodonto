@@ -4441,7 +4441,7 @@ function renderInstallmentTable(entry, contact){
 }
 
 function waChargeLink(phone, nome, entry, parcela){
-  const clean = String(phone||"").replace(/\D/g,"");
+  const clean = cronosPhoneToWhatsApp(phone);
   const p = parcela || {};
   const db = loadDB();
   const tplDefault = `Oi {nome}! 😊\nSó pra lembrar: a parcela {parcela}/{total} de {valor} vence em {vencimento}. Posso te ajudar por aqui?`;
@@ -4454,7 +4454,7 @@ function waChargeLink(phone, nome, entry, parcela){
     .replaceAll("{valor}", moneyBR(p.amount||0))
     .replaceAll("{vencimento}", p.dueDate?fmtBR(p.dueDate):"");
 
-  return `https://wa.me/55${clean}?text=${encodeURIComponent(msg)}`;
+  return clean ? `https://wa.me/${clean}?text=${encodeURIComponent(msg)}` : "#";
 }
 
 async function payInstallment(entryId, number){
@@ -5334,11 +5334,41 @@ window.CRONOS_SHOW_AUDIT = function(entityType, entityId){
   }
 };
 
-function normPhone(s){
-  return String(s||"").replace(/\D/g,"");
+function cronosPhoneStartsInternational(value){
+  const raw = String(value || "").trim();
+  return raw.startsWith("+") || raw.startsWith("00");
 }
-function formatPhoneBR(v){
-  const s = normPhone(v).slice(0, 11);
+function normPhone(value){
+  const raw = String(value || "").trim();
+  const digits = raw.replace(/\D/g, "");
+  if(!digits) return "";
+  if(raw.startsWith("00")) return "+" + digits.slice(2, 17);
+  if(raw.startsWith("+")) return "+" + digits.slice(0, 15);
+  return digits.slice(0, 11);
+}
+function formatInternationalPhoneInput(value){
+  let raw = String(value || "").trimStart();
+  if(raw.startsWith("00")) raw = "+" + raw.slice(2);
+  if(!raw.startsWith("+")) raw = "+" + raw;
+
+  let digitsSeen = 0;
+  let body = "";
+  for(const ch of raw.slice(1)){
+    if(/\d/.test(ch)){
+      if(digitsSeen >= 15) continue;
+      digitsSeen += 1;
+      body += ch;
+    }else if(/[\s().-]/.test(ch)){
+      if(body && !/[\s(.-]$/.test(body)) body += ch;
+    }
+  }
+  return "+" + body.replace(/[\s().-]+$/g, "");
+}
+function formatPhoneBR(value){
+  const raw = String(value || "");
+  if(cronosPhoneStartsInternational(raw)) return formatInternationalPhoneInput(raw);
+
+  const s = raw.replace(/\D/g, "").slice(0, 11);
   if(!s) return "";
   if(s.length <= 2) return `(${s}`;
   const ddd = s.slice(0, 2);
@@ -5347,6 +5377,23 @@ function formatPhoneBR(v){
   if(s.length <= 10) return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
   return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5, 9)}`;
 }
+function cronosIsValidPhone(value){
+  const normalized = normPhone(value);
+  const digits = normalized.replace(/\D/g, "");
+  if(normalized.startsWith("+")) return digits.length >= 8 && digits.length <= 15;
+  return digits.length >= 8 && digits.length <= 11;
+}
+function cronosPhoneToWhatsApp(value){
+  const normalized = normPhone(value);
+  const digits = normalized.replace(/\D/g, "");
+  if(!digits) return "";
+  if(normalized.startsWith("+")) return digits;
+  if(digits.startsWith("55") && digits.length > 11) return digits;
+  return "55" + digits;
+}
+window.CRONOS_PHONE_NORMALIZE = normPhone;
+window.CRONOS_PHONE_FORMAT = formatPhoneBR;
+window.CRONOS_PHONE_TO_WHATSAPP = cronosPhoneToWhatsApp;
 function formatCPFInput(v){
   const s = String(v||"").replace(/\D/g,"").slice(0, 11);
   if(s.length <= 3) return s;
@@ -7998,10 +8045,7 @@ function applyTemplate(tpl, vars){
 }
 
 function normalizePhoneBR(phone){
-  const digits = String(phone||"").replace(/\D+/g,"");
-  if(!digits) return "";
-  if(digits.startsWith("55")) return digits;
-  return "55"+digits;
+  return cronosPhoneToWhatsApp(phone);
 }
 
 function openWhatsAppForEntry(entryId){
@@ -8262,8 +8306,9 @@ function showAuth(){
   window.__CRONOS_BOOTED = true;
 }
 
-function showApp(actor){
-  hideBootSplash();
+function showApp(actor, options={}){
+  const keepSplash = !!options?.keepSplash;
+  if(!keepSplash) hideBootSplash();
   window.__CRONOS_SESSION_CHECKING__ = false;
   window.__CRONOS_BOOTING__ = false;
   window.__CRONOS_ACCESS_BLOCK__ = null;
@@ -11432,7 +11477,8 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div class="suggest">
         <label>Telefone/WhatsApp *</label>
-        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Ex: (98) 99999-0000" inputmode="numeric" autocomplete="off"/>
+        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Ex: (98) 99999-0000 ou +41 79 123 45 67" inputmode="tel" maxlength="28" autocomplete="off"/>
+        <div class="help muted" style="font-size:12px">Para números internacionais, comece com + ou 00 e informe o código do país.</div>
       </div>
 
       <div>
@@ -11563,7 +11609,8 @@ function buildSuggestList(actor, typedName, typedPhone){
   const contacts = db.contacts
     .filter(c=>c.masterId===actor.masterId)
     .filter(c=>{
-      const byPhone = phoneN ? c.phone.includes(phoneN) : false;
+      const storedPhone = normPhone(c.phone || "");
+      const byPhone = phoneN ? storedPhone.includes(phoneN) : false;
       const byName = nameN ? (c.name||"").toLowerCase().includes(nameN) : false;
       return byPhone || byName;
     })
@@ -11894,7 +11941,7 @@ function cronosFindDuplicateContact({masterId, name, phone, cpf, birthDate, excl
   const byNamePhone = currentNameKey && currentPhone
     ? sameMasterContacts.find(c=>
         cronosNormalizePersonName(c.name) === currentNameKey &&
-        String(c.phone || "") === String(currentPhone || "")
+        normPhone(c.phone || "") === String(currentPhone || "")
       )
     : null;
 
@@ -12274,7 +12321,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
     let seen = 0;
     let pos = formatted.length;
     if(digitsBefore <= 0){
-      pos = 0;
+      pos = formatted.startsWith("+") ? formatted.length : 0;
     }else{
       for(let i=0; i<formatted.length; i++){
         if(/\d/.test(formatted[i])) seen++;
@@ -12406,6 +12453,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const name = val("lf_name").trim();
     const phone = normPhone(val("lf_phone"));
     if(!name || !phone) return toast("Nome e telefone são obrigatórios");
+    if(!cronosIsValidPhone(phone)){
+      return toast("Telefone inválido", phone.startsWith("+")
+        ? "Use o código do país e entre 8 e 15 dígitos. Ex.: +41 79 123 45 67."
+        : "Informe o telefone com DDD. Para outro país, comece com + ou 00.");
+    }
 
     const firstContactInput = val("lf_first", "").trim();
 
@@ -12985,13 +13037,13 @@ function openWhats(entryId){
     const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
     if(!entry) return toast("Erro", "Lead não encontrado.");
     const contact = (db.contacts||[]).find(c=>c.id===entry.contactId) || {};
-    const phone = String(contact.phone||entry.phone||"").replace(/\D/g,'');
-    if(!phone) return toast("Sem telefone", "Esse lead não tem telefone.");
+    const phone = cronosPhoneToWhatsApp(contact.phone || entry.phone || "");
+    if(!phone) return toast("Sem telefone", "Esse lead não tem telefone válido.");
     const tpl = (db.settings && db.settings.waTemplate) ? String(db.settings.waTemplate) : "Oi {nome}! Vi seu interesse. Posso te ajudar?";
     const msg = tpl
       .replaceAll("{nome}", String(contact.name||entry.name||""))
       .replaceAll("{tratamento}", String(entry.treatment==="Outros" ? (entry.treatmentOther||"") : (entry.treatment||"")));
-    const url = `https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`;
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
     window.open(url, "_blank");
   }catch(e){
     console.error(e);
@@ -15167,16 +15219,31 @@ async function boot(){
 
   window.__SUPPORT_BOOT_RETRIES__ = 0;
 
-  const accessDecision = await applyClinicAccessRules();
+  // Acesso e permissões são independentes e essenciais. Carregamos os dois em
+  // paralelo e liberamos a tela no instante em que ambos terminarem.
+  const featureAccessPromise = (async ()=>{
+    try{
+      if(typeof window.__refreshFeatureAccess === "function"){
+        await window.__refreshFeatureAccess(true, actor);
+      }
+    }catch(error){
+      console.warn("Cronos: permissões abriram em modo seguro.", error);
+    }
+  })();
+
+  const [accessDecision] = await Promise.all([
+    applyClinicAccessRules(),
+    featureAccessPromise
+  ]);
   if(accessDecision?.mode && accessDecision.mode !== "allow"){
     return;
   }
 
-  showApp(actor);
+  showApp(actor, { keepSplash:true });
   applyRoleVisibility(actor);
-
   bindNav();
   setActiveView(firstAllowedView(actor));
+  hideBootSplash();
 }
 
 /* One-time bindings */
@@ -15714,15 +15781,15 @@ function cronosBootFromLocalCacheAfterF5(session){
       if(migrateDBValues(db)) saveDB(db, { skipCloud:true });
     }catch(e){ console.warn("Cronos F5 rápido: falha na migração leve", e); }
 
-    showApp(actor);
+    // Prepara a interface por baixo do splash, sem esconder e mostrar novamente.
+    showApp(actor, { keepSplash:true });
     applyRoleVisibility(actor);
     bindNav();
 
     const target = cronosGetCurrentVisibleView() || firstAllowedView(actor);
     setActiveView(target);
 
-    // V19: mantém a tela de carregamento por cima até a sincronização real da nuvem
-    // terminar. O app fica preparado por baixo, mas não mostra contagens antigas.
+    // O splash permanece somente enquanto a atualização real estiver pendente.
     try{ document.body?.classList.add("cronos-fast-resume-pending"); }catch(_){ }
     try{ showBootSplash("Atualizando dados da clínica..."); }catch(_){ }
 
@@ -15839,7 +15906,7 @@ function cronosRefreshCloudAfterFastResume(){
   // ser renderizada novamente. Assim o usuário não vê contagens antigas piscando.
   try{ showBootSplash("Atualizando dados da clínica..."); }catch(_){ }
 
-  setTimeout(async ()=>{
+  (async ()=>{
     let refreshed = false;
     try{
       await ensureCloudDBLoaded(true);
@@ -15876,7 +15943,7 @@ function cronosRefreshCloudAfterFastResume(){
         try{ document.body?.classList.remove("cronos-fast-resume-pending"); }catch(_){ }
       }
     }
-  }, 80);
+  })();
 }
 
 function cronosClearSupabaseAuthStorageFast(){
@@ -16116,7 +16183,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const FEATURE_ACCESS_ENDPOINT = 'get-clinic-feature-access';
   const SUPABASE_FN_BASE = 'https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/';
   const FEATURE_CACHE_PREFIX = 'cronos_feature_access_cache::';
-  const SUPPORT_SPLASH_MIN_MS = 900;
 
   const featureStateMap = new Map();
   let lastResolvedContextKey = null;
@@ -16528,7 +16594,6 @@ document.addEventListener("DOMContentLoaded", () => {
     try{
       const ctx = resolveOwnerContext(actorOverride);
       if(!ctx.owner_uid && !ctx.owner_email){
-        console.warn('Feature access: contexto da clínica ainda não resolvido.');
         return false;
       }
 
@@ -16620,25 +16685,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const ctx = resolveOwnerContext(actor);
       readFeatureCache(ctx);
 
-      const supportMode = !!(actor && actor.isSupport);
-      const authVisible = !!(document.getElementById('authView') && !document.getElementById('authView').classList.contains('hidden'));
-      const elapsed = Date.now() - Number(window.__supportEntryStartedAt || 0);
-      const waitMs = (supportMode && authVisible) ? Math.max(0, SUPPORT_SPLASH_MIN_MS - elapsed) : 0;
-
-      const run = () => {
-        originalShowApp.apply(this, arguments);
-        applyFeatureStatesToMenu();
-        syncCurrentViewState();
-        setTimeout(() => { refreshFeatureAccess(true, actor); }, 40);
-        setTimeout(() => { refreshFeatureAccess(true, actor); }, 900);
-      };
-
-      if(waitMs > 0){
-        setTimeout(run, waitMs);
-        return;
-      }
-
-      return run();
+      const result = originalShowApp.apply(this, arguments);
+      applyFeatureStatesToMenu();
+      syncCurrentViewState();
+      // O boot principal já aguarda as permissões. Aqui apenas reaplicamos o cache,
+      // sem atraso mínimo nem duas novas chamadas forçadas.
+      refreshFeatureAccess(false, actor);
+      return result;
     };
 
     window.__featureShowAppWrapped = true;
@@ -16655,10 +16708,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.__supportEntryStartedAt = Date.now();
       }
 
-      const result = await originalBoot.apply(this, arguments);
-      setTimeout(() => { refreshFeatureAccess(true); }, 300);
-      setTimeout(() => { refreshFeatureAccess(true); }, 1200);
-      return result;
+      return await originalBoot.apply(this, arguments);
     };
     window.__featureBootWrapped = true;
   }
@@ -16717,10 +16767,19 @@ document.addEventListener("DOMContentLoaded", () => {
     wrapShowApp();
     wrapBoot();
     wrapSetActiveView();
-    refreshFeatureAccess(false);
-    window.addEventListener('focus', () => refreshFeatureAccess(true));
+
+    const refreshWhenContextExists = (force=false) => {
+      const actor = (typeof currentActor === 'function') ? currentActor() : null;
+      const ctx = resolveOwnerContext(actor);
+      if(!ctx.owner_uid && !ctx.owner_email) return false;
+      refreshFeatureAccess(force, actor);
+      return true;
+    };
+
+    refreshWhenContextExists(false);
+    window.addEventListener('focus', () => refreshWhenContextExists(true));
     document.addEventListener('visibilitychange', () => {
-      if(document.visibilityState === 'visible') refreshFeatureAccess(true);
+      if(document.visibilityState === 'visible') refreshWhenContextExists(true);
     });
   }
 

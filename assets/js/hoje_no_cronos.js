@@ -525,9 +525,19 @@
   }
 
   function waLink(phone, msg=""){
-    const clean = String(phone || "").replace(/\D/g,"");
+    const clean = (typeof window.CRONOS_PHONE_TO_WHATSAPP === "function")
+      ? window.CRONOS_PHONE_TO_WHATSAPP(phone)
+      : (()=>{
+          const raw = String(phone || "").trim();
+          const digits = raw.replace(/\D/g, "");
+          if(!digits) return "";
+          if(raw.startsWith("00")) return digits.slice(2);
+          if(raw.startsWith("+")) return digits;
+          if(digits.startsWith("55") && digits.length > 11) return digits;
+          return "55" + digits;
+        })();
     if(!clean) return "#";
-    return `https://wa.me/55${clean}?text=${encodeURIComponent(msg || "")}`;
+    return `https://wa.me/${clean}?text=${encodeURIComponent(msg || "")}`;
   }
 
   async function copyText(text){
@@ -2752,6 +2762,8 @@
       const receiptOverdueCount = receiptsAll.filter(x=>x.overdue).length;
       const flowOverdueCount = flowsAll.filter(x=>x.overdue).length;
       const urgentCount = apptOverdueCount + taskOverdueCount + receiptOverdueCount + flowOverdueCount;
+      const hasActionableSuggestion = appointmentsAll.length > 0 || tasksAll.length > 0 || receiptsAll.length > 0 || flowsAll.length > 0;
+      const hideSuggestionCard = isTodaySuggestionDismissed() || !hasActionableSuggestion;
       const weekDay = weekdayBR(todayISO());
       const showOverdue = activeFilter === "overdue";
       const showAppointments = activeFilter === "all" || activeFilter === "appointments" || showOverdue;
@@ -2773,7 +2785,7 @@
             </div>
           </div>
 
-          <div class="todayTopGrid ${isTodaySuggestionDismissed() ? "todaySuggestionIsDismissed" : ""}">
+          <div class="todayTopGrid ${hideSuggestionCard ? "todaySuggestionIsDismissed" : ""}">
             <section class="todayPriorityCard">
               <div class="todayPriorityTitle">${todayTitleIcon()}<span>Prioridades de hoje</span></div>
               <div class="todayPriorityGrid">
@@ -2783,12 +2795,12 @@
                 <button class="todayBtn todayPriorityBtn" onclick="CRONOS_TODAY.setFilter('overdue')">Ver urgentes primeiro ›</button>
               </div>
             </section>
-            <aside class="todaySuggestionCard">
+            ${hasActionableSuggestion ? `<aside class="todaySuggestionCard">
               ${(()=>{ const sug = getTodaySuggestionConfig(); const sugVars = { apptOverdueCount, tasksOpenCount: tasksAll.length, receiptsPendingCount: receiptsAll.length, overdueCount, todayDate: fmtBR(todayISO()) }; return `
               <div class="todaySuggestionTitle">${todayTitleIcon()}<span>${escapeAttr(sug.title || DEFAULT_TODAY_SUGGESTION.title)}</span></div>
               <div class="todaySuggestionBody"><div class="todayRobot">${renderSuggestionIcon(sug)}</div><div>${escapeAttr(applyTemplate(sug.message || DEFAULT_TODAY_SUGGESTION.message, sugVars))}</div></div>
               <button class="todayBtn" ${suggestionButtonOnclick(sug.buttonAction, sug.buttonText || DEFAULT_TODAY_SUGGESTION.buttonText)}>${escapeAttr(sug.buttonText || DEFAULT_TODAY_SUGGESTION.buttonText)}</button>`; })()}
-            </aside>
+            </aside>` : ""}
           </div>
 
           <div class="todayGrid todayChipRow">

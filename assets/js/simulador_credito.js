@@ -97,7 +97,15 @@
     return /^ex(?:emplo)?\s*:?\s*20\s*%?$/i.test(s)?'':s;
   }
   function docLabel(v){return ({complete:'Completo',basic:'Básico',incomplete:'Incompleto',none:'Não informado'})[String(v||'basic')]||'Básico'}
-  function phone(v){return String(v||'').replace(/\D/g,'')}
+  function phone(v){
+    if(typeof window.CRONOS_PHONE_TO_WHATSAPP === 'function') return window.CRONOS_PHONE_TO_WHATSAPP(v);
+    const raw=String(v||'').trim(), digits=raw.replace(/\D/g,'');
+    if(!digits)return '';
+    if(raw.startsWith('00'))return digits.slice(2);
+    if(raw.startsWith('+'))return digits;
+    if(digits.startsWith('55')&&digits.length>11)return digits;
+    return '55'+digits;
+  }
   function mainHost(){return qs('main.main')||qs('.main')||document.body}
 
   function css(){
@@ -964,7 +972,7 @@ Observação: esta é uma simulação estimativa e pode variar conforme aprovaç
     if(!S.result)return toast('Simulação','Calcule antes de enviar.');
     const e=getEntry(), c=contactOf(load(),e), ph=phone(c.phone);
     if(!ph)return toast('WhatsApp','Paciente sem telefone.');
-    window.open(`https://wa.me/55${ph}?text=${encodeURIComponent(resultText())}`,'_blank');
+    window.open(`https://wa.me/${ph}?text=${encodeURIComponent(resultText())}`,'_blank');
   }
   function printText(text){
     const safe=esc(text||'').replace(/\n/g,'<br>');
