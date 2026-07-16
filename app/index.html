@@ -419,6 +419,7 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 <span aria-hidden="true" class="spinner sm"></span>
 <span id="supportEntryText">Modo suporte • Validando acesso e carregando a clínica...</span>
 </div>
+<form id="authForm" autocomplete="on" novalidate>
 <div class="twoCol authLoginGrid">
 <div class="authFullRow" id="authModeWrap">
 <label>Modo de acesso</label>
@@ -429,20 +430,21 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 </div>
 <div>
 <label>Login</label>
-<input id="authLogin" placeholder="E-mail ou usuário"/>
+<input id="authLogin" name="username" autocomplete="username" placeholder="E-mail ou usuário"/>
 </div>
 <div class="authPassField">
 <label>Senha</label>
-<input id="authPass" placeholder="••••••••" type="password"/>
+<input id="authPass" name="password" autocomplete="current-password" placeholder="••••••••" type="password"/>
 <button aria-label="Mostrar senha" class="authPassToggle" id="authPassToggle" title="Mostrar senha" type="button">
 <svg aria-hidden="true" fill="none" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"></circle></svg>
 </button>
 </div>
 </div>
 <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap">
-<button class="btn ok" id="btnLogin" style="flex:1">Entrar</button>
-<button class="btn primary hidden" id="btnCreateMaster">Cadastrar Clínica</button>
+<button class="btn ok" id="btnLogin" style="flex:1" type="submit">Entrar</button>
+<button class="btn primary hidden" id="btnCreateMaster" type="button">Cadastrar Clínica</button>
 </div>
+</form>
 <div aria-atomic="true" aria-live="polite" class="authStatus hidden" id="authLoadingHint">
 <span aria-hidden="true" class="spinner sm"></span>
 <span id="authLoadingText">Entrando no Cronos...</span>
@@ -1299,7 +1301,7 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 
 
 <script src="../assets/js/core/cronos-repository.js?build=v4-1-2-ui-prontuario-20260715"></script>
-<script src="../assets/js/app.js?build=v416-carregamento-telefone-internacional-20260716"></script>
+<script src="../assets/js/app.js?build=v417-login-form-perf-20260716"></script>
 <script src="../assets/js/hoje_no_cronos.js?build=v416-sugestao-util-20260716"></script>
 <script src="../assets/js/cronos_fluxos.js?build=public"></script>
 <script src="../assets/js/simulador_credito.js?build=v416-telefone-internacional-20260716"></script>

@@ -4968,10 +4968,33 @@ function showBootSplash(message="Atualizando informações..."){
   const text = document.getElementById("bootSplashText");
   if(text && message) text.textContent = message;
   if(boot) boot.classList.remove("hidden");
+  if(!window.__CRONOS_SPLASH_STARTED_AT__){
+    try{ window.__CRONOS_SPLASH_STARTED_AT__ = performance.now(); }catch(_){ }
+  }
 }
 function hideBootSplash(){
   const boot = document.getElementById("bootSplashView");
   if(boot) boot.classList.add("hidden");
+
+  const startedAt = Number(window.__CRONOS_SPLASH_STARTED_AT__ || 0);
+  window.__CRONOS_SPLASH_STARTED_AT__ = 0;
+  if(startedAt > 0){
+    try{
+      const elapsed = performance.now() - startedAt;
+      window.__CRONOS_LAST_BOOT_MS__ = Math.round(elapsed);
+      if(elapsed >= 3000){
+        const slow = performance.getEntriesByType("resource")
+          .filter(entry => entry && entry.startTime >= Math.max(0, startedAt - 100) && entry.duration >= 250)
+          .sort((a,b)=>b.duration-a.duration)
+          .slice(0,8)
+          .map(entry=>({
+            recurso:String(entry.name || "").replace(/^https?:\/\/[^/]+/i, ""),
+            ms:Math.round(entry.duration)
+          }));
+        console.info(`Cronos: carregamento concluído em ${(elapsed/1000).toFixed(1)}s.`, slow.length ? { requisicoes_mais_lentas:slow } : "Sem requisição individual acima de 250 ms.");
+      }
+    }catch(_){ }
+  }
 }
 const qs = (sel,root=document)=>root.querySelector(sel);
 const qsa = (sel,root=document)=>Array.from(root.querySelectorAll(sel));
@@ -8252,22 +8275,20 @@ function setSupportEntryLoading(isLoading, message="Modo suporte • Validando a
 
 function triggerLoginSubmit(){
   if(window.__CRONOS_LOGIN_BUSY__) return;
+  const form = el("authForm");
+  if(form && typeof form.requestSubmit === "function"){
+    form.requestSubmit();
+    return;
+  }
   const btn = el("btnLogin");
   if(btn) btn.click();
 }
 
 function bindLoginEnterSubmit(){
-  ["authLogin","authPass","authMode"].forEach(id=>{
-    const node = el(id);
-    if(!node || node.dataset.enterBound === "1") return;
-    node.dataset.enterBound = "1";
-    node.addEventListener("keydown", (ev)=>{
-      if(ev.key === "Enter"){
-        ev.preventDefault();
-        triggerLoginSubmit();
-      }
-    });
-  });
+  const form = el("authForm");
+  if(!form || form.dataset.submitBound === "1") return;
+  form.dataset.submitBound = "1";
+  form.addEventListener("submit", cronosHandleLoginSubmit);
 }
 
 function refreshAuthMasters(){
@@ -16061,7 +16082,8 @@ async function finalizeCloudLogin(){
   window.__CRONOS_EXPLICIT_LOGIN__ = false;
 }
 
-document.getElementById("btnLogin").addEventListener("click", async () => {
+async function cronosHandleLoginSubmit(event){
+  if(event && typeof event.preventDefault === "function") event.preventDefault();
   if(window.__CRONOS_LOGIN_BUSY__) return;
 
   cancelPendingCloudSync();
@@ -16107,7 +16129,8 @@ document.getElementById("btnLogin").addEventListener("click", async () => {
     setLoginLoading(false);
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
   }
-});
+
+}
 
 async function verificarSessao() {
   window.__CRONOS_SESSION_CHECKING__ = true;
