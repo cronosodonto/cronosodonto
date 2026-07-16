@@ -5892,102 +5892,6 @@ const DEFAULT_RENEWAL_MESSAGE = "Olá! O acesso da clínica [CLINICA] ao Cronos 
 const DEFAULT_BLOCKED_FEATURE_MESSAGE = "Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].";
 let CLINIC_ACCESS_STATE = null;
 let CLINIC_RENEWAL_CONTACT = null;
-let CLINIC_ACCESS_PROMISE = null;
-let CLINIC_RENEWAL_PROMISE = null;
-let __CRONOS_CURRENT_USER_CACHE__ = null;
-const CRONOS_BOOTSTRAP_CONTEXT_KEY = "cronos_bootstrap_context_v418";
-
-function cronosSetCurrentUserCache(user){
-  __CRONOS_CURRENT_USER_CACHE__ = user && user.id ? user : null;
-  return __CRONOS_CURRENT_USER_CACHE__;
-}
-function cronosBuildBootstrapContext(access, user){
-  const clinicId = String(access?.clinic_id || "").trim();
-  if(!clinicId) return null;
-  const userId = String(user?.id || "").trim();
-  const userEmail = String(user?.email || "").trim().toLowerCase();
-  const ownerUid = String(access?.master_user_id || "").trim();
-  return {
-    clinic_id:clinicId,
-    clinic_name:String(access?.clinic_name || "").trim(),
-    owner_uid:ownerUid || (String(access?.access_role || "").toUpperCase() === "MASTER" ? userId : ""),
-    owner_email:(ownerUid && ownerUid === userId) ? userEmail : "",
-    access_role:String(access?.access_role || "").trim(),
-    user_id:userId,
-    user_email:userEmail,
-    saved_at:Date.now()
-  };
-}
-function cronosWriteBootstrapContext(access, user){
-  try{
-    const context = cronosBuildBootstrapContext(access, user);
-    if(!context) return null;
-    sessionStorage.setItem(CRONOS_BOOTSTRAP_CONTEXT_KEY, JSON.stringify(context));
-    return context;
-  }catch(_){
-    return null;
-  }
-}
-function cronosReadBootstrapContext(session){
-  try{
-    const user = session?.user || null;
-    const userId = String(user?.id || "").trim();
-    const userEmail = String(user?.email || "").trim().toLowerCase();
-    const raw = sessionStorage.getItem(CRONOS_BOOTSTRAP_CONTEXT_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if(parsed?.clinic_id && (
-      (userId && String(parsed.user_id || "") === userId) ||
-      (userEmail && String(parsed.user_email || "").toLowerCase() === userEmail)
-    )){
-      return parsed;
-    }
-
-    // A Mundo Odonto já possui clinic_id oficial conhecido no próprio código.
-    // Isso permite que o estado V4 comece a carregar em paralelo com a validação
-    // de acesso já no primeiro F5 desta versão, sem confiar em dados operacionais locais.
-    if(userEmail === CRONOS_MO_OWNER_EMAIL || userEmail === "mundoodonto.admslz@gmail.com"){
-      return {
-        clinic_id:CRONOS_MO_V2_CLINIC_ID,
-        clinic_name:"Mundo Odonto",
-        owner_uid:userId,
-        owner_email:userEmail,
-        access_role:"MASTER",
-        user_id:userId,
-        user_email:userEmail,
-        saved_at:Date.now(),
-        known_context:true
-      };
-    }
-  }catch(_){ }
-  return null;
-}
-function cronosSeedCloudContextFromBootstrap(context, user){
-  if(!context?.clinic_id) return false;
-  const userId = String(user?.id || context.user_id || "").trim();
-  const userEmail = String(user?.email || context.user_email || "").trim().toLowerCase();
-  const ownerUid = String(context.owner_uid || "").trim();
-  const isOwner = !!userId && (!!ownerUid ? ownerUid === userId : String(context.access_role || "").toUpperCase() === "MASTER");
-
-  CLOUD_OWNER_UID = userId || null;
-  CLOUD_OWNER_EMAIL = userEmail;
-  CLOUD_CLINIC_OWNER_UID = ownerUid || (isOwner ? userId : null);
-  CLOUD_CLINIC_OWNER_EMAIL = String(context.owner_email || (isOwner ? userEmail : "")).trim().toLowerCase();
-  CLOUD_CLINIC_NAME = String(context.clinic_name || "").trim();
-  CLOUD_ACCESS_KIND = isOwner ? "owner" : "member";
-  CLOUD_MEMBER_INFO = null;
-
-  const isMundoOdonto = String(context.clinic_id) === CRONOS_MO_V2_CLINIC_ID;
-  setCloudDataSourcesFromRow({
-    clinic_id:String(context.clinic_id),
-    clinic_name:CLOUD_CLINIC_NAME,
-    contacts_source:isMundoOdonto ? "tables_v2" : "legacy_json",
-    leads_source:isMundoOdonto ? "tables_v2" : "legacy_json",
-    payments_source:"legacy_json",
-    tasks_source:"legacy_json",
-    patient_files_source:"legacy_json"
-  }, String(context.clinic_id));
-  return true;
-}
 
 function parseAccessDate(value){
   if(!value) return null;
@@ -6033,96 +5937,70 @@ function buildRenewalWhatsappUrl(access, kind="expired", featureLabel=""){
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 }
 async function fetchRenewalContact(accessToken){
-  if(CLINIC_RENEWAL_CONTACT) return CLINIC_RENEWAL_CONTACT;
-  if(CLINIC_RENEWAL_PROMISE) return CLINIC_RENEWAL_PROMISE;
   if(!accessToken) return null;
-
-  CLINIC_RENEWAL_PROMISE = (async ()=>{
-    try{
-      const res = await fetch(`${supabaseUrl}/functions/v1/${RENEWAL_CONTACT_ENDPOINT}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`,
-          "apikey": supabaseKey
-        },
-        body: JSON.stringify({})
-      });
-      const json = await res.json().catch(() => ({}));
-      if(!res.ok) throw new Error(json?.error || "Falha ao carregar contato de renovação.");
-      const settings = json?.settings || null;
-      if(!settings) return null;
-      CLINIC_RENEWAL_CONTACT = {
-        support_name: String(settings.support_name || "Cronos Odonto"),
-        renewal_phone: String(settings.whatsapp || ""),
-        renewal_message: String(settings.expired_message || DEFAULT_RENEWAL_MESSAGE),
-        blocked_message: String(settings.blocked_message || DEFAULT_BLOCKED_FEATURE_MESSAGE)
-      };
-      if(CLINIC_ACCESS_STATE){
-        CLINIC_ACCESS_STATE = { ...CLINIC_ACCESS_STATE, ...CLINIC_RENEWAL_CONTACT };
-      }
-      return CLINIC_RENEWAL_CONTACT;
-    }catch(error){
-      console.warn("Contato de renovação não pôde ser carregado:", error);
-      return null;
-    }finally{
-      CLINIC_RENEWAL_PROMISE = null;
-    }
-  })();
-  return CLINIC_RENEWAL_PROMISE;
+  try{
+    const res = await fetch(`${supabaseUrl}/functions/v1/${RENEWAL_CONTACT_ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+        "apikey": supabaseKey
+      },
+      body: JSON.stringify({})
+    });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(json?.error || "Falha ao carregar contato de renovação.");
+    const settings = json?.settings || null;
+    if(!settings) return null;
+    CLINIC_RENEWAL_CONTACT = {
+      support_name: String(settings.support_name || "Cronos Odonto"),
+      renewal_phone: String(settings.whatsapp || ""),
+      renewal_message: String(settings.expired_message || DEFAULT_RENEWAL_MESSAGE),
+      blocked_message: String(settings.blocked_message || DEFAULT_BLOCKED_FEATURE_MESSAGE)
+    };
+    return CLINIC_RENEWAL_CONTACT;
+  }catch(error){
+    console.warn("Contato de renovação não pôde ser carregado:", error);
+    return null;
+  }
 }
 function clearClinicAccessState(){
   CLINIC_ACCESS_STATE = null;
   CLINIC_RENEWAL_CONTACT = null;
-  CLINIC_ACCESS_PROMISE = null;
-  CLINIC_RENEWAL_PROMISE = null;
 }
-async function fetchClinicAccessState(force=false, options={}){
+async function fetchClinicAccessState(force=false){
   if(isSupportMode()) return null;
   const cachedAccess = CLINIC_ACCESS_STATE;
-  if(cachedAccess && !force) return cachedAccess;
-  if(CLINIC_ACCESS_PROMISE) return CLINIC_ACCESS_PROMISE;
+  if(cachedAccess && !force){
+    return cachedAccess;
+  }
   if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
+  const sessionResp = await supabaseClient.auth.getSession();
+  const session = sessionResp?.data?.session;
+  if(!session?.access_token) return null;
 
-  CLINIC_ACCESS_PROMISE = (async ()=>{
-    let accessToken = String(options.accessToken || "").trim();
-    let user = options.user || null;
-    if(!accessToken || !user){
-      const sessionResp = await supabaseClient.auth.getSession();
-      const session = sessionResp?.data?.session;
-      accessToken = accessToken || String(session?.access_token || "").trim();
-      user = user || session?.user || null;
+  try{
+    const res = await fetch(`${supabaseUrl}/functions/v1/${ACCESS_STATUS_ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session.access_token}`,
+        "apikey": supabaseKey
+      },
+      body: JSON.stringify({})
+    });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){
+      throw new Error(json?.error || "Falha ao validar o período de acesso.");
     }
-    if(user) cronosSetCurrentUserCache(user);
-    if(!accessToken) return null;
-
-    try{
-      const res = await fetch(`${supabaseUrl}/functions/v1/${ACCESS_STATUS_ENDPOINT}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`,
-          "apikey": supabaseKey
-        },
-        body: JSON.stringify({})
-      });
-      const json = await res.json().catch(() => ({}));
-      if(!res.ok) throw new Error(json?.error || "Falha ao validar o período de acesso.");
-      CLINIC_ACCESS_STATE = { ...(json?.access || {}) };
-      cronosWriteBootstrapContext(CLINIC_ACCESS_STATE, user);
-      return CLINIC_ACCESS_STATE;
-    }catch(error){
-      console.error("Falha ao consultar período de acesso:", error);
-      if(options.silent !== true){
-        toast("Aviso", "Não foi possível validar o período de acesso agora.");
-      }
-      return null;
-    }finally{
-      CLINIC_ACCESS_PROMISE = null;
-    }
-  })();
-
-  return CLINIC_ACCESS_PROMISE;
+    const renewalContact = await fetchRenewalContact(session.access_token);
+    CLINIC_ACCESS_STATE = { ...(json?.access || {}), ...(renewalContact || {}) };
+    return CLINIC_ACCESS_STATE;
+  }catch(error){
+    console.error("Falha ao consultar período de acesso:", error);
+    toast("Aviso", "Não foi possível validar o período de acesso agora.");
+    return null;
+  }
 }
 function evaluateClinicAccessState(access){
   if(!access) return { mode: "allow", warn: false, daysLeft: null, access: null };
@@ -6248,47 +6126,24 @@ function showAccessGate(decision){
 function hideAccessGate(){
   el("accessGateView")?.classList.add("hidden");
 }
-async function applyClinicAccessRules(options={}){
+async function applyClinicAccessRules(){
   if(isSupportMode()){
     hideAccessGate();
     hideAccessNotice();
     clearClinicAccessState();
     return { mode:"allow", warn:false, support:true };
   }
-
-  const access = options.access || await fetchClinicAccessState(options.force !== false, {
-    accessToken:options.accessToken,
-    user:options.user,
-    silent:options.silent
-  });
+  const access = await fetchClinicAccessState(true);
   const decision = evaluateClinicAccessState(access);
-
-  const warmRenewalContact = ()=>{
-    const token = String(options.accessToken || "").trim();
-    const task = token
-      ? Promise.resolve(token)
-      : supabaseClient.auth.getSession().then(resp=>String(resp?.data?.session?.access_token || ""));
-    task.then(fetchRenewalContact).then(contact=>{
-      if(!contact || !CLINIC_ACCESS_STATE) return;
-      const refreshed = evaluateClinicAccessState(CLINIC_ACCESS_STATE);
-      if(refreshed.mode !== "allow") showAccessGate(refreshed);
-      else if(refreshed.warn) showAccessNotice(refreshed);
-    }).catch(()=>{});
-  };
-
   if(decision.mode !== "allow"){
     showAccessGate(decision);
-    warmRenewalContact();
     return decision;
   }
   hideAccessGate();
   if(decision.warn){
     showAccessNotice(decision);
-    warmRenewalContact();
   }else{
     hideAccessNotice();
-    // Contato de renovação é dado secundário: não segura a abertura normal.
-    warmRenewalContact();
   }
   return decision;
 }
@@ -7265,23 +7120,15 @@ function getLegacyLocalDB(){
   return __localMemoryDB ? normalizeDBShape(__localMemoryDB) : null;
 }
 
-async function getCurrentSupabaseUser(options={}){
-  if(__CRONOS_CURRENT_USER_CACHE__?.id) return __CRONOS_CURRENT_USER_CACHE__;
+async function getCurrentSupabaseUser(){
   if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
   try{
-    const sessionResp = await supabaseClient.auth.getSession();
-    const sessionUser = sessionResp?.data?.session?.user || null;
-    if(sessionUser?.id) return cronosSetCurrentUserCache(sessionUser);
-
-    // Só valida remotamente quando solicitado explicitamente. O bootstrap normal já
-    // é validado pela Edge Function de acesso, evitando repetir /auth/v1/user.
-    if(options.forceRemote === true){
-      const { data, error } = await supabaseClient.auth.getUser();
-      if(error) return null;
-      return cronosSetCurrentUserCache(data?.user || null);
-    }
-  }catch(_){ }
-  return null;
+    const { data, error } = await supabaseClient.auth.getUser();
+    if(error) return null;
+    return data?.user || null;
+  }catch(_){
+    return null;
+  }
 }
 
 function normalizeUsername(value){
@@ -7815,7 +7662,7 @@ try{
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'hidden') flushPendingCloudSaveOnExit(); });
 }catch(_){ }
 
-async function ensureCloudDBLoaded(force=false, options={}){
+async function ensureCloudDBLoaded(force=false){
   if(DB && CLOUD_DB_READY && !force) return DB;
 
   if(isSupportMode()){
@@ -7831,7 +7678,9 @@ async function ensureCloudDBLoaded(force=false, options={}){
     if(supportEmail){
       loaded = ensureMasterRecordByEmail(loaded, supportEmail, support.clinic_name || "");
       const master = getMasterRecordByEmail(loaded, supportEmail) || loaded.masters?.[0];
-      if(master && support.clinic_name) master.name = support.clinic_name;
+      if(master && support.clinic_name){
+        master.name = support.clinic_name;
+      }
     }
 
     DB = loaded;
@@ -7850,13 +7699,12 @@ async function ensureCloudDBLoaded(force=false, options={}){
     return DB;
   }
 
-  const user = options.user || await getCurrentSupabaseUser();
+  const user = await getCurrentSupabaseUser();
   if(!user){
     resetCloudContext();
     DB = normalizeDBShape(getLegacyLocalDB() || freshDB());
     return DB;
   }
-  cronosSetCurrentUserCache(user);
 
   const dbBeforeCloudAttempt = DB;
   CLOUD_LOAD_TEMPORARY_FAILURE = false;
@@ -7864,27 +7712,11 @@ async function ensureCloudDBLoaded(force=false, options={}){
 
   let ctx = null;
   try{
-    const bootstrapContext = options.bootstrapContext || null;
-    if(bootstrapContext?.clinic_id){
-      cronosSeedCloudContextFromBootstrap(bootstrapContext, user);
-      const isOwner = String(CLOUD_CLINIC_OWNER_UID || "") === String(user.id || "");
-      ctx = {
-        kind:isOwner ? "owner" : "member",
-        ownerUid:CLOUD_CLINIC_OWNER_UID || null,
-        ownerEmail:CLOUD_CLINIC_OWNER_EMAIL || "",
-        row:{ id:null, clinic_name:CLOUD_CLINIC_NAME || bootstrapContext.clinic_name || "", data:null },
-        member:null
-      };
-    }else{
-      ctx = await applyCloudAccessContext(user);
-    }
+    ctx = await applyCloudAccessContext(user);
+    await loadCurrentClinicDataSources();
 
-    // Com contexto de sessão conhecido, o V4 pode carregar direto pela RPC.
-    // Só consultamos o mapa legado clinic_data_sources se ainda não houver clinic_id.
-    if(!CLOUD_CLINIC_ID){
-      await loadCurrentClinicDataSources();
-    }
-
+    // Persistência definitiva: carrega somente o estado oficial montado pelo banco.
+    // Não há merge com localStorage, portanto um computador antigo não ressuscita dados.
     if(window.CronosRepository && CLOUD_CLINIC_ID){
       try{
         window.CronosRepository.setClient?.(supabaseClient);
@@ -7892,11 +7724,10 @@ async function ensureCloudDBLoaded(force=false, options={}){
         const v4 = await window.CronosRepository.loadOperationalState({ clinicId:CLOUD_CLINIC_ID });
         if(v4?.enabled){
           let loaded = normalizeDBShape(v4.state || freshDB());
-          const ownerEmail = String(ctx?.ownerEmail || CLOUD_CLINIC_OWNER_EMAIL || (ctx?.kind === "owner" ? user.email : "") || "").trim().toLowerCase();
-          if(ownerEmail) loaded = ensureMasterRecordByEmail(loaded, ownerEmail);
-          const cloudClinicName = String(ctx?.row?.clinic_name || CLOUD_CLINIC_NAME || "").trim();
+          loaded = ensureMasterRecordByEmail(loaded, ctx?.ownerEmail || user.email || "");
+          const cloudClinicName = String(ctx?.row?.clinic_name || "").trim();
           if(cloudClinicName){
-            const master = (ownerEmail ? getMasterRecordByEmail(loaded, ownerEmail) : null) || loaded.masters?.[0];
+            const master = getMasterRecordByEmail(loaded, ctx?.ownerEmail || user.email || "") || loaded.masters?.[0];
             if(master) master.name = cloudClinicName;
           }
           if(ctx?.member) loaded = ensureMemberMirror(loaded, ctx.member);
@@ -7910,11 +7741,6 @@ async function ensureCloudDBLoaded(force=false, options={}){
         console.error("Cronos V4: não foi possível carregar o estado oficial.", error);
         throw error;
       }
-    }
-
-    // Caminho legado somente para clínicas ainda não ativadas no núcleo V4.
-    if(bootstrapContext?.clinic_id){
-      await loadCurrentClinicDataSources();
     }
 
     if(ctx?.row?.data){
@@ -7932,12 +7758,16 @@ async function ensureCloudDBLoaded(force=false, options={}){
         const master = getMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "") || loaded.masters?.[0];
         if(master) master.name = cloudClinicName;
       }
-      if(ctx.member) loaded = ensureMemberMirror(loaded, ctx.member);
+      if(ctx.member){
+        loaded = ensureMemberMirror(loaded, ctx.member);
+      }
       DB = loaded;
       CLOUD_DB_READY = true;
       try{ cronosMarkCloudDBHydrated("ensure_cloud_loaded"); }catch(_){ }
       safeSetLocalDB(DB);
       try{ captureTaskSnapshots(DB); }catch(_){ }
+
+      // Alterações reais chamam saveDB; não reenviamos a base inteira após o pull.
       return DB;
     }
   }catch(error){
@@ -7954,10 +7784,14 @@ async function ensureCloudDBLoaded(force=false, options={}){
       DB = normalizeDBShape(localBackup);
       return DB;
     }
+
+    // Em V2, não usamos cache local sem contatos/leads como se fosse uma clínica válida.
+    // Se já havia uma base em memória, preservamos a aba; caso contrário, o login tenta novamente.
     if(dbBeforeCloudAttempt){
       DB = dbBeforeCloudAttempt;
       return DB;
     }
+
     DB = null;
     return normalizeDBShape(freshDB());
   }
@@ -8145,16 +7979,16 @@ async function deactivateClinicMemberRecord(userRow){
   });
 }
 
-async function syncCurrentCloudActor(options={}){
+async function syncCurrentCloudActor(){
   if(typeof supabaseClient === "undefined"){
     console.log("Supabase ainda não carregou, tentando novamente...");
-    setTimeout(()=>syncCurrentCloudActor(options), 500);
+    setTimeout(syncCurrentCloudActor, 500);
     return null;
   }
 
-  const user = options.user || await getCurrentSupabaseUser();
+  const user = await getCurrentSupabaseUser();
   if(isSupportMode()){
-    let db = (options.skipEnsure && DB) ? DB : await ensureCloudDBLoaded(false, options);
+    let db = await ensureCloudDBLoaded(false);
     const support = getSupportContext();
     if(!support) return null;
     const supportEmail = String(support.owner_email || "").trim().toLowerCase();
@@ -8168,21 +8002,16 @@ async function syncCurrentCloudActor(options={}){
 
   if(!user) return null;
 
-  let db = (options.skipEnsure && DB) ? DB : await ensureCloudDBLoaded(false, { ...options, user });
+  let db = await ensureCloudDBLoaded(false);
 
-  let ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || "").trim().toLowerCase();
-  if(!ownerEmail && CLOUD_ACCESS_KIND === "owner") ownerEmail = String(user.email || "").trim().toLowerCase();
-  if(!ownerEmail){
-    ownerEmail = String(db?.masters?.[0]?.email || db?.masters?.[0]?.id || "").trim().toLowerCase();
-    if(ownerEmail) CLOUD_CLINIC_OWNER_EMAIL = ownerEmail;
-  }
-  if(ownerEmail) db = ensureMasterRecordByEmail(db, ownerEmail);
+  const ownerEmail = String(CLOUD_CLINIC_OWNER_EMAIL || user.email || "").trim().toLowerCase();
+  db = ensureMasterRecordByEmail(db, ownerEmail);
 
   if(CLOUD_ACCESS_KIND === "owner"){
     const master = getMasterRecordByEmail(db, ownerEmail) || db.masters[0];
     if(master){
       saveSession({ kind: "master", id: master.id });
-      DB = db;
+      saveDB(db, { skipCloud:true });
       return { kind: "master", id: master.id };
     }
   }
@@ -8200,7 +8029,7 @@ async function syncCurrentCloudActor(options={}){
     memberRow.authUid = user.id;
     memberRow.loginEmail = memberRow.loginEmail || String(user.email || "").trim().toLowerCase();
     saveSession({ kind: "user", id: memberRow.id });
-    DB = db;
+    saveDB(db, { skipCloud:true });
     return { kind: "user", id: memberRow.id };
   }
 
@@ -11669,7 +11498,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
 
       <div class="suggest">
         <label>Telefone/WhatsApp *</label>
-        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Cadastre com DDD ou +DDI" inputmode="tel" maxlength="28" autocomplete="off"/>
+        <input id="lf_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(c.phone||""))}" placeholder="Ex: (98) 99999-0000 ou +41 79 123 45 67" inputmode="tel" maxlength="28" autocomplete="off"/>
         <div class="help muted" style="font-size:12px">Para números internacionais, comece com + ou 00 e informe o código do país.</div>
       </div>
 
@@ -15340,7 +15169,7 @@ function renderAll(){
   return syncCurrentCloudActor();
 }
 
-async function boot(options={}){
+async function boot(){
   window.__CRONOS_BOOTING__ = true;
   window.__CRONOS_SESSION_CHECKING__ = true;
   const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
@@ -15349,38 +15178,33 @@ async function boot(options={}){
     setSupportEntryLoading(true, "Modo suporte • Validando acesso e carregando a clínica...");
   }
 
-  if(options.skipSupportInit !== true){
-    try{
-      await maybeInitSupportMode();
-    }catch(error){
-      console.error("Falha ao iniciar suporte:", error);
+  try{
+    await maybeInitSupportMode();
+  }catch(error){
+    console.error("Falha ao iniciar suporte:", error);
 
-      if(supportTokenPresent){
-        clearSupportContext();
-        resetCloudContext();
-        DB = null;
-        CLOUD_DB_READY = false;
-        setSupportEntryLoading(false);
-        hideBootSplash();
-        showAuth();
-        toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
-        return;
-      }
+    if(supportTokenPresent){
+      clearSupportContext();
+      resetCloudContext();
+      DB = null;
+      CLOUD_DB_READY = false;
+      setSupportEntryLoading(false);
+      hideBootSplash();
+      showAuth();
+      toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
+      return;
+    }
 
-      const supportCtx = getSupportContext();
-      if(!supportCtx){
-        clearSupportContext();
-        toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
-      }
+    const supportCtx = getSupportContext();
+
+    if(!supportCtx){
+      clearSupportContext();
+      toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
     }
   }
 
-  if(options.cloudReady !== true){
-    await ensureCloudDBLoaded(false, { user:options.user, bootstrapContext:options.bootstrapContext });
-  }
-  if(options.actorReady !== true){
-    await syncCurrentCloudActor({ user:options.user, skipEnsure:true });
-  }
+  await ensureCloudDBLoaded();
+  await syncCurrentCloudActor();
 
   fillSelectOptions();
 
@@ -15399,7 +15223,7 @@ async function boot(options={}){
   if(!actor){
     if((supportTokenPresent || isSupportMode()) && (window.__SUPPORT_BOOT_RETRIES__ || 0) < 6){
       window.__SUPPORT_BOOT_RETRIES__ = (window.__SUPPORT_BOOT_RETRIES__ || 0) + 1;
-      setTimeout(()=>boot(options), 180);
+      setTimeout(()=>boot(), 180);
       return;
     }
 
@@ -15416,7 +15240,9 @@ async function boot(options={}){
 
   window.__SUPPORT_BOOT_RETRIES__ = 0;
 
-  const featureAccessPromise = options.featureAccessPromise || (async ()=>{
+  // Acesso e permissões são independentes e essenciais. Carregamos os dois em
+  // paralelo e liberamos a tela no instante em que ambos terminarem.
+  const featureAccessPromise = (async ()=>{
     try{
       if(typeof window.__refreshFeatureAccess === "function"){
         await window.__refreshFeatureAccess(true, actor);
@@ -15426,15 +15252,13 @@ async function boot(options={}){
     }
   })();
 
-  const accessPromise = applyClinicAccessRules({
-    access:options.access,
-    accessToken:options.accessToken,
-    user:options.user,
-    force:!options.access
-  });
-
-  const [accessDecision] = await Promise.all([accessPromise, featureAccessPromise]);
-  if(accessDecision?.mode && accessDecision.mode !== "allow") return;
+  const [accessDecision] = await Promise.all([
+    applyClinicAccessRules(),
+    featureAccessPromise
+  ]);
+  if(accessDecision?.mode && accessDecision.mode !== "allow"){
+    return;
+  }
 
   showApp(actor, { keepSplash:true });
   applyRoleVisibility(actor);
@@ -15868,9 +15692,9 @@ window.__CRONOS_LOGIN_BUSY__ = false;
 window.__CRONOS_EXPLICIT_LOGIN__ = false;
 window.__CRONOS_ACCESS_BLOCK__ = null;
 
-async function ensureCloudDBForLoginWithRetry(maxAttempts=3, options={}){
+async function ensureCloudDBForLoginWithRetry(maxAttempts=3){
   for(let attempt = 1; attempt <= maxAttempts; attempt++){
-    await ensureCloudDBLoaded(true, options);
+    await ensureCloudDBLoaded(true);
 
     if(!CLOUD_LOAD_TEMPORARY_FAILURE){
       return true;
@@ -15944,7 +15768,7 @@ function cronosBootFromLocalCacheAfterF5(session){
     // O cache pode estar sem as coleções V2 e faz a UI parecer zerada antes da nuvem hidratar.
     const sessionEmail = String(session?.user?.email || "").trim().toLowerCase();
     if(sessionEmail === CRONOS_MO_OWNER_EMAIL || sessionEmail === "mundoodonto.admslz@gmail.com"){
-      console.info("Cronos V418: contexto seguro da Mundo Odonto será carregado pelo bootstrap paralelo.");
+      console.info("Cronos V127: fast resume local desativado para Mundo Odonto; carregando direto da nuvem V2.");
       return false;
     }
 
@@ -16182,17 +16006,8 @@ function cronosInstantLogout({ supportRedirect=false }={}){
   showAuth();
 }
 
-async function finalizeCloudLogin(options={}){
-  let session = options.session || null;
+async function finalizeCloudLogin(){
   try{
-    if(!session){
-      const sessionResp = await supabaseClient.auth.getSession();
-      session = sessionResp?.data?.session || null;
-    }
-    const user = session?.user || null;
-    const accessToken = String(session?.access_token || "").trim();
-    if(user) cronosSetCurrentUserCache(user);
-
     const explicitLogin = !!window.__CRONOS_EXPLICIT_LOGIN__;
     cancelPendingCloudSync();
     suppressCloudFailureToasts(12000);
@@ -16210,33 +16025,7 @@ async function finalizeCloudLogin(options={}){
       showBootSplash("Atualizando informações...");
     }
 
-    let bootstrapContext = options.bootstrapContext || cronosReadBootstrapContext(session);
-    if(bootstrapContext) cronosSeedCloudContextFromBootstrap(bootstrapContext, user);
-
-    // As três tarefas essenciais começam juntas. A tela só abre depois de todas,
-    // mas nenhuma fica esperando a outra sem necessidade.
-    const accessPromise = fetchClinicAccessState(true, { accessToken, user });
-    let featureAccessPromise = null;
-    if(bootstrapContext && typeof window.__refreshFeatureAccess === "function"){
-      featureAccessPromise = window.__refreshFeatureAccess(true, null).catch(error=>{
-        console.warn("Cronos: permissões iniciais em modo seguro.", error);
-      });
-    }
-    const cloudPromise = ensureCloudDBForLoginWithRetry(3, { user, bootstrapContext });
-
-    let [cloudLoaded, access] = await Promise.all([cloudPromise, accessPromise]);
-
-    // Se o contexto salvo pertencia a outra clínica, nada é reaproveitado.
-    const resolvedClinicId = String(access?.clinic_id || "").trim();
-    if(bootstrapContext?.clinic_id && resolvedClinicId && String(bootstrapContext.clinic_id) !== resolvedClinicId){
-      DB = null;
-      CLOUD_DB_READY = false;
-      resetCloudContext();
-      bootstrapContext = cronosBuildBootstrapContext(access, user);
-      if(bootstrapContext) cronosSeedCloudContextFromBootstrap(bootstrapContext, user);
-      cloudLoaded = await ensureCloudDBForLoginWithRetry(2, { user, bootstrapContext });
-      featureAccessPromise = null;
-    }
+    const cloudLoaded = await ensureCloudDBForLoginWithRetry(3);
 
     if(!cloudLoaded){
       setLoginLoading(false);
@@ -16250,7 +16039,7 @@ async function finalizeCloudLogin(options={}){
       return;
     }
 
-    const actorInfo = await syncCurrentCloudActor({ user, skipEnsure:true });
+    const actorInfo = await syncCurrentCloudActor();
     if(!actorInfo){
       let title = "Acesso sem vínculo";
       let message = "Esse login autenticou, mas não está ligado a nenhuma clínica.";
@@ -16272,38 +16061,25 @@ async function finalizeCloudLogin(options={}){
       showAuth();
       return;
     }
-
-    const actor = currentActor();
-    if(!featureAccessPromise && typeof window.__refreshFeatureAccess === "function"){
-      featureAccessPromise = window.__refreshFeatureAccess(true, actor).catch(error=>{
-        console.warn("Cronos: permissões abriram em modo seguro.", error);
-      });
-    }
-
-    await boot({
-      cloudReady:true,
-      actorReady:true,
-      user,
-      access,
-      accessToken,
-      featureAccessPromise,
-      skipSupportInit:true
-    });
-    try{ cronosRefreshSidebarCountersNow({ reason:"login_after_boot", repeat:true }); }catch(_){ }
-
-    if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
-      setTimeout(()=>{
-        toast(`Bem-vindo, ${actor.name} 👋`, actor.kind === "master"
-          ? "Sua clínica já está pronta para uso."
-          : `${roleLabelPt(actor.role)} conectado com sucesso.`);
-      }, 220);
-    }
-    window.__CRONOS_EXPLICIT_LOGIN__ = false;
   }catch(err){
     console.error("Erro ao preparar dados da nuvem:", err);
     setLoginLoading(false);
     toast("Falha ao abrir o sistema", "A autenticação ocorreu, mas a clínica não carregou direito.");
+    return;
   }
+
+  await boot();
+  try{ cronosRefreshSidebarCountersNow({ reason:"login_after_boot", repeat:true }); }catch(_){ }
+
+  const actor = currentActor();
+  if(window.__CRONOS_EXPLICIT_LOGIN__ && actor){
+    setTimeout(()=>{
+      toast(`Bem-vindo, ${actor.name} 👋`, actor.kind === "master"
+        ? "Sua clínica já está pronta para uso."
+        : `${roleLabelPt(actor.role)} conectado com sucesso.`);
+    }, 220);
+  }
+  window.__CRONOS_EXPLICIT_LOGIN__ = false;
 }
 
 async function cronosHandleLoginSubmit(event){
@@ -16345,8 +16121,7 @@ async function cronosHandleLoginSubmit(event){
       return;
     }
 
-    const sessionResp = await supabaseClient.auth.getSession();
-    await finalizeCloudLogin({ session:sessionResp?.data?.session || null });
+    await finalizeCloudLogin();
   }catch(err){
     console.error("Falha no login:", err);
     toast("Falha ao entrar", "O sistema demorou mais do que devia. Tenta de novo.");
@@ -16382,8 +16157,6 @@ async function verificarSessao() {
 
   if (data.session) {
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
-    cronosSetCurrentUserCache(data.session.user);
-    const bootstrapContext = cronosReadBootstrapContext(data.session);
 
     // Em F5, abre primeiro com o cache local da própria sessão e sincroniza a nuvem em segundo plano.
     // Isso tira aquele carregamento longo de 8–10s sem voltar a mostrar dados de outra clínica.
@@ -16392,7 +16165,7 @@ async function verificarSessao() {
       return;
     }
 
-    await finalizeCloudLogin({ session:data.session, bootstrapContext });
+    await finalizeCloudLogin();
     return;
   }
 
@@ -16437,8 +16210,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const featureStateMap = new Map();
   let lastResolvedContextKey = null;
   let overlayMounted = false;
-  let featureRequestInFlight = null;
-  let featureRequestContextKey = null;
 
   const VIEW_TO_FEATURE = {
     dashboard: 'dashboard',
@@ -16843,54 +16614,63 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function fetchFeatureAccess(force, actorOverride){
-    const ctx = resolveOwnerContext(actorOverride);
-    if(!ctx.owner_uid && !ctx.owner_email) return false;
-    const ctxKey = JSON.stringify(ctx);
-
-    if(featureRequestInFlight && featureRequestContextKey === ctxKey){
-      return featureRequestInFlight;
-    }
-
-    featureRequestContextKey = ctxKey;
-    featureRequestInFlight = (async ()=>{
-      try{
-        if(!force && !featureStateMap.size) readFeatureCache(ctx);
-        if(!force && lastResolvedContextKey === ctxKey && featureStateMap.size) return true;
-
-        let authToken = localStorage.getItem('cronos_token') || localStorage.getItem('authToken') || '';
-        try{
-          if(typeof supabaseClient !== 'undefined' && supabaseClient?.auth){
-            const sessionResp = await supabaseClient.auth.getSession();
-            authToken = sessionResp?.data?.session?.access_token || authToken || '';
-          }
-        }catch(_sessionErr){}
-
-        const headers = { 'Content-Type':'application/json' };
-        try{ if(typeof supabaseKey !== 'undefined' && supabaseKey) headers['apikey'] = supabaseKey; }catch(_keyErr){}
-        if(authToken) headers['Authorization'] = 'Bearer ' + authToken;
-
-        const res = await fetch(SUPABASE_FN_BASE + FEATURE_ACCESS_ENDPOINT, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ owner_uid:ctx.owner_uid, owner_email:ctx.owner_email })
-        });
-        if(!res.ok) throw new Error('feature access unavailable');
-
-        const data = await res.json().catch(() => ({}));
-        const features = Array.isArray(data && data.features) ? data.features : [];
-        applyFeaturePayload(features);
-        writeFeatureCache(ctx, features);
-        lastResolvedContextKey = ctxKey;
-        return true;
-      }catch(err){
-        console.warn('Feature access em modo seguro:', err && err.message || err);
+    try{
+      const ctx = resolveOwnerContext(actorOverride);
+      if(!ctx.owner_uid && !ctx.owner_email){
         return false;
-      }finally{
-        featureRequestInFlight = null;
-        featureRequestContextKey = null;
       }
-    })();
-    return featureRequestInFlight;
+
+      const ctxKey = JSON.stringify(ctx);
+
+      if(!force && !featureStateMap.size){
+        readFeatureCache(ctx);
+      }
+
+      if(!force && lastResolvedContextKey === ctxKey && featureStateMap.size){
+        return true;
+      }
+
+      let authToken =
+        localStorage.getItem('cronos_token') ||
+        localStorage.getItem('authToken') ||
+        '';
+
+      try{
+        if(typeof supabaseClient !== 'undefined' && supabaseClient?.auth){
+          const sessionResp = await supabaseClient.auth.getSession();
+          authToken = sessionResp?.data?.session?.access_token || authToken || '';
+        }
+      }catch(_sessionErr){}
+
+      const headers = { 'Content-Type':'application/json' };
+      try{ if(typeof supabaseKey !== 'undefined' && supabaseKey) headers['apikey'] = supabaseKey; }catch(_keyErr){}
+      if(authToken){
+        headers['Authorization'] = 'Bearer ' + authToken;
+      }
+
+      const res = await fetch(SUPABASE_FN_BASE + FEATURE_ACCESS_ENDPOINT, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          owner_uid: ctx.owner_uid,
+          owner_email: ctx.owner_email
+        })
+      });
+
+      if(!res.ok){
+        throw new Error('feature access unavailable');
+      }
+
+      const data = await res.json().catch(() => ({}));
+      const features = Array.isArray(data && data.features) ? data.features : [];
+      applyFeaturePayload(features);
+      writeFeatureCache(ctx, features);
+      lastResolvedContextKey = ctxKey;
+      return true;
+    }catch(err){
+      console.warn('Feature access em modo seguro:', err && err.message || err);
+      return false;
+    }
   }
 
   async function refreshFeatureAccess(force, actorOverride){
