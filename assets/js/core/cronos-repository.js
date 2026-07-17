@@ -15,6 +15,8 @@
   const COLLECTIONS = Object.freeze(["contacts", "entries", "tasks", "payments", "activityLog"]);
   const STORAGE_PREFIX = "cronos_v4_pending";
   const CONFLICT_PREFIX = "cronos_v4_conflict";
+  const RPC_TIMEOUT_MS = 20000;
+  const LOAD_TIMEOUT_MS = 30000;
 
   const state = {
     client: null,
@@ -365,6 +367,87 @@
     return out;
   }
 
+  function emptyCoverage(){
+    return { contacts:{}, entries:{}, tasks:{}, payments:{}, activityLog:{}, meta:0 };
+  }
+
+  function registerMutationCoverage(coverage, changes){
+    COLLECTIONS.forEach(name=>{
+      const part = changes?.[name];
+      if(!part) return;
+      (part.upserts || []).forEach(item=>{
+        const id = String(item?.payload?.id || "").trim();
+        if(id) coverage[name][id] = Math.max(Number(coverage[name][id] || 0), Number(item?.expected_version || 0));
+      });
+      (part.deletes || []).forEach(item=>{
+        const id = String(item?.id || "").trim();
+        if(id) coverage[name][id] = Math.max(Number(coverage[name][id] || 0), Number(item?.expected_version || 0));
+      });
+    });
+    if(changes?.meta){
+      coverage.meta = Math.max(Number(coverage.meta || 0), Number(changes.meta.expected_version || 0));
+    }
+  }
+
+  function mutationReflectedOrSuperseded(serverState, mutation, coverage=emptyCoverage()){
+    const current = normalizeState(serverState);
+    const changes = mutation?.changes || {};
+
+    for(const name of COLLECTIONS){
+      const part = changes?.[name];
+      if(!part) continue;
+      const map = mapById(current[name]);
+
+      for(const item of (part.upserts || [])){
+        const payload = item?.payload || {};
+        const id = String(payload?.id || "").trim();
+        if(!id) return false;
+        const exact = map.has(id) && fingerprint(map.get(id)) === fingerprint(payload);
+        const superseded = Number(coverage?.[name]?.[id] || 0) >= Number(item?.expected_version || 0) + 1;
+        if(!exact && !superseded) return false;
+      }
+
+      for(const item of (part.deletes || [])){
+        const id = String(item?.id || "").trim();
+        if(!id) return false;
+        const exact = !map.has(id);
+        const superseded = Number(coverage?.[name]?.[id] || 0) >= Number(item?.expected_version || 0) + 1;
+        if(!exact && !superseded) return false;
+      }
+    }
+
+    if(changes?.meta){
+      const exactMeta = fingerprint(metaFromState(current)) === fingerprint(changes.meta.payload || {});
+      const supersededMeta = Number(coverage?.meta || 0) >= Number(changes.meta.expected_version || 0) + 1;
+      if(!exactMeta && !supersededMeta) return false;
+    }
+
+    return true;
+  }
+
+  function reconcileRestoredQueue(serverState, queue){
+    const list = Array.isArray(queue) ? queue : [];
+    if(!list.length) return { pending:[], confirmed:[] };
+
+    const coverage = emptyCoverage();
+    const confirmed = [];
+    const pending = [];
+
+    for(let index=list.length - 1; index>=0; index--){
+      const mutation = list[index];
+      if(mutationReflectedOrSuperseded(serverState, mutation, coverage)){
+        confirmed.push(mutation);
+        registerMutationCoverage(coverage, mutation.changes);
+      }else{
+        pending.push(mutation);
+      }
+    }
+
+    confirmed.reverse();
+    pending.reverse();
+    return { pending, confirmed };
+  }
+
   function rebuildWorking(){
     state.working = clone(state.baseline || freshState());
     state.workingVersions = normalizeVersions(state.versions);
@@ -388,12 +471,54 @@
     return code === "40001" || message.includes("CONFLITO_V4");
   }
 
-  async function rpc(name, args){
+  function withTimeout(promise, timeoutMs, label){
+    const ms = Math.max(1000, Number(timeoutMs || 0));
+    let timer = null;
+    const timeout = new Promise((_, reject)=>{
+      timer = setTimeout(()=>{
+        const error = new CronosPersistenceError(`${label || "Operação"} excedeu o tempo de resposta.`, { code:"RPC_TIMEOUT" });
+        error.status = 408;
+        reject(error);
+      }, ms);
+    });
+    return Promise.race([Promise.resolve(promise), timeout]).finally(()=>{
+      if(timer) clearTimeout(timer);
+    });
+  }
+
+  async function rpc(name, args, options={}){
     const client = getClient();
     if(!client?.rpc) throw new CronosPersistenceError("Cliente do Supabase indisponível.", { code:"SUPABASE_UNAVAILABLE" });
-    const { data, error } = await client.rpc(name, args);
+    const timeoutMs = Number(options.timeoutMs || LOAD_TIMEOUT_MS);
+    const response = await withTimeout(client.rpc(name, args), timeoutMs, name);
+    const { data, error } = response || {};
     if(error) throw error;
     return data;
+  }
+
+  async function fetchOfficialSnapshot(){
+    const data = await rpc("cronos_v4_load_operational_state", { p_clinic_id:state.clinicId }, { timeoutMs:LOAD_TIMEOUT_MS });
+    if(data?.enabled !== true) return null;
+    return {
+      state:normalizeState(data?.state || freshState()),
+      versions:normalizeVersions(data?.versions || {})
+    };
+  }
+
+  async function reconcileUncertainMutation(mutation){
+    try{
+      const official = await fetchOfficialSnapshot();
+      if(!official) return null;
+      if(!mutationReflectedOrSuperseded(official.state, mutation, emptyCoverage())) return null;
+      return {
+        __reconciled:true,
+        state:official.state,
+        versions:official.versions
+      };
+    }catch(error){
+      console.warn("Cronos V4: não foi possível reconciliar uma resposta incerta.", error);
+      return null;
+    }
   }
 
   async function checkStatus(options={}){
@@ -410,7 +535,7 @@
     if(!clinicId) return { enabled:false, state:null };
     state.clinicId = clinicId;
 
-    const data = await rpc("cronos_v4_load_operational_state", { p_clinic_id:clinicId });
+    const data = await rpc("cronos_v4_load_operational_state", { p_clinic_id:clinicId }, { timeoutMs:LOAD_TIMEOUT_MS });
     state.enabled = data?.enabled === true;
     state.loaded = state.enabled;
     state.blocked = false;
@@ -427,9 +552,20 @@
 
     state.baseline = normalizeState(data?.state || freshState());
     state.versions = normalizeVersions(data?.versions || {});
-    state.queue = options.restorePending === false ? [] : readQueue();
-    if(options.restorePending === false) persistQueue();
+
+    const restoredQueue = options.restorePending === false ? [] : readQueue();
+    const reconciled = options.restorePending === false
+      ? { pending:[], confirmed:[] }
+      : reconcileRestoredQueue(state.baseline, restoredQueue);
+
+    state.queue = reconciled.pending;
+    if(options.restorePending === false || reconciled.confirmed.length) persistQueue();
     rebuildWorking();
+
+    if(reconciled.confirmed.length){
+      emit("cronos:persistence-reconciled", { count:reconciled.confirmed.length });
+      updateIndicator("saved", "Salvo");
+    }
 
     if(state.queue.length){
       emit("cronos:persistence-pending", { count:state.queue.length });
@@ -455,12 +591,26 @@
           p_clinic_id:state.clinicId,
           p_operation_id:mutation.operationId,
           p_changes:mutation.changes
-        });
+        }, { timeoutMs:RPC_TIMEOUT_MS });
       }catch(error){
         lastError = error;
+
+        // A resposta pode se perder depois de o PostgreSQL confirmar a transação.
+        // Antes de repetir ou deixar um fantasma no navegador, consultamos o estado
+        // oficial. Se a mudança já estiver lá, a operação é tratada como concluída.
+        if(isNetworkError(error)){
+          const reconciled = await reconcileUncertainMutation(mutation);
+          if(reconciled) return reconciled;
+        }
+
         if(!isNetworkError(error) || attempt === 3) break;
         await sleep(350 * attempt);
       }
+    }
+
+    if(isNetworkError(lastError)){
+      const reconciled = await reconcileUncertainMutation(mutation);
+      if(reconciled) return reconciled;
     }
     throw lastError;
   }
@@ -476,8 +626,13 @@
         const mutation = state.queue[0];
         try{
           const result = await commitMutation(mutation);
-          state.baseline = applyChanges(state.baseline, mutation.changes);
-          state.versions = mergeServerVersions(state.versions, result?.versions || {});
+          if(result?.__reconciled && result?.state){
+            state.baseline = normalizeState(result.state);
+            state.versions = normalizeVersions(result.versions || {});
+          }else{
+            state.baseline = applyChanges(state.baseline, mutation.changes);
+            state.versions = mergeServerVersions(state.versions, result?.versions || {});
+          }
           state.queue.shift();
           persistQueue();
           resolveWaiter(mutation.operationId, true);

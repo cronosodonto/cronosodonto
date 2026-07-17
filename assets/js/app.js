@@ -638,7 +638,18 @@ function suggestedFinancialPlanTotal(entry){
 }
 
 function financialPaymentPaid(payment){
-  return !!payment?.paidAt || payment?.status === "PAGA" || payment?.paid === true;
+  if(!payment || (typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(payment))) return false;
+  const status = String(payment?.status || "").trim().toUpperCase();
+  return !!(
+    payment?.paidAt ||
+    payment?.cashDate ||
+    payment?.paymentDate ||
+    payment?.paidDate ||
+    payment?.paid === true ||
+    status === "PAGA" ||
+    status === "PAGO" ||
+    status === "PAID"
+  );
 }
 
 
@@ -731,6 +742,27 @@ function cronosPaymentDateRepairInfo(payment, entry=null, allowLegacyDueFallback
 }
 function cronosPaymentAmount(payment){
   return parseMoney(payment?.value ?? payment?.amount ?? payment?.valor ?? payment?.total ?? 0);
+}
+function cronosPaymentReceivedGrossAmount(payment){
+  // "R$ Recebido" representa quanto o paciente quitou. Em antecipação de
+  // cartão, a taxa reduz o caixa líquido, mas não reabre parte da dívida.
+  const isCreditAnticipation = !!(
+    payment?.creditAnticipated ||
+    String(payment?.settlementType || "").toLowerCase() === "antecipacao_credito" ||
+    String(payment?.source || "").toLowerCase() === "creditanticipation"
+  );
+  if(isCreditAnticipation){
+    return parseMoney(
+      payment?.grossValue ??
+      payment?.amount ??
+      payment?.valorBruto ??
+      payment?.value ??
+      payment?.valor ??
+      payment?.total ??
+      0
+    );
+  }
+  return cronosPaymentAmount(payment);
 }
 function cronosMonthFromISOValue(raw){
   const iso = pickISOFlexible(raw);
@@ -898,12 +930,16 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
   const events = [];
   const skippedDuplicates = [];
   const skippedLegacy = [];
-  const seen = new Set();
-  const seenLoose = new Map();
-  const planLinks = new Set();
-  const legacyLinks = new Set();
-  const detailedEntryIds = new Set();
-  const detailedContactIds = new Set();
+  const seenExactKeys = new Set();
+  const seenCashRecordIds = new Set();
+
+  // Fontes detalhadas são a autoridade: cada linha de parcela/pagamento marcada
+  // como paga representa uma baixa. Não deduplicamos por paciente, data, valor
+  // ou mesmo por paymentId, pois parcelas legítimas podem compartilhar esses
+  // campos (e dados antigos podem ter IDs repetidos).
+  const paidFinancialRefs = new Set();
+  const paidLegacyRefs = new Set();
+  const detailedMirrorSlots = new Map();
 
   function centsKey(value){
     return String(Math.round(parseMoney(value) * 100));
@@ -928,10 +964,21 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     if(s.includes("lead")) return "lead";
     return s || "other";
   }
-  function loosePaymentKey(amount, iso, meta={}){
+  function mirrorKey(amount, iso, meta={}){
     return `${canonicalPatientKey(meta)}|${String(iso||"").slice(0,10)}|${centsKey(amount)}`;
   }
-
+  function addMirrorSlot(amount, iso, meta={}){
+    const key = mirrorKey(amount, iso, meta);
+    detailedMirrorSlots.set(key, (detailedMirrorSlots.get(key) || 0) + 1);
+  }
+  function consumeMirrorSlot(amount, iso, meta={}){
+    const key = mirrorKey(amount, iso, meta);
+    const remaining = detailedMirrorSlots.get(key) || 0;
+    if(remaining <= 0) return false;
+    if(remaining === 1) detailedMirrorSlots.delete(key);
+    else detailedMirrorSlots.set(key, remaining - 1);
+    return true;
+  }
   function inRange(iso){
     if(!iso) return false;
     if(untilToday && iso > today) return false;
@@ -943,68 +990,139 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     amount = parseMoney(amount);
     iso = pickISOFlexible(iso);
     if(!amount || !inRange(iso)) return false;
-    const safeKey = String(key || `${iso}:${amount}:${meta.entryId||""}:${meta.contactId||""}:${meta.desc||meta.source||""}`);
-    if(seen.has(safeKey)) return false;
-
-    const group = sourceGroup(meta.source || meta.desc || "Recebimento");
-    const looseKey = loosePaymentKey(amount, iso, meta);
-    const previous = seenLoose.get(looseKey);
-    if(previous){
+    const safeKey = String(key || `${iso}:${amount}:${meta.entryId||""}:${meta.contactId||""}:${events.length}`);
+    if(seenExactKeys.has(safeKey)){
       skippedDuplicates.push({
         skippedKey: safeKey,
-        keptKey: previous.key,
-        looseKey,
+        keptKey: safeKey,
         amount,
         iso,
-        patient: meta.patient || previous.patient || "Sem paciente vinculado",
-        skippedSource: meta.source || meta.desc || group,
-        keptSource: previous.source || previous.group,
-        group
+        patient: meta.patient || "Sem paciente vinculado",
+        skippedSource: meta.source || meta.desc || "Recebimento",
+        keptSource: meta.source || meta.desc || "Recebimento",
+        reason: "mesma linha física repetida"
       });
       return false;
     }
-
-    seen.add(safeKey);
-    const entryId = String(meta.entryId || "");
-    const contactId = String(meta.contactId || "");
-    if(entryId) detailedEntryIds.add(entryId);
-    if(contactId) detailedContactIds.add(contactId);
+    seenExactKeys.add(safeKey);
+    const group = sourceGroup(meta.source || meta.desc || "Recebimento");
     const ev = {
       key: safeKey,
-      looseKey,
+      looseKey: mirrorKey(amount, iso, meta),
       id: String(meta.id || safeKey),
       amount,
       value: amount,
       iso,
       monthKey: iso.slice(0,7),
-      entryId,
-      contactId,
+      entryId: String(meta.entryId || ""),
+      contactId: String(meta.contactId || ""),
       patient: meta.patient || "Sem paciente vinculado",
       method: String(meta.method || ""),
       source: String(meta.source || "Recebimento"),
       sourceGroup: group,
+      stableIdentity: String(meta.stableIdentity || ""),
       desc: String(meta.desc || meta.source || "Recebimento").trim(),
       dateRepair: meta.dateRepair || null,
       raw: meta.raw || null
     };
     events.push(ev);
-    seenLoose.set(looseKey, ev);
     return true;
   }
 
-  (db?.payments || []).forEach((p, idx)=>{
-    if(!cronosSameMasterPayment(p, masterId, entryById, contactById, entriesByContact)) return;
-    if(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(p)) return;
-    const status = String(p?.status || "").toUpperCase();
-    if(status && status !== "PAGA" && p?.paid !== true && !p?.paidAt && !p?.cashDate && !p?.date) return;
-    const amount = cronosPaymentAmount(p);
-    const entryId = String(p?.entryId || "");
-    const contactId = String(p?.contactId || "");
+  // 1) Regra principal: soma TODAS as baixas das parcelas dos planos ativos.
+  // O índice entra na chave para que IDs antigos repetidos não apaguem parcelas.
+  entries.forEach((entry, entryIdx)=>{
+    const patient = cronosPatientNameForPayment({}, entry, contactById);
+    const plans = (typeof cronosActiveFinancialPlans === "function")
+      ? cronosActiveFinancialPlans(entry)
+      : ensureFinancialPlans(entry);
+    plans.forEach((plan, planIdx)=>{
+      const isLegacyAdapterPlan = legacyPlanShouldBeSkippedAsAdapter(entry, plan);
+      const payments = (typeof cronosActiveFinancialPayments === "function")
+        ? cronosActiveFinancialPayments(plan)
+        : (plan.payments || []);
+      payments.forEach((payment, paymentIdx)=>{
+        if(!financialPaymentPaid(payment)) return;
+        const iso = cronosPaymentCashISO(payment, includeLegacyDueFallback || isLegacyAdapterPlan);
+        const amount = cronosPaymentReceivedGrossAmount(payment);
+        const planId = String(plan?.id || `planIndex${planIdx}`);
+        const paymentId = String(payment?.id || "");
+        const number = String(payment?.number || paymentIdx + 1);
+        const sourceName = isLegacyAdapterPlan
+          ? (plan.title || "Parcelamento legado estruturado")
+          : (plan.title || "Plano financeiro");
+        const meta = {
+          id: paymentId || `plan_${entryIdx}_${planIdx}_${paymentIdx}`,
+          entryId: entry.id,
+          contactId: entry.contactId || "",
+          patient,
+          method: payment.payMethod || plan.payMethod || "",
+          source: sourceName,
+          stableIdentity: `financial-row:${entry.id}:${planId}:${paymentId || "sem-id"}:${paymentIdx}`,
+          desc: `${sourceName} • pagamento ${number}/${payment.total || payments.length}`,
+          raw: payment
+        };
+        const added = addEvent(`finrow:${entry.id}:${planId}:${paymentId || "sem-id"}:${paymentIdx}`, amount, iso, meta);
+        if(!added) return;
+
+        // Referências explícitas só servem para reconhecer o espelho no livro-caixa.
+        // Nunca são usadas para eliminar outra parcela do plano.
+        if(paymentId) paidFinancialRefs.add(`${String(entry.id)}|${planId}|id:${paymentId}`);
+        paidFinancialRefs.add(`${String(entry.id)}|${planId}|num:${number}`);
+        addMirrorSlot(amount, iso, meta);
+      });
+    });
+  });
+
+  // 2) Parcelamentos legados não migrados: também contam linha por linha.
+  entries.forEach((entry, entryIdx)=>{
+    if(entry?.installPlan?.migratedToFinancialPlanId) return;
+    const patient = cronosPatientNameForPayment({}, entry, contactById);
+    const installments = (typeof cronosActiveLegacyInstallments === "function")
+      ? cronosActiveLegacyInstallments(entry)
+      : (entry.installments || []);
+    installments.forEach((payment, paymentIdx)=>{
+      if(!financialPaymentPaid(payment)) return;
+      const iso = cronosPaymentCashISO(payment, includeLegacyDueFallback);
+      const amount = cronosPaymentReceivedGrossAmount(payment);
+      const number = String(payment?.number || paymentIdx + 1);
+      const paymentId = String(payment?.id || "");
+      const meta = {
+        id: paymentId || `legacy_${entryIdx}_${paymentIdx}`,
+        entryId: entry.id,
+        contactId: entry.contactId || "",
+        patient,
+        method: payment.payMethod || entry.installPlan?.payMethod || "",
+        source: "Parcelamento legado",
+        stableIdentity: `legacy-row:${entry.id}:${paymentId || "sem-id"}:${paymentIdx}`,
+        desc: `Parcela ${number}/${payment.total || installments.length}`,
+        raw: payment
+      };
+      const added = addEvent(`legacyrow:${entry.id}:${paymentId || "sem-id"}:${paymentIdx}`, amount, iso, meta);
+      if(!added) return;
+      if(paymentId) paidLegacyRefs.add(`${String(entry.id)}|id:${paymentId}`);
+      paidLegacyRefs.add(`${String(entry.id)}|num:${number}`);
+      addMirrorSlot(amount, iso, meta);
+    });
+  });
+
+  // 3) Livro-caixa: entra apenas quando não é o espelho de uma parcela já
+  // contada. Registros sem vínculo são pareados um a um por paciente/data/valor;
+  // isso evita contar o mesmo pagamento duas vezes sem jamais apagar parcelas.
+  (db?.payments || []).forEach((payment, idx)=>{
+    if(!cronosSameMasterPayment(payment, masterId, entryById, contactById, entriesByContact)) return;
+    if(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(payment)) return;
+    if(!financialPaymentPaid(payment)) return;
+
+    const amount = cronosPaymentReceivedGrossAmount(payment);
+    const entryId = String(payment?.entryId || "");
+    const contactId = String(payment?.contactId || "");
     const entry = entryId ? entryById.get(entryId) : (contactId ? entriesByContact.get(contactId) : null);
-    const iso = cronosPaymentOfficialISO(p, entry, includeLegacyDueFallback);
-    const dateRepair = cronosPaymentDateRepairInfo(p, entry, includeLegacyDueFallback);
-    const patient = cronosPatientNameForPayment(p, entry, contactById);
-    if(!iso && cronosLegacyManualPaymentNeedsMonthRepair(p)){
+    const iso = cronosPaymentOfficialISO(payment, entry, includeLegacyDueFallback);
+    const dateRepair = cronosPaymentDateRepairInfo(payment, entry, includeLegacyDueFallback);
+    const patient = cronosPatientNameForPayment(payment, entry, contactById);
+
+    if(!iso && cronosLegacyManualPaymentNeedsMonthRepair(payment)){
       skippedLegacy.push({
         entryId: entryId || entry?.id || "",
         contactId: contactId || entry?.contactId || "",
@@ -1012,78 +1130,97 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
         amount,
         reason: dateRepair?.reason || "Pagamento manual legado sem data/mês confiável: fora do caixa mensal",
         source: "Pagamento manual legado órfão",
-        raw: p
+        raw: payment
       });
       return;
     }
-    const financialPlanId = String(p?.financialPlanId || "");
-    const financialPaymentId = String(p?.financialPaymentId || "");
-    if(entryId && financialPlanId && financialPaymentId){
-      planLinks.add(`${entryId}|${financialPlanId}|${financialPaymentId}`);
-    }
-    const legacyNum = p?.legacyInstallmentNumber || ((String(p?.desc || "").match(/Parcela\s+(\d+)\//i)||[])[1] || "");
-    if(entryId && legacyNum){
-      legacyLinks.add(`${entryId}|${legacyNum}`);
-    }
-    addEvent(`cash:${p?.id || idx}:${entryId}:${contactId}:${iso}:${amount}`, amount, iso, {
-      id: p?.id,
+
+    const planId = String(payment?.financialPlanId || payment?.planId || "");
+    const paymentId = String(payment?.financialPaymentId || payment?.paymentId || payment?.installmentId || "");
+    const explicitNum = String(
+      payment?.paymentNumber ||
+      payment?.installmentNumber ||
+      ((String(payment?.desc || payment?.description || "").match(/(?:Pagamento|Parcela)\s+(\d+)\//i)||[])[1] || "")
+    );
+    const legacyNum = String(payment?.legacyInstallmentNumber || explicitNum || "");
+
+    const mirrorsFinancial = !!(
+      entryId && planId && (
+        (paymentId && paidFinancialRefs.has(`${entryId}|${planId}|id:${paymentId}`)) ||
+        (explicitNum && paidFinancialRefs.has(`${entryId}|${planId}|num:${explicitNum}`))
+      )
+    );
+    const mirrorsLegacy = !!(
+      entryId && legacyNum && (
+        paidLegacyRefs.has(`${entryId}|num:${legacyNum}`) ||
+        (paymentId && paidLegacyRefs.has(`${entryId}|id:${paymentId}`))
+      )
+    );
+
+    const cashMeta = {
+      id: payment?.id,
       entryId: entryId || entry?.id || "",
       contactId: contactId || entry?.contactId || "",
       patient,
-      method: p?.method || p?.payMethod || "",
-      source: p?.source || "Caixa/Recebimentos",
-      desc: p?.desc || p?.description || "Lançamento no caixa/recebimentos",
+      method: payment?.method || payment?.payMethod || "",
+      source: payment?.source || "Caixa/Recebimentos",
+      stableIdentity: payment?.id ? `cash-record:${payment.id}` : `cash-row:${idx}`,
+      desc: payment?.desc || payment?.description || "Lançamento no caixa/recebimentos",
       dateRepair,
-      raw: p
-    });
-  });
+      raw: payment
+    };
 
-  entries.forEach(entry=>{
-    const patient = cronosPatientNameForPayment({}, entry, contactById);
-    ((typeof cronosActiveFinancialPlans === "function") ? cronosActiveFinancialPlans(entry) : ensureFinancialPlans(entry)).forEach((plan, planIdx)=>{
-      const isLegacyAdapterPlan = legacyPlanShouldBeSkippedAsAdapter(entry, plan);
-      ((typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (plan.payments || [])).forEach((p, idx)=>{
-        if(!financialPaymentPaid(p)) return;
-        const planId = String(plan.id || planIdx);
-        const paymentId = String(p.id || idx);
-        const link = `${String(entry.id)}|${planId}|${paymentId}`;
-        if(planLinks.has(link)) return;
-        const iso = cronosPaymentCashISO(p, includeLegacyDueFallback || isLegacyAdapterPlan);
-        const amount = cronosPaymentAmount(p);
-        const sourceName = isLegacyAdapterPlan ? (plan.title || "Parcelamento legado estruturado") : (plan.title || "Plano financeiro");
-        const added = addEvent(`fin:${entry.id}:${planId}:${paymentId}:${iso}:${amount}`, amount, iso, {
-          entryId: entry.id,
-          contactId: entry.contactId || "",
-          patient,
-          method: p.payMethod || "",
-          source: sourceName,
-          desc: `${sourceName} • pagamento ${p.number || idx+1}/${p.total || (plan.payments||[]).length}`,
-          raw: p
-        });
-        if(added) planLinks.add(link);
-      });
-    });
-  });
-
-  entries.forEach(entry=>{
-    if(entry?.installPlan?.migratedToFinancialPlanId) return;
-    const patient = cronosPatientNameForPayment({}, entry, contactById);
-    ((typeof cronosActiveLegacyInstallments === "function") ? cronosActiveLegacyInstallments(entry) : (entry.installments || [])).forEach((p, idx)=>{
-      if(!(p?.paidAt || p?.cashDate || p?.paid || String(p?.status || "").toUpperCase()==="PAGA")) return;
-      const legacyNum = String(p.number || idx+1);
-      if(legacyLinks.has(`${String(entry.id)}|${legacyNum}`)) return;
-      const iso = cronosPaymentCashISO(p, includeLegacyDueFallback);
-      const amount = cronosPaymentAmount(p);
-      addEvent(`legacyInst:${entry.id}:${legacyNum}:${iso}:${amount}`, amount, iso, {
-        entryId: entry.id,
-        contactId: entry.contactId || "",
+    if(mirrorsFinancial || mirrorsLegacy){
+      skippedDuplicates.push({
+        skippedKey: `cash:${payment?.id || idx}`,
+        keptKey: mirrorsFinancial ? "parcela-financeira" : "parcela-legada",
+        looseKey: mirrorKey(amount, iso, cashMeta),
+        amount,
+        iso,
         patient,
-        method: p.payMethod || entry.installPlan?.payMethod || "",
-        source: "Parcelamento legado",
-        desc: `Parcela ${legacyNum}/${p.total || ""}`,
-        raw: p
+        skippedSource: cashMeta.source,
+        keptSource: mirrorsFinancial ? "Baixa da parcela financeira" : "Baixa da parcela legada",
+        reason: "registro de caixa espelha uma baixa já contada"
       });
-    });
+      return;
+    }
+
+    // Registros antigos sem IDs podem ser apenas o espelho do plano. Pareamos
+    // um por um; havendo mais registros que parcelas, o excedente é contado.
+    if(!planId && !paymentId && !legacyNum && consumeMirrorSlot(amount, iso, cashMeta)){
+      skippedDuplicates.push({
+        skippedKey: `cash:${payment?.id || idx}`,
+        keptKey: "parcela-detalhada-pareada",
+        looseKey: mirrorKey(amount, iso, cashMeta),
+        amount,
+        iso,
+        patient,
+        skippedSource: cashMeta.source,
+        keptSource: "Baixa detalhada da parcela",
+        reason: "espelho legado pareado um a um"
+      });
+      return;
+    }
+
+    const recordId = String(payment?.id || "").trim();
+    if(recordId){
+      if(seenCashRecordIds.has(recordId)){
+        skippedDuplicates.push({
+          skippedKey: `cash:${recordId}:${idx}`,
+          keptKey: `cash:${recordId}`,
+          looseKey: mirrorKey(amount, iso, cashMeta),
+          amount,
+          iso,
+          patient,
+          skippedSource: cashMeta.source,
+          keptSource: cashMeta.source,
+          reason: "mesmo registro de caixa repetido"
+        });
+        return;
+      }
+      seenCashRecordIds.add(recordId);
+    }
+    addEvent(`cashrow:${recordId || `idx-${idx}`}`, amount, iso, cashMeta);
   });
 
   function hasDetailedForEntryInMonth(eid, cid, mk){
@@ -1095,6 +1232,9 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     });
   }
 
+  // 4) Campos agregados antigos só são fallback quando não existe nenhuma baixa
+  // detalhada daquele lead/paciente no mês. Nunca substituem nem completam
+  // parcelas modernas por tentativa de adivinhação.
   entries.forEach(entry=>{
     const eid = String(entry.id || "");
     const cid = String(entry.contactId || "");
@@ -1132,7 +1272,7 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     if(includeUndatedLegacyByEntryMonth && /^\d{4}-\d{2}$/.test(entryMonth)){
       if(hasDetailedForEntryInMonth(eid, cid, entryMonth)) return;
       const anchoredISO = legacyAnchor?.iso || `${entryMonth}-01`;
-      addEvent(`entryPaidMonthV84:${eid}:${cid}:${entryMonth}:${paidUndated}`, paidUndated, anchoredISO, {
+      addEvent(`entryPaidMonth:${eid}:${cid}:${entryMonth}:${paidUndated}`, paidUndated, anchoredISO, {
         entryId: eid,
         contactId: cid,
         patient,
@@ -1161,7 +1301,7 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     });
   });
 
-  events.sort((a,b)=>String(a.iso).localeCompare(String(b.iso)) || String(a.patient).localeCompare(String(b.patient)));
+  events.sort((a,b)=>String(a.iso).localeCompare(String(b.iso)) || String(a.patient).localeCompare(String(b.patient)) || String(a.key).localeCompare(String(b.key)));
   Object.defineProperty(events, "skippedDuplicates", {
     value: skippedDuplicates,
     enumerable: false,
@@ -1292,6 +1432,39 @@ window.cronosAuditRecebidosTotalPorFonte = function(){
     console.warn(`Adaptadores/duplicidades ignorados: ${events.skippedDuplicates.length}`);
   }
   return { total, totalBR: moneyBR(total), count:(events||[]).length, rows, skippedDuplicates:events.skippedDuplicates||[], skippedLegacy:events.skippedLegacy||[] };
+};
+
+window.cronosAuditTombstonesFinanceiros = function(){
+  const db = loadDB();
+  const actor = currentActor();
+  const masterId = actor?.masterId || actor?.clinicId || "";
+  const rows = [];
+  (db?.entries || []).filter(e=>!masterId || !e.masterId || e.masterId===masterId).forEach(entry=>{
+    (entry?.financialPlans || []).forEach(plan=>{
+      (plan?.payments || []).forEach((pay, idx)=>{
+        const id = String(pay?.id || pay?.paymentId || pay?.installmentId || "");
+        const lists = [plan?.deletedPaymentIds, plan?.paymentsDeleted, plan?.removedPaymentIds];
+        const tombstones = lists.flatMap(v=>Array.from(cronosTombstoneRecords(v).values()));
+        const matched = tombstones.filter(t=>t.id===id);
+        if(!matched.length) return;
+        const blocked = cronosAnyTombstoneBlocksEntity(lists, id, pay);
+        rows.push({
+          paciente: entry?.name || entry?.lead || entry?.contactId || "",
+          plano: plan?.title || plan?.id || "",
+          parcela: pay?.number || idx+1,
+          id,
+          valor: moneyBR(pay?.amount ?? pay?.value ?? 0),
+          status: pay?.status || "",
+          caixa: cronosPaymentCashISO(pay, false),
+          atualizadaEm: pay?.updatedAt || pay?.lastUpdateAt || pay?.cronosRevivedAt || "",
+          tombstoneEm: matched.map(t=>t.at ? new Date(t.at).toISOString() : "sem data").join(" | "),
+          bloqueada: blocked ? "SIM" : "NÃO (tombstone antigo)"
+        });
+      });
+    });
+  });
+  console.table(rows);
+  return rows;
 };
 
 window.cronosAuditPacientePagamentos = function(nome){
@@ -1849,7 +2022,8 @@ function renderFinancialPaymentTable(entry, plan, contact){
   const today = todayISO();
   const canSensitive = canManageFinancialSensitiveActions();
   const planApproved = financialPlanIsApproved(plan);
-  const rows = (plan.payments||[]).map(p=>{
+  const visiblePayments = (typeof cronosActiveFinancialPayments === "function") ? cronosActiveFinancialPayments(plan) : (plan.payments || []);
+  const rows = visiblePayments.map(p=>{
     const uiMutation = String(p?.__cronosUiMutation || "");
     const mutating = !!uiMutation || isFinancialPaymentMutationPending(entry?.id, plan?.id, p?.id);
     const paid = financialPaymentPaid(p);
@@ -2334,13 +2508,11 @@ function cronosLegacyInstallmentTombstoneKey(parcela, fallbackNumber=""){
 
 function applyFinancialTombstonesToEntry(entry){
   if(!entry || typeof entry !== "object") return entry;
-  const deletedPlanIds = cronosTombstoneIdSet(entry.deletedFinancialPlanIds);
   if(Array.isArray(entry.financialPlans)){
-    entry.financialPlans = entry.financialPlans.filter(plan=>!deletedPlanIds.has(String(plan?.id || "")));
+    entry.financialPlans = cronosActiveFinancialPlans(entry);
     entry.financialPlans.forEach(plan=>{
-      const deletedPaymentIds = cronosTombstoneIdSet(plan?.deletedPaymentIds);
-      if(deletedPaymentIds.size && Array.isArray(plan.payments)){
-        plan.payments = plan.payments.filter(pay=>!deletedPaymentIds.has(String(pay?.id || "")));
+      if(Array.isArray(plan.payments)){
+        plan.payments = cronosActiveFinancialPayments(plan);
         try{ renumberFinancialPlanPayments(plan); }catch(_){ }
       }
     });
@@ -2801,8 +2973,14 @@ function openCreditAnticipationModal(){
     toast("Processando antecipação", "Aguarde a conclusão da baixa.");
 
     try{
-      await applyCreditAnticipation(db, selected, date, feePercent);
-      overlay.remove();
+      const applied = await applyCreditAnticipation(db, selected, date, feePercent);
+      if(applied){
+        overlay.remove();
+      }else{
+        confirmBtn.dataset.busy = "0";
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = originalText || "Confirmar antecipação";
+      }
     }catch(err){
       console.error("Erro ao confirmar antecipação de crédito", err);
       toast("Erro ao antecipar crédito", err?.message || "Não foi possível concluir a baixa antecipada. Tente novamente.");
@@ -2815,155 +2993,266 @@ function openCreditAnticipationModal(){
   renderCandidates();
 }
 
+function resolveCreditAnticipationCandidate(db, candidate){
+  const entryId = String(candidate?.entry?.id || "");
+  const entry = (db?.entries || []).find(item=>String(item?.id || "") === entryId);
+  if(!entry) return null;
+
+  if(candidate?.type === "financial"){
+    const planId = String(candidate?.plan?.id || "");
+    const paymentId = String(candidate?.payment?.id || "");
+    const plan = ensureFinancialPlans(entry).find(item=>String(item?.id || "") === planId);
+    const payment = (plan?.payments || []).find(item=>String(item?.id || "") === paymentId);
+    if(!plan || !payment) return null;
+    return { ...candidate, entry, plan, payment };
+  }
+
+  const number = String(candidate?.payment?.number || "");
+  const paymentId = String(candidate?.payment?.id || "");
+  const payment = (entry?.installments || []).find(item=>
+    (paymentId && String(item?.id || "") === paymentId) ||
+    (number && String(item?.number || "") === number)
+  );
+  if(!payment) return null;
+  return { ...candidate, entry, plan:null, payment };
+}
+
 async function applyCreditAnticipation(db, candidates, settlementDate, feePercent=0){
   const actor = currentActor();
-  if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
-  db.payments = db.payments || [];
+  if(!canManageFinancialSensitiveActions(actor)){
+    blockedFinancialSensitiveAction();
+    return false;
+  }
+  if(__cronosFinancialMutationBusy){
+    toast("Aguarde", financialMutationBusyText());
+    return false;
+  }
+
+  const before = cloneCronosCriticalSnapshot(db);
+  const commitDB = cloneCronosCriticalSnapshot(db);
+  commitDB.payments = commitDB.payments || [];
+  const selected = (Array.isArray(candidates) ? candidates : [])
+    .map(candidate=>resolveCreditAnticipationCandidate(commitDB, candidate))
+    .filter(Boolean);
+
+  if(!selected.length){
+    toast("Nada para antecipar", "As parcelas selecionadas não foram encontradas no estado atual.");
+    return false;
+  }
+
+  const finishMutation = startFinancialMutationWait("uma antecipação de crédito");
   const nowISO = new Date().toISOString();
   let count = 0;
   let grossTotal = 0;
   let feeTotal = 0;
   let netTotal = 0;
-  const affectedEntries = new Set();
-
-  candidates.forEach(c=>{
-    const payment = c.payment;
-    if(!payment || financialPaymentPaid(payment)) return;
-    const gross = parseMoney(payment.amount);
-    if(gross <= 0) return;
-    const feeAmount = Number((gross * (Math.max(0, feePercent) / 100)).toFixed(2));
-    const net = Number(Math.max(0, gross - feeAmount).toFixed(2));
-    grossTotal += gross;
-    feeTotal += feeAmount;
-    netTotal += net;
-    count++;
-
-    payment.status = "PAGA";
-    payment.paidAt = settlementDate;
-    payment.cashDate = settlementDate;
-    payment.manualPayment = true;
-    payment.autoCreditSettlement = false;
-    payment.creditAnticipated = true;
-    payment.settlementType = "antecipacao_credito";
-    payment.grossValue = gross;
-    payment.cashValue = net;
-    payment.netValue = net;
-    payment.cardFeePercent = Math.max(0, feePercent);
-    payment.cardFeeAmount = feeAmount;
-    markFinancialMutation(c.entry, c.plan, payment, nowISO);
-    if(c.entry) affectedEntries.add(c.entry);
-
-    if(c.type === "financial"){
-      let rec = findFinancePaymentRecord(db, c.entry.id, c.plan.id, payment.id);
-      if(!rec){
-        rec = {
-          id: uid("p"),
-          masterId: actor.masterId,
-          entryId: c.entry.id,
-          contactId: c.entry.contactId || "",
-          financialPlanId: c.plan.id,
-          financialPaymentId: payment.id,
-          at: nowISO,
-          createdAt: nowISO,
-          updatedAt: nowISO,
-          date: settlementDate,
-          paidAt: settlementDate,
-          cashDate: settlementDate,
-          status: "PAGA",
-          value: net,
-          grossValue: gross,
-          cardFeePercent: Math.max(0, feePercent),
-          cardFeeAmount: feeAmount,
-          method: payment.payMethod || c.method || "Cartão de crédito",
-          desc: `Antecipação de crédito • ${c.plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
-          source: "creditAnticipation",
-          settlementType: "antecipacao_credito"
-        };
-        db.payments.push(rec);
-      }else{
-        rec.date = settlementDate;
-        rec.paidAt = settlementDate;
-        rec.cashDate = settlementDate;
-        rec.status = "PAGA";
-        rec.at = nowISO;
-        rec.updatedAt = nowISO;
-        rec.value = net;
-        rec.grossValue = gross;
-        rec.cardFeePercent = Math.max(0, feePercent);
-        rec.cardFeeAmount = feeAmount;
-        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
-        rec.source = "creditAnticipation";
-        rec.settlementType = "antecipacao_credito";
-      }
-    }else{
-      c.entry.valuePaid = parseMoney(c.entry.valuePaid) + gross;
-      c.entry.valueClosed = (c.entry.status === "Fechou") ? c.entry.valuePaid : c.entry.valueClosed;
-      const legacyNum = String(payment.number || "");
-      let rec = db.payments.find(x=>String(x.entryId)===String(c.entry.id) && String(x.legacyInstallmentNumber || "") === legacyNum);
-      if(!rec){
-        rec = {
-          id: uid("p"),
-          masterId: actor.masterId,
-          entryId: c.entry.id,
-          contactId: c.entry.contactId || "",
-          at: nowISO,
-          createdAt: nowISO,
-          updatedAt: nowISO,
-          date: settlementDate,
-          paidAt: settlementDate,
-          cashDate: settlementDate,
-          status: "PAGA",
-          value: net,
-          grossValue: gross,
-          cardFeePercent: Math.max(0, feePercent),
-          cardFeeAmount: feeAmount,
-          method: payment.payMethod || c.method || "Cartão de crédito",
-          desc: `Antecipação de crédito • Parcela ${payment.number || ""}/${payment.total || ""}`,
-          source: "creditAnticipation",
-          settlementType: "antecipacao_credito",
-          legacyInstallmentNumber: payment.number
-        };
-        db.payments.push(rec);
-      }else{
-        rec.date = settlementDate;
-        rec.paidAt = settlementDate;
-        rec.cashDate = settlementDate;
-        rec.status = "PAGA";
-        rec.at = nowISO;
-        rec.updatedAt = nowISO;
-        rec.value = net;
-        rec.grossValue = gross;
-        rec.cardFeePercent = Math.max(0, feePercent);
-        rec.cardFeeAmount = feeAmount;
-        rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
-        rec.source = "creditAnticipation";
-        rec.settlementType = "antecipacao_credito";
-      }
-    }
-  });
-
-  if(!count) return toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
-  affectedEntries.forEach(entry=>{
-    try{ syncFichaFinancialLinks(entry); }catch(e){ console.warn("Falha ao conciliar antecipação com a ficha:", e); }
-  });
-  try{ syncInstallmentTasks(db, actor); }catch(_){ }
-  cronosAuditAction(db, { action:"credit_anticipated", entityType:"finance", entityId:"credit_anticipation", value:netTotal, details:`${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)} • caixa ${fmtBR(settlementDate)}` });
-  affectedEntries.forEach(entry=>{
-    cronosAuditAction(db, { action:"credit_anticipated", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:entry.contactId, value:netTotal, details:`Antecipação de crédito no período • caixa ${fmtBR(settlementDate)}` });
-  });
+  const affectedEntries = new Map();
   let cloudOk = false;
+
   try{
-    cloudOk = await saveDB(db, { immediate:true });
+    selected.forEach(c=>{
+      const payment = c.payment;
+      if(!payment || financialPaymentPaid(payment)) return;
+      const gross = parseMoney(payment.amount);
+      if(gross <= 0) return;
+
+      const feeAmount = Number((gross * (Math.max(0, feePercent) / 100)).toFixed(2));
+      const net = Number(Math.max(0, gross - feeAmount).toFixed(2));
+      grossTotal += gross;
+      feeTotal += feeAmount;
+      netTotal += net;
+      count++;
+
+      const entryId = String(c.entry?.id || "");
+      const entryTotals = affectedEntries.get(entryId) || { entry:c.entry, gross:0, fee:0, net:0, count:0 };
+      entryTotals.gross += gross;
+      entryTotals.fee += feeAmount;
+      entryTotals.net += net;
+      entryTotals.count += 1;
+      affectedEntries.set(entryId, entryTotals);
+
+      payment.status = "PAGA";
+      payment.paidAt = settlementDate;
+      payment.cashDate = settlementDate;
+      payment.paid = true;
+      payment.manualPayment = true;
+      payment.autoCreditSettlement = false;
+      payment.creditAnticipated = true;
+      payment.settlementType = "antecipacao_credito";
+      payment.grossValue = gross;
+      payment.cashValue = net;
+      payment.netValue = net;
+      payment.cardFeePercent = Math.max(0, feePercent);
+      payment.cardFeeAmount = feeAmount;
+      payment.updatedAt = nowISO;
+      payment.lastUpdateAt = nowISO;
+      markFinancialMutation(c.entry, c.plan, payment, nowISO);
+
+      if(c.type === "financial"){
+        let rec = findFinancePaymentRecord(commitDB, c.entry.id, c.plan.id, payment.id);
+        const recBeforePay = clonePlainFinancialRecord(rec);
+        setPaymentUndoRecordSnapshot(payment, !!recBeforePay, recBeforePay, nowISO);
+
+        if(!rec){
+          rec = {
+            id: uid("p"),
+            masterId: actor.masterId,
+            entryId: c.entry.id,
+            contactId: c.entry.contactId || "",
+            financialPlanId: c.plan.id,
+            financialPaymentId: payment.id,
+            at: nowISO,
+            createdAt: nowISO,
+            updatedAt: nowISO,
+            lastUpdateAt: nowISO,
+            date: settlementDate,
+            paidAt: settlementDate,
+            cashDate: settlementDate,
+            status: "PAGA",
+            value: net,
+            grossValue: gross,
+            cardFeePercent: Math.max(0, feePercent),
+            cardFeeAmount: feeAmount,
+            method: payment.payMethod || c.method || "Cartão de crédito",
+            desc: `Antecipação de crédito • ${c.plan.title || "Plano financeiro"} • ${payment.number || ""}/${payment.total || ""}`,
+            source: "creditAnticipation",
+            settlementType: "antecipacao_credito",
+            cronosFinancialMutation: "antecipacao_credito",
+            cronosFinancialMutationAt: nowISO
+          };
+          commitDB.payments.push(rec);
+        }else{
+          rec.date = settlementDate;
+          rec.paidAt = settlementDate;
+          rec.cashDate = settlementDate;
+          rec.status = "PAGA";
+          rec.at = nowISO;
+          rec.updatedAt = nowISO;
+          rec.lastUpdateAt = nowISO;
+          rec.value = net;
+          rec.grossValue = gross;
+          rec.cardFeePercent = Math.max(0, feePercent);
+          rec.cardFeeAmount = feeAmount;
+          rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
+          rec.source = "creditAnticipation";
+          rec.settlementType = "antecipacao_credito";
+          rec.cronosFinancialMutation = "antecipacao_credito";
+          rec.cronosFinancialMutationAt = nowISO;
+        }
+
+        if(financialPlanIsFullyPaid(c.plan)) c.plan.status = "Concluído";
+      }else{
+        c.entry.valuePaid = parseMoney(c.entry.valuePaid) + gross;
+        c.entry.valueClosed = (c.entry.status === "Fechou") ? c.entry.valuePaid : c.entry.valueClosed;
+        const legacyNum = String(payment.number || "");
+        let rec = commitDB.payments.find(x=>String(x.entryId)===String(c.entry.id) && String(x.legacyInstallmentNumber || "") === legacyNum);
+        if(!rec){
+          rec = {
+            id: uid("p"),
+            masterId: actor.masterId,
+            entryId: c.entry.id,
+            contactId: c.entry.contactId || "",
+            at: nowISO,
+            createdAt: nowISO,
+            updatedAt: nowISO,
+            lastUpdateAt: nowISO,
+            date: settlementDate,
+            paidAt: settlementDate,
+            cashDate: settlementDate,
+            status: "PAGA",
+            value: net,
+            grossValue: gross,
+            cardFeePercent: Math.max(0, feePercent),
+            cardFeeAmount: feeAmount,
+            method: payment.payMethod || c.method || "Cartão de crédito",
+            desc: `Antecipação de crédito • Parcela ${payment.number || ""}/${payment.total || ""}`,
+            source: "creditAnticipation",
+            settlementType: "antecipacao_credito",
+            legacyInstallmentNumber: payment.number,
+            cronosFinancialMutation: "antecipacao_credito",
+            cronosFinancialMutationAt: nowISO
+          };
+          commitDB.payments.push(rec);
+        }else{
+          rec.date = settlementDate;
+          rec.paidAt = settlementDate;
+          rec.cashDate = settlementDate;
+          rec.status = "PAGA";
+          rec.at = nowISO;
+          rec.updatedAt = nowISO;
+          rec.lastUpdateAt = nowISO;
+          rec.value = net;
+          rec.grossValue = gross;
+          rec.cardFeePercent = Math.max(0, feePercent);
+          rec.cardFeeAmount = feeAmount;
+          rec.method = payment.payMethod || c.method || rec.method || "Cartão de crédito";
+          rec.source = "creditAnticipation";
+          rec.settlementType = "antecipacao_credito";
+          rec.cronosFinancialMutation = "antecipacao_credito";
+          rec.cronosFinancialMutationAt = nowISO;
+        }
+      }
+    });
+
+    if(!count){
+      toast("Nada para antecipar", "As parcelas selecionadas já estavam pagas ou não são crédito pendente.");
+      return false;
+    }
+
+    // A persistência V4 confirma vários pacientes na mesma transação. Em clínicas
+    // ainda mantidas no fluxo V2, a RPC financeira recebe um único lead por vez;
+    // nesse cenário bloqueamos lote entre pacientes para nunca salvar metade.
+    if(!window.CronosRepository?.isEnabled?.() && affectedEntries.size > 1){
+      toast("Selecione um paciente por vez", "Esta clínica ainda usa a persistência anterior. A antecipação em lote entre pacientes foi bloqueada para evitar gravação parcial.");
+      return false;
+    }
+
+    affectedEntries.forEach(({entry})=>{
+      try{ syncFichaFinancialLinks(entry); }catch(error){ console.warn("Falha ao conciliar antecipação com a ficha:", error); }
+    });
+    try{ syncInstallmentTasks(commitDB, actor); }catch(_){ }
+
+    cronosAuditAction(commitDB, {
+      action:"credit_anticipated",
+      entityType:"finance",
+      entityId:`credit_anticipation:${nowISO}`,
+      value:netTotal,
+      details:`${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)} • caixa ${fmtBR(settlementDate)}`
+    });
+    affectedEntries.forEach(({entry, gross, fee, net, count:entryCount})=>{
+      cronosAuditAction(commitDB, {
+        action:"credit_anticipated",
+        entityType:"entry",
+        entityId:entry.id,
+        entryId:entry.id,
+        contactId:entry.contactId,
+        value:net,
+        details:`${entryCount} parcela(s) • bruto ${moneyBR(gross)} • taxa ${moneyBR(fee)} • líquido ${moneyBR(net)} • caixa ${fmtBR(settlementDate)}`
+      });
+    });
+
+    toast("Salvando antecipação...", "As parcelas e o caixa serão confirmados juntos.");
+    const firstAffectedEntry = affectedEntries.values().next().value?.entry || null;
+    cloudOk = await commitFinancialMutationCloud(commitDB, firstAffectedEntry);
   }catch(err){
     console.error("Falha ao salvar antecipação de crédito na nuvem", err);
-    safeSetLocalDB(db);
+    cloudOk = false;
+  }finally{
+    finishMutation();
   }
-  if(cloudOk){
-    toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
-  }else{
-    toast("Antecipação pendente", "Não foi possível concluir. O estado anterior foi mantido.");
+
+  if(!cloudOk){
+    restoreCronosCriticalSnapshot(before);
+    toast("Antecipação não registrada", "Nenhuma parcela ou lançamento de caixa foi confirmado. Tente novamente.");
+    return false;
   }
-  renderAll();
+
+  DB = normalizeDBShape(commitDB);
+  try{ safeSetLocalDB(DB); }catch(_){ }
+  try{ captureV2Snapshots(DB); }catch(_){ }
+  refreshFinancialUIAfterPayment();
+  toast("Antecipação registrada ✅", `${count} parcela(s) • bruto ${moneyBR(grossTotal)} • taxa ${moneyBR(feeTotal)} • líquido ${moneyBR(netTotal)}`);
+  return true;
 }
 
 async function payFinancialPayment(entryId, planId, paymentId){
@@ -3022,6 +3311,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
       }
 
       const nowISO = new Date().toISOString();
+      cronosReviveFinancialPayment(commit.plan, commitPayment, nowISO);
       commitPayment.status = "PAGA";
       commitPayment.paidAt = payDate;
       commitPayment.cashDate = payDate;
@@ -3161,6 +3451,7 @@ async function undoFinancialPayment(entryId, planId, paymentId){
   try{
     if(!commit.entry || !commit.plan || !payment) throw new Error("Pagamento não encontrado na confirmação.");
     const nowISO = new Date().toISOString();
+    cronosReviveFinancialPayment(commit.plan, payment, nowISO);
     payment.status = "PENDENTE";
     payment.paidAt = "";
     payment.cashDate = "";
@@ -3182,7 +3473,7 @@ async function undoFinancialPayment(entryId, planId, paymentId){
     }
     markFinancialMutation(commit.entry, commit.plan, payment, nowISO);
     cronosAuditAction(commitDB, { action:"payment_undo", entityType:"entry", entityId:commit.entry.id, entryId:commit.entry.id, contactId:commit.entry.contactId, value:parseMoney(payment.amount), details:`${commit.plan.title || "Plano financeiro"} • pagamento ${payment.number || ""}/${payment.total || ""}` });
-    if(String(commit.plan.status || "").toLowerCase().includes("concl")) commit.plan.status = "Aguardando";
+    if(String(commit.plan.status || "").toLowerCase().includes("concl")) commit.plan.status = "Aprovado";
     syncInstallmentTasks(commitDB, actor);
 
     cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, false);
@@ -3230,6 +3521,7 @@ async function transferFinancialPaymentCashDate(entryId, planId, paymentId){
 
   const before = cloneCronosCriticalSnapshot(db);
   const nowISO = new Date().toISOString();
+  cronosReviveFinancialPayment(plan, payment, nowISO);
   payment.cashDate = next;
   payment.paidAt = next;
   payment.status = "PAGA";
@@ -8728,21 +9020,145 @@ function setDashStatusFilter(status){
 }
 
 
+function cronosTimestampMs(value){
+  if(!value) return 0;
+  if(typeof value === "number" && Number.isFinite(value)) return value;
+  const ms = Date.parse(String(value));
+  return Number.isFinite(ms) ? ms : 0;
+}
+function cronosLatestEntityMutationMs(obj){
+  if(!obj || typeof obj !== "object") return 0;
+  return Math.max(
+    cronosTimestampMs(obj.cronosRevivedAt),
+    cronosTimestampMs(obj.updatedAt),
+    cronosTimestampMs(obj.lastUpdateAt),
+    cronosTimestampMs(obj.financeUpdatedAt),
+    cronosTimestampMs(obj.cronosFinancialMutationAt),
+    cronosTimestampMs(obj.paidAt),
+    cronosTimestampMs(obj.cashDate),
+    cronosTimestampMs(obj.paymentDate),
+    cronosTimestampMs(obj.paidDate),
+    cronosTimestampMs(obj.createdAt)
+  );
+}
+function cronosLatestDeletionMs(obj){
+  if(!obj || typeof obj !== "object") return 0;
+  return Math.max(
+    cronosTimestampMs(obj.deletedAt),
+    cronosTimestampMs(obj.removedAt),
+    cronosTimestampMs(obj.archivedAt),
+    cronosTimestampMs(obj.canceledAt),
+    cronosTimestampMs(obj.cancelledAt)
+  );
+}
 function cronosIsDeletedLike(obj){
   if(!obj || typeof obj !== "object") return false;
-  if(obj.deletedAt || obj.removedAt || obj.archivedAt || obj.canceledAt || obj.cancelledAt) return true;
-  if(obj.deleted === true || obj.removed === true || obj.archived === true || obj.canceled === true || obj.cancelled === true || obj.isDeleted === true) return true;
+  const deletionMs = cronosLatestDeletionMs(obj);
+  const mutationMs = cronosLatestEntityMutationMs(obj);
+
+  // Uma parcela pode ter sido excluída/cancelada e depois recriada ou baixada
+  // novamente com o mesmo ID. Nesse caso, a mutação mais recente vence. Sem
+  // isso, o modal mostra PAGO, mas Dashboard/Performance ignoram a baixa.
+  if(deletionMs > 0){
+    if(mutationMs > deletionMs) return false;
+    return true;
+  }
+
+  const booleanDeleted = obj.deleted === true || obj.removed === true || obj.archived === true || obj.canceled === true || obj.cancelled === true || obj.isDeleted === true;
+  if(booleanDeleted && !obj.cronosRevivedAt) return true;
+
   const st = String(obj.status || obj.situacao || "")
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .trim().toLowerCase();
-  return ["excluido", "excluida", "deletado", "deletada", "removido", "removida", "cancelado", "cancelada", "canceled", "cancelled"].includes(st);
+  const deletedStatus = ["excluido", "excluida", "deletado", "deletada", "removido", "removida", "cancelado", "cancelada", "canceled", "cancelled"].includes(st);
+  return deletedStatus && !obj.cronosRevivedAt;
+}
+function cronosTombstoneRecords(value){
+  const records = new Map();
+  const keepLatest = (id, raw)=>{
+    id = String(id || "").trim();
+    if(!id) return;
+    let at = 0;
+    if(raw && typeof raw === "object"){
+      at = Math.max(
+        cronosTimestampMs(raw.deletedAt),
+        cronosTimestampMs(raw.removedAt),
+        cronosTimestampMs(raw.archivedAt),
+        cronosTimestampMs(raw.canceledAt),
+        cronosTimestampMs(raw.cancelledAt),
+        cronosTimestampMs(raw.updatedAt),
+        cronosTimestampMs(raw.at),
+        cronosTimestampMs(raw.date)
+      );
+    }else if(typeof raw === "string"){
+      at = cronosTimestampMs(raw);
+    }
+    const prev = records.get(id);
+    if(!prev || at >= prev.at) records.set(id, {id, at, raw});
+  };
+
+  if(!value) return records;
+  if(value instanceof Set){
+    [...value].forEach(id=>keepLatest(id, id));
+    return records;
+  }
+  if(Array.isArray(value)){
+    value.forEach(item=>{
+      const id = typeof item === "object" ? (item?.id || item?.paymentId || item?.planId || item?.key || "") : item;
+      keepLatest(id, item);
+    });
+    return records;
+  }
+  if(typeof value === "object"){
+    Object.entries(value).forEach(([id, raw])=>{ if(raw) keepLatest(id, raw); });
+    return records;
+  }
+  String(value).split(/[;,|\s]+/).map(x=>x.trim()).filter(Boolean).forEach(id=>keepLatest(id, id));
+  return records;
 }
 function cronosTombstoneIdSet(value){
-  if(!value) return new Set();
-  if(value instanceof Set) return new Set([...value].map(String));
-  if(Array.isArray(value)) return new Set(value.map(x=>String(typeof x === "object" ? (x?.id || x?.paymentId || x?.planId || x?.key || "") : x)).filter(Boolean));
-  if(typeof value === "object") return new Set(Object.keys(value).filter(k=>value[k]));
-  return new Set(String(value).split(/[;,|\s]+/).map(x=>x.trim()).filter(Boolean));
+  return new Set(cronosTombstoneRecords(value).keys());
+}
+function cronosTombstoneBlocksEntity(value, id, entity){
+  id = String(id || "").trim();
+  if(!id) return false;
+  const tomb = cronosTombstoneRecords(value).get(id);
+  if(!tomb) return false;
+  const entityMs = cronosLatestEntityMutationMs(entity);
+  // Tombstone sem data continua valendo, exceto quando a parcela foi marcada
+  // explicitamente como revivida por uma nova operação do Cronos.
+  if(!tomb.at) return !entity?.cronosRevivedAt;
+  return !(entityMs > tomb.at);
+}
+function cronosAnyTombstoneBlocksEntity(values, id, entity){
+  return (values || []).some(value=>cronosTombstoneBlocksEntity(value, id, entity));
+}
+function cronosRemoveTombstoneId(value, id){
+  id = String(id || "").trim();
+  if(!id || !value) return value;
+  if(value instanceof Set){
+    const next = new Set(value); next.delete(id); return next;
+  }
+  if(Array.isArray(value)){
+    return value.filter(item=>String(typeof item === "object" ? (item?.id || item?.paymentId || item?.planId || item?.key || "") : item).trim() !== id);
+  }
+  if(typeof value === "object"){
+    const next = {...value}; delete next[id]; return next;
+  }
+  return String(value).split(/[;,|\s]+/).map(x=>x.trim()).filter(x=>x && x!==id).join(",");
+}
+function cronosReviveFinancialPayment(plan, payment, nowISO=new Date().toISOString()){
+  if(!plan || !payment) return payment;
+  const id = String(payment.id || payment.paymentId || payment.installmentId || "").trim();
+  if(id){
+    plan.deletedPaymentIds = cronosRemoveTombstoneId(plan.deletedPaymentIds, id);
+    plan.paymentsDeleted = cronosRemoveTombstoneId(plan.paymentsDeleted, id);
+    plan.removedPaymentIds = cronosRemoveTombstoneId(plan.removedPaymentIds, id);
+  }
+  payment.cronosRevivedAt = nowISO;
+  payment.updatedAt = nowISO;
+  payment.lastUpdateAt = nowISO;
+  return payment;
 }
 function cronosLegacyInstallmentTombstoneKey(pay, number){
   return String(pay?.id || pay?.installmentId || pay?.paymentId || pay?.number || number || "");
@@ -8752,18 +9168,18 @@ function cronosActiveFichaPlanItems(entry){
   return items.filter(item=>!cronosIsDeletedLike(item));
 }
 function cronosActiveFinancialPlans(entry){
-  const deletedPlanIds = cronosTombstoneIdSet(entry?.deletedFinancialPlanIds || entry?.financialPlansDeleted || entry?.removedFinancialPlanIds);
+  const tombstoneLists = [entry?.deletedFinancialPlanIds, entry?.financialPlansDeleted, entry?.removedFinancialPlanIds];
   return (Array.isArray(entry?.financialPlans) ? entry.financialPlans : []).filter(plan=>{
     const id = String(plan?.id || "");
-    if(id && deletedPlanIds.has(id)) return false;
+    if(id && cronosAnyTombstoneBlocksEntity(tombstoneLists, id, plan)) return false;
     return !cronosIsDeletedLike(plan);
   });
 }
 function cronosActiveFinancialPayments(plan){
-  const deletedPaymentIds = cronosTombstoneIdSet(plan?.deletedPaymentIds || plan?.paymentsDeleted || plan?.removedPaymentIds);
+  const tombstoneLists = [plan?.deletedPaymentIds, plan?.paymentsDeleted, plan?.removedPaymentIds];
   return (Array.isArray(plan?.payments) ? plan.payments : []).filter(pay=>{
     const id = String(pay?.id || pay?.paymentId || pay?.installmentId || "");
-    if(id && deletedPaymentIds.has(id)) return false;
+    if(id && cronosAnyTombstoneBlocksEntity(tombstoneLists, id, pay)) return false;
     return !cronosIsDeletedLike(pay);
   });
 }
@@ -9209,7 +9625,7 @@ function buildDashboardRevenueData(rows, db, actor, filters){
     contactsLength: Array.isArray(db?.contacts) ? db.contacts.length : 0,
     paymentsLength: Array.isArray(db?.payments) ? db.payments.length : 0,
     version: window.__CRONOS_DATA_VERSION__ || 0,
-    calcVersion: 'v37-finance-unificado'
+    calcVersion: 'v38-finance-parcelas-distintas'
   });
   const cache = window.__CRONOS_DASH_REVENUE_CACHE__;
   if(cache && cache.rows === rowsSafe && cache.db === db && cache.key === cacheKey && (Date.now() - cache.ts) < 1500){
