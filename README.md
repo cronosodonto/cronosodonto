@@ -1,22 +1,8 @@
 # Cronos Odonto
 
-Sistema de gestão comercial e financeira desenvolvido para clínicas odontológicas.
+Sistema de gestão comercial e financeira para clínicas odontológicas.
 
-## Recursos
-
-- Gestão de leads e pacientes
-- Funil comercial
-- Acompanhamento de avaliações e tratamentos
-- Controle de recebimentos e parcelamentos
-- Dashboard com indicadores comerciais e financeiros
-- Gestão de campanhas, tarefas e usuários
-- Administração de clínicas e permissões
-
-## Sobre o projeto
-
-O Cronos Odonto foi desenvolvido para centralizar processos comerciais e financeiros de clínicas odontológicas, oferecendo uma visão mais clara das oportunidades, dos recebimentos e da operação.
-
-## Propriedade
+O Cronos Odonto centraliza o acompanhamento de leads, oportunidades, tratamentos e recebimentos em uma única plataforma.
 
 © 2026 Cronos Odonto Software. Todos os direitos reservados.
 

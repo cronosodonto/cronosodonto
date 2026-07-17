@@ -143,7 +143,7 @@
       renderDetail();
       if (showToast) toast('Chats do site atualizados.', 'success', 2200);
     } catch (error) {
-      if (list) list.innerHTML = '<div class="sitechat-empty">Não foi possível carregar os chats. Se a tabela ainda não existir, rode o arquivo site-chat-setup.sql.</div>';
+      if (list) list.innerHTML = '<div class="sitechat-empty">Não foi possível carregar os chats do site. Verifique a configuração do serviço.</div>';
       const empty = qs('siteChatDetailEmpty');
       const detail = qs('siteChatDetail');
       if (detail) detail.classList.add('hidden');
@@ -289,7 +289,7 @@
     } catch (error) {
       fillLandingSettingsForm(defaultSettings());
       const preview = qs('siteChatSettingsPreview');
-      if (preview) preview.textContent = 'Não consegui carregar as configurações. Se a tabela ainda não existir, rode o site-chat-setup.sql.';
+      if (preview) preview.textContent = 'Não foi possível carregar as configurações do chat. Verifique a configuração do serviço.';
       console.warn('site chat settings load', error);
     }
   }

@@ -108,7 +108,7 @@
     }catch(error){
       fillForm(DEFAULT);
       const status = qs("todaySuggestionStatus");
-      if(status) status.textContent = "Não consegui carregar. Rode o site-chat-setup.sql atualizado para criar a tabela today_cronos_settings.";
+      if(status) status.textContent = "Não foi possível carregar as configurações. Verifique a configuração do serviço.";
       console.warn("today config load", error);
     }
   }

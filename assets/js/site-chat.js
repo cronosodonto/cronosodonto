@@ -45,7 +45,7 @@
       const template = String(this.askInterest || DEFAULT_FLOW.askInterest);
       return template.replaceAll('{nome}', name || 'Doutor(a)').replaceAll('[NOME]', name || 'Doutor(a)');
     },
-    offline: 'O chat está quase lá, mas a tabela do Supabase ainda não foi preparada. Rode o arquivo site-chat-setup.sql para ativar tudo.'
+    offline: 'O chat está temporariamente indisponível. Tente novamente mais tarde ou fale com a equipe pelo WhatsApp.'
   };
 
   function applyFlowConfig(flowConfig){
