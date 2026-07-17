@@ -1,3 +1,4 @@
+// Cronos Odonto v422 — carga controlada e proteção contra avalanche
 function debounce(fn, delay){
   let t;
   return function(...args){
@@ -5852,6 +5853,23 @@ let __localCacheQuotaWarned = false;
 let CLOUD_LOAD_TEMPORARY_FAILURE = false; // falha de leitura/timeout não é "usuário sem vínculo"
 let CLOUD_LAST_LOAD_ERROR = null;
 
+// V422 — proteção contra avalanche de leituras.
+// Uma única aba nunca deve iniciar duas hidratações completas da mesma clínica ao mesmo tempo.
+let __cloudLoadPromise = null;
+let __cloudLoadPromiseForce = false;
+let __dataSourcesLoadPromise = null;
+let __dataSourcesLoadedClinicId = "";
+const __v2FetchPromises = new Map();
+
+function cronosInfrastructureBusyError(error){
+  const code = String(error?.code || "").toUpperCase();
+  const status = Number(error?.status || error?.statusCode || 0);
+  const message = String(error?.message || error?.details || error || "").toLowerCase();
+  return code === "PGRST003" || status === 429 || status === 502 || status === 503 || status === 504 ||
+    message.includes("connection pool") || message.includes("timed out acquiring connection") ||
+    message.includes("server overloaded") || message.includes("database is overloaded");
+}
+
 // FASE 2: fontes estruturadas para contatos/leads. A interface ainda opera com arrays
 // em memória nesta ponte inicial, mas a persistência passa a ser por tabela quando ativada.
 const CLOUD_DATA_SOURCES_TABLE = "clinic_data_sources";
@@ -6441,6 +6459,10 @@ async function applyClinicAccessRules(){
 }
 
 function resetCloudContext(){
+  __cloudLoadPromise = null;
+  __dataSourcesLoadPromise = null;
+  __dataSourcesLoadedClinicId = "";
+  __v2FetchPromises.clear();
   CLOUD_DB_READY = false;
   CLOUD_ROW_ID = null;
   CLOUD_OWNER_UID = null;
@@ -7087,18 +7109,13 @@ function cronosMoV2NormalizeHydratedCollections(db){
   return db;
 }
 
-async function loadCurrentClinicDataSources(){
+async function loadCurrentClinicDataSourcesInternal(){
   if(isSupportMode()){
     const support = getSupportContext();
     setCloudDataSourcesFromRow(support?.data_sources || null, support?.clinic_id || "");
     return CLOUD_DATA_SOURCES;
   }
 
-  // V124 — correção final Mundo Odonto:
-  // depois do resgate, a conta mundoodonto.slzma foi vinculada ao clinic_id 2674...
-  // e o mapa em clinic_data_sources também foi corrigido. Ainda assim, algumas abas
-  // podiam cair no fallback legado antes de hidratar V2. Para a MO, a fonte correta
-  // agora é explícita e restrita a essa clínica. Outras clínicas seguem o mapa normal.
   let currentUserEmail = "";
   try{
     const user = await getCurrentSupabaseUser();
@@ -7109,8 +7126,10 @@ async function loadCurrentClinicDataSources(){
     || currentUserEmail === "mundoodonto.admslz@gmail.com"
     || cronosIsMundoOdontoContext();
 
+  // A fonte oficial da Mundo Odonto já foi validada e é fixa. Consultar o mapa em
+  // toda abertura só adicionava uma chamada e um novo ponto de falha ao login.
   if(isMundoOdontoLogin){
-    const forcedRow = {
+    setCloudDataSourcesFromRow({
       clinic_id: CRONOS_MO_V2_CLINIC_ID,
       clinic_name: "Mundo Odonto",
       contacts_source: "tables_v2",
@@ -7118,27 +7137,8 @@ async function loadCurrentClinicDataSources(){
       payments_source: "legacy_json",
       tasks_source: "legacy_json",
       patient_files_source: "legacy_json"
-    };
-
-    try{
-      const { data: moRow, error: moError } = await supabaseClient
-        .from(CLOUD_DATA_SOURCES_TABLE)
-        .select("clinic_id, clinic_name, contacts_source, leads_source, payments_source, tasks_source, patient_files_source, updated_at")
-        .eq("clinic_id", CRONOS_MO_V2_CLINIC_ID)
-        .maybeSingle();
-
-      if(!moError && moRow){
-        setCloudDataSourcesFromRow({ ...forcedRow, ...moRow, contacts_source:"tables_v2", leads_source:"tables_v2" }, CRONOS_MO_V2_CLINIC_ID);
-        console.info("Cronos V127: Mundo Odonto usando fonte V2 resgatada", CRONOS_MO_V2_CLINIC_ID);
-        return CLOUD_DATA_SOURCES;
-      }
-      if(moError) console.warn("Cronos V127: não consegui ler clinic_data_sources da MO; usando fonte V2 forçada segura.", moError);
-    }catch(err){
-      console.warn("Cronos V127: falha ao consultar mapa da MO; usando fonte V2 forçada segura.", err);
-    }
-
-    setCloudDataSourcesFromRow(forcedRow, CRONOS_MO_V2_CLINIC_ID);
-    console.info("Cronos V127: Mundo Odonto usando fonte V2 forçada", CRONOS_MO_V2_CLINIC_ID);
+    }, CRONOS_MO_V2_CLINIC_ID);
+    console.info("Cronos V422: Mundo Odonto usando fonte V2 oficial", CRONOS_MO_V2_CLINIC_ID);
     return CLOUD_DATA_SOURCES;
   }
 
@@ -7151,22 +7151,39 @@ async function loadCurrentClinicDataSources(){
   const chosen = cronosSelectDataSourceRow(rows);
   if(chosen){
     setCloudDataSourcesFromRow(chosen, chosen.clinic_id);
-    console.info("Cronos V127: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
+    console.info("Cronos V422: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
   }else if(rows.length === 0){
     setCloudDataSourcesFromRow(null, "");
   }else{
-    console.warn("Cronos V127: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
+    console.warn("Cronos V422: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
     setCloudDataSourcesFromRow(null, "");
   }
   return CLOUD_DATA_SOURCES;
 }
 
-async function fetchAllV2Payloads(tableName){
+async function loadCurrentClinicDataSources(){
+  const currentKey = String(CLOUD_CLINIC_ID || CLOUD_CLINIC_OWNER_UID || CLOUD_OWNER_UID || "pending");
+  if(__dataSourcesLoadedClinicId && currentKey !== "pending" && __dataSourcesLoadedClinicId === currentKey){
+    return CLOUD_DATA_SOURCES;
+  }
+  if(__dataSourcesLoadPromise) return __dataSourcesLoadPromise;
+
+  const promise = loadCurrentClinicDataSourcesInternal();
+  __dataSourcesLoadPromise = promise;
+  try{
+    const result = await promise;
+    __dataSourcesLoadedClinicId = String(CLOUD_CLINIC_ID || currentKey || "");
+    return result;
+  }finally{
+    if(__dataSourcesLoadPromise === promise) __dataSourcesLoadPromise = null;
+  }
+}
+
+async function fetchAllV2PayloadsInternal(tableName){
   if(!CLOUD_CLINIC_ID) throw new Error("clinic_id não resolvido para leitura V2.");
 
   const output = [];
   const pageSize = 1000;
-  const maxParallelPages = 4;
 
   const pushRows = (rows)=>{
     (Array.isArray(rows) ? rows : []).forEach(row=>{
@@ -7179,51 +7196,42 @@ async function fetchAllV2Payloads(tableName){
     ? "id, clinic_id, name, phone, phone_digits, cpf, cpf_digits, birth_date, email, legacy_payload, created_at, updated_at"
     : "id, clinic_id, contact_id, status, origin, origin_other, treatment, treatment_other, priority, first_contact_at, appointment_date, appointment_time, month_key, city, budget_value, paid_value, closed_value, notes, tags, status_log, legacy_payload, created_at, updated_at";
 
-  const fetchPage = async (start, withCount=false)=>{
-    const query = supabaseClient
+  // Não usamos count exact: ele fazia um segundo percurso caro na tabela em toda
+  // abertura. A paginação termina naturalmente quando a última página vem menor.
+  for(let start = 0; ; start += pageSize){
+    const { data, error } = await supabaseClient
       .from(tableName)
-      .select(selectColumns, withCount ? { count:"exact" } : undefined)
+      .select(selectColumns)
       .eq("clinic_id", CLOUD_CLINIC_ID)
+      .order("id", { ascending:true })
       .range(start, start + pageSize - 1);
 
-    const { data, error, count } = await query;
     if(error) throw error;
-    return { rows: Array.isArray(data) ? data : [], count: Number.isFinite(count) ? count : null };
-  };
+    const rows = Array.isArray(data) ? data : [];
+    pushRows(rows);
+    if(rows.length < pageSize) break;
 
-  // V21: antes o Cronos buscava as páginas V2 uma por uma. Em clínica grande
-  // isso fazia o F5 parecer que foi buscar café em outra cidade. Agora a primeira
-  // página vem com contagem total e as demais páginas são baixadas em lotes paralelos.
-  const first = await fetchPage(0, true);
-  pushRows(first.rows);
-
-  if(Number.isFinite(first.count) && first.count > first.rows.length){
-    const starts = [];
-    for(let start = pageSize; start < first.count; start += pageSize){
-      starts.push(start);
-    }
-
-    for(let i = 0; i < starts.length; i += maxParallelPages){
-      const batch = starts.slice(i, i + maxParallelPages);
-      const pages = await Promise.all(batch.map(start => fetchPage(start, false)));
-      pages.forEach(page => pushRows(page.rows));
-    }
-
-    return output;
-  }
-
-  // Fallback: se o Supabase não devolver count por algum motivo, mantém o
-  // comportamento antigo e seguro, sem risco de cortar a base pela metade.
-  if(first.rows.length >= pageSize){
-    for(let start = pageSize; ; start += pageSize){
-      const page = await fetchPage(start, false);
-      pushRows(page.rows);
-      if(page.rows.length < pageSize) break;
-    }
+    // Evita quatro páginas pesadas disputando a CPU compartilhada simultaneamente.
+    await new Promise(resolve=>setTimeout(resolve, 35));
   }
 
   return output;
 }
+
+async function fetchAllV2Payloads(tableName){
+  if(!CLOUD_CLINIC_ID) throw new Error("clinic_id não resolvido para leitura V2.");
+  const key = `${CLOUD_CLINIC_ID}:${tableName}`;
+  if(__v2FetchPromises.has(key)) return __v2FetchPromises.get(key);
+
+  const promise = fetchAllV2PayloadsInternal(tableName);
+  __v2FetchPromises.set(key, promise);
+  try{
+    return await promise;
+  }finally{
+    if(__v2FetchPromises.get(key) === promise) __v2FetchPromises.delete(key);
+  }
+}
+
 async function seedV2FromLegacyIfEmpty(tableName, legacyItems, rowMapper, label){
   // Recuperação automática: algumas importações administrativas antigas gravam os
   // contatos/leads dentro do JSON do clinic_state, enquanto a clínica já está
@@ -7535,8 +7543,13 @@ async function getClinicMembershipByAuthUid(authUid){
   return data || null;
 }
 
-async function resolveClinicAccessContext(user){
+async function resolveClinicAccessContext(user, options={}){
   if(!user) return null;
+
+  const includeData = options.includeData === true;
+  const stateColumns = includeData
+    ? "id, owner_uid, owner_email, clinic_name, data, updated_at"
+    : "id, owner_uid, owner_email, clinic_name, updated_at";
 
   const ownerEmail = String(user.email || "").trim().toLowerCase();
   const isInternalUser = String(user?.user_metadata?.cronos_kind || "").toLowerCase() === "member"
@@ -7544,7 +7557,7 @@ async function resolveClinicAccessContext(user){
 
   const ownerResp = await supabaseClient
     .from(CLOUD_TABLE)
-    .select("id, owner_uid, owner_email, clinic_name, data, updated_at")
+    .select(stateColumns)
     .eq("owner_uid", user.id)
     .maybeSingle();
 
@@ -7566,7 +7579,7 @@ async function resolveClinicAccessContext(user){
   if(membership){
     const rowResp = await supabaseClient
       .from(CLOUD_TABLE)
-      .select("id, owner_uid, owner_email, clinic_name, data, updated_at")
+      .select(stateColumns)
       .eq("owner_uid", membership.owner_uid)
       .maybeSingle();
 
@@ -7604,8 +7617,8 @@ async function resolveClinicAccessContext(user){
   };
 }
 
-async function applyCloudAccessContext(user){
-  const ctx = await resolveClinicAccessContext(user);
+async function applyCloudAccessContext(user, options={}){
+  const ctx = await resolveClinicAccessContext(user, options);
 
   if(!ctx){
     resetCloudContext();
@@ -7621,6 +7634,21 @@ async function applyCloudAccessContext(user){
   CLOUD_MEMBER_INFO = ctx.member || null;
   CLOUD_ROW_ID = ctx.row?.id || null;
 
+  return ctx;
+}
+
+async function ensureLegacyStateDataLoaded(ctx){
+  if(!ctx?.row || ctx.row.data !== undefined) return ctx;
+  const ownerUid = String(ctx.ownerUid || ctx.row.owner_uid || "").trim();
+  if(!ownerUid) return ctx;
+
+  const { data, error } = await supabaseClient
+    .from(CLOUD_TABLE)
+    .select("data, updated_at")
+    .eq("owner_uid", ownerUid)
+    .maybeSingle();
+  if(error && error.code !== "PGRST116") throw error;
+  if(data) ctx.row = { ...ctx.row, ...data };
   return ctx;
 }
 
@@ -7816,7 +7844,7 @@ async function flushCloudSave(dbToSave){
     }
   }
 
-  const ctx = await applyCloudAccessContext(user);
+  const ctx = await applyCloudAccessContext(user, { includeData:true });
   await loadCurrentClinicDataSources();
   const ownerEmail = String(ctx?.ownerEmail || user.email || "").trim().toLowerCase();
 
@@ -7954,7 +7982,7 @@ try{
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'hidden') flushPendingCloudSaveOnExit(); });
 }catch(_){ }
 
-async function ensureCloudDBLoaded(force=false){
+async function ensureCloudDBLoadedInternal(force=false){
   if(DB && CLOUD_DB_READY && !force) return DB;
 
   if(isSupportMode()){
@@ -8004,7 +8032,7 @@ async function ensureCloudDBLoaded(force=false){
 
   let ctx = null;
   try{
-    ctx = await applyCloudAccessContext(user);
+    ctx = await applyCloudAccessContext(user, { includeData:false });
     await loadCurrentClinicDataSources();
 
     // Persistência definitiva: carrega somente o estado oficial montado pelo banco.
@@ -8035,6 +8063,7 @@ async function ensureCloudDBLoaded(force=false){
       }
     }
 
+    ctx = await ensureLegacyStateDataLoaded(ctx);
     if(ctx?.row?.data){
       const localBeforePull = normalizeDBShape(getLegacyLocalDB() || freshDB());
       const cloudBeforePull = normalizeDBShape(ctx.row.data);
@@ -16108,23 +16137,47 @@ window.__CRONOS_LOGIN_BUSY__ = false;
 window.__CRONOS_EXPLICIT_LOGIN__ = false;
 window.__CRONOS_ACCESS_BLOCK__ = null;
 
-async function ensureCloudDBForLoginWithRetry(maxAttempts=3){
-  for(let attempt = 1; attempt <= maxAttempts; attempt++){
+async function ensureCloudDBLoaded(force=false){
+  if(DB && CLOUD_DB_READY && !force) return DB;
+  if(__cloudLoadPromise) return __cloudLoadPromise;
+
+  const promise = ensureCloudDBLoadedInternal(force);
+  __cloudLoadPromise = promise;
+  __cloudLoadPromiseForce = force === true;
+  try{
+    return await promise;
+  }finally{
+    if(__cloudLoadPromise === promise){
+      __cloudLoadPromise = null;
+      __cloudLoadPromiseForce = false;
+    }
+  }
+}
+
+async function ensureCloudDBForLoginWithRetry(maxAttempts=2){
+  const attempts = Math.max(1, Math.min(2, Number(maxAttempts || 2)));
+  for(let attempt = 1; attempt <= attempts; attempt++){
     await ensureCloudDBLoaded(true);
 
     if(!CLOUD_LOAD_TEMPORARY_FAILURE){
       return true;
     }
 
-    if(attempt < maxAttempts){
-      const nextAttempt = attempt + 1;
-      setLoginLoading(true, `Sistema ocupado. Tentando novamente (${nextAttempt}/${maxAttempts})...`);
-      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    if(attempt < attempts){
+      const busy = cronosInfrastructureBusyError(CLOUD_LAST_LOAD_ERROR);
+      setLoginLoading(
+        true,
+        busy
+          ? "Servidor temporariamente ocupado. Aguardando antes de tentar novamente..."
+          : `Não foi possível concluir. Tentando novamente (${attempt + 1}/${attempts})...`
+      );
+      await new Promise(resolve => setTimeout(resolve, busy ? 5000 : 1400));
     }
   }
 
   return false;
 }
+
 
 
 /* =========================

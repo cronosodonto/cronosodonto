@@ -1,3 +1,4 @@
+// Cronos Repository v4.2.2 — single-flight e backoff de infraestrutura
 /*
  * CronosRepository V4 — persistência central, transacional e concorrente.
  *
@@ -33,6 +34,9 @@
     lastError: null,
     waiters: new Map()
   };
+
+  let operationalLoadPromise = null;
+  let operationalLoadClinicId = "";
 
   class CronosPersistenceError extends Error {
     constructor(message, options={}){
@@ -465,6 +469,15 @@
       message.includes("connection") || message.includes("temporar");
   }
 
+  function isInfrastructureBusyError(error){
+    const code = String(error?.code || "").toUpperCase();
+    const status = Number(error?.status || error?.statusCode || 0);
+    const message = String(error?.message || error?.details || error || "").toLowerCase();
+    return code === "PGRST003" || status === 429 || status === 502 || status === 503 || status === 504 ||
+      message.includes("connection pool") || message.includes("timed out acquiring connection") ||
+      message.includes("server overloaded") || message.includes("database is overloaded");
+  }
+
   function isConflictError(error){
     const code = String(error?.code || "");
     const message = String(error?.message || error?.details || "");
@@ -530,7 +543,7 @@
     return data || { enabled:false };
   }
 
-  async function loadOperationalState(options={}){
+  async function loadOperationalStateInternal(options={}){
     const clinicId = String(options.clinicId || state.clinicId || global.__CRONOS_CLINIC_ID__ || "").trim();
     if(!clinicId) return { enabled:false, state:null };
     state.clinicId = clinicId;
@@ -576,6 +589,27 @@
     return { enabled:true, state:clone(state.working), versions:clone(state.workingVersions) };
   }
 
+  async function loadOperationalState(options={}){
+    const clinicId = String(options.clinicId || state.clinicId || global.__CRONOS_CLINIC_ID__ || "").trim();
+    if(!clinicId) return { enabled:false, state:null };
+
+    if(operationalLoadPromise && operationalLoadClinicId === clinicId){
+      return operationalLoadPromise;
+    }
+
+    const promise = loadOperationalStateInternal({ ...options, clinicId });
+    operationalLoadPromise = promise;
+    operationalLoadClinicId = clinicId;
+    try{
+      return await promise;
+    }finally{
+      if(operationalLoadPromise === promise){
+        operationalLoadPromise = null;
+        operationalLoadClinicId = "";
+      }
+    }
+  }
+
   function resolveWaiter(operationId, value){
     const waiter = state.waiters.get(operationId);
     if(!waiter) return;
@@ -585,7 +619,9 @@
 
   async function commitMutation(mutation){
     let lastError = null;
-    for(let attempt=1; attempt<=3; attempt++){
+    const maxAttempts = 2;
+
+    for(let attempt=1; attempt<=maxAttempts; attempt++){
       try{
         return await rpc("cronos_v4_commit_changes", {
           p_clinic_id:state.clinicId,
@@ -595,25 +631,29 @@
       }catch(error){
         lastError = error;
 
-        // A resposta pode se perder depois de o PostgreSQL confirmar a transação.
-        // Antes de repetir ou deixar um fantasma no navegador, consultamos o estado
-        // oficial. Se a mudança já estiver lá, a operação é tratada como concluída.
+        // PGRST003/504 por esgotamento de infraestrutura não deve gerar uma rajada
+        // de novas RPCs e snapshots. Preservamos a fila e aguardamos o servidor voltar.
+        if(isInfrastructureBusyError(error)) break;
+
+        // Em falha de rede comum, a resposta pode ter se perdido depois do commit.
+        // Fazemos uma única reconciliação e no máximo uma repetição controlada.
         if(isNetworkError(error)){
           const reconciled = await reconcileUncertainMutation(mutation);
           if(reconciled) return reconciled;
         }
 
-        if(!isNetworkError(error) || attempt === 3) break;
-        await sleep(350 * attempt);
+        if(!isNetworkError(error) || attempt === maxAttempts) break;
+        await sleep(900 * attempt);
       }
     }
 
-    if(isNetworkError(lastError)){
+    if(isNetworkError(lastError) && !isInfrastructureBusyError(lastError)){
       const reconciled = await reconcileUncertainMutation(mutation);
       if(reconciled) return reconciled;
     }
     throw lastError;
   }
+
 
   async function processQueue(){
     if(state.processing || state.blocked || !state.enabled || !state.queue.length) return;
@@ -837,6 +877,8 @@
     state.queue = [];
     state.processing = false;
     state.blocked = false;
+    operationalLoadPromise = null;
+    operationalLoadClinicId = "";
   }
 
   function clearContext(){ setClinicId(""); }
