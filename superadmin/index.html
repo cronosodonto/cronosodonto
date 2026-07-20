@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- Cronos Superadmin v423 — importação CSV em lotes automáticos -->
 <html lang="pt-BR">
 <head>
   <meta name="robots" content="noindex, nofollow" />
@@ -1930,18 +1931,36 @@
       const accessToken = await getAccessToken();
       if (!accessToken) throw new Error("Sessão expirada ou inexistente. Faz login de novo.");
 
-      const res = await fetch(`${CONFIG.supabaseUrl}/functions/v1/${functionName}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`,
-          "apikey": CONFIG.anonKey
-        },
-        body: JSON.stringify(payload)
-      });
+      let res;
+      try {
+        res = await fetch(`${CONFIG.supabaseUrl}/functions/v1/${functionName}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${accessToken}`,
+            "apikey": CONFIG.anonKey
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch (networkError) {
+        const error = new Error("A função de importação não respondeu. A conexão pode ter sido interrompida ou o servidor pode estar temporariamente ocupado.");
+        error.code = "EDGE_FETCH_FAILED";
+        error.cause = networkError;
+        throw error;
+      }
 
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || `Erro ao chamar ${functionName}`);
+      const raw = await res.text().catch(() => "");
+      let json = {};
+      try { json = raw ? JSON.parse(raw) : {}; } catch (_) { json = {}; }
+
+      if (!res.ok) {
+        const detail = json?.detail || json?.message || raw || "";
+        const error = new Error(json?.error || `Erro ao chamar ${functionName} (${res.status})`);
+        error.status = res.status;
+        error.code = json?.code || "EDGE_HTTP_ERROR";
+        error.detail = detail;
+        throw error;
+      }
       return json;
     }
 
@@ -3082,6 +3101,43 @@
       return { delimiter, headers, rows: dataRows, objects };
     }
 
+    function csvEscapeCell(value, delimiter) {
+      const text = String(value ?? "");
+      if (text.includes('"') || text.includes('\n') || text.includes('\r') || text.includes(delimiter)) {
+        return `"${text.replace(/"/g, '""')}"`;
+      }
+      return text;
+    }
+
+    function serializeCsvBatch(headers, rows, delimiter) {
+      return [headers, ...rows]
+        .map(row => row.map(value => csvEscapeCell(value, delimiter)).join(delimiter))
+        .join("\n");
+    }
+
+    function importRetryableError(error) {
+      const status = Number(error?.status || 0);
+      const code = String(error?.code || "").toUpperCase();
+      const message = String(error?.message || error || "").toLowerCase();
+      return code === "EDGE_FETCH_FAILED" || status === 408 || status === 429 || status === 502 || status === 503 || status === 504 ||
+        message.includes("failed to fetch") || message.includes("não respondeu") || message.includes("temporariamente ocupado") ||
+        message.includes("timeout") || message.includes("timed out") || message.includes("connection pool");
+    }
+
+    async function importCsvBatchWithRetry(payload, { maxAttempts = 2 } = {}) {
+      let lastError = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          return await callEdgeFunction(CONFIG.endpoints.importClinicCsv, payload);
+        } catch (error) {
+          lastError = error;
+          if (attempt >= maxAttempts || !importRetryableError(error)) throw error;
+          await new Promise(resolve => setTimeout(resolve, 1800 * attempt));
+        }
+      }
+      throw lastError || new Error("Falha ao importar o lote.");
+    }
+
     function selectCsvFile() {
       return new Promise((resolve) => {
         importInput.value = "";
@@ -3124,75 +3180,99 @@
           `Colunas: ${previewHeaders}${parsed.headers.length > 6 ? "..." : ""}
 
 ` +
+          `O Cronos dividirá a importação automaticamente em lotes seguros.
+
+` +
           `Confirma a importação?`
         );
 
         if (!ok) return null;
 
-        let summary = null;
-        await withButtonLoading(button, "Importando...", async () => {
-          const data = await callEdgeFunction(CONFIG.endpoints.importClinicCsv, {
-            clinic_id: clinicId,
-            clinicId,
-            clinic: { id: clinicId },
-            target: "contacts",
-            mode: "contacts",
-            filename: file.name,
-            csv_content: text,
-            csv: text,
-            content: text,
-            delimiter: parsed.delimiter,
-            headers: parsed.headers,
-            rows: parsed.objects,
-            contacts: parsed.objects,
-            records: parsed.objects,
-            items: parsed.objects,
-            row_count: parsed.rows.length,
-            rows_count: parsed.rows.length,
-            total_rows: parsed.rows.length
-          });
+        const batchSize = 80;
+        const batchCount = Math.ceil(parsed.rows.length / batchSize);
+        const importId = (crypto.randomUUID?.() || `import_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+        const originalButtonText = button.textContent;
+        const totals = {
+          importedContacts: 0,
+          updatedContacts: 0,
+          importedEntries: 0,
+          updatedEntries: 0,
+          repairedEntries: 0,
+          skippedRows: 0,
+          rowsWithoutAppointmentDate: 0,
+          processedRows: 0
+        };
 
-          const countKeys = ["imported", "inserted", "created", "rows_imported", "updated", "rows_updated", "skipped", "ignored", "failed", "errors_count"];
-          const hasExplicitCount = countKeys.some(key => data?.[key] !== undefined && data?.[key] !== null && data?.[key] !== "");
-          const confirmed = data?.ok === true || data?.success === true || data?.confirmed === true || hasExplicitCount;
+        button.disabled = true;
+        try {
+          for (let batchIndex = 0; batchIndex < batchCount; batchIndex++) {
+            const startRow = batchIndex * batchSize;
+            const batchRows = parsed.rows.slice(startRow, startRow + batchSize);
+            const batchCsv = serializeCsvBatch(parsed.headers, batchRows, parsed.delimiter);
+            const progress = Math.min(parsed.rows.length, startRow + batchRows.length);
+            button.textContent = `Importando ${progress}/${parsed.rows.length}...`;
 
-          if (!confirmed) {
-            throw new Error("O backend recebeu o CSV, mas não confirmou quantos registros foram gravados. Importação não será marcada como concluída para evitar falso sucesso.");
+            const data = await importCsvBatchWithRetry({
+              clinic_id: clinicId,
+              filename: file.name,
+              csv_content: batchCsv,
+              import_id: importId,
+              batch_index: batchIndex,
+              batch_number: batchIndex + 1,
+              batch_count: batchCount,
+              row_offset: startRow,
+              total_rows: parsed.rows.length,
+              finalize: batchIndex === batchCount - 1
+            });
+
+            if (data?.ok !== true) {
+              throw new Error(`O lote ${batchIndex + 1}/${batchCount} não foi confirmado pelo backend.`);
+            }
+
+            totals.importedContacts += Number(data.imported_contacts || 0);
+            totals.updatedContacts += Number(data.updated_contacts || 0);
+            totals.importedEntries += Number(data.imported_entries || 0);
+            totals.updatedEntries += Number(data.updated_entries || 0);
+            totals.repairedEntries += Number(data.repaired_entries || 0);
+            totals.skippedRows += Number(data.skipped_rows || 0);
+            totals.rowsWithoutAppointmentDate += Number(data.rows_without_appointment_date || 0);
+            totals.processedRows += Number(data.processed_rows || batchRows.length);
           }
+        } finally {
+          button.disabled = false;
+          button.textContent = originalButtonText;
+        }
 
-          const imported = Number(data?.imported ?? data?.inserted ?? data?.created ?? data?.rows_imported ?? 0) || 0;
-          const updated = Number(data?.updated ?? data?.rows_updated ?? 0) || 0;
-          const skipped = Number(data?.skipped ?? data?.ignored ?? 0) || 0;
-          const failed = Number(data?.failed ?? data?.errors_count ?? 0) || 0;
-          const totalWritten = imported + updated;
+        const summary = {
+          imported: totals.importedEntries,
+          updated: totals.updatedEntries + totals.repairedEntries,
+          skipped: totals.skippedRows,
+          failed: 0,
+          total: parsed.rows.length,
+          batches: batchCount,
+          raw: totals
+        };
 
-          if (hasExplicitCount && parsed.rows.length > 0 && totalWritten <= 0 && skipped <= 0 && failed <= 0) {
-            throw new Error("O backend respondeu sem registros gravados. Nada foi importado para a clínica selecionada.");
-          }
+        const parts = [
+          `Lidos: ${parsed.rows.length}`,
+          `Novos leads: ${totals.importedEntries}`,
+          `Atualizados: ${totals.updatedEntries + totals.repairedEntries}`
+        ];
+        if (totals.skippedRows) parts.push(`Ignorados: ${totals.skippedRows}`);
+        if (totals.rowsWithoutAppointmentDate) parts.push(`Sem data de consulta: ${totals.rowsWithoutAppointmentDate}`);
+        parts.push(`Lotes: ${batchCount}`);
 
-          summary = { imported, updated, skipped, failed, total: parsed.rows.length, raw: data };
-          const parts = [`Lidos: ${parsed.rows.length}`];
-          if (hasExplicitCount) {
-            parts.push(`Gravados: ${totalWritten}`);
-            if (imported) parts.push(`Novos: ${imported}`);
-            if (updated) parts.push(`Atualizados: ${updated}`);
-            if (skipped) parts.push(`Ignorados: ${skipped}`);
-            if (failed) parts.push(`Falhas: ${failed}`);
-          } else {
-            parts.push("Confirmado pelo backend");
-          }
+        toast(`Importação concluída. ${parts.join(" • ")}.`, "success", 7600);
 
-          toast(`Importação concluída. ${parts.join(" • ")}.`, failed ? "info" : "success", 6200);
-
-          try { await loadClinics(); } catch (_) {}
-          if (state.selectedClinicId === clinicId) {
-            try { await loadClinicDetails(clinicId); } catch (_) {}
-          }
-        });
+        try { await loadClinics(); } catch (_) {}
+        if (state.selectedClinicId === clinicId) {
+          try { await loadClinicDetails(clinicId); } catch (_) {}
+        }
         return summary;
       } catch (err) {
         console.error(err);
-        toast(err?.message || "Falha ao importar CSV.", "error", 6200);
+        const detail = err?.detail ? ` ${err.detail}` : "";
+        toast(`${err?.message || "Falha ao importar CSV."}${detail}`, "error", 7600);
         return null;
       }
     }

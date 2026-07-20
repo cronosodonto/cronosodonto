@@ -1,4 +1,4 @@
-// Cronos Odonto v422 — carga controlada e proteção contra avalanche
+// Cronos Odonto v423 — importação em lotes e proteção contra falso estado zerado
 function debounce(fn, delay){
   let t;
   return function(...args){
@@ -8113,8 +8113,10 @@ async function ensureCloudDBLoadedInternal(force=false){
       return DB;
     }
 
-    DB = null;
-    return normalizeDBShape(freshDB());
+    // Falha de infraestrutura não é uma clínica vazia. Mantemos DB nulo para o
+    // fluxo de login exibir indisponibilidade e nunca renderizar indicadores zerados.
+    DB = dbBeforeCloudAttempt || null;
+    return DB;
   }
 
   if(ctx?.kind === "member" || ctx?.kind === "member_orphan"){
