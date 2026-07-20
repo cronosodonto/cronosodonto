@@ -1,4 +1,4 @@
-// Cronos Repository v4.2.2 — single-flight e backoff de infraestrutura
+// Cronos Repository v4.2.8 — comandos direcionados para tarefas
 /*
  * CronosRepository V4 — persistência central, transacional e concorrente.
  *
@@ -18,6 +18,9 @@
   const CONFLICT_PREFIX = "cronos_v4_conflict";
   const RPC_TIMEOUT_MS = 20000;
   const LOAD_TIMEOUT_MS = 30000;
+  // A interface salva alterações pontuais. Operações em massa pertencem às Edge
+  // Functions/RPCs administrativas em lotes, nunca ao autosave do navegador.
+  const MAX_BROWSER_MUTATION_ENTITIES = 500;
 
   const state = {
     client: null,
@@ -107,6 +110,20 @@
     return `${STORAGE_PREFIX}:${String(state.clinicId || "unknown")}`;
   }
 
+  function countChangedEntities(changes){
+    if(!changes || typeof changes !== "object") return 0;
+    let total = changes.meta ? 1 : 0;
+    COLLECTIONS.forEach(name=>{
+      total += Array.isArray(changes?.[name]?.upserts) ? changes[name].upserts.length : 0;
+      total += Array.isArray(changes?.[name]?.deletes) ? changes[name].deletes.length : 0;
+    });
+    return total;
+  }
+
+  function isOversizedBrowserMutation(mutation){
+    return countChangedEntities(mutation?.changes) > MAX_BROWSER_MUTATION_ENTITIES;
+  }
+
   function persistQueue(){
     if(!state.clinicId) return false;
     try{
@@ -128,9 +145,22 @@
     try{
       const raw = localStorage.getItem(storageKey());
       const parsed = raw ? JSON.parse(raw) : null;
-      return Array.isArray(parsed?.queue) ? parsed.queue.filter(item=>item?.operationId && item?.changes) : [];
+      const valid = Array.isArray(parsed?.queue)
+        ? parsed.queue.filter(item=>item?.operationId && item?.changes)
+        : [];
+      const safe = valid.filter(item=>!isOversizedBrowserMutation(item));
+      if(safe.length !== valid.length){
+        console.warn("Cronos V4: fila antiga com alteração em massa foi descartada. Imports devem usar a rotina administrativa em lotes.");
+        if(safe.length){
+          localStorage.setItem(storageKey(), JSON.stringify({ version:4, queue:safe }));
+        }else{
+          localStorage.removeItem(storageKey());
+        }
+      }
+      return safe;
     }catch(error){
       console.warn("Cronos V4: fila local inválida foi ignorada.", error);
+      try{ localStorage.removeItem(storageKey()); }catch(_){ }
       return [];
     }
   }
@@ -733,7 +763,7 @@
     }
   }
 
-  async function saveOperationalState(db, options={}){
+  async function enqueueChanges(changes, options={}){
     if(!state.enabled) return false;
     if(!state.loaded || !state.working){
       throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
@@ -742,10 +772,21 @@
       notify("Alteração bloqueada", "Recarregue a página antes de fazer outra alteração. Nenhum dado antigo será sobrescrito.");
       return false;
     }
-
-    const current = normalizeState(db);
-    const changes = buildChanges(state.working, current, state.workingVersions);
     if(!hasChanges(changes)) return true;
+
+    const changedEntities = countChangedEntities(changes);
+    if(changedEntities > MAX_BROWSER_MUTATION_ENTITIES && options.allowBulk !== true){
+      const error = new CronosPersistenceError(
+        `Alteração em massa bloqueada no navegador (${changedEntities} entidades).`,
+        { code:"BULK_MUTATION_BLOCKED", details:{ changedEntities } }
+      );
+      state.lastError = error;
+      console.error("Cronos V4: autosave em massa bloqueado para proteger o banco.", error);
+      updateIndicator("error", "Atualização em massa bloqueada");
+      notify("Atualização automática bloqueada", "Os dados carregaram, mas o navegador tentou reenviar a clínica inteira. Recarregue após atualizar o Cronos.");
+      emit("cronos:persistence-error", { error, mutation:null });
+      return false;
+    }
 
     const operationId = options.operationId || newOperationId();
     const mutation = {
@@ -758,7 +799,12 @@
     state.queue.push(mutation);
     state.working = applyChanges(state.working, changes);
     state.workingVersions = predictVersions(state.workingVersions, changes);
-    persistQueue();
+    if(!persistQueue()){
+      state.queue = state.queue.filter(item=>item.operationId !== operationId);
+      rebuildWorking();
+      updateIndicator("error", "Não foi possível preparar o salvamento");
+      return false;
+    }
 
     if(state.blocked){
       notify("Alteração preservada localmente", "A fila está bloqueada por uma falha anterior. Recarregue quando a conexão estiver estável.");
@@ -770,6 +816,60 @@
     });
     processQueue();
     return promise;
+  }
+
+  async function saveOperationalState(db, options={}){
+    if(!state.enabled) return false;
+    if(!state.loaded || !state.working){
+      throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
+    }
+    const current = normalizeState(db);
+    const changes = buildChanges(state.working, current, state.workingVersions);
+    return enqueueChanges(changes, options);
+  }
+
+  async function upsertTask(task, options={}){
+    const payload = clone(task || {});
+    const id = String(payload?.id || "").trim();
+    if(!id){
+      throw new CronosPersistenceError("Tarefa inválida para salvar.", { code:"INVALID_TASK_ID" });
+    }
+    const expected = Number(state.workingVersions?.tasks?.[id] || 0);
+    return enqueueChanges({
+      tasks:{ upserts:[{ payload, expected_version:expected }], deletes:[] }
+    }, options);
+  }
+
+  async function deleteTask(taskId, options={}){
+    const id = String(taskId || "").trim();
+    if(!id){
+      throw new CronosPersistenceError("Tarefa inválida para excluir.", { code:"INVALID_TASK_ID" });
+    }
+    const expected = Number(state.workingVersions?.tasks?.[id] || 0);
+    return enqueueChanges({
+      tasks:{ upserts:[], deletes:[{ id, expected_version:expected }] }
+    }, options);
+  }
+
+  function adoptHydratedState(db, options={}){
+    if(!state.enabled || !state.loaded) return false;
+    if(state.processing || state.queue.length){
+      console.warn("Cronos V4: estado hidratado não foi adotado porque existe alteração pendente.");
+      return false;
+    }
+
+    const normalized = normalizeState(db);
+    state.baseline = clone(normalized);
+    state.working = clone(normalized);
+    state.workingVersions = normalizeVersions(state.versions);
+    state.blocked = false;
+    state.lastError = null;
+
+    if(options.clearIndicator !== false){
+      try{ updateIndicator("saved", "Salvo"); }catch(_){ }
+    }
+    emit("cronos:persistence-hydrated", { reason:String(options.reason || "client_normalization") });
+    return true;
   }
 
   async function deleteLeadCascade(leadId, options={}){
@@ -928,6 +1028,9 @@
     checkStatus,
     loadOperationalState,
     saveOperationalState,
+    upsertTask,
+    deleteTask,
+    adoptHydratedState,
     deleteLeadCascade,
     isEnabled,
     hasPending,

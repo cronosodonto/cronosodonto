@@ -5083,12 +5083,8 @@ window.cronosLimparTarefasParcelamentoAgora = function(){
 /* Recebimentos */
 const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
 renderAll = function(){
-  try{
-    const actor = currentActor();
-    const db = loadDB();
-    (db.entries||[]).forEach(e=>{ if(e.installPlan){ ensureInstallmentsForEntry(e); }});
-    if(actor) { try{ syncInstallmentTasks(db, actor); }catch{} saveDB(db, { skipCloud:true }); }
-  }catch(e){}
+  // Renderização e filtros são somente leitura. Sincronizar parcelas/tarefas aqui
+  // fazia cada troca de ano ou busca tentar salvar milhares de entidades novamente.
   __renderAll();
   try{ relabelInstallmentsToRecebimentos(); }catch(e){}
   try{
@@ -8051,7 +8047,18 @@ async function ensureCloudDBLoadedInternal(force=false){
             if(master) master.name = cloudClinicName;
           }
           if(ctx?.member) loaded = ensureMemberMirror(loaded, ctx.member);
+
+          // Compatibilizações antigas são aplicadas uma única vez na cópia hidratada,
+          // antes de ela virar a linha de base local da V4. Assim o login não transforma
+          // normalização de leitura em milhares de alterações para salvar.
+          try{ migrateDBValues(loaded); }catch(_){ }
+
           DB = loaded;
+          try{
+            window.CronosRepository.adoptHydratedState?.(DB, { reason:"v4_loaded_normalized" });
+          }catch(error){
+            console.warn("Cronos V426: não foi possível alinhar a hidratação local da V4.", error);
+          }
           CLOUD_DB_READY = true;
           try{ cronosMarkCloudDBHydrated("v4_loaded"); }catch(_){ }
           safeSetLocalDB(DB);
@@ -8217,6 +8224,64 @@ function saveDB(db, options={}){
   return scheduleCloudSave(shouldSaveImmediately);
 }
 
+
+function cronosRefreshTaskViews(){
+  try{ if(typeof renderTasks === "function") renderTasks(); }catch(_){ }
+  try{ if(typeof updateSidebarPills === "function") updateSidebarPills(); }catch(_){ }
+  try{
+    window.CRONOS_TODAY?.invalidateTodayCache?.();
+    if(typeof getCurrentMainView === "function" && getCurrentMainView() === "todayCronos"){
+      window.CRONOS_TODAY?.render?.({ defer:true });
+    }
+  }catch(_){ }
+}
+
+function cronosPersistTaskUpsert(db, task, options={}){
+  DB = normalizeDBShape(db);
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  safeSetLocalDB(DB);
+  try{ updateSidebarPills(); }catch(_){ }
+  if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.upsertTask === "function"){
+    return window.CronosRepository.upsertTask(task, {
+      keepPendingOnFailure:options.keepPendingOnFailure !== false
+    }).then(ok=>{
+      if(!ok && !options.silent) toast("Alteração não confirmada", "Não foi possível salvar a tarefa.");
+      return !!ok;
+    }).catch(error=>{
+      console.error("Cronos V4: falha ao salvar tarefa:", error);
+      if(!options.silent) toast("Falha ao salvar", "Não foi possível salvar a tarefa.");
+      return false;
+    });
+  }
+  return saveDB(DB, { immediate:true, ...options });
+}
+
+function cronosPersistTaskDelete(db, taskId, options={}){
+  DB = normalizeDBShape(db);
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  safeSetLocalDB(DB);
+  try{ updateSidebarPills(); }catch(_){ }
+  if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.deleteTask === "function"){
+    return window.CronosRepository.deleteTask(taskId, {
+      keepPendingOnFailure:options.keepPendingOnFailure !== false
+    }).then(ok=>{
+      if(!ok && !options.silent) toast("Exclusão não confirmada", "Não foi possível excluir a tarefa.");
+      return !!ok;
+    }).catch(error=>{
+      console.error("Cronos V4: falha ao excluir tarefa:", error);
+      if(!options.silent) toast("Falha ao excluir", "Não foi possível excluir a tarefa.");
+      return false;
+    });
+  }
+  return saveDB(DB, { immediate:true, ...options });
+}
+
+window.cronosPersistTaskUpsert = cronosPersistTaskUpsert;
+window.cronosPersistTaskDelete = cronosPersistTaskDelete;
+window.cronosRefreshTaskViews = cronosRefreshTaskViews;
+
 function createIsolatedSupabaseClient(){
   return window.supabase.createClient(supabaseUrl, supabaseKey, {
     auth: {
@@ -8334,7 +8399,12 @@ async function syncCurrentCloudActor(){
     const master = getMasterRecordByEmail(db, ownerEmail) || db.masters[0];
     if(master){
       saveSession({ kind: "master", id: master.id });
-      saveDB(db, { skipCloud:true });
+      // Login é hidratação/leitura, não uma alteração operacional. Na V4, chamar
+      // saveDB aqui podia normalizar milhares de Leads importados e tentar reenviar
+      // a clínica inteira logo após entrar.
+      DB = db;
+      safeSetLocalDB(DB);
+      try{ updateSidebarPills(); }catch(_){ }
       return { kind: "master", id: master.id };
     }
   }
@@ -8352,7 +8422,10 @@ async function syncCurrentCloudActor(){
     memberRow.authUid = user.id;
     memberRow.loginEmail = memberRow.loginEmail || String(user.email || "").trim().toLowerCase();
     saveSession({ kind: "user", id: memberRow.id });
-    saveDB(db, { skipCloud:true });
+    // O espelho do usuário é apenas contexto de sessão. Não gere commit V4 no login.
+    DB = db;
+    safeSetLocalDB(DB);
+    try{ updateSidebarPills(); }catch(_){ }
     return { kind: "user", id: memberRow.id };
   }
 
@@ -11843,6 +11916,10 @@ function closeModal(options){
   const force = options === true || (options && typeof options === "object" && options.force === true);
   const source = typeof options === "string" ? options : ((options && typeof options === "object" && options.source) || "button");
   if(!cronosCanCloseModal(source, force)) return false;
+  try{
+    const active = document.activeElement;
+    if(active && el("modalBg")?.contains(active) && typeof active.blur === "function") active.blur();
+  }catch(_){ }
   el("modalBg").classList.remove("show");
   el("modalBg").setAttribute("aria-hidden","true");
   const __modalRoot = document.querySelector('#modalBg > .modal');
@@ -14617,8 +14694,8 @@ function renderTasks(){
   if(!actor) return;
 
   const db = loadDB();
-  syncInstallmentTasks(db, actor);
-  saveDB(db, { skipCloud:true });
+  // Tarefas automáticas já são sincronizadas no carregamento e nas mutações
+  // financeiras. A tela de tarefas é somente leitura até uma ação explícita.
   try{ cronosUpdateTasksSidebarPill({ repair:false }); }catch(_){ }
 
   const listRoot = el("tasksCardsList") || el("tasksTbody");
@@ -14898,9 +14975,9 @@ function postponeTask(taskId, days=1){
   t.updatedAt = new Date().toISOString();
   t.updatedBy = cronosActorLabel(actor);
   try{ recordTaskPatch(t); }catch(_){}
-  saveDB(db, { immediate:true });
+  cronosPersistTaskUpsert(db, t, { immediate:true });
   try{ toast("Tarefa adiada", "Vencimento movido para " + fmtBR(t.dueDate)); }catch(_){}
-  renderAll();
+  cronosRefreshTaskViews();
 }
 
 
@@ -15023,10 +15100,10 @@ function openLeadTaskShortcut(evOrEntryId, maybeEntryId){
           db.tasks = db.tasks || [];
           db.tasks.push(t);
           try{ recordTaskPatch(t); }catch(_){}
-          saveDB(db, { immediate:true });
+          cronosPersistTaskUpsert(db, t, { immediate:true });
           closeModal({ force:true, source:"lead-task-shortcut" });
           toast("Tarefa criada", "Ela já aparece no módulo Tarefas.");
-          renderAll();
+          cronosRefreshTaskViews();
         });
       }
     });
@@ -15187,10 +15264,10 @@ function openNewTask(){
         db.tasks = db.tasks || [];
         db.tasks.push(t);
         try{ recordTaskPatch(t); }catch(_){}
-        saveDB(db, { immediate:true });
+        cronosPersistTaskUpsert(db, t, { immediate:true });
         closeModal({ force:true, source:"save-task" });
         toast("Tarefa criada");
-        renderAll();
+        cronosRefreshTaskViews();
       });
     }
   });
@@ -15278,10 +15355,10 @@ function openTaskEdit(taskId){
         t.updatedAt = new Date().toISOString();
         t.updatedBy = cronosActorLabel(actor);
         try{ recordTaskPatch(t); }catch(_){}
-        saveDB(db, { immediate:true });
+        cronosPersistTaskUpsert(db, t, { immediate:true });
         closeModal({ force:true, source:"save-task" });
         toast("Tarefa atualizada");
-        renderAll();
+        cronosRefreshTaskViews();
       });
     }
   });
@@ -15299,10 +15376,9 @@ function toggleTaskDone(taskId){
   t.updatedAt = new Date().toISOString();
   t.updatedBy = cronosActorLabel(currentActor());
   try{ recordTaskPatch(t); }catch(_){}
-  saveDB(db, { immediate:true });
+  cronosPersistTaskUpsert(db, t, { immediate:true });
   toast(t.done ? "Tarefa marcada como feita" : "Tarefa reaberta");
- if (typeof renderTasks === "function") renderTasks();
-  if (typeof updateSidebarPills === "function") updateSidebarPills();
+  cronosRefreshTaskViews();
 }
 function markTaskDone(taskId){ return toggleTaskDone(taskId); }
 function CRONOS_CAN_DELETE_TASKS(actor){
@@ -15328,9 +15404,9 @@ function deleteTask(taskId){
 
   try{ recordTaskDeletion(t); }catch(_){}
   db.tasks.splice(idx, 1);
-  saveDB(db, { immediate:true });
+  cronosPersistTaskDelete(db, taskId, { immediate:true });
   try{ toast("Tarefa apagada", "A lista foi atualizada."); }catch(_){}
-  renderAll();
+  cronosRefreshTaskViews();
 }
 
 function renderAll(){
@@ -15452,28 +15528,41 @@ function bindActions(){
   const btnMyPasswordSide = el("btnMyPasswordSide");
   if(btnMyPasswordSide) btnMyPasswordSide.onclick = openChangeMyPassword;
 
-  ["fYear","fMonth","fSearch","fStatus","fCampaign","fTreatment","fOrigin","fPeriodFrom","fPeriodTo","fOrder"].forEach(id=>{
-    el(id).addEventListener("input", ()=>{
-      const f = getUIFilters();
-      if(id === "fSearch" && String(f.search || "").trim()){
-        window.__KPI_ACTIVE = null;
-      }
-      saveFilters(f);
+  let filterRenderTimer = 0;
+  const scheduleFilterRender = (delay=0)=>{
+    clearTimeout(filterRenderTimer);
+    filterRenderTimer = setTimeout(()=>{
       currentPage = 1;
-      renderAll();
-    });
-    el(id).addEventListener("change", ()=>{
-      const f = getUIFilters();
-      if(id === "fSearch" && String(f.search || "").trim()){
-        window.__KPI_ACTIVE = null;
-      }
-      saveFilters(f);
-      if(id==="fYear"){
+      try{ renderAll(); }catch(error){ console.warn("Cronos V428: falha ao aplicar filtros", error); }
+    }, delay);
+  };
+
+  const persistCurrentFilters = (id)=>{
+    const f = getUIFilters();
+    if(id === "fSearch" && String(f.search || "").trim()){
+      window.__KPI_ACTIVE = null;
+    }
+    saveFilters(f);
+  };
+
+  // Busca reage enquanto digita, mas com debounce. Os demais controles usam apenas
+  // change; ouvir input + change em selects executava o mesmo filtro duas vezes.
+  const searchFilter = el("fSearch");
+  searchFilter?.addEventListener("input", ()=>{
+    persistCurrentFilters("fSearch");
+    scheduleFilterRender(180);
+  });
+
+  ["fYear","fMonth","fStatus","fCampaign","fTreatment","fOrigin","fPeriodFrom","fPeriodTo","fOrder"].forEach(id=>{
+    const node = el(id);
+    if(!node) return;
+    node.addEventListener("change", ()=>{
+      persistCurrentFilters(id);
+      if(id === "fYear"){
         ensureMonthOptions();
+        saveFilters(getUIFilters());
       }
-      saveFilters(getUIFilters());
-      currentPage = 1;
-      renderAll();
+      scheduleFilterRender(0);
     });
   });
 
@@ -15661,7 +15750,13 @@ async function boot(){
   ensureMonthOptions();
   setUIFilters(f);
 
-  try{ const db=loadDB(); if(migrateDBValues(db)) saveDB(db, { skipCloud:true }); }catch(e){}
+  try{
+    const db=loadDB();
+    if(migrateDBValues(db)){
+      safeSetLocalDB(db);
+      try{ window.CronosRepository?.adoptHydratedState?.(db, { reason:"boot_compat" }); }catch(_){ }
+    }
+  }catch(e){}
 
   saveFilters(getUIFilters());
 
@@ -16270,7 +16365,10 @@ function cronosBootFromLocalCacheAfterF5(session){
 
     try{
       const db = loadDB();
-      if(migrateDBValues(db)) saveDB(db, { skipCloud:true });
+      if(migrateDBValues(db)){
+        safeSetLocalDB(db);
+        try{ window.CronosRepository?.adoptHydratedState?.(db, { reason:"fast_resume_compat" }); }catch(_){ }
+      }
     }catch(e){ console.warn("Cronos F5 rápido: falha na migração leve", e); }
 
     // Prepara a interface por baixo do splash, sem esconder e mostrar novamente.

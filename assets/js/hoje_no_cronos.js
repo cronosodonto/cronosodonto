@@ -1141,7 +1141,8 @@
         };
         db.tasks.push(createdTask);
         try{ window.recordTaskPatch?.(createdTask); }catch(_){}
-        save(db, { immediate:true });
+        if(typeof window.cronosPersistTaskUpsert === "function") window.cronosPersistTaskUpsert(db, createdTask, { immediate:true });
+        else save(db, { immediate:true });
       }
     }catch(_){}
     render();
@@ -1165,7 +1166,8 @@
     t.doneAt = nowISO();
     t.updatedAt = nowISO();
     try{ window.recordTaskPatch?.(t); }catch(_){}
-    save(db, { immediate:true });
+    if(typeof window.cronosPersistTaskUpsert === "function") window.cronosPersistTaskUpsert(db, t, { immediate:true });
+    else save(db, { immediate:true });
     toast("Tarefa concluída");
     render();
     try{ if(typeof window.renderTasks === "function") window.renderTasks(); }catch(_){}
@@ -1181,7 +1183,8 @@
     t.dueDate = date;
     t.updatedAt = nowISO();
     try{ window.recordTaskPatch?.(t); }catch(_){}
-    save(db, { immediate:true });
+    if(typeof window.cronosPersistTaskUpsert === "function") window.cronosPersistTaskUpsert(db, t, { immediate:true });
+    else save(db, { immediate:true });
     toast("Tarefa adiada", fmtBR(date));
     render();
   }
@@ -3481,19 +3484,50 @@
     restoreNativeViews();
     hideTodayView();
 
-    setInterval(()=>{
+    let maintenanceVersion = Number(window.__CRONOS_DATA_VERSION__ || 0);
+    let maintenanceDay = todayISO();
+
+    const runMaintenance = (force=false)=>{
+      if(document.hidden) return;
+      const version = Number(window.__CRONOS_DATA_VERSION__ || 0);
+      const day = todayISO();
+      const shellMissing = !$(NAV_ID) || !$(VIEW_ID);
+
+      // Com bases grandes, varrer DOM e coleções em intervalo fixo travava filtros.
+      // Só refaz o trabalho quando os dados/dia mudarem ou o shell tiver sumido.
+      if(!force && !shellMissing && version === maintenanceVersion && day === maintenanceDay){
+        return;
+      }
+
+      maintenanceVersion = version;
+      maintenanceDay = day;
       try{
         ensureNav();
         ensureView();
         bindNativeNavRecovery();
         patchBirthDateCloudSync();
-
         updateNavCount();
         syncNavBadgeStyle();
-
-
       }catch(_){}
-    }, 12000);
+    };
+
+    const scheduleMaintenance = ()=>{
+      setTimeout(()=>{
+        const runner = ()=>runMaintenance(false);
+        if(typeof window.requestIdleCallback === "function"){
+          window.requestIdleCallback(runner, { timeout:1800 });
+        }else{
+          runner();
+        }
+        scheduleMaintenance();
+      }, 30000);
+    };
+
+    ["cronos:persistence-saved", "cronos:persistence-hydrated", "cronos:data-changed"].forEach(type=>{
+      try{ window.addEventListener(type, ()=>runMaintenance(true)); }catch(_){ }
+    });
+    document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) runMaintenance(false); });
+    scheduleMaintenance();
   }
 
   if(document.readyState === "loading"){
