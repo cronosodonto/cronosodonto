@@ -11415,11 +11415,23 @@ async function refreshCloudDataNow({ force=false, reason="" } = {}){
   }
   const run = (async ()=>{
     try{
-      // Antes de puxar a nuvem, tenta enviar mudanças locais pendentes.
-      // Isso evita que procedimentos recém-lançados no prontuário sejam apagados por um refresh
-      // quando ainda estavam só no navegador.
+      // Antes de puxar a nuvem, apenas aguardamos comandos pontuais pendentes.
+      // Na V4 o botão Atualizar é leitura: ele nunca compara nem reenvia a clínica inteira.
       if(DB && typeof supabaseClient !== "undefined" && supabaseClient?.auth){
-        try{ await scheduleCloudSave(true); }catch(err){ console.warn("Não foi possível enviar alterações locais antes do refresh:", err); }
+        if(window.CronosRepository?.isEnabled?.()){
+          // Na V4, cada alteração real já entra por um comando direcionado.
+          // O botão Atualizar nunca pode comparar/regravar a clínica inteira.
+          if(window.CronosRepository.hasPending?.()){
+            await window.CronosRepository.retryPending?.();
+            if(window.CronosRepository.hasPending?.()){
+              throw new Error("Existe uma alteração pendente. Aguarde a confirmação antes de atualizar.");
+            }
+          }
+        }else{
+          // Compatibilidade apenas para clínicas que ainda não usam a persistência V4.
+          try{ await scheduleCloudSave(true); }
+          catch(err){ console.warn("Não foi possível enviar alterações locais antes do refresh:", err); }
+        }
       }
       await ensureCloudDBLoaded(true);
       await syncCurrentCloudActor();
@@ -11461,18 +11473,40 @@ function setLoadingButtonState(btn, isLoading){
 async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
   try{
     setLoadingButtonState(btn, true);
+    const activeView = (typeof getCurrentMainView === "function") ? getCurrentMainView() : "dashboard";
     await refreshCloudDataNow({ force:true, reason: installmentsOnly ? "installments_button" : "manual_button" });
+
+    // Atualizar é uma leitura da fonte oficial. Renderizamos apenas a área visível,
+    // sem reconstruir todas as telas nem disparar rotinas de reparo/salvamento.
     if(installmentsOnly){
       renderInstallmentsView();
-      cronosRefreshSidebarCountersNow({ reason:"manual_installments_refresh", repeat:true });
+      cronosRefreshSidebarCountersNow({
+        reason:"manual_installments_refresh",
+        repeat:false,
+        repairTasks:false
+      });
     }else{
-      renderAll();
-      cronosRefreshSidebarCountersNow({ reason:"manual_refresh", repeat:true });
+      if(typeof renderActiveViewOnly === "function"){
+        renderActiveViewOnly(activeView);
+      }else{
+        renderAll();
+      }
+      cronosRefreshSidebarCountersNow({
+        reason:"manual_refresh",
+        repeat:false,
+        repairTasks:false
+      });
     }
     toast("Atualizado", "Dados atualizados.");
   }catch(error){
     console.error("Falha ao atualizar manualmente:", error);
-    toast("Falha ao atualizar", "Não foi possível buscar os dados agora.");
+    const pending = window.CronosRepository?.hasPending?.();
+    toast(
+      pending ? "Aguarde o salvamento" : "Falha ao atualizar",
+      pending
+        ? "Existe uma alteração sendo confirmada. Tente atualizar novamente em instantes."
+        : "Não foi possível buscar os dados agora."
+    );
   }finally{
     setLoadingButtonState(btn, false);
   }
@@ -16435,7 +16469,7 @@ function cronosUpdateTodaySidebarBadge(){
 }
 
 
-function cronosUpdateTasksSidebarPill({ repair=true } = {}){
+function cronosUpdateTasksSidebarPill({ repair=false } = {}){
   try{
     const db = loadDB();
     const actor = currentActor();
@@ -16467,11 +16501,11 @@ function cronosUpdateTasksSidebarPill({ repair=true } = {}){
   }catch(e){ console.warn("Cronos V24: falha ao atualizar contador de tarefas", e); }
 }
 
-function cronosRefreshSidebarCountersNow({ reason="", repeat=true } = {}){
+function cronosRefreshSidebarCountersNow({ reason="", repeat=true, repairTasks=false } = {}){
   const run = ()=>{
     try{ window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null; }catch(_){ }
     try{ updateSidebarPills(); }catch(e){ console.warn("Cronos V23: falha ao atualizar contadores laterais", e); }
-    cronosUpdateTasksSidebarPill({ repair:true });
+    cronosUpdateTasksSidebarPill({ repair:repairTasks });
     cronosUpdateInstallmentsSidebarPill();
     cronosUpdateTodaySidebarBadge();
   };

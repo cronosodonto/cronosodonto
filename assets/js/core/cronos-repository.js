@@ -1,4 +1,4 @@
-// Cronos Repository v4.2.8 — comandos direcionados para tarefas
+// Cronos Repository v4.2.9 — atualização manual somente leitura
 /*
  * CronosRepository V4 — persistência central, transacional e concorrente.
  *

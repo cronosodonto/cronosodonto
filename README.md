@@ -30,6 +30,13 @@ Este é um software proprietário. A reprodução, distribuição, modificação
 Filtros são operações somente de leitura, sem autosave. Busca usa debounce e controles de ano/mês disparam apenas uma renderização. A manutenção do Hoje no Cronos permanece ociosa e condicionada a mudança real de dados.
 
 
+## v429 — botão Atualizar somente leitura
+
+- o botão **Atualizar** não chama mais o salvamento genérico da clínica antes de buscar a nuvem;
+- na persistência V4, ele apenas aguarda comandos pontuais pendentes e carrega o estado oficial;
+- a atualização renderiza somente a tela ativa e não executa reparos que possam alterar dados;
+- elimina o falso aviso **“Atualização em massa bloqueada”** ao atualizar manualmente.
+
 ## v428 — tarefas transacionais direcionadas
 - Criar, editar, concluir, adiar e excluir tarefas usa pacotes V4 apenas da tarefa alterada.
 - Renderização de tarefas não dispara salvamento.
