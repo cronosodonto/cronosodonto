@@ -8178,6 +8178,23 @@ function loadDB(){
 function saveDB(db, options={}){
   const incoming = normalizeDBShape(db);
 
+  // Mesclagens usam uma RPC transacional própria. Alguns renderizadores legados
+  // ainda tentam chamar saveDB logo após a confirmação; reenviar a clínica inteira
+  // nesse intervalo é redundante e aciona a proteção de alteração em massa.
+  const mergeSaveSuppressed = !!window.CronosRepository?.isEnabled?.() &&
+    options.allowDuringTransactionalMerge !== true &&
+    (window.__CRONOS_MERGE_IN_PROGRESS__ === true ||
+      Date.now() < Number(window.__CRONOS_SUPPRESS_LEGACY_SAVE_UNTIL__ || 0));
+  if(mergeSaveSuppressed){
+    DB = incoming;
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    safeSetLocalDB(DB);
+    try{ updateSidebarPills(); }catch(_){ }
+    console.info("Cronos V437: autosave legado pós-mesclagem ignorado; a RPC transacional já confirmou a operação.");
+    return Promise.resolve(true);
+  }
+
   if(isSupportMode()){
     const previous = normalizeDBShape(__supportMemoryDB || DB || getSupportDB() || freshDB());
     const previousSize = (previous.contacts?.length || 0) + (previous.entries?.length || 0);
@@ -12683,6 +12700,9 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
       return null;
     }
 
+    // Mantém uma janela curta para absorver callbacks de renderização disparados
+    // pela confirmação da RPC sem permitir que o legado tente salvar 5 mil registros.
+    window.__CRONOS_SUPPRESS_LEGACY_SAVE_UNTIL__ = Date.now() + 1500;
     DB = normalizeDBShape(mergeResult.state || db);
     window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
     window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
