@@ -1,4 +1,4 @@
-// Cronos Repository v4.2.9 — atualização manual somente leitura
+// Cronos Repository v4.6.0 — comandos transacionais direcionados, cascata e mesclagem atômica
 /*
  * CronosRepository V4 — persistência central, transacional e concorrente.
  *
@@ -593,6 +593,19 @@
       return { enabled:false, state:null };
     }
 
+    // A V4 é a única autoridade de persistência. Filas V2 antigas podem conter
+    // milhares de contatos/leads e estourar a quota do localStorage ao sair da página.
+    try{
+      const legacyKeys = [];
+      for(let i=0; i<localStorage.length; i++){
+        const key = String(localStorage.key(i) || "");
+        if(key.endsWith(":pending_v2_patches") || key.endsWith(":pending_task_patches_v21")){
+          legacyKeys.push(key);
+        }
+      }
+      legacyKeys.forEach(key=>localStorage.removeItem(key));
+    }catch(_){ }
+
     state.baseline = normalizeState(data?.state || freshState());
     state.versions = normalizeVersions(data?.versions || {});
 
@@ -828,6 +841,48 @@
     return enqueueChanges(changes, options);
   }
 
+  async function updateMeta(patch, options={}){
+    if(!state.enabled || !state.loaded || !state.working){
+      throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
+    }
+    if(!patch || typeof patch !== "object" || Array.isArray(patch)){
+      throw new CronosPersistenceError("Metadados inválidos para salvar.", { code:"INVALID_META_PATCH" });
+    }
+
+    const meta = metaFromState(state.working);
+    Object.keys(patch).forEach(key=>{
+      const value = patch[key];
+      if(value === undefined) delete meta[key];
+      else meta[key] = clone(value);
+    });
+
+    return enqueueChanges({
+      meta:{
+        payload:meta,
+        expected_version:Number(state.workingVersions?.meta || 0)
+      }
+    }, options);
+  }
+
+  async function updateSettings(patch, options={}){
+    if(!patch || typeof patch !== "object" || Array.isArray(patch)){
+      throw new CronosPersistenceError("Configurações inválidas para salvar.", { code:"INVALID_SETTINGS_PATCH" });
+    }
+
+    const currentMeta = metaFromState(state.working || freshState());
+    const settings = currentMeta.settings && typeof currentMeta.settings === "object" && !Array.isArray(currentMeta.settings)
+      ? clone(currentMeta.settings)
+      : {};
+
+    Object.keys(patch).forEach(key=>{
+      const value = patch[key];
+      if(value === undefined) delete settings[key];
+      else settings[key] = clone(value);
+    });
+
+    return updateMeta({ settings }, options);
+  }
+
   async function upsertTask(task, options={}){
     const payload = clone(task || {});
     const id = String(payload?.id || "").trim();
@@ -849,6 +904,171 @@
     return enqueueChanges({
       tasks:{ upserts:[], deletes:[{ id, expected_version:expected }] }
     }, options);
+  }
+
+  function buildTargetedBatchChanges(batch){
+    if(!batch || typeof batch !== "object" || Array.isArray(batch)){
+      throw new CronosPersistenceError("Pacote direcionado inválido.", { code:"INVALID_TARGETED_BATCH" });
+    }
+
+    const changes = {};
+    COLLECTIONS.forEach(name=>{
+      const part = batch[name];
+      if(!part) return;
+
+      const upsertMap = new Map();
+      (Array.isArray(part.upserts) ? part.upserts : []).forEach(item=>{
+        const payload = clone(item?.payload && typeof item.payload === "object" ? item.payload : item);
+        const id = String(payload?.id || "").trim();
+        if(!id){
+          throw new CronosPersistenceError(`Entidade ${name} sem ID no pacote direcionado.`, { code:"INVALID_TARGETED_ENTITY" });
+        }
+        upsertMap.set(id, payload);
+      });
+
+      const deleteSet = new Set();
+      (Array.isArray(part.deletes) ? part.deletes : []).forEach(item=>{
+        const id = String(typeof item === "string" ? item : (item?.id || "")).trim();
+        if(!id){
+          throw new CronosPersistenceError(`Exclusão ${name} sem ID no pacote direcionado.`, { code:"INVALID_TARGETED_DELETE" });
+        }
+        deleteSet.add(id);
+      });
+
+      upsertMap.forEach((_, id)=>{
+        if(deleteSet.has(id)){
+          throw new CronosPersistenceError(`A entidade ${name}/${id} não pode ser salva e excluída na mesma ação.`, { code:"TARGETED_BATCH_COLLISION" });
+        }
+      });
+
+      const upserts = Array.from(upsertMap.entries()).map(([id, payload])=>({
+        payload,
+        expected_version:Number(state.workingVersions?.[name]?.[id] || 0)
+      }));
+      const deletes = Array.from(deleteSet).map(id=>({
+        id,
+        expected_version:Number(state.workingVersions?.[name]?.[id] || 0)
+      }));
+
+      if(upserts.length || deletes.length) changes[name] = { upserts, deletes };
+    });
+
+    if(batch.meta && typeof batch.meta === "object" && !Array.isArray(batch.meta)){
+      const payload = clone(
+        batch.meta.payload && typeof batch.meta.payload === "object" && !Array.isArray(batch.meta.payload)
+          ? batch.meta.payload
+          : batch.meta
+      );
+      changes.meta = {
+        payload,
+        expected_version:Number(state.workingVersions?.meta || 0)
+      };
+    }
+
+    return changes;
+  }
+
+  async function commitTargetedBatch(batch, options={}){
+    if(!state.enabled || !state.loaded || !state.working){
+      throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
+    }
+    const changes = buildTargetedBatchChanges(batch);
+    return enqueueChanges(changes, options);
+  }
+
+  async function mergeContactsCascade(batch, options={}){
+    if(!state.enabled || !state.loaded || !state.working){
+      throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
+    }
+    if(state.processing || state.queue.length || state.blocked){
+      throw new CronosPersistenceError(
+        "Existe outra alteração sendo salva. Aguarde antes de mesclar.",
+        { code:"PENDING_MUTATION" }
+      );
+    }
+
+    const changes = buildTargetedBatchChanges(batch);
+    const contactUpserts = changes?.contacts?.upserts || [];
+    const contactDeletes = changes?.contacts?.deletes || [];
+    if(contactUpserts.length !== 1 || contactDeletes.length !== 1){
+      throw new CronosPersistenceError(
+        "A mesclagem deve conter exatamente um contato principal e um contato duplicado.",
+        { code:"INVALID_MERGE_BATCH" }
+      );
+    }
+
+    const primaryContactId = String(contactUpserts[0]?.payload?.id || "").trim();
+    const secondaryContactId = String(contactDeletes[0]?.id || "").trim();
+    if(!primaryContactId || !secondaryContactId || primaryContactId === secondaryContactId){
+      throw new CronosPersistenceError("Contatos inválidos para mesclagem.", { code:"INVALID_MERGE_CONTACTS" });
+    }
+
+    const operationId = String(options.operationId || newOperationId());
+    updateIndicator("saving", "Mesclando...");
+    emit("cronos:persistence-saving", {
+      operationId,
+      command:"merge_contacts_cascade",
+      primaryContactId,
+      secondaryContactId
+    });
+
+    try{
+      const result = await rpc("cronos_v4_merge_contacts", {
+        p_clinic_id:state.clinicId,
+        p_operation_id:operationId,
+        p_changes:changes
+      }, { timeoutMs:RPC_TIMEOUT_MS });
+
+      const refreshed = await loadOperationalState({
+        clinicId:state.clinicId,
+        restorePending:false
+      });
+
+      state.lastError = null;
+      state.blocked = false;
+      emit("cronos:persistence-saved", {
+        operationId,
+        command:"merge_contacts_cascade",
+        primaryContactId,
+        secondaryContactId,
+        result
+      });
+      updateIndicator("saved", "Mesclado");
+
+      return {
+        ...(result && typeof result === "object" ? result : {}),
+        ok:result?.ok !== false,
+        state:clone(refreshed?.state || state.working),
+        versions:clone(refreshed?.versions || state.workingVersions)
+      };
+    }catch(error){
+      const conflict = isConflictError(error);
+      const missingRpc = /cronos_v4_merge_contacts|schema cache|function/i.test(String(error?.message || ""))
+        && /not found|could not find|schema cache/i.test(String(error?.message || ""));
+      const wrapped = new CronosPersistenceError(
+        conflict
+          ? "Um dos cadastros foi alterado em outro computador. Recarregue antes de mesclar."
+          : missingRpc
+            ? "A rotina SQL de mesclagem ainda não foi instalada no Supabase."
+            : String(error?.message || "Não foi possível mesclar os cadastros."),
+        {
+          code:conflict ? "VERSION_CONFLICT" : (missingRpc ? "MERGE_RPC_NOT_INSTALLED" : (error?.code || "MERGE_CASCADE_ERROR")),
+          cause:error,
+          operationId,
+          details:error?.details || null,
+          conflict
+        }
+      );
+      state.lastError = wrapped;
+      emit(conflict ? "cronos:persistence-conflict" : "cronos:persistence-error", {
+        error:wrapped,
+        command:"merge_contacts_cascade",
+        primaryContactId,
+        secondaryContactId
+      });
+      updateIndicator("error", conflict ? "Conflito: recarregue a página" : "Falha ao mesclar");
+      throw wrapped;
+    }
   }
 
   function adoptHydratedState(db, options={}){
@@ -1028,8 +1248,12 @@
     checkStatus,
     loadOperationalState,
     saveOperationalState,
+    updateMeta,
+    updateSettings,
     upsertTask,
     deleteTask,
+    commitTargetedBatch,
+    mergeContactsCascade,
     adoptHydratedState,
     deleteLeadCascade,
     isEnabled,

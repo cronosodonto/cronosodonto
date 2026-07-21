@@ -2580,12 +2580,16 @@ async function queueFichaV2LeadSave(entry){
 async function saveFichaMutation(db, entry, options={}){
   try{ markFichaMutation(entry); }catch(_){ }
 
-  // Persistência definitiva: prontuário, odontograma, plano e financeiro do lead
-  // são confirmados na mesma transação, sem depender do HTML que originou a ação.
+  // Persistência V4 direcionada: a Ficha mora dentro de um único Lead.
+  // Nunca compare nem reenvie a clínica inteira para salvar odontograma,
+  // avaliações, observações ou itens do plano de tratamento.
   if(!isSupportMode() && window.CronosRepository?.isEnabled?.()){
     try{
-      const ok = await window.CronosRepository.saveOperationalState(db, {
-        keepPendingOnFailure:false
+      const ok = await cronosPersistTargetedBatch(db, {
+        entries:{ upserts:[cloneFichaLeadSnapshot(entry)], deletes:[] }
+      }, {
+        keepPendingOnFailure:false,
+        silent:true
       });
       if(ok){
         DB = normalizeDBShape(db || DB || freshDB());
@@ -2595,7 +2599,7 @@ async function saveFichaMutation(db, entry, options={}){
         return true;
       }
     }catch(error){
-      console.error("Falha ao salvar prontuário na persistência V4:", error);
+      console.error("Falha ao salvar prontuário direcionado na persistência V4:", error);
     }
     if(!options.silent){
       toast("Prontuário não salvo", "Não foi possível salvar esta alteração. O estado anterior será preservado.");
@@ -6581,6 +6585,10 @@ function clearPendingV2Patches(){
 }
 function persistPendingV2Patches(db){
   try{
+    if(window.CronosRepository?.isEnabled?.()){
+      clearPendingV2Patches();
+      return false;
+    }
     if(!usesAnyClinicTableV2()) return false;
     const normalized = normalizeDBShape(db || DB || freshDB());
     const patch = loadPendingV2Patches();
@@ -6728,6 +6736,10 @@ function captureTaskSnapshots(db){
 }
 function persistPendingTaskPatches(db){
   try{
+    if(window.CronosRepository?.isEnabled?.()){
+      clearPendingTaskPatches();
+      return false;
+    }
     const normalized = normalizeDBShape(db || DB || freshDB());
     const patch = loadPendingTaskPatches();
     const snapshot = window.__CRONOS_TASK_SNAPSHOTS__ instanceof Map ? window.__CRONOS_TASK_SNAPSHOTS__ : new Map();
@@ -7963,6 +7975,11 @@ function scheduleCloudSave(immediate=false){
 
 function flushPendingCloudSaveOnExit(){
   try{
+    if(window.CronosRepository?.isEnabled?.()){
+      clearPendingV2Patches();
+      clearPendingTaskPatches();
+      return;
+    }
     if(DB) persistPendingV2Patches(DB);
     if(!DB || typeof supabaseClient === "undefined" || !supabaseClient?.auth) return;
     if(__cloudSaveTimer){
@@ -8282,6 +8299,88 @@ window.cronosPersistTaskUpsert = cronosPersistTaskUpsert;
 window.cronosPersistTaskDelete = cronosPersistTaskDelete;
 window.cronosRefreshTaskViews = cronosRefreshTaskViews;
 
+function cronosPersistMetaPatch(db, patch, options={}){
+  DB = normalizeDBShape(db || DB || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  safeSetLocalDB(DB);
+  try{ updateSidebarPills(); }catch(_){ }
+
+  if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.updateMeta === "function"){
+    return window.CronosRepository.updateMeta(patch || {}, {
+      keepPendingOnFailure:options.keepPendingOnFailure !== false
+    }).then(ok=>!!ok).catch(error=>{
+      console.error("Cronos V4: falha ao salvar metadados direcionados:", error);
+      if(!options.silent) toast("Falha ao salvar", "Não foi possível salvar esta configuração.");
+      return false;
+    });
+  }
+  return saveDB(DB, { immediate:true, ...options });
+}
+
+function cronosPersistSettingsPatch(db, patch, options={}){
+  DB = normalizeDBShape(db || DB || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  safeSetLocalDB(DB);
+  try{ updateSidebarPills(); }catch(_){ }
+
+  if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.updateSettings === "function"){
+    return window.CronosRepository.updateSettings(patch || {}, {
+      keepPendingOnFailure:options.keepPendingOnFailure !== false
+    }).then(ok=>!!ok).catch(error=>{
+      console.error("Cronos V4: falha ao salvar configurações direcionadas:", error);
+      if(!options.silent) toast("Falha ao salvar", "Não foi possível salvar esta configuração.");
+      return false;
+    });
+  }
+  return saveDB(DB, { immediate:true, ...options });
+}
+
+window.cronosPersistMetaPatch = cronosPersistMetaPatch;
+window.cronosPersistSettingsPatch = cronosPersistSettingsPatch;
+
+function cronosPersistTargetedBatch(db, batch, options={}){
+  DB = normalizeDBShape(db || DB || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  safeSetLocalDB(DB);
+  try{ updateSidebarPills(); }catch(_){ }
+
+  if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.commitTargetedBatch === "function"){
+    return window.CronosRepository.commitTargetedBatch(batch || {}, {
+      keepPendingOnFailure:options.keepPendingOnFailure !== false
+    }).then(ok=>!!ok).catch(error=>{
+      console.error("Cronos V4: falha no comando transacional direcionado:", error);
+      if(!options.silent) toast("Falha ao salvar", "Não foi possível confirmar esta operação.");
+      return false;
+    });
+  }
+  return saveDB(DB, { immediate:true, ...options });
+}
+
+window.cronosPersistTargetedBatch = cronosPersistTargetedBatch;
+
+function cronosPersistMergeBatch(db, batch, options={}){
+  DB = normalizeDBShape(db || DB || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  safeSetLocalDB(DB);
+  try{ updateSidebarPills(); }catch(_){ }
+
+  if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.mergeContactsCascade === "function"){
+    return window.CronosRepository.mergeContactsCascade(batch || {}, options).catch(error=>{
+      console.error("Cronos V4: falha na mesclagem transacional:", error);
+      if(!options.silent) toast("Falha ao mesclar", String(error?.message || "Não foi possível confirmar a mesclagem."));
+      return null;
+    });
+  }
+
+  return saveDB(DB, { immediate:true, ...options }).then(ok=>ok ? { ok:true, state:DB } : null);
+}
+
+window.cronosPersistMergeBatch = cronosPersistMergeBatch;
+
 function createIsolatedSupabaseClient(){
   return window.supabase.createClient(supabaseUrl, supabaseKey, {
     auth: {
@@ -8451,7 +8550,7 @@ function getPrefs(){
   if(!db.settings) db.settings = {};
   if(typeof db.settings.waTemplate !== "string" || !db.settings.waTemplate.trim()){
     db.settings.waTemplate = "Oi {nome}! Vi seu interesse em {tratamento}. Posso te ajudar por aqui? 😊";
-    saveDB(db, { skipCloud:true });
+    // Valor padrão de leitura: só é persistido quando o usuário salvar Configurações.
   }
   return db.settings;
 }
@@ -12352,7 +12451,28 @@ function cronosMergeFinancialPlansSafe(primaryPlans, secondaryPlans){
   return plans;
 }
 
-function cronosMergeEntryIntoTarget(db, targetEntry, sourceEntry, primaryContactId, actor){
+function cronosMergeMetaPayload(db){
+  const meta = cronosCloneSafe(normalizeDBShape(db || freshDB()));
+  ["contacts", "entries", "tasks", "payments", "activityLog"].forEach(key=>{ delete meta[key]; });
+  delete meta.lastMergedAt;
+  delete meta.lastLocalPatchAppliedAt;
+  return meta;
+}
+
+function cronosRebindMergedReference(item, leadRemap, secondaryContactId, primaryContactId){
+  if(!item || typeof item !== "object") return item;
+  const leadFields = ["entryId", "leadId", "entry_id", "lead_id"];
+  leadFields.forEach(field=>{
+    const current = String(item[field] || "");
+    if(current && leadRemap?.has(current)) item[field] = leadRemap.get(current);
+  });
+  ["contactId", "contact_id"].forEach(field=>{
+    if(String(item[field] || "") === String(secondaryContactId || "")) item[field] = primaryContactId;
+  });
+  return item;
+}
+
+function cronosMergeEntryIntoTarget(db, targetEntry, sourceEntry, primaryContactId, actor, leadRemap){
   if(!targetEntry || !sourceEntry || String(targetEntry.id) === String(sourceEntry.id)) return targetEntry;
   const targetScore = cronosEntryCompletenessScore(targetEntry);
   const sourceScore = cronosEntryCompletenessScore(sourceEntry);
@@ -12390,23 +12510,28 @@ function cronosMergeEntryIntoTarget(db, targetEntry, sourceEntry, primaryContact
 
   const sourceId = String(sourceEntry.id || "");
   const targetId = String(targetEntry.id || "");
-  (db.payments || []).forEach(p=>{
-    if(String(p.entryId || "") === sourceId) p.entryId = targetId;
-    if(String(p.contactId || "") === String(sourceEntry.contactId || "")) p.contactId = primaryContactId;
-  });
-  (db.tasks || []).forEach(t=>{
-    if(String(t.entryId || "") === sourceId) t.entryId = targetId;
-    if(String(t.leadId || "") === sourceId) t.leadId = targetId;
-    if(String(t.contactId || "") === String(sourceEntry.contactId || "")) t.contactId = primaryContactId;
+  if(sourceId && targetId && leadRemap instanceof Map) leadRemap.set(sourceId, targetId);
+  (db.payments || []).forEach(p=>cronosRebindMergedReference(p, leadRemap, sourceEntry.contactId, primaryContactId));
+  (db.tasks || []).forEach(t=>cronosRebindMergedReference(t, leadRemap, sourceEntry.contactId, primaryContactId));
+  (db.activityLog || []).forEach(a=>cronosRebindMergedReference(a, leadRemap, sourceEntry.contactId, primaryContactId));
+  ["flowRuns", "assistedFlowRuns"].forEach(key=>{
+    (Array.isArray(db[key]) ? db[key] : []).forEach(run=>
+      cronosRebindMergedReference(run, leadRemap, sourceEntry.contactId, primaryContactId)
+    );
   });
 
   db.entries = (db.entries || []).filter(e=>String(e.id || "") !== sourceId);
   return targetEntry;
 }
 
-function cronosMergeDuplicateContactsInternal(currentContactId, duplicateContactId, options={}){
+async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateContactId, options={}){
   const actor = currentActor && currentActor();
   if(!actor?.perms?.edit){ toast("Sem permissão", "Seu nível não permite mesclar cadastros."); return null; }
+  if(window.__CRONOS_MERGE_IN_PROGRESS__){
+    toast("Mesclagem em andamento", "Aguarde a confirmação da operação atual.");
+    return null;
+  }
+
   const db = loadDB();
   const a = (db.contacts || []).find(c=>String(c.id || "") === String(currentContactId || ""));
   const b = (db.contacts || []).find(c=>String(c.id || "") === String(duplicateContactId || ""));
@@ -12439,58 +12564,154 @@ function cronosMergeDuplicateContactsInternal(currentContactId, duplicateContact
   );
   if(!ok) return null;
 
+  window.__CRONOS_MERGE_IN_PROGRESS__ = true;
+  const rollbackDB = cronosCloneSafe(db);
   const before = { primary: cronosCloneSafe(primary), secondary: cronosCloneSafe(secondary) };
-  ["name","phone","cpf","birthDate","firstSeenAt","lastSeenAt","email","city","address","notes"].forEach(k=>{
-    primary[k] = cronosFirstFilled(primary[k], secondary[k]);
-  });
-  primary.updatedAt = now;
-  primary.lastUpdateAt = now;
+  const affectedEntryIds = new Set([...aEntries, ...bEntries].map(e=>String(e?.id || "")).filter(Boolean));
+  const affectedContactIds = new Set([primaryId, secondaryId]);
+  const beforeEntries = (db.entries || []).filter(e=>affectedEntryIds.has(String(e?.id || ""))).map(cronosCloneSafe);
+  const beforePayments = (db.payments || []).filter(p=>
+    affectedContactIds.has(String(p?.contactId || "")) || affectedEntryIds.has(String(p?.entryId || ""))
+  ).map(cronosCloneSafe);
+  const beforeTasks = (db.tasks || []).filter(t=>
+    affectedContactIds.has(String(t?.contactId || "")) ||
+    affectedEntryIds.has(String(t?.entryId || "")) ||
+    affectedEntryIds.has(String(t?.leadId || ""))
+  ).map(cronosCloneSafe);
+  const beforeActivity = (db.activityLog || []).filter(item=>
+    affectedContactIds.has(String(item?.contactId || item?.contact_id || "")) ||
+    affectedEntryIds.has(String(item?.entryId || item?.leadId || item?.entry_id || item?.lead_id || ""))
+  ).map(cronosCloneSafe);
+  const beforeActivityIds = new Set((db.activityLog || []).map(item=>String(item?.id || "")).filter(Boolean));
+  const beforeMetaPayload = cronosMergeMetaPayload(db);
 
-  const primaryEntries = (db.entries || []).filter(e=>String(e.contactId || "") === primaryId);
-  const secondaryEntries = (db.entries || []).filter(e=>String(e.contactId || "") === secondaryId);
+  try{
+    ["name","phone","cpf","birthDate","firstSeenAt","lastSeenAt","email","city","address","notes"].forEach(k=>{
+      primary[k] = cronosFirstFilled(primary[k], secondary[k]);
+    });
+    primary.updatedAt = now;
+    primary.lastUpdateAt = now;
 
-  secondaryEntries.forEach(src=>{
-    const sameMonth = primaryEntries.find(e=>String(e.monthKey || "") === String(src.monthKey || ""));
-    if(sameMonth){
-      cronosMergeEntryIntoTarget(db, sameMonth, src, primaryId, actor);
-    }else{
-      src.contactId = primaryId;
-      src.updatedAt = now;
-      src.lastUpdateAt = now;
-      src.updatedBy = cronosActorLabel(actor);
-      try{ syncFichaFinancialLinks(src); }catch(_){ }
-      primaryEntries.push(src);
+    const primaryEntries = (db.entries || []).filter(e=>String(e.contactId || "") === primaryId);
+    const secondaryEntries = (db.entries || []).filter(e=>String(e.contactId || "") === secondaryId);
+    const leadRemap = new Map();
+
+    secondaryEntries.forEach(src=>{
+      const sameMonth = primaryEntries.find(e=>String(e.monthKey || "") === String(src.monthKey || ""));
+      if(sameMonth){
+        cronosMergeEntryIntoTarget(db, sameMonth, src, primaryId, actor, leadRemap);
+      }else{
+        src.contactId = primaryId;
+        src.updatedAt = now;
+        src.lastUpdateAt = now;
+        src.updatedBy = cronosActorLabel(actor);
+        try{ syncFichaFinancialLinks(src); }catch(_){ }
+        primaryEntries.push(src);
+      }
+    });
+
+    (db.entries || []).forEach(e=>cronosRebindMergedReference(e, leadRemap, secondaryId, primaryId));
+    (db.payments || []).forEach(p=>cronosRebindMergedReference(p, leadRemap, secondaryId, primaryId));
+    (db.tasks || []).forEach(t=>cronosRebindMergedReference(t, leadRemap, secondaryId, primaryId));
+    (db.activityLog || []).forEach(item=>cronosRebindMergedReference(item, leadRemap, secondaryId, primaryId));
+    ["flowRuns", "assistedFlowRuns"].forEach(key=>{
+      (Array.isArray(db[key]) ? db[key] : []).forEach(run=>
+        cronosRebindMergedReference(run, leadRemap, secondaryId, primaryId)
+      );
+    });
+    db.contacts = (db.contacts || []).filter(c=>String(c.id || "") !== secondaryId);
+
+    cronosAuditAction(db, {
+      action:"contacts_merged",
+      entityType:"contact",
+      entityId:primaryId,
+      contactId:primaryId,
+      details:`Cadastros mesclados: ${primary.name || "Sem nome"}`,
+      before,
+      after:{ primary: cronosCloneSafe(primary), removedContactId: secondaryId }
+    });
+
+    const fingerprint = value=>{
+      try{ return JSON.stringify(value); }catch(_){ return String(value); }
+    };
+    const diffPart = (beforeList, afterList)=>{
+      const beforeMap = new Map((beforeList || []).map(item=>[String(item?.id || ""), item]).filter(([id])=>id));
+      const afterMap = new Map((afterList || []).map(item=>[String(item?.id || ""), item]).filter(([id])=>id));
+      const upserts = [];
+      const deletes = [];
+      afterMap.forEach((item, id)=>{
+        if(!beforeMap.has(id) || fingerprint(beforeMap.get(id)) !== fingerprint(item)) upserts.push(cronosCloneSafe(item));
+      });
+      beforeMap.forEach((_, id)=>{ if(!afterMap.has(id)) deletes.push(id); });
+      return { upserts, deletes };
+    };
+
+    const afterEntries = (db.entries || []).filter(e=>affectedEntryIds.has(String(e?.id || "")));
+    const affectedPaymentIds = new Set(beforePayments.map(p=>String(p?.id || "")).filter(Boolean));
+    const afterPayments = (db.payments || []).filter(p=>affectedPaymentIds.has(String(p?.id || "")));
+    const affectedTaskIds = new Set(beforeTasks.map(t=>String(t?.id || "")).filter(Boolean));
+    const afterTasks = (db.tasks || []).filter(t=>affectedTaskIds.has(String(t?.id || "")));
+    const affectedActivityIds = new Set(beforeActivity.map(item=>String(item?.id || "")).filter(Boolean));
+    const afterActivity = (db.activityLog || []).filter(item=>{
+      const id = String(item?.id || "");
+      return id && (affectedActivityIds.has(id) || !beforeActivityIds.has(id));
+    });
+    const afterMetaPayload = cronosMergeMetaPayload(db);
+
+    const batch = {
+      contacts:{ upserts:[cronosCloneSafe(primary)], deletes:[secondaryId] },
+      entries:diffPart(beforeEntries, afterEntries),
+      payments:diffPart(beforePayments, afterPayments),
+      tasks:diffPart(beforeTasks, afterTasks),
+      activityLog:diffPart(beforeActivity, afterActivity)
+    };
+    if(fingerprint(beforeMetaPayload) !== fingerprint(afterMetaPayload)){
+      batch.meta = { payload:afterMetaPayload };
     }
-  });
 
-  (db.entries || []).forEach(e=>{ if(String(e.contactId || "") === secondaryId) e.contactId = primaryId; });
-  (db.payments || []).forEach(p=>{ if(String(p.contactId || "") === secondaryId) p.contactId = primaryId; });
-  (db.tasks || []).forEach(t=>{ if(String(t.contactId || "") === secondaryId) t.contactId = primaryId; });
-  db.contacts = (db.contacts || []).filter(c=>String(c.id || "") !== secondaryId);
+    const mergeResult = await cronosPersistMergeBatch(db, batch, {
+      silent:true
+    });
 
-  cronosAuditAction(db, {
-    action:"contacts_merged",
-    entityType:"contact",
-    entityId:primaryId,
-    contactId:primaryId,
-    details:`Cadastros mesclados: ${primary.name || "Sem nome"}`,
-    before,
-    after:{ primary: cronosCloneSafe(primary), removedContactId: secondaryId }
-  });
+    if(!mergeResult?.ok){
+      DB = normalizeDBShape(rollbackDB);
+      window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+      window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+      safeSetLocalDB(DB);
+      try{ renderAll(); }catch(_){ }
+      toast("Mesclagem não confirmada", "Nada foi alterado. Recarregue e tente novamente.");
+      return null;
+    }
 
-  saveDB(db, { immediate:true });
-  try{ closeModal({ force:true }); }catch(_){ }
-  try{ renderAll(); }catch(_){ }
-  toast("Cadastros mesclados ✅", `${primary.name || "Paciente"} manteve ficha, recebimentos e histórico.`);
-  const latest = (db.entries || [])
-    .filter(e=>String(e.contactId || "") === primaryId)
-    .sort((x,y)=>String(y.lastUpdateAt || y.monthKey || "").localeCompare(String(x.lastUpdateAt || x.monthKey || "")))[0];
-  if(latest?.id){ setTimeout(()=>{ try{ openLeadEntry(latest.id); }catch(_){ } }, 150); }
-  return { primaryId, removedContactId: secondaryId };
+    DB = normalizeDBShape(mergeResult.state || db);
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    safeSetLocalDB(DB);
+    try{ captureTaskSnapshots(DB); }catch(_){ }
+    try{ closeModal({ force:true }); }catch(_){ }
+    try{ renderAll(); }catch(_){ }
+    toast("Cadastros mesclados ✅", `${primary.name || "Paciente"} manteve ficha, recebimentos e histórico.`);
+    const latest = (DB.entries || [])
+      .filter(e=>String(e.contactId || "") === primaryId)
+      .sort((x,y)=>String(y.lastUpdateAt || y.monthKey || "").localeCompare(String(x.lastUpdateAt || x.monthKey || "")))[0];
+    if(latest?.id){ setTimeout(()=>{ try{ openLeadEntry(latest.id); }catch(_){ } }, 150); }
+    return { primaryId, removedContactId: secondaryId };
+  }catch(error){
+    console.error("Cronos: falha na mesclagem transacional de cadastros.", error);
+    DB = normalizeDBShape(rollbackDB);
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    safeSetLocalDB(DB);
+    try{ renderAll(); }catch(_){ }
+    toast("Falha ao mesclar", "A operação foi cancelada sem alterar os cadastros.");
+    return null;
+  }finally{
+    window.__CRONOS_MERGE_IN_PROGRESS__ = false;
+  }
 }
 
-window.cronosMesclarCadastrosDuplicados = function(currentContactId, duplicateContactId){
-  return cronosMergeDuplicateContactsInternal(currentContactId, duplicateContactId);
+window.cronosMesclarCadastrosDuplicados = async function(currentContactId, duplicateContactId){
+  return await cronosMergeDuplicateContactsInternal(currentContactId, duplicateContactId);
 };
 
 function cronosNormalizePersonName(v){
@@ -13912,7 +14133,7 @@ function openNewUser(){
             createdAt: new Date().toISOString()
           });
 
-          saveDB(db, { immediate:true });
+          cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
           closeModal();
 
           if(pendingApproval){
@@ -13960,7 +14181,7 @@ function openUserEdit(userId){
             u.name = name;
             u.role = role;
             await updateClinicMemberRecord(u, { name, role });
-            saveDB(db, { immediate:true });
+            cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
             closeModal();
             toast("Usuário atualizado ✅");
             renderAll();
@@ -13986,7 +14207,7 @@ function openUserEdit(userId){
         if(pass){
           u.passHash = await hashPass(pass);
         }
-        saveDB(db, { immediate:true });
+        cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
         closeModal();
         toast("Usuário atualizado ✅");
         renderAll();
@@ -14009,7 +14230,7 @@ async function deleteUser(userId){
       await deactivateClinicMemberRecord(u);
     }
     db.users = db.users.filter(x=>x.id!==userId);
-    saveDB(db, { immediate:true });
+    await cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
     toast("Usuário excluído");
     renderAll();
   }catch(err){
@@ -15633,7 +15854,7 @@ function bindActions(){
     if(!clinicDisplayName) return toast("Nome da clínica", "Digite um nome para a clínica antes de salvar.");
     if(master){
       master.name = clinicDisplayName;
-      saveDB(db);
+      cronosPersistMetaPatch(db, { masters:db.masters }, { silent:true });
       try{
         const actorNow = currentActor();
         if(actorNow) showApp(actorNow);
@@ -15653,7 +15874,7 @@ function bindActions(){
     if(!db.settings) db.settings = {};
     db.settings.waTemplate = (val("waTemplate")||"").trim();
 
-    saveDB(db);
+    cronosPersistSettingsPatch(db, { waTemplate:db.settings.waTemplate }, { silent:true });
     try{
       const actorNow = currentActor();
       if(actorNow) showApp(actorNow);
@@ -15678,7 +15899,7 @@ function bindActions(){
     const db = loadDB();
     if(!db.settings) db.settings = {};
     db.settings.waChargeTemplate = (val("waChargeTemplate")||"").trim();
-    saveDB(db);
+    cronosPersistSettingsPatch(db, { waChargeTemplate:db.settings.waChargeTemplate }, { silent:true });
     if(hintCharge){ hintCharge.textContent = "Salvo."; setTimeout(()=>hintCharge.textContent="", 2000); }
     toast("Cobrança salva.");
   };
@@ -15686,7 +15907,7 @@ function bindActions(){
     const db = loadDB();
     if(!db.settings) db.settings = {};
     db.settings.waChargeTemplate = "";
-    saveDB(db);
+    cronosPersistSettingsPatch(db, { waChargeTemplate:"" }, { silent:true });
     if(taCharge) taCharge.value = "";
     if(hintCharge){ hintCharge.textContent = "Padrão restaurado."; setTimeout(()=>hintCharge.textContent="", 2000); }
     toast("Padrão restaurado.");
@@ -18236,7 +18457,7 @@ document.addEventListener("DOMContentLoaded", () => {
           createdAt: item.createdAt || new Date().toISOString(),
           updatedAt: item.updatedAt || new Date().toISOString()
         }));
-        saveDB(db, { immediate:true });
+        cronosPersistSettingsPatch(db, { procedureCatalog:db.settings.procedureCatalog }, { silent:true });
       }
     }
     function getEntryById(entryId){
@@ -18509,7 +18730,96 @@ document.addEventListener("DOMContentLoaded", () => {
       return payments;
     }
 
-    function createFichaReceiving(entryId, itemIds, options={}){
+    function createTargetedTasksForFichaReceiving(db, actor, entry, plan){
+      const masterId = String(actor?.masterId || '');
+      if(!masterId || !entry || !plan) return [];
+      db.tasks = Array.isArray(db.tasks) ? db.tasks : [];
+      const contact = (db.contacts || []).find(c=>String(c?.id || '') === String(entry.contactId || '')) || { name:'(sem nome)', phone:'' };
+      const created = [];
+      const today = todayISO();
+
+      (Array.isArray(plan.payments) ? plan.payments : []).forEach(payment=>{
+        const due = String(payment?.dueDate || '').slice(0,10);
+        if(!due || due >= today || financialPaymentPaid(payment)) return;
+
+        const key = `FININST:${entry.id}:${plan.id}:${payment.id}`;
+        const taskId = stableInstallmentTaskId(key);
+        const alreadyExists = db.tasks.some(task=>
+          String(task?.id || '') === String(taskId) || String(task?.key || '') === String(key)
+        );
+        if(alreadyExists) return;
+        if(typeof cronosIsTaskTombstoned === 'function' && cronosIsTaskTombstoned(taskId, key)) return;
+
+        const task = {
+          id: taskId,
+          masterId,
+          key,
+          type:'installment',
+          entryId:entry.id,
+          contactId:entry.contactId || '',
+          financialPlanId:plan.id,
+          financialPaymentId:payment.id,
+          title:`Inadimplente: ${contact.name || '(sem nome)'} • ${plan.title || 'Orçamento'} • Parcela ${payment.number || ''}/${payment.total || ''}`,
+          action:'WhatsApp',
+          notes:`Venc: ${fmtBR(due)} • ${moneyBR(payment.amount)} • ${payment.payMethod || '—'}`,
+          done:false,
+          createdAt:new Date().toISOString(),
+          dueDate:due,
+          phone:contact.phone || '',
+          wa:true,
+          autoGenerated:true
+        };
+        db.tasks.push(task);
+        created.push(task);
+      });
+
+      return created;
+    }
+
+    async function persistFichaReceivingTargeted(db, entry, createdPaymentRecords=[], createdTasks=[]){
+      if(isSupportMode()){
+        toast('Modo suporte', 'Alterações financeiras não são salvas no modo suporte.');
+        return false;
+      }
+
+      if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.commitTargetedBatch === 'function'){
+        const batch = {
+          entries:{ upserts:[cloneFichaLeadSnapshot(entry)], deletes:[] }
+        };
+        if(createdPaymentRecords.length){
+          batch.payments = { upserts:createdPaymentRecords, deletes:[] };
+        }
+        if(createdTasks.length){
+          batch.tasks = { upserts:createdTasks, deletes:[] };
+        }
+
+        try{
+          const ok = await window.CronosRepository.commitTargetedBatch(batch, {
+            keepPendingOnFailure:false
+          });
+          if(!ok) return false;
+          DB = normalizeDBShape(db || DB || freshDB());
+          window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+          window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+          try{ safeSetLocalDB(DB); }catch(cacheErr){ console.warn('Recebimento salvo; cache local não atualizado:', cacheErr); }
+          try{ captureV2Snapshots(DB); }catch(snapshotErr){ console.warn('Recebimento salvo; snapshot local não atualizado:', snapshotErr); }
+          CLOUD_DB_READY = true;
+          return true;
+        }catch(error){
+          console.error('Falha ao salvar recebimento direcionado na persistência V4:', error);
+          return false;
+        }
+      }
+
+      return await commitFinancialMutationCloud(db, entry);
+    }
+
+    async function createFichaReceiving(entryId, itemIds, options={}){
+      if(__cronosFinancialMutationBusy){
+        toast('Aguarde', financialMutationBusyText());
+        return null;
+      }
+
       const actor = currentActor();
       const db = loadDB();
       const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
@@ -18534,6 +18844,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const method = String(options.method || '').trim();
       const obs = String(options.obs || '').trim();
       const recordPaidNow = options.recordPaidNow === true || options.recordPaidNow === 'true' || options.recordPaidNow === 'on';
+      const before = cloneCronosCriticalSnapshot(db);
+      const nowISO = new Date().toISOString();
 
       const evalLabel = items[0]?.avaliacaoLabel || 'Avaliação';
       const plan = {
@@ -18542,7 +18854,9 @@ document.addEventListener("DOMContentLoaded", () => {
         dentist: '',
         amount: total,
         status: recordPaidNow ? 'Aprovado' : 'Aguardando',
-        createdAt: new Date().toISOString(),
+        createdAt: nowISO,
+        updatedAt: nowISO,
+        lastUpdateAt: nowISO,
         createdBy: actor?.name || '',
         source: 'ficha',
         receivedNow: recordPaidNow,
@@ -18557,32 +18871,64 @@ document.addEventListener("DOMContentLoaded", () => {
         item.recebimentoId = plan.id;
         item.financeStatus = recordPaidNow ? 'pago' : 'em_pagamento';
         item.pago = recordPaidNow;
+        item.updatedAt = nowISO;
       });
-      try{ syncFichaFinancialLinks(entry); }catch(_){}
+      try{ markFinancialMutation(entry, plan, null, nowISO); }catch(_){ }
+      try{ syncFichaFinancialLinks(entry); }catch(_){ }
 
+      const createdPaymentRecords = [];
       if(recordPaidNow){
         db.payments = db.payments || [];
         plan.payments.filter(p=>String(p.status||'').toUpperCase()==='PAGA').forEach(p=>{
-          db.payments.push({
+          try{ markFinancialMutation(entry, plan, p, nowISO); }catch(_){ }
+          const record = {
             id: uid('p'),
             masterId: actor.masterId,
             entryId: entry.id,
             contactId: entry.contactId || '',
             financialPlanId: plan.id,
             financialPaymentId: p.id,
-            at: new Date().toISOString(),
+            at: nowISO,
+            createdAt: nowISO,
+            updatedAt: nowISO,
+            lastUpdateAt: nowISO,
             date: p.cashDate || date,
+            paidAt: p.cashDate || date,
+            cashDate: p.cashDate || date,
+            status:'PAGA',
             value: parseMoney(p.amount),
             method: p.payMethod || method || '',
             desc: `Recebimento do prontuário • ${evalLabel}`,
             source: 'financialPlan',
             receivedNow: true
-          });
+          };
+          db.payments.push(record);
+          createdPaymentRecords.push(record);
         });
       }
 
-      try{ syncInstallmentTasks(db, actor); }catch(_){}
-      saveDB(db, { immediate:true });
+      // Não reconstrói todas as tarefas automáticas da clínica. Apenas cria, se
+      // necessário, a tarefa correspondente a uma nova parcela já vencida.
+      const createdTasks = createTargetedTasksForFichaReceiving(db, actor, entry, plan);
+
+      const finishMutation = startFinancialMutationWait('um recebimento');
+      toast('Salvando recebimento...', 'Aguarde a confirmação antes de atualizar a página.');
+      let cloudOk = false;
+      try{
+        cloudOk = await persistFichaReceivingTargeted(db, entry, createdPaymentRecords, createdTasks);
+      }catch(error){
+        console.error('Falha ao criar recebimento pelo prontuário:', error);
+        cloudOk = false;
+      }finally{
+        finishMutation();
+      }
+
+      if(!cloudOk){
+        restoreCronosCriticalSnapshot(before);
+        toast('Recebimento não criado', 'Não foi possível salvar. O prontuário e o financeiro voltaram ao estado anterior.');
+        return null;
+      }
+
       return plan;
     }
 
@@ -18660,7 +19006,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const actor = currentActor();
         const branding = getClinicBranding(db, actor);
         branding.logoDataUri = dataUri || '';
-        saveDB(db);
+        cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true });
         injectBrandingSettingsCard();
       },
       removeLogo(){
@@ -18668,7 +19014,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const actor = currentActor();
         const branding = getClinicBranding(db, actor);
         branding.logoDataUri = '';
-        saveDB(db);
+        cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true });
         injectBrandingSettingsCard();
       },
       save(){
@@ -18676,7 +19022,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const actor = currentActor();
         const branding = getClinicBranding(db, actor);
         branding.clinicName = String(val('brandClinicName') || '').trim();
-        saveDB(db);
+        cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true });
         injectBrandingSettingsCard();
         toast('Identidade salva ✅', branding.clinicName || getClinicDisplayName(db, actor));
       }
@@ -19078,7 +19424,7 @@ window.CRONOS_PROC_UI = {
         const idx = catalog.findIndex(x=>String(x.id)===String(payload.id));
         if(idx >= 0) catalog[idx] = payload; else catalog.push(payload);
         db.settings.procedureCatalog = catalog;
-        const cloudSave = saveDB(db, { immediate:true });
+        const cloudSave = cronosPersistSettingsPatch(db, { procedureCatalog:catalog }, { silent:true });
         window.__procCatalogState = { editingId:null, search: state.search || '' };
         renderProcedureCatalogApp();
         injectProcedureSettingsCard();
@@ -19102,7 +19448,7 @@ window.CRONOS_PROC_UI = {
           raw[idx] = { ...raw[idx], ativo:false, deletedAt:'', updatedAt: now };
         }
         db.settings.procedureCatalog = raw;
-        const cloudSave = saveDB(db, { immediate:true });
+        const cloudSave = cronosPersistSettingsPatch(db, { procedureCatalog:raw }, { silent:true });
         if(window.__procCatalogState?.editingId === id) window.__procCatalogState.editingId = null;
         renderProcedureCatalogApp();
         injectProcedureSettingsCard();
@@ -19123,7 +19469,7 @@ window.CRONOS_PROC_UI = {
       if(!entry) return null;
       const ficha = ensureFicha(entry);
       const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
-      saveDB(db);
+      // Abrir a ficha é leitura/hidratação. Nenhum commit deve acontecer aqui.
       window.__fichaFeatureState = {
         entryId: String(entryId),
         procSearch: '',
@@ -20033,7 +20379,7 @@ window.CRONOS_PROC_UI = {
         item.valorFechado = parseMoneyInput(raw);
         if(node) delete node.dataset.cronosPendingValue;
         markFichaMutation(entry, item);
-        saveDB(db, { immediate:true });
+        saveFichaMutation(db, entry, { silent:true });
         refreshFichaLiveFinancialSummary(entry, itemId);
         __scheduleFichaLeadsFinancialRefresh();
       },
@@ -20048,7 +20394,7 @@ window.CRONOS_PROC_UI = {
           item.valorFechado = parseMoneyInput(node.value);
           delete node.dataset.cronosPendingValue;
           markFichaMutation(entry, item);
-          saveDB(db, { immediate:true });
+          saveFichaMutation(db, entry, { silent:true });
           __scheduleFichaLeadsFinancialRefresh();
         }
         if(node) node.value = String(Number(item.valorFechado || 0)).replace('.', ',');
@@ -20063,7 +20409,7 @@ window.CRONOS_PROC_UI = {
         if(!item) return;
         item.face = String(v || '');
         markFichaMutation(entry, item);
-        saveDB(db, { immediate:true });
+        saveFichaMutation(db, entry, { silent:true });
       },
       async toggleDone(itemId){
         const s = getFichaState(); if(!s) return;
@@ -20167,9 +20513,9 @@ window.CRONOS_PROC_UI = {
         const s = getFichaState(); if(!s) return;
         this.openReceivingForItems(s.selectedItemIds || []);
       },
-      confirmReceiving(){
+      async confirmReceiving(){
         const draft = window.__fichaReceivingDraft || {};
-        const plan = createFichaReceiving(draft.entryId, draft.itemIds, {
+        const plan = await createFichaReceiving(draft.entryId, draft.itemIds, {
           type: val('fr_type') || 'parcelado',
           method: val('fr_method') || '',
           date: val('fr_date') || todayISO(),
@@ -20390,7 +20736,7 @@ window.CRONOS_PROC_UI = {
         if(!odonto[s.selectedTooth].status && !odonto[s.selectedTooth].note && !odonto[s.selectedTooth].absent && !odonto[s.selectedTooth].condition){
           delete odonto[s.selectedTooth];
         }
-        saveDB(db);
+        saveFichaMutation(db, entry, { silent:true });
         renderFichaApp();
         toast('Odontograma salvo.');
       },

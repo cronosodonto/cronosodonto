@@ -1398,15 +1398,41 @@
       .replaceAll("{clinica}", String(getClinicName(db, actor()) || ""));
   }
 
-  function editBirthdayTemplate(){
+  async function editBirthdayTemplate(){
     const db = load();
     if(!db) return;
     db.settings = db.settings || {};
     const current = getBirthdayTemplate(db);
+    const previous = db.settings.birthdayTemplate;
     const next = prompt("Mensagem padrão para aniversariantes:", current);
     if(next == null) return;
-    db.settings.birthdayTemplate = String(next || "").trim();
-    save(db, { immediate:true });
+
+    const value = String(next || "").trim();
+    db.settings.birthdayTemplate = value;
+
+    let ok = false;
+    try{
+      if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.updateSettings === "function"){
+        ok = await window.CronosRepository.updateSettings(
+          { birthdayTemplate:value },
+          { keepPendingOnFailure:false }
+        );
+      }else{
+        ok = await Promise.resolve(save(db, { immediate:true }));
+      }
+    }catch(error){
+      console.error("Hoje no Cronos: falha ao salvar mensagem de aniversário.", error);
+      ok = false;
+    }
+
+    if(!ok){
+      if(previous === undefined) delete db.settings.birthdayTemplate;
+      else db.settings.birthdayTemplate = previous;
+      toast("Não foi possível salvar", "A mensagem anterior foi mantida.");
+      render();
+      return;
+    }
+
     toast("Mensagem de aniversário salva ✅");
     render();
   }

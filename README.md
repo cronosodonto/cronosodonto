@@ -41,3 +41,55 @@ Filtros são operações somente de leitura, sem autosave. Busca usa debounce e 
 - Criar, editar, concluir, adiar e excluir tarefas usa pacotes V4 apenas da tarefa alterada.
 - Renderização de tarefas não dispara salvamento.
 - Fechamento do modal remove foco antes de `aria-hidden`.
+
+
+## v430 — configurações transacionais
+
+- edição da mensagem de aniversariantes salva apenas `settings` via RPC V4;
+- remove filas locais legadas V2 quando a persistência V4 está ativa;
+- impede recriação de patches gigantes no `pagehide/beforeunload`;
+- mantém tarefas e atualização manual transacionais.
+
+
+## v431 — auditoria estrutural, etapa 1
+
+- adiciona persistência direcionada para metadados e configurações;
+- remove commits ao apenas abrir preferências e ficha;
+- converte usuários, identidade, mensagens, branding, catálogo, fluxos configuráveis e histórico do simulador para patches específicos;
+- mantém Leads, Financeiro, Prontuário clínico e ativação de fluxos para etapas separadas, com testes próprios.
+
+> **Publicação:** a v431 é a etapa 1 da auditoria. Teste localmente os módulos de Configurações, Usuários, Fluxos (definições) e Simulador antes de substituir a versão de produção. Leads, Financeiro e Prontuário serão convertidos em etapas próprias.
+
+
+## v432 — mesclagem transacional de duplicados
+
+- Mesclar cadastros não usa mais o salvamento genérico da clínica.
+- Contato principal, contato removido, leads, tarefas, pagamentos e auditoria são confirmados em uma única transação V4.
+- Se a operação falhar ou houver conflito de versão, o estado local é revertido e nenhum cadastro é parcialmente mesclado.
+
+## v433 — mesclagem atômica com cascata validada
+
+- a mesclagem de duplicados usa um comando V4 dedicado;
+- Leads unidos no mesmo mês são removidos somente dentro da transação validada;
+- tarefas, pagamentos, atividades e fluxos são transferidos para o cadastro preservado;
+- uma falha cancela toda a operação, sem deixar cadastros parcialmente mesclados.
+
+## v434 — prontuário e odontograma transacionais
+
+- marcação de dentes ausentes, cores e observações salva somente o Lead aberto;
+- avaliações e itens do plano de tratamento não chamam mais o salvamento genérico da clínica;
+- edições de valor e face do procedimento usam pacote V4 direcionado;
+- mantém a barreira de atualização em massa para proteger os demais registros.
+
+> **Hotfix de produção:** versões anteriores podem exibir “Atualização em massa bloqueada” ao editar a Ficha em clínicas grandes. Publique a v434 após o teste local do odontograma.
+
+
+
+## v435 — recebimento do odontograma transacional
+
+- gerar recebimento pela Ficha salva somente o Lead aberto e os novos lançamentos financeiros;
+- deixa de chamar `saveDB` e de comparar os milhares de pacientes da clínica;
+- tarefas automáticas não são mais reconstruídas em massa: somente uma nova parcela já vencida pode gerar sua tarefa direcionada;
+- falha de banco restaura Ficha e Financeiro ao estado anterior, sem marcar procedimento como pago apenas na tela.
+
+> **Hotfix de produção:** a versão online anterior pode exibir “Atualização em massa bloqueada” ao gerar recebimento pelo odontograma. Teste localmente e publique a v435 após confirmar persistência com F5.

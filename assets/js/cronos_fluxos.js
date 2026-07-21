@@ -20,6 +20,22 @@
   function load(){ try{ return window.loadDB(); }catch(_){ return null; } }
   function actor(){ try{ return window.currentActor(); }catch(_){ return null; } }
   function save(db, opts={ immediate:true }){ try{ return window.saveDB(db, opts); }catch(e){ console.warn("Fluxos: falha ao salvar", e); } }
+  function saveFlowSettings(db){
+    try{
+      if(typeof window.cronosPersistSettingsPatch === "function"){
+        return window.cronosPersistSettingsPatch(db, { assistedFlows:db?.settings?.assistedFlows || [] }, { silent:true });
+      }
+      return save(db, { immediate:true });
+    }catch(e){ console.warn("Fluxos: falha ao salvar configurações", e); }
+  }
+  function saveBirthdaySetting(db){
+    try{
+      if(typeof window.cronosPersistSettingsPatch === "function"){
+        return window.cronosPersistSettingsPatch(db, { birthdayTemplate:String(db?.settings?.birthdayTemplate || "") }, { silent:true });
+      }
+      return save(db, { immediate:true });
+    }catch(e){ console.warn("Fluxos: falha ao salvar aniversário", e); }
+  }
   function toast(title, msg=""){
     try{ if(typeof window.toast === "function") return window.toast(title, msg); }catch(_){}
     console.log("[Fluxos]", title, msg);
@@ -337,7 +353,7 @@
         const db = load(); if(!db) return;
         db.settings = db.settings || {};
         db.settings.birthdayTemplate = String(ta.value || '').trim();
-        save(db, { immediate:true });
+        saveBirthdaySetting(db);
         if(hint){ hint.textContent = 'Salvo.'; setTimeout(()=>hint.textContent='', 2000); }
         toast('Mensagem de aniversário salva ✅');
         try{ window.CRONOS_TODAY?.render?.(); }catch(_){ }
@@ -350,7 +366,7 @@
         db.settings = db.settings || {};
         db.settings.birthdayTemplate = '';
         ta.value = getBirthdayTemplateDefault();
-        save(db, { immediate:true });
+        saveBirthdaySetting(db);
         if(hint){ hint.textContent = 'Padrão restaurado.'; setTimeout(()=>hint.textContent='', 2000); }
         toast('Padrão restaurado');
         try{ window.CRONOS_TODAY?.render?.(); }catch(_){ }
@@ -637,7 +653,7 @@
     flow.updatedAt = now;
     flow.masterId = flow.masterId || a.masterId;
 
-    save(db, { immediate:true });
+    saveFlowSettings(db);
     toast("Fluxo salvo ✅", name);
     closeModal();
     renderSettingsCard();
@@ -651,7 +667,7 @@
     if(!f) return;
     f.active = f.active === false ? true : false;
     f.updatedAt = nowISO();
-    save(db,{ immediate:true });
+    saveFlowSettings(db);
     renderSettingsCard();
     setTimeout(()=>openSettingsCardById(CARD_ID), 0);
   }
@@ -662,7 +678,7 @@
     if(!f) return;
     if(!confirm(`Excluir o fluxo "${f.name || "sem nome"}"?\n\nAs etapas já ativadas em pacientes continuam no histórico.`)) return;
     db.settings.assistedFlows = flows(db).filter(x=>String(x.id)!==String(flowId));
-    save(db,{ immediate:true });
+    saveFlowSettings(db);
     renderSettingsCard();
     setTimeout(()=>openSettingsCardById(CARD_ID), 0);
     toast("Fluxo excluído");

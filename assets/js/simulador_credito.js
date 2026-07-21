@@ -1140,7 +1140,8 @@ Observação: documento interno de apoio à decisão, baseado nos dados registra
     db.creditSimulations=db.creditSimulations.slice(0,500);
 
     try{
-      if(typeof window.saveDB==='function')window.saveDB(db,{immediate:true});
+      if(typeof window.cronosPersistMetaPatch==='function')window.cronosPersistMetaPatch(db,{creditSimulations:db.creditSimulations},{silent:true});
+      else if(typeof window.saveDB==='function')window.saveDB(db,{immediate:true});
       else if(typeof window.save==='function')window.save(db,{immediate:true});
     }catch(_){}
 
@@ -1193,7 +1194,8 @@ Observação: documento interno de apoio à decisão, baseado nos dados registra
       .filter(x=>String(x.id)!==String(id));
 
     try{
-      if(typeof window.saveDB==='function')window.saveDB(db,{immediate:true});
+      if(typeof window.cronosPersistMetaPatch==='function')window.cronosPersistMetaPatch(db,{creditSimulations:db.creditSimulations},{silent:true});
+      else if(typeof window.saveDB==='function')window.saveDB(db,{immediate:true});
       else if(typeof window.save==='function')window.save(db,{immediate:true});
     }catch(_){}
 
