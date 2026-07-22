@@ -1,4 +1,4 @@
-// Cronos Repository v4.6.0 — comandos transacionais direcionados, cascata e mesclagem atômica
+// Cronos Repository v4.6.3 — persistência direcionada e proteção pós-mesclagem
 /*
  * CronosRepository V4 — persistência central, transacional e concorrente.
  *
@@ -17,6 +17,7 @@
   const STORAGE_PREFIX = "cronos_v4_pending";
   const CONFLICT_PREFIX = "cronos_v4_conflict";
   const RPC_TIMEOUT_MS = 20000;
+  const MERGE_TIMEOUT_MS = 60000;
   const LOAD_TIMEOUT_MS = 30000;
   // A interface salva alterações pontuais. Operações em massa pertencem às Edge
   // Functions/RPCs administrativas em lotes, nunca ao autosave do navegador.
@@ -1017,12 +1018,17 @@
         p_clinic_id:state.clinicId,
         p_operation_id:operationId,
         p_changes:changes
-      }, { timeoutMs:RPC_TIMEOUT_MS });
+      }, { timeoutMs:MERGE_TIMEOUT_MS });
 
-      const refreshed = await loadOperationalState({
-        clinicId:state.clinicId,
-        restorePending:false
-      });
+      // A RPC já executa exatamente o pacote validado e devolve as versões
+      // confirmadas. Recarregar a clínica inteira aqui duplicava o trabalho,
+      // pressionava o Supabase e podia transformar uma mesclagem concluída em
+      // falso erro apenas porque o snapshot posterior demorou demais.
+      state.baseline = applyChanges(state.baseline, changes);
+      state.versions = result?.versions
+        ? mergeServerVersions(state.versions, result.versions)
+        : predictVersions(state.versions, changes);
+      rebuildWorking();
 
       state.lastError = null;
       state.blocked = false;
@@ -1038,11 +1044,13 @@
       return {
         ...(result && typeof result === "object" ? result : {}),
         ok:result?.ok !== false,
-        state:clone(refreshed?.state || state.working),
-        versions:clone(refreshed?.versions || state.workingVersions)
+        operationId,
+        state:clone(state.working),
+        versions:clone(state.workingVersions)
       };
     }catch(error){
       const conflict = isConflictError(error);
+      const confirmationTimeout = String(error?.code || "").toUpperCase() === "RPC_TIMEOUT";
       const missingRpc = /cronos_v4_merge_contacts|schema cache|function/i.test(String(error?.message || ""))
         && /not found|could not find|schema cache/i.test(String(error?.message || ""));
       const wrapped = new CronosPersistenceError(
@@ -1050,9 +1058,15 @@
           ? "Um dos cadastros foi alterado em outro computador. Recarregue antes de mesclar."
           : missingRpc
             ? "A rotina SQL de mesclagem ainda não foi instalada no Supabase."
-            : String(error?.message || "Não foi possível mesclar os cadastros."),
+            : confirmationTimeout
+              ? "A confirmação da mesclagem demorou além do esperado. Recarregue a página para conferir o resultado antes de tentar novamente."
+              : String(error?.message || "Não foi possível mesclar os cadastros."),
         {
-          code:conflict ? "VERSION_CONFLICT" : (missingRpc ? "MERGE_RPC_NOT_INSTALLED" : (error?.code || "MERGE_CASCADE_ERROR")),
+          code:conflict
+            ? "VERSION_CONFLICT"
+            : (missingRpc
+              ? "MERGE_RPC_NOT_INSTALLED"
+              : (confirmationTimeout ? "MERGE_CONFIRMATION_TIMEOUT" : (error?.code || "MERGE_CASCADE_ERROR"))),
           cause:error,
           operationId,
           details:error?.details || null,
@@ -1066,7 +1080,7 @@
         primaryContactId,
         secondaryContactId
       });
-      updateIndicator("error", conflict ? "Conflito: recarregue a página" : "Falha ao mesclar");
+      updateIndicator("error", conflict ? "Conflito: recarregue a página" : (confirmationTimeout ? "Confirmação pendente: recarregue" : "Falha ao mesclar"));
       throw wrapped;
     }
   }

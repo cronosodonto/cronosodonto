@@ -1,4 +1,4 @@
-// Cronos Odonto v423 — importação em lotes e proteção contra falso estado zerado
+// Cronos Odonto v440 — correções de recebimentos, login comercial e senhas hierárquicas
 function debounce(fn, delay){
   let t;
   return function(...args){
@@ -2230,34 +2230,125 @@ async function verifyFinancialPaymentCloudState(entryId, planId, paymentId, paid
   if(!payment) return false;
   return paidExpected ? financialPaymentPaid(payment) : !financialPaymentPaid(payment);
 }
-async function commitPaymentWithAutoConfirmation(db, entry, planId, paymentId, paidExpected=true){
-  // A RPC é transacional: quando retorna sucesso, a baixa já foi confirmada no banco.
-  // Sem espera artificial ou polling de minutos.
-  return await commitFinancialMutationCloud(db, entry);
+function cloneFinancialScopedValue(value){
+  try{ return JSON.parse(JSON.stringify(value)); }
+  catch(_){ return value; }
 }
 
-async function commitFinancialMutationCloud(db, entry){
+function financialScopedMap(list, predicate){
+  const map = new Map();
+  (Array.isArray(list) ? list : []).forEach(item=>{
+    if(!item || (typeof predicate === "function" && !predicate(item))) return;
+    const id = String(item.id || "").trim();
+    if(id) map.set(id, item);
+  });
+  return map;
+}
+
+function financialScopedPart(beforeList, afterList, predicate, options={}){
+  const before = financialScopedMap(beforeList, predicate);
+  const after = financialScopedMap(afterList, predicate);
+  const upserts = [];
+  const deletes = [];
+
+  after.forEach((item, id)=>{
+    const previous = before.get(id);
+    let changed = !previous;
+    if(!changed){
+      try{ changed = JSON.stringify(previous) !== JSON.stringify(item); }
+      catch(_){ changed = true; }
+    }
+    if(changed) upserts.push(cloneFinancialScopedValue(item));
+  });
+
+  if(options.includeDeletes !== false){
+    before.forEach((_, id)=>{
+      if(!after.has(id)) deletes.push(id);
+    });
+  }
+
+  return { upserts, deletes };
+}
+
+function financialTaskBelongsToEntry(task, entryId){
+  const id = String(entryId || "");
+  if(!id || !task) return false;
+  if(String(task.entryId || "") === id) return true;
+  const key = String(task.key || task.id || "");
+  return key.startsWith(`INST:${id}:`) || key.startsWith(`FININST:${id}:`) || key.includes(`:${id}:`);
+}
+
+function buildFinancialTargetedBatch(db, before, entry){
+  const current = normalizeDBShape(db || DB || freshDB());
+  const previous = normalizeDBShape(before || freshDB());
+  const entryId = String(entry?.id || "").trim();
+  if(!entryId) throw new Error("Paciente inválido para salvar a alteração financeira.");
+  const contactId = String(entry?.contactId || "").trim();
+  const currentEntry = (current.entries || []).find(item=>String(item?.id || "") === entryId) || entry;
+
+  const batch = {
+    entries:{ upserts:[cloneFinancialScopedValue(currentEntry)], deletes:[] }
+  };
+
+  const paymentPart = financialScopedPart(
+    previous.payments,
+    current.payments,
+    item=>String(item?.entryId || "") === entryId
+  );
+  if(paymentPart.upserts.length || paymentPart.deletes.length) batch.payments = paymentPart;
+
+  const taskPart = financialScopedPart(
+    previous.tasks,
+    current.tasks,
+    item=>financialTaskBelongsToEntry(item, entryId)
+  );
+  if(taskPart.upserts.length || taskPart.deletes.length) batch.tasks = taskPart;
+
+  const auditPart = financialScopedPart(
+    previous.activityLog,
+    current.activityLog,
+    item=>String(item?.entryId || item?.entityId || "") === entryId || (!!contactId && String(item?.contactId || "") === contactId),
+    { includeDeletes:false }
+  );
+  if(auditPart.upserts.length) batch.activityLog = { upserts:auditPart.upserts, deletes:[] };
+
+  return batch;
+}
+
+async function commitPaymentWithAutoConfirmation(db, entry, planId, paymentId, paidExpected=true, before=null){
+  // A RPC é transacional: quando retorna sucesso, a baixa já foi confirmada no banco.
+  // Sem espera artificial ou polling de minutos.
+  return await commitFinancialMutationCloud(db, entry, before);
+}
+
+async function commitFinancialMutationCloud(db, entry, before=null){
   if(isSupportMode()){
     toast("Modo suporte", "Alterações financeiras não são salvas no modo suporte.");
     return false;
   }
 
-  // V4: lead, ficha, plano, parcela, pagamento e tarefas relacionadas são gravados
-  // em uma única transação. A tela só confirma depois do commit do PostgreSQL.
+  // V4: ações financeiras são sempre direcionadas ao paciente e às entidades
+  // realmente alteradas. Nunca reenviamos a clínica inteira para aprovar, baixar,
+  // desfazer baixa, excluir ou transferir uma parcela.
   if(window.CronosRepository?.isEnabled?.()){
     try{
-      const ok = await window.CronosRepository.saveOperationalState(db, {
+      if(typeof window.CronosRepository.commitTargetedBatch !== "function"){
+        throw new Error("Persistência direcionada indisponível nesta versão.");
+      }
+      const batch = buildFinancialTargetedBatch(db, before, entry);
+      const ok = await window.CronosRepository.commitTargetedBatch(batch, {
         keepPendingOnFailure:false
       });
       if(!ok) return false;
       DB = normalizeDBShape(db || DB || freshDB());
       window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
       window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
-      safeSetLocalDB(DB);
+      try{ safeSetLocalDB(DB); }catch(cacheErr){ console.warn("Financeiro salvo; cache local não atualizado:", cacheErr); }
+      try{ captureV2Snapshots(DB); }catch(snapshotErr){ console.warn("Financeiro salvo; snapshot local não atualizado:", snapshotErr); }
       CLOUD_DB_READY = true;
       return true;
     }catch(error){
-      console.error("Falha financeira na persistência V4:", error);
+      console.error("Falha financeira direcionada na persistência V4:", error);
       return false;
     }
   }
@@ -2309,7 +2400,7 @@ async function saveConfirmedFinancialChange(db, entry, before, labels={}){
 
   let cloudOk = false;
   try{
-    cloudOk = await commitFinancialMutationCloud(db, entry);
+    cloudOk = await commitFinancialMutationCloud(db, entry, before);
   }catch(err){
     console.error(labels.consoleLabel || "Falha ao salvar alteração financeira:", err);
   }finally{
@@ -3381,7 +3472,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
       try{ syncFichaFinancialLinks(commit.entry); }catch(err){ console.warn("Falha ao sincronizar ficha após baixa:", err); }
       cronosAuditAction(commitDB, { action:"payment_paid", entityType:"entry", entityId:commit.entry.id, entryId:commit.entry.id, contactId:commit.entry.contactId, value:parseMoney(commitPayment.amount), details:`${commit.plan.title || "Plano financeiro"} • pagamento ${commitPayment.number || ""}/${commitPayment.total || ""} • caixa ${fmtBR(payDate)}` });
 
-      cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, true);
+      cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, true, before);
     }
   }catch(err){
     console.error("Falha ao salvar baixa financeira:", err);
@@ -3481,7 +3572,7 @@ async function undoFinancialPayment(entryId, planId, paymentId){
     if(String(commit.plan.status || "").toLowerCase().includes("concl")) commit.plan.status = "Aprovado";
     syncInstallmentTasks(commitDB, actor);
 
-    cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, false);
+    cloudOk = await commitPaymentWithAutoConfirmation(commitDB, commit.entry, planId, paymentId, false, before);
   }catch(err){
     console.error("Falha ao salvar desfazer baixa financeira:", err);
     cloudOk = false;
@@ -4817,7 +4908,7 @@ async function payInstallment(entryId, number){
   toast("Salvando baixa...", "Aguarde a conclusão antes de atualizar a página.");
   let cloudOk = false;
   try{
-    cloudOk = await commitFinancialMutationCloud(db, entry);
+    cloudOk = await commitFinancialMutationCloud(db, entry, before);
   }catch(err){
     console.error("Falha ao salvar baixa de parcela legada:", err);
   }finally{
@@ -8178,20 +8269,21 @@ function loadDB(){
 function saveDB(db, options={}){
   const incoming = normalizeDBShape(db);
 
-  // Mesclagens usam uma RPC transacional própria. Alguns renderizadores legados
-  // ainda tentam chamar saveDB logo após a confirmação; reenviar a clínica inteira
-  // nesse intervalo é redundante e aciona a proteção de alteração em massa.
+  // Mesclagens usam uma RPC transacional própria. A proteção permanece ativa
+  // até a próxima interação humana, em vez de depender de uma janela de tempo.
+  const confirmedMergeGuard = window.__CRONOS_CONFIRMED_MERGE_SAVE_GUARD__ || null;
   const mergeSaveSuppressed = !!window.CronosRepository?.isEnabled?.() &&
     options.allowDuringTransactionalMerge !== true &&
-    (window.__CRONOS_MERGE_IN_PROGRESS__ === true ||
-      Date.now() < Number(window.__CRONOS_SUPPRESS_LEGACY_SAVE_UNTIL__ || 0));
+    (window.__CRONOS_MERGE_IN_PROGRESS__ === true || !!confirmedMergeGuard);
   if(mergeSaveSuppressed){
     DB = incoming;
     window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
     window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
     safeSetLocalDB(DB);
     try{ updateSidebarPills(); }catch(_){ }
-    console.info("Cronos V437: autosave legado pós-mesclagem ignorado; a RPC transacional já confirmou a operação.");
+    console.info("Cronos V440: autosave legado pós-mesclagem ignorado; a RPC transacional já confirmou a operação.", {
+      operationId:confirmedMergeGuard?.operationId || null
+    });
     return Promise.resolve(true);
   }
 
@@ -8377,6 +8469,36 @@ function cronosPersistTargetedBatch(db, batch, options={}){
 }
 
 window.cronosPersistTargetedBatch = cronosPersistTargetedBatch;
+
+
+function cronosClearConfirmedMergeSaveGuard(reason=""){
+  const guard = window.__CRONOS_CONFIRMED_MERGE_SAVE_GUARD__;
+  if(!guard) return;
+  try{
+    (guard.events || []).forEach(type=>document.removeEventListener(type, guard.clearOnUserAction, true));
+  }catch(_){ }
+  window.__CRONOS_CONFIRMED_MERGE_SAVE_GUARD__ = null;
+  if(reason) console.info("Cronos V440: proteção pós-mesclagem encerrada.", { reason, operationId:guard.operationId || null });
+}
+
+function cronosArmConfirmedMergeSaveGuard(operationId){
+  cronosClearConfirmedMergeSaveGuard();
+  const events = ["pointerdown", "keydown", "input", "change", "submit"];
+  const guard = {
+    operationId:String(operationId || "merge-confirmed"),
+    events,
+    clearOnUserAction:null
+  };
+  guard.clearOnUserAction = event=>{
+    if(event && event.isTrusted === false) return;
+    cronosClearConfirmedMergeSaveGuard("nova interação do usuário");
+  };
+  window.__CRONOS_CONFIRMED_MERGE_SAVE_GUARD__ = guard;
+  events.forEach(type=>document.addEventListener(type, guard.clearOnUserAction, true));
+  console.info("Cronos V440: proteção pós-mesclagem armada.", { operationId:guard.operationId });
+}
+window.cronosClearConfirmedMergeSaveGuard = cronosClearConfirmedMergeSaveGuard;
+window.cronosArmConfirmedMergeSaveGuard = cronosArmConfirmedMergeSaveGuard;
 
 function cronosPersistMergeBatch(db, batch, options={}){
   DB = normalizeDBShape(db || DB || freshDB());
@@ -11285,12 +11407,13 @@ function toggleLeadCampaign(evOrEntryId, maybeEntryId){
 }
 window.toggleLeadCampaign = toggleLeadCampaign;
 
-function openChangeMyPassword(){
+function openChangeMyPassword(options={}){
+  const required = options?.required === true;
   const actor = currentActor();
   if(!actor) return toast("Sessão não encontrada");
   openModal({
-    title: "Alterar minha senha",
-    sub: "Essa alteração vale para o acesso logado agora.",
+    title: required ? "Crie sua nova senha" : "Alterar minha senha",
+    sub: required ? "Sua senha foi redefinida por um Master. Crie uma senha pessoal para continuar." : "Essa alteração vale para o acesso logado agora.",
     bodyHTML: `
       <div class="twoCol">
         <div>
@@ -11305,10 +11428,15 @@ function openChangeMyPassword(){
       <div class="muted" style="font-size:12px; margin-top:10px">Use pelo menos 6 caracteres para não dar palco pro caos.</div>
     `,
     footHTML: `
-      <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
+      ${required ? `` : `<button type="button" class="btn" onclick="closeModal()">Cancelar</button>`}
       <button class="btn ok" id="btnSaveMyPassword">Salvar nova senha</button>
     `,
     onMount: ()=>{
+      if(required){
+        window.__CRONOS_PASSWORD_CHANGE_REQUIRED__ = true;
+        const modalClose = el("modalClose");
+        if(modalClose) modalClose.classList.add("hidden");
+      }
       el("btnSaveMyPassword").addEventListener("click", async ()=>{
         const pass1 = val("myPass1").trim();
         const pass2 = val("myPass2").trim();
@@ -11317,7 +11445,16 @@ function openChangeMyPassword(){
 
         try{
           if(typeof supabaseClient !== "undefined" && supabaseClient?.auth?.updateUser){
-            const { error } = await supabaseClient.auth.updateUser({ password: pass1 });
+            const currentSessionResp = await supabaseClient.auth.getSession();
+            const currentMetadata = currentSessionResp?.data?.session?.user?.user_metadata || {};
+            const { error } = await supabaseClient.auth.updateUser({
+              password: pass1,
+              data: {
+                ...currentMetadata,
+                password_reset_required:false,
+                password_changed_at:new Date().toISOString()
+              }
+            });
             if(error) throw error;
           }else{
             const db = loadDB();
@@ -11332,7 +11469,10 @@ function openChangeMyPassword(){
             }
           }
 
-          closeModal();
+          window.__CRONOS_PASSWORD_CHANGE_REQUIRED__ = false;
+          const modalClose = el("modalClose");
+          if(modalClose) modalClose.classList.remove("hidden");
+          closeModal({ force:true, source:"password-changed" });
           toast("Senha atualizada ✅", "A nova senha já vale para o seu próximo login.");
         }catch(err){
           console.error("Falha ao alterar a própria senha:", err);
@@ -11423,12 +11563,15 @@ function updateUsersKpisV40(rows){
 
 function userActionsHTMLV40(row, actor, canManage){
   if(row.kind !== "USER" || !canManage) return `<span class="muted">—</span>`;
-  if(row.role === "MASTER" && !actor.perms.manageMasters) return `<span class="muted">—</span>`;
+  if(String(row.role || "").toUpperCase() === "MASTER" && !actor.perms.manageMasters) return `<span class="muted">—</span>`;
 
   const edit = `<button class="miniBtn usersMiniActionV40" title="Editar usuário" aria-label="Editar usuário" onclick="openUserEdit('${row.id}')">Editar</button>`;
+  const reset = row.authUid
+    ? `<button class="miniBtn usersMiniActionV40 password" title="Redefinir senha" aria-label="Redefinir senha" onclick="openResetUserPassword('${row.id}')">Senha</button>`
+    : ``;
   const del = `<button class="miniBtn danger usersMiniActionV40" title="Excluir usuário" aria-label="Excluir usuário" onclick="deleteUser('${row.id}')">Excluir</button>`;
 
-  return `<div class="usersActionsV40">${edit}${del}</div>`;
+  return `<div class="usersActionsV40">${edit}${reset}${del}</div>`;
 }
 
 function renderUsers(){
@@ -11459,6 +11602,7 @@ function renderUsers(){
     ...users.map(u=>({
       kind:"USER",
       id: u.id,
+      authUid: u.authUid || u.auth_uid || "",
       name: u.name || "Usuário",
       login: u.username ? `${u.username}${u.email ? " / " + u.email : ""}` : (u.email || u.loginEmail || ""),
       role: u.role || "SECRETARIA",
@@ -12008,6 +12152,10 @@ function cronosResetModalGuard(){
 
 function cronosCanCloseModal(source="button", force=false){
   if(force) return true;
+  if(window.__CRONOS_PASSWORD_CHANGE_REQUIRED__ === true){
+    toast("Nova senha obrigatória", "Crie sua senha pessoal para continuar usando o Cronos.");
+    return false;
+  }
   const modalBg = el("modalBg");
   if(!modalBg || !modalBg.classList.contains("show")) return true;
 
@@ -12581,6 +12729,7 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
   );
   if(!ok) return null;
 
+  cronosClearConfirmedMergeSaveGuard("nova mesclagem");
   window.__CRONOS_MERGE_IN_PROGRESS__ = true;
   const rollbackDB = cronosCloneSafe(db);
   const before = { primary: cronosCloneSafe(primary), secondary: cronosCloneSafe(secondary) };
@@ -12702,7 +12851,7 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
 
     // Mantém uma janela curta para absorver callbacks de renderização disparados
     // pela confirmação da RPC sem permitir que o legado tente salvar 5 mil registros.
-    window.__CRONOS_SUPPRESS_LEGACY_SAVE_UNTIL__ = Date.now() + 1500;
+    cronosArmConfirmedMergeSaveGuard(mergeResult?.operationId || options.operationId || `merge:${primaryId}:${secondaryId}`);
     DB = normalizeDBShape(mergeResult.state || db);
     window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
     window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
@@ -14039,7 +14188,7 @@ function userFormHTML(user){
       <div class="muted" style="font-size:12px; grid-column:1/-1">
         ${
           isCloudUser
-            ? 'Este acesso já existe no sistema. Aqui você pode alterar <b>nome</b> e <b>nível</b>. Login e senha de outro usuário exigem uma rota administrativa segura.'
+            ? 'Este acesso já existe no sistema. Aqui você altera <b>nome</b> e <b>nível</b>. Para criar uma senha temporária, use o botão <b>Senha</b> na tabela de usuários.'
             : 'Se preencher <b>usuário</b>, ele vira o login principal. O <b>e-mail</b> fica como contato. Se deixar o usuário vazio, o login será pelo e-mail.'
         }
       </div>
@@ -14095,6 +14244,97 @@ async function createClinicUserViaEdge({ name, username, email, password, role }
     role
   });
 }
+
+async function resetClinicUserPasswordViaEdge({ authUid, password }){
+  return callClinicUserManagerEdge({
+    action:"reset_password",
+    auth_uid:String(authUid || "").trim(),
+    password:String(password || ""),
+    force_change:true
+  });
+}
+
+function cronosGenerateTemporaryPassword(length=12){
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%*";
+  const bytes = new Uint8Array(Math.max(10, Number(length || 12)));
+  try{ crypto.getRandomValues(bytes); }
+  catch(_){ for(let i=0;i<bytes.length;i++) bytes[i] = Math.floor(Math.random()*256); }
+  return Array.from(bytes, value=>chars[value % chars.length]).join("");
+}
+
+function openResetUserPassword(userId){
+  const actor = currentActor();
+  if(!actor?.perms?.manageUsers) return toast("Sem permissão", "Somente Master pode redefinir senhas.");
+  const db = loadDB();
+  const user = (db.users || []).find(item=>String(item.id) === String(userId));
+  if(!user) return toast("Usuário não encontrado");
+  if(!user.authUid) return toast("Acesso sem vínculo", "Esse usuário ainda não possui um acesso cloud válido.");
+  if(String(user.role || "").toUpperCase() === "MASTER" && !actor?.perms?.manageMasters){
+    return toast("Ação bloqueada", "Só o Master principal pode redefinir a senha de outro Master.");
+  }
+
+  openModal({
+    title:"Redefinir senha",
+    sub:`Acesso de ${user.name || "usuário"}.`,
+    bodyHTML:`
+      <div class="passwordResetNoticeV439">
+        <b>Senha temporária</b><br/>
+        A senha anterior nunca é exibida. O usuário deverá criar uma senha própria no próximo acesso.
+      </div>
+      <div class="twoCol" style="margin-top:14px">
+        <div>
+          <label>Nova senha temporária</label>
+          <input id="resetUserPass1" type="text" autocomplete="new-password" placeholder="Mínimo de 8 caracteres"/>
+        </div>
+        <div>
+          <label>Confirmar senha</label>
+          <input id="resetUserPass2" type="text" autocomplete="new-password" placeholder="Repita a senha"/>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:10px">
+        <button type="button" class="miniBtn" id="btnGenerateResetPassword">Gerar senha segura</button>
+      </div>
+    `,
+    footHTML:`
+      <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn ok" id="btnConfirmResetPassword">Redefinir senha</button>
+    `,
+    onMount:()=>{
+      const pass1 = el("resetUserPass1");
+      const pass2 = el("resetUserPass2");
+      const generate = ()=>{
+        const password = cronosGenerateTemporaryPassword(12);
+        pass1.value = password;
+        pass2.value = password;
+        try{ pass1.focus(); pass1.select(); }catch(_){ }
+      };
+      el("btnGenerateResetPassword")?.addEventListener("click", generate);
+      el("btnConfirmResetPassword")?.addEventListener("click", async ()=>{
+        const password = String(pass1?.value || "").trim();
+        const confirmation = String(pass2?.value || "").trim();
+        if(password.length < 8) return toast("Senha fraca", "Use pelo menos 8 caracteres.");
+        if(password !== confirmation) return toast("As senhas não batem");
+        const button = el("btnConfirmResetPassword");
+        try{
+          if(button){ button.disabled = true; button.classList.add("loading"); button.textContent = "Redefinindo..."; }
+          const result = await resetClinicUserPasswordViaEdge({ authUid:user.authUid, password });
+          // A redefinição já foi confirmada pelo Supabase Auth. Não reenvie o
+          // estado operacional da clínica por causa de uma senha administrativa.
+          closeModal({ force:true, source:"password-reset" });
+          toast("Senha redefinida ✅", "Entregue a senha temporária ao usuário por um canal seguro.");
+          renderUsers();
+        }catch(error){
+          console.error("Cronos: falha ao redefinir senha de usuário.", error);
+          toast("Falha ao redefinir senha", String(error?.message || "Tente novamente."));
+        }finally{
+          if(button){ button.disabled = false; button.classList.remove("loading"); button.textContent = "Redefinir senha"; }
+        }
+      });
+      generate();
+    }
+  });
+}
+window.openResetUserPassword = openResetUserPassword;
 
 function openNewUser(){
   const actor = currentActor();
@@ -15764,6 +16004,16 @@ function bindActions(){
   el("themeToggle").onclick = toggleTheme;
   el("themeToggleAuth").onclick = toggleTheme;
 
+  const authHelpToggle = el("authHelpToggle");
+  const authHelpPanel = el("authHelpPanel");
+  if(authHelpToggle && authHelpPanel){
+    authHelpToggle.onclick = ()=>{
+      const expanded = authHelpToggle.getAttribute("aria-expanded") === "true";
+      authHelpToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
+      authHelpPanel.classList.toggle("hidden", expanded);
+    };
+  }
+
   const passToggle = el("authPassToggle");
   const passInput = el("authPass");
   if(passToggle && passInput){
@@ -15808,7 +16058,7 @@ function bindActions(){
     clearTimeout(filterRenderTimer);
     filterRenderTimer = setTimeout(()=>{
       currentPage = 1;
-      try{ renderAll(); }catch(error){ console.warn("Cronos V428: falha ao aplicar filtros", error); }
+      try{ renderAll(); }catch(error){ console.warn("Cronos V440: falha ao aplicar filtros", error); }
     }, delay);
   };
 
@@ -16850,6 +17100,20 @@ function cronosInstantLogout({ supportRedirect=false }={}){
   showAuth();
 }
 
+
+async function cronosMaybeRequirePasswordChange(){
+  try{
+    const response = await supabaseClient.auth.getSession();
+    const required = response?.data?.session?.user?.user_metadata?.password_reset_required === true;
+    if(!required) return false;
+    setTimeout(()=>openChangeMyPassword({ required:true }), 120);
+    return true;
+  }catch(error){
+    console.warn("Cronos: não foi possível verificar a exigência de nova senha.", error);
+    return false;
+  }
+}
+
 async function finalizeCloudLogin(){
   try{
     const explicitLogin = !!window.__CRONOS_EXPLICIT_LOGIN__;
@@ -16913,6 +17177,7 @@ async function finalizeCloudLogin(){
   }
 
   await boot();
+  await cronosMaybeRequirePasswordChange();
   try{ cronosRefreshSidebarCountersNow({ reason:"login_after_boot", repeat:true }); }catch(_){ }
 
   const actor = currentActor();
@@ -20544,7 +20809,10 @@ window.CRONOS_PROC_UI = {
           recordPaidNow: !!el('fr_record_paid')?.checked
         });
         if(!plan) return;
-        closeModal();
+        // A cobrança já foi confirmada no banco. O fechamento é programático e não
+        // deve acionar o aviso de descarte das alterações preenchidas no formulário.
+        window.__fichaReceivingDraft = null;
+        closeModal({ force:true, source:'success' });
         const s = getFichaState();
         if(s){ s.selectedItemIds = []; }
         renderFichaApp();

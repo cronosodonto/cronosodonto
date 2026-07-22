@@ -93,3 +93,29 @@ Filtros são operações somente de leitura, sem autosave. Busca usa debounce e 
 - falha de banco restaura Ficha e Financeiro ao estado anterior, sem marcar procedimento como pago apenas na tela.
 
 > **Hotfix de produção:** a versão online anterior pode exibir “Atualização em massa bloqueada” ao gerar recebimento pelo odontograma. Teste localmente e publique a v435 após confirmar persistência com F5.
+
+
+## v438 — Mesclagem resiliente
+- timeout exclusivo da RPC de mesclagem ampliado para 60 segundos;
+- removido o recarregamento integral da clínica após confirmação da RPC;
+- estado e versões são atualizados com o resultado transacional já devolvido pelo servidor;
+- timeout extremo passa a orientar recarregamento antes de nova tentativa.
+
+
+## v440 — Recebimentos direcionados
+
+- O botão **Criar cobrança** fecha o modal após a confirmação sem exibir aviso falso de alterações não salvas.
+- Aprovação, baixa, desfazer baixa, transferência e exclusão financeira usam pacote direcionado ao paciente.
+- Ações financeiras não tentam reenviar a clínica inteira e não devem acionar o bloqueio de atualização em massa.
+- Mantém o login, redefinição hierárquica de senha, mesclagem resiliente e logo HD da v439.
+
+## v439 — Login, senhas e mesclagem
+
+- Novo login responsivo com identidade comercial do Cronos.
+- Recuperação orientada pela hierarquia da clínica, sem promessa de e-mail.
+- Masters podem redefinir senhas conforme suas permissões.
+- Proteção pós-mesclagem vinculada à operação confirmada, sem janela fixa de 1,5 s.
+
+### Ajuste visual da marca no login
+- O topo esquerdo usa um único PNG transparente com o símbolo e o nome Cronos Odonto.
+- O texto da marca não é mais reconstruído por HTML/CSS, preservando proporções, tipografia e gradiente oficiais.
