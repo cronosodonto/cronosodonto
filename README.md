@@ -136,3 +136,10 @@ Filtros são operações somente de leitura, sem autosave. Busca usa debounce e 
 - Remove a alternância de tema somente da tela de login.
 - Preserva a preferência claro/escuro dentro do sistema após o acesso.
 - Mantém integralmente o reparo direcionado de tarefas da v441.
+
+
+## v443 — Salvamento direcionado de Leads
+
+- edição/criação de Lead envia apenas contatos, Leads, pagamentos, tarefas e auditorias realmente alterados pela ação;
+- remove o `saveDB` genérico do botão Salvar Lead, que podia tentar comparar e reenviar milhares de entidades após exclusões/mesclagens;
+- preserva o login escuro fixo da v442 e o reparo direcionado de tarefas da v441.

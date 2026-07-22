@@ -1,4 +1,4 @@
-// Cronos Odonto v442 — reparo direcionado de tarefas + login escuro fixo
+// Cronos Odonto v443 — salvamento direcionado de Lead + reparo de tarefas + login escuro fixo
 function debounce(fn, delay){
   let t;
   return function(...args){
@@ -8568,6 +8568,55 @@ function cronosPersistTargetedBatch(db, batch, options={}){
 window.cronosPersistTargetedBatch = cronosPersistTargetedBatch;
 
 
+function cronosCloneTargetedCollections(db){
+  const source = normalizeDBShape(db || DB || freshDB());
+  const snapshot = {};
+  ["contacts", "entries", "tasks", "payments", "activityLog"].forEach(name=>{
+    try{ snapshot[name] = JSON.parse(JSON.stringify(Array.isArray(source[name]) ? source[name] : [])); }
+    catch(_){ snapshot[name] = []; }
+  });
+  return snapshot;
+}
+
+function cronosTargetedEntityFingerprint(value){
+  try{ return JSON.stringify(value || null); }
+  catch(_){ return String(value?.id || ""); }
+}
+
+function cronosBuildTargetedBatchFromSnapshot(beforeSnapshot, afterDB){
+  const after = normalizeDBShape(afterDB || DB || freshDB());
+  const batch = {};
+
+  ["contacts", "entries", "tasks", "payments", "activityLog"].forEach(name=>{
+    const beforeItems = Array.isArray(beforeSnapshot?.[name]) ? beforeSnapshot[name] : [];
+    const afterItems = Array.isArray(after?.[name]) ? after[name] : [];
+    const beforeMap = new Map(beforeItems.filter(item=>item?.id).map(item=>[String(item.id), item]));
+    const afterMap = new Map(afterItems.filter(item=>item?.id).map(item=>[String(item.id), item]));
+    const upserts = [];
+    const deletes = [];
+
+    afterMap.forEach((item, id)=>{
+      const previous = beforeMap.get(id);
+      if(!previous || cronosTargetedEntityFingerprint(previous) !== cronosTargetedEntityFingerprint(item)){
+        try{ upserts.push(JSON.parse(JSON.stringify(item))); }
+        catch(_){ upserts.push(item); }
+      }
+    });
+
+    beforeMap.forEach((_, id)=>{
+      if(!afterMap.has(id)) deletes.push(id);
+    });
+
+    if(upserts.length || deletes.length) batch[name] = { upserts, deletes };
+  });
+
+  return batch;
+}
+
+window.cronosCloneTargetedCollections = cronosCloneTargetedCollections;
+window.cronosBuildTargetedBatchFromSnapshot = cronosBuildTargetedBatchFromSnapshot;
+
+
 function cronosClearConfirmedMergeSaveGuard(reason=""){
   const guard = window.__CRONOS_CONFIRMED_MERGE_SAVE_GUARD__;
   if(!guard) return;
@@ -13539,6 +13588,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
     if(!monthKey || monthKey === "all") monthKey = monthKeyFromDate(firstContactInput) || todayISO().slice(0,7);
     if(!/^\d{4}-\d{2}$/.test(monthKey)) return toast("Mês de referência inválido", "Use YYYY-MM (ex: 2026-01)");
 
+    // O formulário de Lead pode alterar contato, Lead, pagamentos e auditoria.
+    // Capturamos somente essas coleções antes da ação para nunca comparar ou
+    // reenviar os milhares de registros que não participaram desta edição.
+    const leadSaveSnapshot = cronosCloneTargetedCollections(db);
+
     const now = new Date().toISOString();
 
     const selectedId = String(el("lf_name")?.dataset.contactId || el("lf_phone")?.dataset.contactId || "").trim();
@@ -13701,7 +13755,11 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const existingThisMonth = db.entries.find(e=>e.masterId===actor.masterId && e.contactId===contact.id && e.monthKey === monthKey);
 
     if(isNew && existingThisMonth){
-      saveDB(db);
+      const existingLeadBatch = cronosBuildTargetedBatchFromSnapshot(leadSaveSnapshot, db);
+      const existingLeadSaved = await cronosPersistTargetedBatch(db, existingLeadBatch, { silent:true });
+      if(existingLeadSaved === false){
+        return toast("Alteração não confirmada", "Não foi possível atualizar o paciente antes de abrir o Lead existente.");
+      }
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
       closeModal({ force:true });
       openLeadEntry(existingThisMonth.id);
@@ -13923,7 +13981,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
       cronosAuditAction(db, { action:"lead_updated", entityType:"entry", entityId:entry.id, entryId:entry.id, contactId:contact.id, details:changes.length ? changes.join(" • ") : `Lead atualizado: ${name}`, before:entryBeforeAudit ? {status:entryBeforeAudit.status, monthKey:entryBeforeAudit.monthKey, budget:entryBeforeAudit.valueBudget} : null, after:{status:entry.status, monthKey:entry.monthKey, budget:entry.valueBudget} });
     }
 
-    const cloudPromise = saveDB(db, { immediate:true });
+    const leadTargetedBatch = cronosBuildTargetedBatchFromSnapshot(leadSaveSnapshot, db);
+    const cloudPromise = cronosPersistTargetedBatch(db, leadTargetedBatch, { immediate:true });
     closeModal({ force:true });
     ensureMonthOptions(); // in case new month
     const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
