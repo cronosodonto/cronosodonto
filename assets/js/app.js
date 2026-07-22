@@ -1,4 +1,4 @@
-// Cronos Odonto v440 — correções de recebimentos, login comercial e senhas hierárquicas
+// Cronos Odonto v442 — reparo direcionado de tarefas + login escuro fixo
 function debounce(fn, delay){
   let t;
   return function(...args){
@@ -219,6 +219,15 @@ function scrubInstallmentTasksForMaster(db, masterId){
   if(!masterId) return {before: db.tasks.length, after: db.tasks.length, removed: 0, created: 0};
 
   const before = db.tasks.length;
+  // Preserva metadados estáveis das tarefas automáticas existentes. Sem isso,
+  // o reparo recriava createdAt em todo login e fazia tarefas idênticas parecerem
+  // alterações novas para a camada transacional.
+  const existingAutomaticTasksByKey = new Map(
+    db.tasks
+      .filter(t => (!t?.masterId || t.masterId === masterId) && isAutomaticInstallmentTask(t))
+      .map(t => [String(t.key || t.id || ""), t])
+      .filter(([key]) => !!key)
+  );
   try{
     const scope = instFilterScopeV38(filter, mk);
     const label = instFilterLabelV38(filter);
@@ -273,7 +282,7 @@ function scrubInstallmentTasksForMaster(db, masterId){
           action: "WhatsApp",
           notes,
           done: false,
-          createdAt: new Date().toISOString(),
+          createdAt: existingAutomaticTasksByKey.get(key)?.createdAt || new Date().toISOString(),
           dueDate: due,
           phone: c.phone || "",
           wa: true,
@@ -314,7 +323,7 @@ function scrubInstallmentTasksForMaster(db, masterId){
             action: "WhatsApp",
             notes: `Venc: ${fmtBR(due)} • ${moneyBR(p.amount)} • ${p.payMethod || "—"}`,
             done: false,
-            createdAt: new Date().toISOString(),
+            createdAt: existingAutomaticTasksByKey.get(key)?.createdAt || new Date().toISOString(),
             dueDate: due,
             phone: c.phone || "",
             wa: true,
@@ -8281,7 +8290,7 @@ function saveDB(db, options={}){
     window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
     safeSetLocalDB(DB);
     try{ updateSidebarPills(); }catch(_){ }
-    console.info("Cronos V440: autosave legado pós-mesclagem ignorado; a RPC transacional já confirmou a operação.", {
+    console.info("Cronos V441: autosave legado pós-mesclagem ignorado; a RPC transacional já confirmou a operação.", {
       operationId:confirmedMergeGuard?.operationId || null
     });
     return Promise.resolve(true);
@@ -8404,9 +8413,97 @@ function cronosPersistTaskDelete(db, taskId, options={}){
   return saveDB(DB, { immediate:true, ...options });
 }
 
+
 window.cronosPersistTaskUpsert = cronosPersistTaskUpsert;
 window.cronosPersistTaskDelete = cronosPersistTaskDelete;
 window.cronosRefreshTaskViews = cronosRefreshTaskViews;
+
+function cronosCloneTaskRepairValue(task){
+  try{
+    if(typeof structuredClone === "function") return structuredClone(task);
+  }catch(_){ }
+  try{ return JSON.parse(JSON.stringify(task || {})); }
+  catch(_){ return Object.assign({}, task || {}); }
+}
+
+function cronosBuildAutomaticTaskRepairBatch(beforeTasks, afterTasks){
+  const before = new Map(
+    (Array.isArray(beforeTasks) ? beforeTasks : [])
+      .filter(task => task && task.id)
+      .map(task => [String(task.id), task])
+  );
+  const after = new Map(
+    (Array.isArray(afterTasks) ? afterTasks : [])
+      .filter(task => task && task.id)
+      .map(task => [String(task.id), task])
+  );
+
+  const upserts = [];
+  const deletes = [];
+
+  after.forEach((task, id)=>{
+    const previous = before.get(id);
+    if(!previous || cronosTaskFingerprint(previous) !== cronosTaskFingerprint(task)){
+      upserts.push(cronosCloneTaskRepairValue(task));
+    }
+  });
+  before.forEach((_, id)=>{
+    if(!after.has(id)) deletes.push(id);
+  });
+
+  return { upserts, deletes, count:upserts.length + deletes.length };
+}
+
+async function cronosPersistAutomaticTaskRepair(db, beforeTasks, options={}){
+  DB = normalizeDBShape(db || DB || freshDB());
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  safeSetLocalDB(DB);
+  try{ updateSidebarPills(); }catch(_){ }
+
+  const diff = cronosBuildAutomaticTaskRepairBatch(beforeTasks, DB.tasks || []);
+  if(!diff.count){
+    try{ captureTaskSnapshots(DB); }catch(_){ }
+    return true;
+  }
+
+  if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.commitTargetedBatch === "function"){
+    // Cada lote fica muito abaixo do limite de proteção do navegador. O reparo
+    // toca apenas tarefas automáticas; jamais reenvia contatos, leads ou a clínica.
+    const operations = [
+      ...diff.upserts.map(payload => ({ type:"upsert", payload })),
+      ...diff.deletes.map(id => ({ type:"delete", id }))
+    ];
+    const chunkSize = 40;
+
+    for(let index = 0; index < operations.length; index += chunkSize){
+      const chunk = operations.slice(index, index + chunkSize);
+      const batch = { tasks:{ upserts:[], deletes:[] } };
+      chunk.forEach(operation=>{
+        if(operation.type === "upsert") batch.tasks.upserts.push(operation.payload);
+        else batch.tasks.deletes.push(operation.id);
+      });
+      const ok = await window.CronosRepository.commitTargetedBatch(batch, {
+        keepPendingOnFailure:false
+      });
+      if(!ok){
+        if(!options.silent) toast("Tarefas não sincronizadas", "O reparo automático será tentado novamente no próximo acesso.");
+        return false;
+      }
+    }
+
+    try{ captureTaskSnapshots(DB); }catch(_){ }
+    console.info("Cronos V441: reparo de tarefas salvo de forma direcionada.", {
+      upserts:diff.upserts.length,
+      deletes:diff.deletes.length
+    });
+    return true;
+  }
+
+  return saveDB(DB, { immediate:true, silent:options.silent === true });
+}
+
+window.cronosPersistAutomaticTaskRepair = cronosPersistAutomaticTaskRepair;
 
 function cronosPersistMetaPatch(db, patch, options={}){
   DB = normalizeDBShape(db || DB || freshDB());
@@ -8478,7 +8575,7 @@ function cronosClearConfirmedMergeSaveGuard(reason=""){
     (guard.events || []).forEach(type=>document.removeEventListener(type, guard.clearOnUserAction, true));
   }catch(_){ }
   window.__CRONOS_CONFIRMED_MERGE_SAVE_GUARD__ = null;
-  if(reason) console.info("Cronos V440: proteção pós-mesclagem encerrada.", { reason, operationId:guard.operationId || null });
+  if(reason) console.info("Cronos V441: proteção pós-mesclagem encerrada.", { reason, operationId:guard.operationId || null });
 }
 
 function cronosArmConfirmedMergeSaveGuard(operationId){
@@ -8495,7 +8592,7 @@ function cronosArmConfirmedMergeSaveGuard(operationId){
   };
   window.__CRONOS_CONFIRMED_MERGE_SAVE_GUARD__ = guard;
   events.forEach(type=>document.addEventListener(type, guard.clearOnUserAction, true));
-  console.info("Cronos V440: proteção pós-mesclagem armada.", { operationId:guard.operationId });
+  console.info("Cronos V441: proteção pós-mesclagem armada.", { operationId:guard.operationId });
 }
 window.cronosClearConfirmedMergeSaveGuard = cronosClearConfirmedMergeSaveGuard;
 window.cronosArmConfirmedMergeSaveGuard = cronosArmConfirmedMergeSaveGuard;
@@ -8988,17 +9085,25 @@ function showApp(actor, options={}){
 
   // Não bloqueia login/F5 higienizando tarefas automáticas antes da primeira tela.
   // A rotina continua existindo, mas roda em segundo plano depois do app aparecer.
-  const deferTaskRepair = ()=>{
+  const deferTaskRepair = async ()=>{
     try{
       const db = loadDB();
-      const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      const beforeTasks = (Array.isArray(db.tasks) ? db.tasks : []).map(cronosCloneTaskRepairValue);
+      const before = beforeTasks.length;
       const stats = syncInstallmentTasks(db, actor) || {};
       const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
-      if(before !== after){
-        saveDB(db, { skipCloud:true });
-        if(!window.__CRONOS_TASK_REPAIR_TOASTED__){
+      const diff = cronosBuildAutomaticTaskRepairBatch(beforeTasks, db.tasks || []);
+      if(diff.count){
+        const ok = await cronosPersistAutomaticTaskRepair(db, beforeTasks, { silent:true });
+        if(ok && !window.__CRONOS_TASK_REPAIR_TOASTED__){
           window.__CRONOS_TASK_REPAIR_TOASTED__ = true;
-          console.info("Cronos: tarefas automáticas ajustadas em segundo plano.", {before, after, stats});
+          console.info("Cronos: tarefas automáticas ajustadas em segundo plano.", {
+            before,
+            after,
+            upserts:diff.upserts.length,
+            deletes:diff.deletes.length,
+            stats
+          });
         }
       }
     }catch(e){
@@ -16058,7 +16163,7 @@ function bindActions(){
     clearTimeout(filterRenderTimer);
     filterRenderTimer = setTimeout(()=>{
       currentPage = 1;
-      try{ renderAll(); }catch(error){ console.warn("Cronos V440: falha ao aplicar filtros", error); }
+      try{ renderAll(); }catch(error){ console.warn("Cronos V441: falha ao aplicar filtros", error); }
     }, delay);
   };
 
@@ -16967,11 +17072,11 @@ function cronosUpdateTasksSidebarPill({ repair=false } = {}){
     if(!db || !actor) return;
 
     if(repair && typeof syncInstallmentTasks === "function"){
-      const before = Array.isArray(db.tasks) ? db.tasks.length : 0;
+      const beforeTasks = (Array.isArray(db.tasks) ? db.tasks : []).map(cronosCloneTaskRepairValue);
       try{ syncInstallmentTasks(db, actor); }catch(e){ console.warn("Cronos V24: falha ao sincronizar tarefas automáticas", e); }
-      const after = Array.isArray(db.tasks) ? db.tasks.length : 0;
-      if(before !== after){
-        try{ saveDB(db, { skipCloud:true }); }catch(_){ }
+      const diff = cronosBuildAutomaticTaskRepairBatch(beforeTasks, db.tasks || []);
+      if(diff.count){
+        void cronosPersistAutomaticTaskRepair(db, beforeTasks, { silent:true });
       }
     }
 

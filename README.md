@@ -102,6 +102,15 @@ Filtros são operações somente de leitura, sem autosave. Busca usa debounce e 
 - timeout extremo passa a orientar recarregamento antes de nova tentativa.
 
 
+
+## v441 — Reparo direcionado de tarefas automáticas
+
+- Corrige o aviso de **Atualização em massa bloqueada** que aparecia logo após o login.
+- A higienização de tarefas de parcelas agora compara e salva apenas tarefas alteradas, em lotes direcionados.
+- O reparo não chama mais o `saveDB` genérico nem reenvia contatos/leads da clínica.
+- Preserva `createdAt` das tarefas automáticas existentes para evitar alterações falsas a cada acesso.
+- Mantém o PNG de marca e todas as correções financeiras/visuais da v440 enviada pelo usuário.
+
 ## v440 — Recebimentos direcionados
 
 - O botão **Criar cobrança** fecha o modal após a confirmação sem exibir aviso falso de alterações não salvas.
@@ -119,3 +128,11 @@ Filtros são operações somente de leitura, sem autosave. Busca usa debounce e 
 ### Ajuste visual da marca no login
 - O topo esquerdo usa um único PNG transparente com o símbolo e o nome Cronos Odonto.
 - O texto da marca não é mais reconstruído por HTML/CSS, preservando proporções, tipografia e gradiente oficiais.
+
+
+## v442 — Login escuro fixo
+
+- Mantém a página de acesso sempre no tema escuro da marca.
+- Remove a alternância de tema somente da tela de login.
+- Preserva a preferência claro/escuro dentro do sistema após o acesso.
+- Mantém integralmente o reparo direcionado de tarefas da v441.
