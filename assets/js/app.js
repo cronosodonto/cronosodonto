@@ -5953,7 +5953,7 @@ let __localCacheQuotaWarned = false;
 let CLOUD_LOAD_TEMPORARY_FAILURE = false; // falha de leitura/timeout não é "usuário sem vínculo"
 let CLOUD_LAST_LOAD_ERROR = null;
 
-// V444 — contexto de login reaproveitado dentro da mesma sessão.
+// V446 — contexto de login reaproveitado dentro da mesma sessão.
 // Evita validar o mesmo usuário e consultar a mesma clínica várias vezes durante o boot.
 let __cronosSessionUserCache = null;
 let __cloudAccessContextCache = null;
@@ -6590,7 +6590,7 @@ function cronosStartPolicyPrefetch(){
   if(!__cronosAccessBootstrapPromise){
     __cronosAccessBootstrapPromise = Promise.resolve(fetchClinicAccessState(true))
       .catch(error=>{
-        console.warn("Cronos V444: pré-validação de acesso indisponível.", error);
+        console.warn("Cronos V446: pré-validação de acesso indisponível.", error);
         return null;
       });
   }
@@ -6598,7 +6598,7 @@ function cronosStartPolicyPrefetch(){
   if(!__cronosFeatureBootstrapPromise && typeof window.__refreshFeatureAccess === "function"){
     __cronosFeatureBootstrapPromise = Promise.resolve(window.__refreshFeatureAccess(true))
       .catch(error=>{
-        console.warn("Cronos V444: pré-carregamento de permissões indisponível.", error);
+        console.warn("Cronos V446: pré-carregamento de permissões indisponível.", error);
       });
   }
 
@@ -7306,7 +7306,7 @@ async function loadCurrentClinicDataSourcesInternal(){
       tasks_source: "legacy_json",
       patient_files_source: "legacy_json"
     }, CRONOS_MO_V2_CLINIC_ID);
-    console.info("Cronos V444: Mundo Odonto usando fonte V2 oficial", CRONOS_MO_V2_CLINIC_ID);
+    console.info("Cronos V446: Mundo Odonto usando fonte V2 oficial", CRONOS_MO_V2_CLINIC_ID);
     return CLOUD_DATA_SOURCES;
   }
 
@@ -7319,11 +7319,11 @@ async function loadCurrentClinicDataSourcesInternal(){
   const chosen = cronosSelectDataSourceRow(rows);
   if(chosen){
     setCloudDataSourcesFromRow(chosen, chosen.clinic_id);
-    console.info("Cronos V444: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
+    console.info("Cronos V446: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
   }else if(rows.length === 0){
     setCloudDataSourcesFromRow(null, "");
   }else{
-    console.warn("Cronos V444: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
+    console.warn("Cronos V446: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
     setCloudDataSourcesFromRow(null, "");
   }
   return CLOUD_DATA_SOURCES;
@@ -8476,8 +8476,75 @@ function cronosRefreshTaskViews(){
   }catch(_){ }
 }
 
+function cronosPersistEntryUpsert(db, entry, options={}){
+  const previousDB = DB;
+  const incoming = normalizeDBShape(db || DB || freshDB());
+  const payload = entry && typeof entry === "object" ? entry : null;
+  const entryId = String(payload?.id || "").trim();
+  if(!entryId){
+    if(!options.silent) toast("Falha ao salvar", "Lead inválido para atualização.");
+    return Promise.resolve(false);
+  }
+
+  const restorePreviousLocalState = ()=>{
+    DB = previousDB;
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    try{ safeSetLocalDB(DB); }catch(_){ }
+    try{ updateSidebarPills(); }catch(_){ }
+  };
+
+  DB = incoming;
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  safeSetLocalDB(DB);
+  try{ updateSidebarPills(); }catch(_){ }
+
+  if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.commitTargetedBatch === "function"){
+    return window.CronosRepository.commitTargetedBatch({
+      entries:{ upserts:[payload], deletes:[] }
+    }, {
+      keepPendingOnFailure:options.keepPendingOnFailure !== false
+    }).then(ok=>{
+      if(!ok){
+        restorePreviousLocalState();
+        if(!options.silent) toast("Alteração não confirmada", "Não foi possível salvar o status do paciente.");
+        return false;
+      }
+      return true;
+    }).catch(error=>{
+      restorePreviousLocalState();
+      console.error("Cronos V4: falha ao salvar lead direcionado:", error);
+      if(!options.silent) toast("Falha ao salvar", "Não foi possível salvar o status do paciente.");
+      return false;
+    });
+  }
+
+  return Promise.resolve(saveDB(DB, { immediate:true, ...options })).then(ok=>{
+    if(!ok) restorePreviousLocalState();
+    return !!ok;
+  }).catch(error=>{
+    restorePreviousLocalState();
+    console.error("Cronos: falha no fallback de lead direcionado:", error);
+    return false;
+  });
+}
+
+window.cronosPersistEntryUpsert = cronosPersistEntryUpsert;
+
 function cronosPersistTaskUpsert(db, task, options={}){
-  DB = normalizeDBShape(db);
+  const previousDB = DB;
+  const incoming = normalizeDBShape(db || DB || freshDB());
+  const restorePreviousLocalState = ()=>{
+    if(options.restoreOnFailure !== true) return;
+    DB = previousDB;
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    try{ safeSetLocalDB(DB); }catch(_){ }
+    try{ updateSidebarPills(); }catch(_){ }
+  };
+
+  DB = incoming;
   window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
   window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
   safeSetLocalDB(DB);
@@ -8486,15 +8553,27 @@ function cronosPersistTaskUpsert(db, task, options={}){
     return window.CronosRepository.upsertTask(task, {
       keepPendingOnFailure:options.keepPendingOnFailure !== false
     }).then(ok=>{
-      if(!ok && !options.silent) toast("Alteração não confirmada", "Não foi possível salvar a tarefa.");
-      return !!ok;
+      if(!ok){
+        restorePreviousLocalState();
+        if(!options.silent) toast("Alteração não confirmada", "Não foi possível salvar a tarefa.");
+        return false;
+      }
+      return true;
     }).catch(error=>{
+      restorePreviousLocalState();
       console.error("Cronos V4: falha ao salvar tarefa:", error);
       if(!options.silent) toast("Falha ao salvar", "Não foi possível salvar a tarefa.");
       return false;
     });
   }
-  return saveDB(DB, { immediate:true, ...options });
+  return Promise.resolve(saveDB(DB, { immediate:true, ...options })).then(ok=>{
+    if(!ok) restorePreviousLocalState();
+    return !!ok;
+  }).catch(error=>{
+    restorePreviousLocalState();
+    console.error("Cronos: falha no fallback de tarefa direcionada:", error);
+    return false;
+  });
 }
 
 function cronosPersistTaskDelete(db, taskId, options={}){
@@ -8611,7 +8690,18 @@ async function cronosPersistAutomaticTaskRepair(db, beforeTasks, options={}){
 window.cronosPersistAutomaticTaskRepair = cronosPersistAutomaticTaskRepair;
 
 function cronosPersistMetaPatch(db, patch, options={}){
-  DB = normalizeDBShape(db || DB || freshDB());
+  const previousDB = DB;
+  const incoming = normalizeDBShape(db || DB || freshDB());
+  const restorePreviousLocalState = ()=>{
+    if(options.restoreOnFailure !== true) return;
+    DB = previousDB;
+    window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+    window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+    try{ safeSetLocalDB(DB); }catch(_){ }
+    try{ updateSidebarPills(); }catch(_){ }
+  };
+
+  DB = incoming;
   window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
   window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
   safeSetLocalDB(DB);
@@ -8620,13 +8710,28 @@ function cronosPersistMetaPatch(db, patch, options={}){
   if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.updateMeta === "function"){
     return window.CronosRepository.updateMeta(patch || {}, {
       keepPendingOnFailure:options.keepPendingOnFailure !== false
-    }).then(ok=>!!ok).catch(error=>{
+    }).then(ok=>{
+      if(!ok){
+        restorePreviousLocalState();
+        if(!options.silent) toast("Alteração não confirmada", "Não foi possível salvar esta configuração.");
+        return false;
+      }
+      return true;
+    }).catch(error=>{
+      restorePreviousLocalState();
       console.error("Cronos V4: falha ao salvar metadados direcionados:", error);
       if(!options.silent) toast("Falha ao salvar", "Não foi possível salvar esta configuração.");
       return false;
     });
   }
-  return saveDB(DB, { immediate:true, ...options });
+  return Promise.resolve(saveDB(DB, { immediate:true, ...options })).then(ok=>{
+    if(!ok) restorePreviousLocalState();
+    return !!ok;
+  }).catch(error=>{
+    restorePreviousLocalState();
+    console.error("Cronos: falha no fallback de metadados direcionados:", error);
+    return false;
+  });
 }
 
 function cronosPersistSettingsPatch(db, patch, options={}){

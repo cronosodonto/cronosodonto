@@ -331,6 +331,14 @@
     return new Date().toISOString();
   }
 
+  function cloneValue(value){
+    try{
+      if(typeof structuredClone === "function") return structuredClone(value);
+    }catch(_){ }
+    try{ return JSON.parse(JSON.stringify(value)); }
+    catch(_){ return value && typeof value === "object" ? { ...value } : value; }
+  }
+
   function fmtBR(iso){
     try{
       if(typeof window.fmtBR === "function") return window.fmtBR(iso);
@@ -1092,38 +1100,93 @@
     toast("Recebimentos", "Não encontrei a função de abrir recebimento nesta versão.");
   }
 
-  function setEntryStatus(entryId, status, extra={}){
+  async function setEntryStatus(entryId, status, extra={}){
     const db = load();
     const a = actor();
-    if(!db || !a) return;
+    if(!db || !a) return false;
     const e = (db.entries || []).find(x=>String(x.id)===String(entryId));
-    if(!e) return toast("Lead não encontrado");
-    const old = e.status || "";
-    e.status = status;
-    e.lastUpdateAt = nowISO();
-    if(extra.apptDate !== undefined) e.apptDate = extra.apptDate;
-    if(extra.apptTime !== undefined) e.apptTime = extra.apptTime;
-    e.statusLog = Array.isArray(e.statusLog) ? e.statusLog : [];
-    e.statusLog.push({ at:nowISO(), from:old, to:status, by:a.name || a.email || a.username || "Cronos" });
-    save(db, { immediate:true });
-    toast("Atualizado ✅", `${status}`);
-    render();
-    try{ if(typeof window.renderAll === "function") window.renderAll(); }catch(_){}
+    if(!e){
+      toast("Lead não encontrado");
+      return false;
+    }
+
+    let updatedEntry;
+    try{
+      updatedEntry = typeof structuredClone === "function"
+        ? structuredClone(e)
+        : JSON.parse(JSON.stringify(e));
+    }catch(_){
+      updatedEntry = { ...e, statusLog:Array.isArray(e.statusLog) ? [...e.statusLog] : [] };
+    }
+
+    const old = updatedEntry.status || "";
+    updatedEntry.status = status;
+    updatedEntry.lastUpdateAt = nowISO();
+    if(extra.apptDate !== undefined) updatedEntry.apptDate = extra.apptDate;
+    if(extra.apptTime !== undefined) updatedEntry.apptTime = extra.apptTime;
+    updatedEntry.statusLog = Array.isArray(updatedEntry.statusLog) ? updatedEntry.statusLog : [];
+    updatedEntry.statusLog.push({ at:nowISO(), from:old, to:status, by:a.name || a.email || a.username || "Cronos" });
+
+    try{
+      let ok = false;
+      if(typeof window.cronosPersistEntryUpsert === "function"){
+        // Monta uma nova visão local com apenas este lead alterado. O helper central
+        // grava um pacote V4 direcionado e nunca executa o diff da clínica inteira.
+        const nextDB = {
+          ...db,
+          entries:(db.entries || []).map(item=>String(item?.id)===String(entryId) ? updatedEntry : item)
+        };
+        ok = await Promise.resolve(window.cronosPersistEntryUpsert(nextDB, updatedEntry, {
+          immediate:true,
+          keepPendingOnFailure:false,
+          restoreOnFailure:true,
+          silent:true
+        }));
+      }else{
+        const previous = { ...e };
+        Object.keys(e).forEach(key=>delete e[key]);
+        Object.assign(e, updatedEntry);
+        ok = await Promise.resolve(save(db, { immediate:true, silent:true }));
+        if(!ok){
+          Object.keys(e).forEach(key=>delete e[key]);
+          Object.assign(e, previous);
+        }
+      }
+
+      if(!ok){
+        toast("Alteração não confirmada", "Não foi possível salvar o status do paciente.");
+        render();
+        return false;
+      }
+
+      toast("Atualizado ✅", `${status}`);
+      render();
+      try{ if(typeof window.renderAll === "function") window.renderAll(); }catch(_){}
+      return true;
+    }catch(error){
+      console.error("Hoje no Cronos: falha ao salvar status direcionado", error);
+      toast("Falha ao salvar", "O status não foi alterado. Tente novamente.");
+      render();
+      return false;
+    }
   }
 
-  function markAppointmentNoShow(entryId){
-    setEntryStatus(entryId, "Faltou");
+  async function markAppointmentNoShow(entryId){
+    const statusOk = await setEntryStatus(entryId, "Faltou");
+    if(!statusOk) return false;
+
     try{
       const db = load();
       const a = actor();
-      const e = (db.entries || []).find(x=>String(x.id)===String(entryId));
-      if(!db || !a || !e) return;
+      const e = (db?.entries || []).find(x=>String(x.id)===String(entryId));
+      if(!db || !a || !e) return false;
       const c = getContact(db, e);
-      db.tasks = Array.isArray(db.tasks) ? db.tasks : [];
+      const currentTasks = Array.isArray(db.tasks) ? db.tasks : [];
       const key = `NO_SHOW:${e.id}:${todayISO()}`;
-      if(!db.tasks.some(t=>String(t.key||"")===key)){
+
+      if(!currentTasks.some(t=>t.key===key)){
         const createdTask = {
-          id: `task_${key.replace(/[^a-zA-Z0-9_-]/g,"_")}`,
+          id:`task_${key.replace(/[^a-zA-Z0-9_-]/g,"_")}`,
           key,
           masterId:a.masterId,
           entryId:e.id,
@@ -1139,54 +1202,118 @@
           wa:true,
           source:"todayCronos"
         };
-        db.tasks.push(createdTask);
-        try{ window.recordTaskPatch?.(createdTask); }catch(_){}
-        if(typeof window.cronosPersistTaskUpsert === "function") window.cronosPersistTaskUpsert(db, createdTask, { immediate:true });
-        else save(db, { immediate:true });
+        const nextDB = { ...db, tasks:[...currentTasks, createdTask] };
+        let taskOk = false;
+        if(typeof window.cronosPersistTaskUpsert === "function"){
+          taskOk = await Promise.resolve(window.cronosPersistTaskUpsert(nextDB, createdTask, {
+            immediate:true,
+            keepPendingOnFailure:false,
+            restoreOnFailure:true,
+            silent:true
+          }));
+        }else{
+          taskOk = await Promise.resolve(save(nextDB, { immediate:true, silent:true }));
+        }
+
+        if(taskOk){
+          if(!window.CronosRepository?.isEnabled?.()){
+            try{ window.recordTaskPatch?.(createdTask); }catch(_){ }
+          }
+        }else{
+          toast("Falta registrada", "O status foi salvo, mas a tarefa automática de remarcação não pôde ser criada.");
+        }
       }
-    }catch(_){}
+    }catch(error){
+      console.warn("Hoje no Cronos: status de falta salvo, mas a tarefa automática não foi criada", error);
+      toast("Falta registrada", "O status foi salvo, mas a tarefa automática de remarcação falhou.");
+    }
     render();
+    return true;
   }
 
-  function rescheduleAppointment(entryId){
+  async function rescheduleAppointment(entryId){
     const date = prompt("Nova data do agendamento (AAAA-MM-DD):", todayISO());
-    if(!date) return;
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Data inválida", "Use AAAA-MM-DD.");
+    if(!date) return false;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){
+      toast("Data inválida", "Use AAAA-MM-DD.");
+      return false;
+    }
     const time = prompt("Novo horário (HH:MM):", "09:00") || "";
-    setEntryStatus(entryId, "Remarcou", { apptDate:date, apptTime:time });
+    return await setEntryStatus(entryId, "Remarcou", { apptDate:date, apptTime:time });
   }
 
-  function markTaskDone(taskId){
+  async function persistTodayTask(taskId, mutate, successTitle, successMessage=""){
     const db = load();
-    const a = actor();
-    if(!db || !a) return;
-    const t = (db.tasks || []).find(x=>String(x.id)===String(taskId));
-    if(!t) return toast("Tarefa não encontrada");
-    t.done = true;
-    t.doneAt = nowISO();
-    t.updatedAt = nowISO();
-    try{ window.recordTaskPatch?.(t); }catch(_){}
-    if(typeof window.cronosPersistTaskUpsert === "function") window.cronosPersistTaskUpsert(db, t, { immediate:true });
-    else save(db, { immediate:true });
-    toast("Tarefa concluída");
+    if(!db) return false;
+    const current = (db.tasks || []).find(x=>String(x.id)===String(taskId));
+    if(!current){
+      toast("Tarefa não encontrada");
+      return false;
+    }
+
+    const updated = cloneValue(current);
+    try{ mutate(updated); }
+    catch(error){
+      console.error("Hoje no Cronos: alteração de tarefa inválida", error);
+      toast("Não foi possível alterar", "A tarefa permaneceu como estava.");
+      return false;
+    }
+    const nextDB = {
+      ...db,
+      tasks:(db.tasks || []).map(item=>String(item?.id)===String(taskId) ? updated : item)
+    };
+
+    let ok = false;
+    try{
+      if(typeof window.cronosPersistTaskUpsert === "function"){
+        ok = await Promise.resolve(window.cronosPersistTaskUpsert(nextDB, updated, {
+          immediate:true,
+          keepPendingOnFailure:false,
+          restoreOnFailure:true,
+          silent:true
+        }));
+      }else{
+        ok = await Promise.resolve(save(nextDB, { immediate:true, silent:true }));
+      }
+    }catch(error){
+      console.error("Hoje no Cronos: falha ao salvar tarefa direcionada", error);
+      ok = false;
+    }
+
+    if(!ok){
+      toast("Alteração não confirmada", "A tarefa permaneceu como estava.");
+      render();
+      return false;
+    }
+
+    if(!window.CronosRepository?.isEnabled?.()){
+      try{ window.recordTaskPatch?.(updated); }catch(_){ }
+    }
+    toast(successTitle, successMessage);
     render();
-    try{ if(typeof window.renderTasks === "function") window.renderTasks(); }catch(_){}
+    try{ if(typeof window.renderTasks === "function") window.renderTasks(); }catch(_){ }
+    return true;
   }
 
-  function postponeTask(taskId){
+  async function markTaskDone(taskId){
+    return await persistTodayTask(taskId, task=>{
+      task.done = true;
+      task.doneAt = nowISO();
+      task.updatedAt = nowISO();
+    }, "Tarefa concluída");
+  }
+
+  async function postponeTask(taskId){
     const date = prompt("Adiar para qual data? (AAAA-MM-DD):", todayISO());
-    if(!date) return;
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Data inválida", "Use AAAA-MM-DD.");
-    const db = load();
-    const t = (db.tasks || []).find(x=>String(x.id)===String(taskId));
-    if(!t) return toast("Tarefa não encontrada");
-    t.dueDate = date;
-    t.updatedAt = nowISO();
-    try{ window.recordTaskPatch?.(t); }catch(_){}
-    if(typeof window.cronosPersistTaskUpsert === "function") window.cronosPersistTaskUpsert(db, t, { immediate:true });
-    else save(db, { immediate:true });
-    toast("Tarefa adiada", fmtBR(date));
-    render();
+    if(!date) return false;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){
+      toast("Data inválida", "Use AAAA-MM-DD.");
+      return false;
+    }
+    return await persistTodayTask(taskId, task=>{
+      task.dueDate = date;
+      task.updatedAt = nowISO();
+    }, "Tarefa adiada", fmtBR(date));
   }
 
   function payFinancial(entryId, planId, paymentId){
@@ -1215,29 +1342,78 @@
     toast("Baixa", "Função de baixa legada não encontrada.");
   }
 
-  function markFlowStepDone(runId, stepIndex){
-    const db = load();
-    const run = (db.flowRuns || db.assistedFlowRuns || []).find(r=>String(r.id)===String(runId));
-    if(!run) return toast("Fluxo não encontrado");
-    const step = (run.steps || []).find(s=>Number(s.index)===Number(stepIndex));
-    if(!step) return toast("Etapa não encontrada");
-    step.done = true;
-    step.doneAt = nowISO();
-    run.updatedAt = nowISO();
-    save(db, { immediate:true });
-    toast("Etapa marcada como enviada ✅");
-    render();
+  function findFlowRunCollection(db, runId){
+    for(const key of ["flowRuns", "assistedFlowRuns"]){
+      const list = Array.isArray(db?.[key]) ? db[key] : [];
+      if(list.some(run=>String(run?.id)===String(runId))) return { key, list };
+    }
+    const key = Array.isArray(db?.flowRuns) ? "flowRuns" : "assistedFlowRuns";
+    return { key, list:Array.isArray(db?.[key]) ? db[key] : [] };
   }
 
-  function finishFlow(runId){
+  async function persistFlowRun(runId, mutate, successTitle){
     const db = load();
-    const run = (db.flowRuns || db.assistedFlowRuns || []).find(r=>String(r.id)===String(runId));
-    if(!run) return toast("Fluxo não encontrado");
-    run.active = false;
-    run.finishedAt = nowISO();
-    save(db, { immediate:true });
-    toast("Fluxo encerrado");
+    if(!db) return false;
+    const { key, list } = findFlowRunCollection(db, runId);
+    const current = list.find(run=>String(run?.id)===String(runId));
+    if(!current){
+      toast("Fluxo não encontrado");
+      return false;
+    }
+
+    const updated = cloneValue(current);
+    try{ mutate(updated); }
+    catch(error){
+      console.error("Hoje no Cronos: alteração de fluxo inválida", error);
+      toast("Etapa não encontrada", "O fluxo permaneceu como estava.");
+      return false;
+    }
+    const nextRuns = list.map(run=>String(run?.id)===String(runId) ? updated : run);
+    const nextDB = { ...db, [key]:nextRuns };
+    let ok = false;
+
+    try{
+      if(typeof window.cronosPersistMetaPatch === "function"){
+        ok = await Promise.resolve(window.cronosPersistMetaPatch(nextDB, { [key]:nextRuns }, {
+          keepPendingOnFailure:false,
+          restoreOnFailure:true,
+          silent:true
+        }));
+      }else{
+        ok = await Promise.resolve(save(nextDB, { immediate:true, silent:true }));
+      }
+    }catch(error){
+      console.error("Hoje no Cronos: falha ao salvar fluxo direcionado", error);
+      ok = false;
+    }
+
+    if(!ok){
+      toast("Alteração não confirmada", "O fluxo permaneceu como estava.");
+      render();
+      return false;
+    }
+
+    toast(successTitle);
     render();
+    return true;
+  }
+
+  async function markFlowStepDone(runId, stepIndex){
+    return await persistFlowRun(runId, run=>{
+      const step = (run.steps || []).find(s=>Number(s.index)===Number(stepIndex));
+      if(!step) throw new Error("Etapa não encontrada");
+      step.done = true;
+      step.doneAt = nowISO();
+      run.updatedAt = nowISO();
+    }, "Etapa marcada como enviada ✅");
+  }
+
+  async function finishFlow(runId){
+    return await persistFlowRun(runId, run=>{
+      run.active = false;
+      run.finishedAt = nowISO();
+      run.updatedAt = nowISO();
+    }, "Fluxo encerrado");
   }
 
   function paymentPaid(p){

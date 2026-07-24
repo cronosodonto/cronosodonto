@@ -9,6 +9,21 @@ O Cronos Odonto centraliza o acompanhamento de leads, oportunidades, tratamentos
 Este é um software proprietário. A reprodução, distribuição, modificação ou utilização do código sem autorização é proibida.
 
 
+
+## v446 — Hoje no Cronos com gravações direcionadas
+
+- tarefas concluídas ou adiadas salvam somente a tarefa alterada e aguardam confirmação do banco;
+- fluxos marcados como enviados ou encerrados atualizam somente os metadados de fluxos;
+- falhas restauram o estado local anterior e não exibem sucesso falso;
+- recebimentos e aniversariantes continuam usando suas rotinas específicas.
+
+
+## v445 — status de agendamento direcionado
+
+- ações **Compareceu**, **Faltou** e **Remarcou** no Hoje no Cronos salvam somente o lead alterado;
+- elimina o falso aviso **“Atualização em massa bloqueada”** ao atualizar o status do agendamento;
+- sucesso visual só é exibido após confirmação da persistência.
+
 ## v425 — proteção pós-importação
 
 - login não dispara salvamento do estado operacional;
