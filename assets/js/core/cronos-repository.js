@@ -1,4 +1,4 @@
-// Cronos Repository v4.6.3 — persistência direcionada e proteção pós-mesclagem
+// Cronos Repository v4.8.0 — quarentena de fila e trava de commit entre abas
 /*
  * CronosRepository V4 — persistência central, transacional e concorrente.
  *
@@ -13,15 +13,31 @@
 (function initCronosRepository(global){
   "use strict";
 
+  // Evita que duas inclusões acidentais do mesmo arquivo criem dois processadores
+  // independentes dentro da mesma aba.
+  if(global.__CRONOS_REPOSITORY_V448_ACTIVE__){
+    console.warn("Cronos V448: inicialização duplicada do repositório ignorada.");
+    return;
+  }
+  global.__CRONOS_REPOSITORY_V448_ACTIVE__ = true;
+
   const COLLECTIONS = Object.freeze(["contacts", "entries", "tasks", "payments", "activityLog"]);
   const STORAGE_PREFIX = "cronos_v4_pending";
   const CONFLICT_PREFIX = "cronos_v4_conflict";
+  const UNCERTAIN_PREFIX = "cronos_v4_uncertain";
+  const COMMIT_LEASE_PREFIX = "cronos_v4_commit_lease";
+  const QUEUE_STORAGE_VERSION = 6;
   const RPC_TIMEOUT_MS = 20000;
   const MERGE_TIMEOUT_MS = 60000;
   const LOAD_TIMEOUT_MS = 30000;
   // A interface salva alterações pontuais. Operações em massa pertencem às Edge
   // Functions/RPCs administrativas em lotes, nunca ao autosave do navegador.
   const MAX_BROWSER_MUTATION_ENTITIES = 500;
+  const COMMIT_LEASE_MS = 45000;
+  const COMMIT_LEASE_SETTLE_MS = 90;
+  const TAB_ID = global.crypto?.randomUUID
+    ? global.crypto.randomUUID()
+    : `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   const state = {
     client: null,
@@ -35,6 +51,7 @@
     queue: [],
     processing: false,
     blocked: false,
+    activeOperationId: "",
     lastError: null,
     waiters: new Map()
   };
@@ -132,7 +149,7 @@
         localStorage.removeItem(storageKey());
         return true;
       }
-      localStorage.setItem(storageKey(), JSON.stringify({ version:4, queue:state.queue }));
+      localStorage.setItem(storageKey(), JSON.stringify({ version:QUEUE_STORAGE_VERSION, queue:state.queue }));
       return true;
     }catch(error){
       console.error("Cronos V4: não foi possível preservar a fila local.", error);
@@ -142,27 +159,32 @@
   }
 
   function readQueue(){
-    if(!state.clinicId) return [];
+    if(!state.clinicId) return { queue:[], legacy:false };
     try{
       const raw = localStorage.getItem(storageKey());
       const parsed = raw ? JSON.parse(raw) : null;
+      const storedVersion = Number(parsed?.version || 0);
       const valid = Array.isArray(parsed?.queue)
         ? parsed.queue.filter(item=>item?.operationId && item?.changes)
         : [];
       const safe = valid.filter(item=>!isOversizedBrowserMutation(item));
       if(safe.length !== valid.length){
         console.warn("Cronos V4: fila antiga com alteração em massa foi descartada. Imports devem usar a rotina administrativa em lotes.");
-        if(safe.length){
-          localStorage.setItem(storageKey(), JSON.stringify({ version:4, queue:safe }));
-        }else{
-          localStorage.removeItem(storageKey());
-        }
       }
-      return safe;
+      if(!safe.length){
+        try{ localStorage.removeItem(storageKey()); }catch(_){ }
+        return { queue:[], legacy:false };
+      }
+      return {
+        queue:safe,
+        // Filas criadas antes da V447 não guardavam a causa da falha. Elas são
+        // reconciliadas com a nuvem, mas nunca reenviadas automaticamente.
+        legacy:storedVersion < QUEUE_STORAGE_VERSION
+      };
     }catch(error){
       console.warn("Cronos V4: fila local inválida foi ignorada.", error);
       try{ localStorage.removeItem(storageKey()); }catch(_){ }
-      return [];
+      return { queue:[], legacy:false };
     }
   }
 
@@ -210,6 +232,63 @@
     if(!state.clinicId) return false;
     try{
       localStorage.removeItem(conflictStorageKey());
+      return true;
+    }catch(_){
+      return false;
+    }
+  }
+
+  function uncertainStorageKey(){
+    return `${UNCERTAIN_PREFIX}:${String(state.clinicId || "unknown")}`;
+  }
+
+  function archiveUncertainMutations(mutations, error, reason="UNCONFIRMED_OPERATION"){
+    if(!state.clinicId) return false;
+    const list = Array.isArray(mutations) ? mutations.filter(Boolean) : [];
+    if(!list.length) return true;
+    try{
+      const existingRaw = localStorage.getItem(uncertainStorageKey());
+      const existing = existingRaw ? JSON.parse(existingRaw) : null;
+      const records = Array.isArray(existing?.records) ? existing.records : [];
+      list.forEach(mutation=>{
+        records.push({
+          archivedAt:new Date().toISOString(),
+          clinicId:state.clinicId,
+          reason:String(reason || "UNCONFIRMED_OPERATION"),
+          operationId:String(mutation?.operationId || ""),
+          createdAt:String(mutation?.createdAt || ""),
+          changes:clone(mutation?.changes || {}),
+          error:{
+            code:String(error?.code || "UNCONFIRMED_OPERATION"),
+            status:Number(error?.status || error?.statusCode || 0),
+            message:String(error?.message || error || "Operação não confirmada."),
+            details:error?.details || null
+          }
+        });
+      });
+      localStorage.setItem(uncertainStorageKey(), JSON.stringify({ version:1, records:records.slice(-30) }));
+      return true;
+    }catch(archiveError){
+      console.error("Cronos V4: não foi possível arquivar a operação incerta localmente.", archiveError);
+      return false;
+    }
+  }
+
+  function getUncertainArchive(){
+    if(!state.clinicId) return [];
+    try{
+      const raw = localStorage.getItem(uncertainStorageKey());
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed?.records) ? clone(parsed.records) : [];
+    }catch(_){
+      return [];
+    }
+  }
+
+  function clearUncertainArchive(){
+    if(!state.clinicId) return false;
+    try{
+      localStorage.removeItem(uncertainStorageKey());
       return true;
     }catch(_){
       return false;
@@ -504,7 +583,9 @@
     const code = String(error?.code || "").toUpperCase();
     const status = Number(error?.status || error?.statusCode || 0);
     const message = String(error?.message || error?.details || error || "").toLowerCase();
-    return code === "PGRST003" || status === 429 || status === 502 || status === 503 || status === 504 ||
+    return code === "RPC_TIMEOUT" || code === "ABORT_ERR" || code === "ABORTERROR" ||
+      code === "PGRST003" || status === 408 || status === 429 || status === 502 || status === 503 || status === 504 ||
+      message.includes("aborted") || message.includes("aborterror") ||
       message.includes("connection pool") || message.includes("timed out acquiring connection") ||
       message.includes("server overloaded") || message.includes("database is overloaded");
   }
@@ -515,15 +596,20 @@
     return code === "40001" || message.includes("CONFLITO_V4");
   }
 
+  function rpcTimeoutError(label, cause=null){
+    const error = new CronosPersistenceError(`${label || "Operação"} excedeu o tempo de resposta.`, {
+      code:"RPC_TIMEOUT",
+      cause
+    });
+    error.status = 408;
+    return error;
+  }
+
   function withTimeout(promise, timeoutMs, label){
     const ms = Math.max(1000, Number(timeoutMs || 0));
     let timer = null;
     const timeout = new Promise((_, reject)=>{
-      timer = setTimeout(()=>{
-        const error = new CronosPersistenceError(`${label || "Operação"} excedeu o tempo de resposta.`, { code:"RPC_TIMEOUT" });
-        error.status = 408;
-        reject(error);
-      }, ms);
+      timer = setTimeout(()=>reject(rpcTimeoutError(label)), ms);
     });
     return Promise.race([Promise.resolve(promise), timeout]).finally(()=>{
       if(timer) clearTimeout(timer);
@@ -533,11 +619,39 @@
   async function rpc(name, args, options={}){
     const client = getClient();
     if(!client?.rpc) throw new CronosPersistenceError("Cliente do Supabase indisponível.", { code:"SUPABASE_UNAVAILABLE" });
-    const timeoutMs = Number(options.timeoutMs || LOAD_TIMEOUT_MS);
-    const response = await withTimeout(client.rpc(name, args), timeoutMs, name);
-    const { data, error } = response || {};
-    if(error) throw error;
-    return data;
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || LOAD_TIMEOUT_MS));
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    let timedOut = false;
+    let timer = null;
+    let request = client.rpc(name, args);
+    const supportsAbort = Boolean(controller && typeof request?.abortSignal === "function");
+
+    // O Promise.race antigo desistia da espera, mas deixava a requisição viva.
+    // Quando disponível, abortSignal encerra o fetch em andamento e impede que
+    // uma segunda RPC seja disparada enquanto a primeira ainda ocupa o banco.
+    if(supportsAbort){
+      request = request.abortSignal(controller.signal);
+      timer = setTimeout(()=>{
+        timedOut = true;
+        try{ controller.abort(); }catch(_){ }
+      }, timeoutMs);
+    }
+
+    try{
+      const response = supportsAbort
+        ? await request
+        : await withTimeout(request, timeoutMs, name);
+      if(timer){ clearTimeout(timer); timer = null; }
+      const { data, error } = response || {};
+      if(timedOut || controller?.signal?.aborted) throw rpcTimeoutError(name, error || null);
+      if(error) throw error;
+      return data;
+    }catch(error){
+      if(timedOut || controller?.signal?.aborted) throw rpcTimeoutError(name, error);
+      throw error;
+    }finally{
+      if(timer) clearTimeout(timer);
+    }
   }
 
   async function fetchOfficialSnapshot(){
@@ -610,13 +724,35 @@
     state.baseline = normalizeState(data?.state || freshState());
     state.versions = normalizeVersions(data?.versions || {});
 
-    const restoredQueue = options.restorePending === false ? [] : readQueue();
+    const restored = options.restorePending === false
+      ? { queue:[], legacy:false }
+      : readQueue();
     const reconciled = options.restorePending === false
       ? { pending:[], confirmed:[] }
-      : reconcileRestoredQueue(state.baseline, restoredQueue);
+      : reconcileRestoredQueue(state.baseline, restored.queue);
 
-    state.queue = reconciled.pending;
-    if(options.restorePending === false || reconciled.confirmed.length) persistQueue();
+    // V448: nenhuma fila encontrada ao abrir a página volta para o banco. Mesmo
+    // uma fila criada pela própria V448 pode ter ficado sem resposta após o
+    // navegador ser fechado. O estado oficial é consultado, itens já refletidos
+    // são aceitos e todo o restante vai para quarentena para revisão manual.
+    const quarantined = reconciled.pending;
+    state.queue = [];
+    if(quarantined.length){
+      archiveUncertainMutations(
+        quarantined,
+        { code:"RESTORED_QUEUE_QUARANTINED", message:"Fila encontrada na abertura e não reenviada." },
+        "RESTORED_QUEUE_NOT_REPLAYED"
+      );
+      console.warn("Cronos V448: fila restaurada colocada em quarentena; nenhum commit foi reenviado.", {
+        clinicId:state.clinicId,
+        tabId:TAB_ID,
+        count:quarantined.length,
+        operationIds:quarantined.map(item=>String(item?.operationId || ""))
+      });
+    }
+    // Sempre apaga a fila ativa persistida após a reconciliação. O arquivo de
+    // quarentena permanece disponível em diagnostics/getUncertainArchive.
+    persistQueue();
     rebuildWorking();
 
     if(reconciled.confirmed.length){
@@ -624,10 +760,16 @@
       updateIndicator("saved", "Salvo");
     }
 
-    if(state.queue.length){
-      emit("cronos:persistence-pending", { count:state.queue.length });
-      updateIndicator("pending", `${state.queue.length} alteração(ões) pendente(s)`);
-      processQueue();
+    if(quarantined.length){
+      emit("cronos:persistence-error", {
+        error:new CronosPersistenceError("Uma alteração antiga foi colocada em quarentena e não foi reenviada.", { code:"RESTORED_QUEUE_QUARANTINED" }),
+        mutation:null
+      });
+      updateIndicator("pending", "Alteração antiga em quarentena");
+      notify(
+        "Alteração antiga não reenviada",
+        "O Cronos conferiu a nuvem e bloqueou o reenvio automático. Revise o registro antes de refazer a ação."
+      );
     }
 
     return { enabled:true, state:clone(state.working), versions:clone(state.workingVersions) };
@@ -661,41 +803,137 @@
     try{ waiter.resolve(value); }catch(_){ }
   }
 
-  async function commitMutation(mutation){
-    let lastError = null;
-    const maxAttempts = 2;
+  function commitLeaseKey(){
+    return `${COMMIT_LEASE_PREFIX}:${String(state.clinicId || "unknown")}`;
+  }
 
-    for(let attempt=1; attempt<=maxAttempts; attempt++){
+  function commitLockName(){
+    return `cronos-v4-commit:${String(state.clinicId || "unknown")}`;
+  }
+
+  function commitBusyError(details={}){
+    const error = new CronosPersistenceError(
+      "Outra aba do Cronos já está enviando uma alteração para esta clínica.",
+      { code:"COMMIT_BUSY_OTHER_TAB", details }
+    );
+    error.status = 409;
+    return error;
+  }
+
+  function isCommitBusyError(error){
+    return String(error?.code || "").toUpperCase() === "COMMIT_BUSY_OTHER_TAB";
+  }
+
+  function readCommitLease(){
+    try{
+      const raw = localStorage.getItem(commitLeaseKey());
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === "object" ? parsed : null;
+    }catch(_){
+      return null;
+    }
+  }
+
+  function releaseCommitLease(candidate){
+    try{
+      const current = readCommitLease();
+      if(current?.owner === candidate?.owner && current?.nonce === candidate?.nonce){
+        localStorage.removeItem(commitLeaseKey());
+      }
+    }catch(_){ }
+  }
+
+  async function withFallbackCommitLease(mutation, task){
+    const now = Date.now();
+    const existing = readCommitLease();
+    if(existing && Number(existing.expiresAt || 0) > now && existing.owner !== TAB_ID){
+      throw commitBusyError({ owner:existing.owner, operationId:existing.operationId, expiresAt:existing.expiresAt });
+    }
+
+    const candidate = {
+      owner:TAB_ID,
+      nonce:newOperationId(),
+      operationId:String(mutation?.operationId || ""),
+      acquiredAt:now,
+      expiresAt:now + COMMIT_LEASE_MS
+    };
+
+    try{
+      localStorage.setItem(commitLeaseKey(), JSON.stringify(candidate));
+      // Duas leituras espaçadas reduzem a janela de corrida nos navegadores sem
+      // Web Locks. Chrome/Edge modernos usam a trava nativa abaixo.
+      await sleep(COMMIT_LEASE_SETTLE_MS + Math.floor(Math.random() * 70));
+      let current = readCommitLease();
+      if(current?.owner !== TAB_ID || current?.nonce !== candidate.nonce){
+        throw commitBusyError({ owner:current?.owner || "", operationId:current?.operationId || "" });
+      }
+      await sleep(COMMIT_LEASE_SETTLE_MS);
+      current = readCommitLease();
+      if(current?.owner !== TAB_ID || current?.nonce !== candidate.nonce){
+        throw commitBusyError({ owner:current?.owner || "", operationId:current?.operationId || "" });
+      }
+      return await task();
+    }finally{
+      releaseCommitLease(candidate);
+    }
+  }
+
+  async function withClinicCommitLock(mutation, task){
+    const lockManager = global.navigator?.locks;
+    if(lockManager?.request){
+      let callbackStarted = false;
       try{
-        return await rpc("cronos_v4_commit_changes", {
-          p_clinic_id:state.clinicId,
-          p_operation_id:mutation.operationId,
-          p_changes:mutation.changes
-        }, { timeoutMs:RPC_TIMEOUT_MS });
+        return await lockManager.request(
+          commitLockName(),
+          { mode:"exclusive", ifAvailable:true },
+          async lock=>{
+            callbackStarted = true;
+            if(!lock) throw commitBusyError({ lock:"web-locks", operationId:mutation?.operationId || "" });
+            return task();
+          }
+        );
       }catch(error){
-        lastError = error;
-
-        // PGRST003/504 por esgotamento de infraestrutura não deve gerar uma rajada
-        // de novas RPCs e snapshots. Preservamos a fila e aguardamos o servidor voltar.
-        if(isInfrastructureBusyError(error)) break;
-
-        // Em falha de rede comum, a resposta pode ter se perdido depois do commit.
-        // Fazemos uma única reconciliação e no máximo uma repetição controlada.
-        if(isNetworkError(error)){
-          const reconciled = await reconcileUncertainMutation(mutation);
-          if(reconciled) return reconciled;
-        }
-
-        if(!isNetworkError(error) || attempt === maxAttempts) break;
-        await sleep(900 * attempt);
+        // Se o callback começou, o erro veio do próprio commit. Nunca fazemos
+        // fallback nesse caso, pois isso enviaria a mesma operação uma segunda vez.
+        if(callbackStarted || isCommitBusyError(error)) throw error;
+        console.warn("Cronos V448: Web Locks indisponível; usando trava local de compatibilidade.", error);
       }
     }
+    return withFallbackCommitLease(mutation, task);
+  }
 
-    if(isNetworkError(lastError) && !isInfrastructureBusyError(lastError)){
-      const reconciled = await reconcileUncertainMutation(mutation);
-      if(reconciled) return reconciled;
+  function traceCommit(stage, mutation, extra={}){
+    const detail = {
+      version:"V448",
+      stage:String(stage || ""),
+      clinicId:state.clinicId,
+      tabId:TAB_ID,
+      operationId:String(mutation?.operationId || ""),
+      source:String(mutation?.source || "frontend_action"),
+      queueLength:state.queue.length,
+      at:new Date().toISOString(),
+      ...extra
+    };
+    try{ console.info(`Cronos V448 commit ${detail.stage}`, detail); }catch(_){ }
+    emit("cronos:persistence-trace", detail);
+  }
+
+  async function commitMutation(mutation){
+    // V448 nunca repete automaticamente um commit. Em erro de rede, apenas uma
+    // leitura oficial tenta confirmar se o servidor concluiu a operação.
+    try{
+      return await rpc("cronos_v4_commit_changes", {
+        p_clinic_id:state.clinicId,
+        p_operation_id:mutation.operationId,
+        p_changes:mutation.changes
+      }, { timeoutMs:RPC_TIMEOUT_MS });
+    }catch(error){
+      if(isNetworkError(error) && !isInfrastructureBusyError(error)){
+        const reconciled = await reconcileUncertainMutation(mutation);
+        if(reconciled) return reconciled;
+      }
+      throw error;
     }
-    throw lastError;
   }
 
 
@@ -709,7 +947,21 @@
       while(state.queue.length && !state.blocked){
         const mutation = state.queue[0];
         try{
-          const result = await commitMutation(mutation);
+          if(state.activeOperationId){
+            throw new CronosPersistenceError("Já existe um commit ativo nesta aba.", {
+              code:"COMMIT_ALREADY_ACTIVE",
+              details:{ activeOperationId:state.activeOperationId }
+            });
+          }
+          state.activeOperationId = mutation.operationId;
+          traceCommit("dispatch", mutation);
+          let result;
+          try{
+            result = await withClinicCommitLock(mutation, ()=>commitMutation(mutation));
+            traceCommit("confirmed", mutation);
+          }finally{
+            state.activeOperationId = "";
+          }
           if(result?.__reconciled && result?.state){
             state.baseline = normalizeState(result.state);
             state.versions = normalizeVersions(result.versions || {});
@@ -727,16 +979,38 @@
           const conflict = isConflictError(error);
           console.error("Cronos V4: operação não confirmada.", error);
 
+          const infrastructureBusy = isInfrastructureBusyError(error);
+          const commitBusy = isCommitBusyError(error);
+          traceCommit("failed", mutation, { code:String(error?.code || ""), infrastructureBusy, conflict, commitBusy });
           if(conflict){
             // Um pacote com versão antiga nunca é repetido automaticamente: isso
             // só produziria o mesmo conflito a cada F5. Arquivamos a tentativa,
             // limpamos a fila e voltamos ao último estado confirmado do servidor.
             archiveConflict(mutation, error);
-            state.queue = [];
+            const affected = state.queue.splice(0);
             persistQueue();
             state.blocked = true;
             rebuildWorking();
-            resolveWaiter(mutation.operationId, false);
+            affected.forEach(item=>resolveWaiter(item.operationId, false));
+          }else if(commitBusy){
+            // A ação desta aba não chegou ao servidor. Removemos a cópia local,
+            // revertemos a interface e exigimos atualização antes de tentar de novo.
+            const affected = state.queue.splice(0);
+            persistQueue();
+            state.blocked = true;
+            rebuildWorking();
+            affected.forEach(item=>resolveWaiter(item.operationId, false));
+          }else if(infrastructureBusy){
+            // Timeout/504 têm resultado incerto: a chamada pode ainda estar sendo
+            // finalizada no servidor. Nunca repetimos nem preservamos uma fila ativa
+            // que ressuscitaria no próximo login. Arquivamos, revertimos a interface
+            // e exigimos recarga para conferir o estado oficial.
+            const affected = state.queue.splice(0);
+            archiveUncertainMutations(affected, error, "INFRASTRUCTURE_TIMEOUT");
+            persistQueue();
+            state.blocked = true;
+            rebuildWorking();
+            affected.forEach(item=>resolveWaiter(item.operationId, false));
           }else if(mutation.keepPendingOnFailure === false){
             state.queue.shift();
             persistQueue();
@@ -750,7 +1024,11 @@
           const wrapped = new CronosPersistenceError(
             conflict
               ? "Este registro foi alterado em outro computador. Recarregue antes de salvar novamente."
-              : "Não foi possível salvar a alteração.",
+              : commitBusy
+                ? "Outra aba já estava salvando esta clínica. A ação desta aba foi cancelada antes de chegar ao banco."
+                : infrastructureBusy
+                  ? "O banco demorou além do limite e a alteração não foi repetida automaticamente."
+                  : "Não foi possível salvar a alteração.",
             {
               code:conflict ? "VERSION_CONFLICT" : (error?.code || "RPC_ERROR"),
               cause:error,
@@ -761,12 +1039,31 @@
           );
           state.lastError = wrapped;
           emit(conflict ? "cronos:persistence-conflict" : "cronos:persistence-error", { error:wrapped, mutation });
-          updateIndicator(conflict ? "error" : "pending", conflict ? "Conflito: recarregue a página" : "Não foi possível salvar");
+          updateIndicator(
+            conflict || infrastructureBusy || commitBusy ? "error" : "pending",
+            conflict
+              ? "Conflito: recarregue a página"
+              : commitBusy
+                ? "Outra aba está salvando"
+                : infrastructureBusy
+                  ? "Tempo excedido: recarregue"
+                  : "Não foi possível salvar"
+          );
           notify(
-            conflict ? "Alteração concorrente detectada" : "Alteração ainda não confirmada",
+            conflict
+              ? "Alteração concorrente detectada"
+              : commitBusy
+                ? "Outra aba está salvando"
+                : infrastructureBusy
+                  ? "Salvamento não confirmado"
+                  : "Alteração ainda não confirmada",
             conflict
               ? "Outro computador atualizou o mesmo registro. Recarregue a página para evitar sobrescrever dados."
-              : "O Cronos preservou a tentativa neste computador. Confira sua conexão antes de sair."
+              : commitBusy
+                ? "A ação desta aba foi cancelada antes do envio. Aguarde a outra aba terminar e recarregue os dados."
+                : infrastructureBusy
+                  ? "O Cronos interrompeu a espera e não repetirá a operação sozinho. Recarregue para conferir o estado oficial antes de tentar novamente."
+                  : "O Cronos preservou a tentativa neste computador. Confira sua conexão antes de sair."
           );
           break;
         }
@@ -781,6 +1078,10 @@
     if(!state.enabled) return false;
     if(!state.loaded || !state.working){
       throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
+    }
+    if(state.activeOperationId){
+      notify("Salvamento em andamento", "Aguarde a alteração atual ser confirmada antes de fazer outra ação.");
+      return false;
     }
     if(state.blocked){
       notify("Alteração bloqueada", "Recarregue a página antes de fazer outra alteração. Nenhum dado antigo será sobrescrito.");
@@ -807,6 +1108,7 @@
       operationId,
       changes,
       keepPendingOnFailure:options.keepPendingOnFailure !== false,
+      source:String(options.source || options.reason || "frontend_action"),
       createdAt:new Date().toISOString()
     };
 
@@ -981,7 +1283,7 @@
     if(!state.enabled || !state.loaded || !state.working){
       throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
     }
-    if(state.processing || state.queue.length || state.blocked){
+    if(state.processing || state.queue.length || state.blocked || state.activeOperationId){
       throw new CronosPersistenceError(
         "Existe outra alteração sendo salva. Aguarde antes de mesclar.",
         { code:"PENDING_MUTATION" }
@@ -1014,11 +1316,23 @@
     });
 
     try{
-      const result = await rpc("cronos_v4_merge_contacts", {
-        p_clinic_id:state.clinicId,
-        p_operation_id:operationId,
-        p_changes:changes
-      }, { timeoutMs:MERGE_TIMEOUT_MS });
+      const lockMutation = { operationId, source:"merge_contacts_cascade" };
+      state.activeOperationId = operationId;
+      traceCommit("dispatch", lockMutation);
+      let result;
+      try{
+        result = await withClinicCommitLock(lockMutation, ()=>rpc("cronos_v4_merge_contacts", {
+          p_clinic_id:state.clinicId,
+          p_operation_id:operationId,
+          p_changes:changes
+        }, { timeoutMs:MERGE_TIMEOUT_MS }));
+        traceCommit("confirmed", lockMutation);
+      }catch(error){
+        traceCommit("failed", lockMutation, { code:String(error?.code || "") });
+        throw error;
+      }finally{
+        state.activeOperationId = "";
+      }
 
       // A RPC já executa exatamente o pacote validado e devolve as versões
       // confirmadas. Recarregar a clínica inteira aqui duplicava o trabalho,
@@ -1087,7 +1401,7 @@
 
   function adoptHydratedState(db, options={}){
     if(!state.enabled || !state.loaded) return false;
-    if(state.processing || state.queue.length){
+    if(state.processing || state.queue.length || state.activeOperationId){
       console.warn("Cronos V4: estado hidratado não foi adotado porque existe alteração pendente.");
       return false;
     }
@@ -1114,7 +1428,7 @@
     if(!state.enabled || !state.loaded || !state.working){
       throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
     }
-    if(state.processing || state.queue.length || state.blocked){
+    if(state.processing || state.queue.length || state.blocked || state.activeOperationId){
       throw new CronosPersistenceError(
         "Existe outra alteração sendo salva. Aguarde antes de excluir.",
         { code:"PENDING_MUTATION" }
@@ -1141,13 +1455,25 @@
     emit("cronos:persistence-saving", { operationId, command:"delete_lead_cascade" });
 
     try{
-      const result = await rpc("cronos_v4_delete_lead_cascade", {
-        p_clinic_id:state.clinicId,
-        p_lead_id:id,
-        p_expected_lead_version:expectedLeadVersion,
-        p_expected_contact_version:expectedContactVersion,
-        p_operation_id:operationId
-      });
+      const lockMutation = { operationId, source:"delete_lead_cascade" };
+      state.activeOperationId = operationId;
+      traceCommit("dispatch", lockMutation);
+      let result;
+      try{
+        result = await withClinicCommitLock(lockMutation, ()=>rpc("cronos_v4_delete_lead_cascade", {
+          p_clinic_id:state.clinicId,
+          p_lead_id:id,
+          p_expected_lead_version:expectedLeadVersion,
+          p_expected_contact_version:expectedContactVersion,
+          p_operation_id:operationId
+        }));
+        traceCommit("confirmed", lockMutation);
+      }catch(error){
+        traceCommit("failed", lockMutation, { code:String(error?.code || "") });
+        throw error;
+      }finally{
+        state.activeOperationId = "";
+      }
 
       // O comando pode apagar entidades que não estavam no diff local. Por isso
       // a interface sempre recarrega o estado oficial após a confirmação.
@@ -1211,13 +1537,14 @@
     state.queue = [];
     state.processing = false;
     state.blocked = false;
+    state.activeOperationId = "";
     operationalLoadPromise = null;
     operationalLoadClinicId = "";
   }
 
   function clearContext(){ setClinicId(""); }
   function isEnabled(){ return state.enabled === true; }
-  function hasPending(){ return state.queue.length > 0 || state.processing; }
+  function hasPending(){ return state.queue.length > 0 || state.processing || Boolean(state.activeOperationId); }
 
   function discardPending(){
     state.queue = [];
@@ -1234,14 +1561,18 @@
 
   function diagnostics(){
     return {
+      version:"4.8.0",
+      tabId:TAB_ID,
       clinicId:state.clinicId,
       enabled:state.enabled,
       loaded:state.loaded,
       pending:state.queue.length,
       processing:state.processing,
       blocked:state.blocked,
+      activeOperationId:state.activeOperationId,
       lastError:state.lastError ? String(state.lastError.message || state.lastError) : null,
-      archivedConflicts:getConflictArchive().length
+      archivedConflicts:getConflictArchive().length,
+      archivedUncertain:getUncertainArchive().length
     };
   }
 
@@ -1255,6 +1586,8 @@
   }catch(_){ }
 
   global.CronosRepository = Object.freeze({
+    __cronosRepositoryVersion:"4.8.0",
+    __tabId:TAB_ID,
     CronosPersistenceError,
     setClient,
     setClinicId,
@@ -1276,6 +1609,8 @@
     discardPending,
     getConflictArchive,
     clearConflictArchive,
+    getUncertainArchive,
+    clearUncertainArchive,
     newOperationId,
     diagnostics
   });

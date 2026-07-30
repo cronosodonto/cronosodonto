@@ -10,6 +10,25 @@ Este é um software proprietário. A reprodução, distribuição, modificação
 
 
 
+## v448 — fila em quarentena e commit único entre abas
+
+- nenhuma fila encontrada ao abrir o Cronos é reenviada automaticamente, independentemente da versão que a criou;
+- operações antigas são reconciliadas com a nuvem e, quando não confirmadas, ficam em quarentena local;
+- cada commit usa uma trava exclusiva por clínica entre abas (`Web Locks`, com fallback por lease local);
+- o commit nunca é repetido automaticamente: em falha de rede há somente uma leitura de reconciliação;
+- o console registra aba, operação, origem e estágio de cada envio para auditoria;
+- inicializações duplicadas do repositório na mesma aba são ignoradas.
+
+
+## v447 — timeout cancelável e fim do reenvio fantasma
+
+- chamadas RPC usam `AbortController`/`abortSignal` quando suportado;
+- timeout local, 408, 504 e esgotamento de infraestrutura não geram segunda tentativa imediata;
+- operações com resultado incerto são revertidas na interface e arquivadas localmente;
+- filas antigas da V446 são reconciliadas com a nuvem, mas não são reenviadas automaticamente;
+- após um timeout, o usuário precisa recarregar para conferir o estado oficial antes de repetir a ação.
+
+
 ## v446 — Hoje no Cronos com gravações direcionadas
 
 - tarefas concluídas ou adiadas salvam somente a tarefa alterada e aguardam confirmação do banco;

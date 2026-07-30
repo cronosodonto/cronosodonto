@@ -5953,7 +5953,7 @@ let __localCacheQuotaWarned = false;
 let CLOUD_LOAD_TEMPORARY_FAILURE = false; // falha de leitura/timeout não é "usuário sem vínculo"
 let CLOUD_LAST_LOAD_ERROR = null;
 
-// V446 — contexto de login reaproveitado dentro da mesma sessão.
+// V450 — contexto de login reaproveitado dentro da mesma sessão.
 // Evita validar o mesmo usuário e consultar a mesma clínica várias vezes durante o boot.
 let __cronosSessionUserCache = null;
 let __cloudAccessContextCache = null;
@@ -6590,7 +6590,7 @@ function cronosStartPolicyPrefetch(){
   if(!__cronosAccessBootstrapPromise){
     __cronosAccessBootstrapPromise = Promise.resolve(fetchClinicAccessState(true))
       .catch(error=>{
-        console.warn("Cronos V446: pré-validação de acesso indisponível.", error);
+        console.warn("Cronos V451: pré-validação de acesso indisponível.", error);
         return null;
       });
   }
@@ -6598,7 +6598,7 @@ function cronosStartPolicyPrefetch(){
   if(!__cronosFeatureBootstrapPromise && typeof window.__refreshFeatureAccess === "function"){
     __cronosFeatureBootstrapPromise = Promise.resolve(window.__refreshFeatureAccess(true))
       .catch(error=>{
-        console.warn("Cronos V446: pré-carregamento de permissões indisponível.", error);
+        console.warn("Cronos V451: pré-carregamento de permissões indisponível.", error);
       });
   }
 
@@ -7306,7 +7306,7 @@ async function loadCurrentClinicDataSourcesInternal(){
       tasks_source: "legacy_json",
       patient_files_source: "legacy_json"
     }, CRONOS_MO_V2_CLINIC_ID);
-    console.info("Cronos V446: Mundo Odonto usando fonte V2 oficial", CRONOS_MO_V2_CLINIC_ID);
+    console.info("Cronos V451: Mundo Odonto usando fonte V2 oficial", CRONOS_MO_V2_CLINIC_ID);
     return CLOUD_DATA_SOURCES;
   }
 
@@ -7319,11 +7319,11 @@ async function loadCurrentClinicDataSourcesInternal(){
   const chosen = cronosSelectDataSourceRow(rows);
   if(chosen){
     setCloudDataSourcesFromRow(chosen, chosen.clinic_id);
-    console.info("Cronos V446: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
+    console.info("Cronos V451: fonte de dados selecionada", chosen.clinic_name, chosen.clinic_id);
   }else if(rows.length === 0){
     setCloudDataSourcesFromRow(null, "");
   }else{
-    console.warn("Cronos V446: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
+    console.warn("Cronos V451: mais de uma fonte acessível e nenhuma corresponde ao contexto atual. Mantendo legacy_json por segurança.", rows);
     setCloudDataSourcesFromRow(null, "");
   }
   return CLOUD_DATA_SOURCES;
@@ -8959,6 +8959,45 @@ async function deactivateClinicMemberRecord(userRow){
     action:"deactivate",
     auth_uid:userRow.authUid
   });
+}
+
+async function reactivateClinicMemberRecord(userRow){
+  if(!userRow?.authUid) return null;
+  return callClinicUserManagerEdge({
+    action:"reactivate",
+    auth_uid:userRow.authUid
+  });
+}
+
+function applyManagedUserStateV450(userRow, result={}, fallback={}){
+  if(!userRow) return userRow;
+  const source = (result?.user && typeof result.user === "object") ? result.user : (result || {});
+  const has = key => Object.prototype.hasOwnProperty.call(source, key);
+
+  if(has("active")) userRow.active = source.active === true;
+  else if(Object.prototype.hasOwnProperty.call(fallback, "active")) userRow.active = fallback.active === true;
+
+  if(has("pending_approval")) userRow.pendingApproval = source.pending_approval === true;
+  else if(has("pendingApproval")) userRow.pendingApproval = source.pendingApproval === true;
+  else if(Object.prototype.hasOwnProperty.call(fallback, "pendingApproval")) userRow.pendingApproval = fallback.pendingApproval === true;
+
+  if(has("blocked_reason")) userRow.blockedReason = source.blocked_reason || null;
+  else if(has("blockedReason")) userRow.blockedReason = source.blockedReason || null;
+  else if(Object.prototype.hasOwnProperty.call(fallback, "blockedReason")) userRow.blockedReason = fallback.blockedReason || null;
+
+  return userRow;
+}
+
+function repaintUsersAfterMembershipChangeV450(db){
+  // Reatribuir DB evita que uma renderização use um snapshot anterior da clínica.
+  DB = normalizeDBShape(db || loadDB());
+  safeSetLocalDB(DB);
+  try{ renderUsers(); }catch(err){ console.error("Falha ao atualizar a lista de usuários:", err); }
+  try{ updateSidebarPills(); }catch(_){ }
+  const repaint = ()=>{ try{ renderUsers(); }catch(_){ } };
+  if(typeof requestAnimationFrame === "function") requestAnimationFrame(repaint);
+  else setTimeout(repaint, 0);
+  return DB;
 }
 
 async function syncCurrentCloudActor(){
@@ -11902,6 +11941,23 @@ function userStatusInfoV40(row){
   return { key:"active", label:"ATIVO", cls:"active" };
 }
 
+function userIsUnavailableV449(row){
+  return !!row && (row.pendingApproval === true || row.active === false);
+}
+
+function guardActiveManagedUserV449(row, actionLabel="alterar este usuário"){
+  if(!row) return false;
+  if(row.pendingApproval === true){
+    toast("Aguardando aprovação", "Esse acesso ainda depende da aprovação do superadmin.");
+    return false;
+  }
+  if(row.active === false){
+    toast("Reative primeiro", `A conta está bloqueada. Reative o usuário antes de ${actionLabel}.`);
+    return false;
+  }
+  return true;
+}
+
 function userDateV40(raw){
   if(!raw) return "—";
   try{
@@ -11929,13 +11985,21 @@ function userActionsHTMLV40(row, actor, canManage){
   if(row.kind !== "USER" || !canManage) return `<span class="muted">—</span>`;
   if(String(row.role || "").toUpperCase() === "MASTER" && !actor.perms.manageMasters) return `<span class="muted">—</span>`;
 
+  const status = userStatusInfoV40(row);
+  if(status.key === "pending"){
+    return `<span class="muted" title="Aguardando aprovação do superadmin">—</span>`;
+  }
+  if(status.key === "inactive"){
+    return `<div class="usersActionsV40"><button class="miniBtn ok usersMiniActionV40 reactivate" title="Reativar usuário" aria-label="Reativar usuário" onclick="reactivateUser('${row.id}', this)">Reativar</button></div>`;
+  }
+
   const edit = `<button class="miniBtn usersMiniActionV40" title="Editar usuário" aria-label="Editar usuário" onclick="openUserEdit('${row.id}')">Editar</button>`;
   const reset = row.authUid
     ? `<button class="miniBtn usersMiniActionV40 password" title="Redefinir senha" aria-label="Redefinir senha" onclick="openResetUserPassword('${row.id}')">Senha</button>`
     : ``;
-  const del = `<button class="miniBtn danger usersMiniActionV40" title="Excluir usuário" aria-label="Excluir usuário" onclick="deleteUser('${row.id}')">Excluir</button>`;
+  const block = `<button class="miniBtn danger usersMiniActionV40" title="Bloquear usuário" aria-label="Bloquear usuário" onclick="deleteUser('${row.id}', this)">Bloquear</button>`;
 
-  return `<div class="usersActionsV40">${edit}${reset}${del}</div>`;
+  return `<div class="usersActionsV40">${edit}${reset}${block}</div>`;
 }
 
 function renderUsers(){
@@ -14642,6 +14706,7 @@ function openResetUserPassword(userId){
   const db = loadDB();
   const user = (db.users || []).find(item=>String(item.id) === String(userId));
   if(!user) return toast("Usuário não encontrado");
+  if(!guardActiveManagedUserV449(user, "redefinir a senha")) return;
   if(!user.authUid) return toast("Acesso sem vínculo", "Esse usuário ainda não possui um acesso cloud válido.");
   if(String(user.role || "").toUpperCase() === "MASTER" && !actor?.perms?.manageMasters){
     return toast("Ação bloqueada", "Só o Master principal pode redefinir a senha de outro Master.");
@@ -14792,6 +14857,7 @@ function openUserEdit(userId){
   const db = loadDB();
   const u = db.users.find(x=>x.id===userId);
   if(!u) return toast("Usuário não encontrado");
+  if(!guardActiveManagedUserV449(u, "editar os dados")) return;
   openModal({
     title: "Editar usuário",
     sub: u.authUid ? "Nome e nível podem ser alterados aqui. Credenciais cloud de terceiros precisam de rota administrativa." : "Altere nível e login. (Senha opcional)",
@@ -14850,28 +14916,135 @@ function openUserEdit(userId){
   });
 }
 
-async function deleteUser(userId){
+const __cronosUserMutationBusyV451 = new Set();
+
+function beginUserMutationFeedbackV451(userId, action, triggerButton){
+  const key = String(userId || "");
+  if(__cronosUserMutationBusyV451.has(key)){
+    toast("Aguarde", "Já existe uma alteração desse usuário em andamento.");
+    return null;
+  }
+
+  __cronosUserMutationBusyV451.add(key);
+  const container = triggerButton?.closest?.(".usersActionsV40") || null;
+  const buttons = container ? Array.from(container.querySelectorAll("button")) : (triggerButton ? [triggerButton] : []);
+  const states = buttons.map(button=>({
+    button,
+    disabled: button.disabled,
+    text: button.textContent,
+    ariaBusy: button.getAttribute("aria-busy")
+  }));
+
+  buttons.forEach(button=>{ button.disabled = true; });
+  if(triggerButton){
+    triggerButton.classList.add("is-loading");
+    triggerButton.setAttribute("aria-busy", "true");
+    triggerButton.textContent = action === "reactivate" ? "Reativando..." : "Bloqueando...";
+  }
+
+  return ()=>{
+    __cronosUserMutationBusyV451.delete(key);
+    states.forEach(({button, disabled, text, ariaBusy})=>{
+      if(!button?.isConnected) return;
+      button.disabled = disabled;
+      button.textContent = text;
+      button.classList.remove("is-loading");
+      if(ariaBusy == null) button.removeAttribute("aria-busy");
+      else button.setAttribute("aria-busy", ariaBusy);
+    });
+  };
+}
+
+async function deleteUser(userId, triggerButton=null){
   const actor = currentActor();
-  if(!actor.perms.manageUsers) return toast("Sem permissão");
+  if(!actor?.perms?.manageUsers) return toast("Sem permissão");
   const db = loadDB();
   const u = db.users.find(x=>x.id===userId);
-  if(!u) return;
-  if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode remover outros masters.");
-  if(!confirm(`Excluir usuário ${u.name}?`)) return;
+  if(!u) return toast("Usuário não encontrado");
+  if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode bloquear outros masters.");
+  if(u.pendingApproval === true) return toast("Aguardando aprovação", "Esse acesso ainda depende da aprovação do superadmin.");
+  if(u.active === false){
+    toast("Usuário já bloqueado", "Nenhuma nova operação foi enviada. Use Reativar para liberar a conta.");
+    renderUsers();
+    return;
+  }
+  if(!confirm(`Bloquear usuário ${u.name}?\n\nEle não poderá acessar o Cronos até ser reativado.`)) return;
+
+  const endBusy = beginUserMutationFeedbackV451(userId, "deactivate", triggerButton);
+  if(!endBusy) return;
+  toast("Bloqueando usuário...", `Aguarde enquanto o acesso de ${u.name} é atualizado.`);
 
   try{
     if(u.authUid){
-      await deactivateClinicMemberRecord(u);
+      const result = await deactivateClinicMemberRecord(u);
+      applyManagedUserStateV450(u, result, {
+        active:false,
+        pendingApproval:false,
+        blockedReason:"Acesso removido por um Master da clínica."
+      });
+    }else{
+      u.active = false;
+      u.pendingApproval = false;
+      u.blockedReason = "Acesso removido por um Master da clínica.";
+      await cronosPersistMetaPatch(db, { users:db.users }, { silent:true, source:"user_block_local" });
     }
-    db.users = db.users.filter(x=>x.id!==userId);
-    await cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
-    toast("Usuário excluído");
-    renderAll();
+    repaintUsersAfterMembershipChangeV450(db);
+    toast("Usuário bloqueado", `${u.name} não poderá acessar o Cronos até ser reativado.`);
   }catch(err){
-    console.error("Erro ao remover usuário:", err);
-    toast("Falha ao excluir usuário", String(err?.message || "Tente novamente."));
+    console.error("Erro ao bloquear usuário:", err);
+    toast("Falha ao bloquear usuário", String(err?.message || "Tente novamente."));
+  }finally{
+    endBusy();
   }
 }
+
+async function reactivateUser(userId, triggerButton=null){
+  const actor = currentActor();
+  if(!actor?.perms?.manageUsers) return toast("Sem permissão");
+  const db = loadDB();
+  const u = db.users.find(x=>x.id===userId);
+  if(!u) return toast("Usuário não encontrado");
+  if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode reativar outros masters.");
+  if(u.pendingApproval === true) return toast("Aguardando aprovação", "A aprovação inicial desse acesso pertence ao superadmin.");
+  if(u.active !== false){
+    toast("Usuário já ativo", "Nenhuma operação foi necessária.");
+    renderUsers();
+    return;
+  }
+  if(!confirm(`Reativar usuário ${u.name}?\n\nOs botões de edição e senha voltarão a ficar disponíveis.`)) return;
+
+  const endBusy = beginUserMutationFeedbackV451(userId, "reactivate", triggerButton);
+  if(!endBusy) return;
+  toast("Reativando usuário...", `Aguarde enquanto o acesso de ${u.name} é liberado.`);
+
+  try{
+    if(u.authUid){
+      const result = await reactivateClinicMemberRecord(u);
+      applyManagedUserStateV450(u, result, {
+        active:true,
+        pendingApproval:false,
+        blockedReason:null
+      });
+    }else{
+      u.active = true;
+      u.pendingApproval = false;
+      u.blockedReason = null;
+      await cronosPersistMetaPatch(db, { users:db.users }, { silent:true, source:"user_reactivate_local" });
+    }
+    repaintUsersAfterMembershipChangeV450(db);
+    if(u.pendingApproval === true || u.active === false){
+      toast("Reativação aguardando aprovação", u.blockedReason || "O limite da clínica precisa ser liberado pelo superadmin.");
+    }else{
+      toast("Usuário reativado ✅", `${u.name} já pode acessar o Cronos novamente.`);
+    }
+  }catch(err){
+    console.error("Erro ao reativar usuário:", err);
+    toast("Falha ao reativar usuário", String(err?.message || "Tente novamente."));
+  }finally{
+    endBusy();
+  }
+}
+window.reactivateUser = reactivateUser;
 
 /* -------- CSV Export -------- */
 function exportCSV(){

@@ -9067,3 +9067,45 @@ body.light #authView .authCardV439 select,
 #authView .authPassToggle:hover{color:#eef6ff!important}
 #authView .authHelpToggleV439{color:#8bdaf5!important}
 #authView .authSecurityV439{color:rgba(184,207,230,.52)!important}
+
+/* V449 — conta bloqueada oferece somente reativação */
+#view-users .usersMiniActionV40.reactivate{
+  color:#86efac;
+  border-color:rgba(34,197,94,.36);
+  background:rgba(34,197,94,.10);
+}
+#view-users .usersMiniActionV40.reactivate:hover{
+  border-color:rgba(34,197,94,.62);
+  background:rgba(34,197,94,.18);
+}
+
+
+/* V450 — gestão de usuários sincronizada imediatamente */
+
+/* V451 — feedback visual durante bloqueio e reativação de usuários */
+#view-users .usersMiniActionV40:disabled{
+  cursor:wait;
+  opacity:.68;
+  filter:saturate(.72);
+}
+#view-users .usersMiniActionV40.is-loading{
+  min-width:108px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  pointer-events:none;
+}
+#view-users .usersMiniActionV40.is-loading::before{
+  content:"";
+  width:12px;
+  height:12px;
+  flex:0 0 12px;
+  border:2px solid currentColor;
+  border-right-color:transparent;
+  border-radius:999px;
+  animation:cronosUserActionSpinV451 .72s linear infinite;
+}
+@keyframes cronosUserActionSpinV451{
+  to{ transform:rotate(360deg); }
+}
