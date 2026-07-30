@@ -1,4 +1,4 @@
-# Cronos Odonto
+# Cronos Odonto — V456
 
 Sistema de gestão comercial e financeira para clínicas odontológicas.
 
@@ -177,3 +177,17 @@ Filtros são operações somente de leitura, sem autosave. Busca usa debounce e 
 - edição/criação de Lead envia apenas contatos, Leads, pagamentos, tarefas e auditorias realmente alterados pela ação;
 - remove o `saveDB` genérico do botão Salvar Lead, que podia tentar comparar e reenviar milhares de entidades após exclusões/mesclagens;
 - preserva o login escuro fixo da v442 e o reparo direcionado de tarefas da v441.
+
+## v454 — login simples com isolamento por clínica
+
+- mantém `cronosodonto.com` como porta única;
+- remove o campo visível de código da clínica;
+- preserva o seletor Master/Usuário interno;
+- permite o mesmo nome de usuário em clínicas diferentes;
+- resolve a clínica silenciosamente pela nova Edge Function `login-clinic-user`;
+- só pede para escolher a clínica no caso raro de login e senha idênticos em mais de uma clínica.
+
+
+## v455 — feedback correto ao salvar usuários
+
+Corrige o alerta falso de alterações não salvas depois de uma atualização bem-sucedida e mostra o estado **Salvando...** durante a operação.

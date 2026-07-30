@@ -6306,6 +6306,7 @@ async function maybeInitSupportMode(){
 const ACCESS_STATUS_ENDPOINT = "get-clinic-access-state";
 const RENEWAL_CONTACT_ENDPOINT = "get-renewal-contact";
 const CREATE_CLINIC_USER_ENDPOINT = "create-clinic-user"; // criação e gestão segura por Masters
+const LOGIN_CLINIC_USER_ENDPOINT = "login-clinic-user"; // login interno sem expor o código da clínica
 const DEFAULT_RENEWAL_MESSAGE = "Olá! O acesso da clínica [CLINICA] ao Cronos expirou e quero regularizar a renovação.";
 const DEFAULT_BLOCKED_FEATURE_MESSAGE = "Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].";
 let CLINIC_ACCESS_STATE = null;
@@ -6647,11 +6648,49 @@ function resetCloudContext(){
   try{ window.CronosRepository?.clearContext?.(); }catch(_){ }
 }
 
+function managedUserAuthUidV453(row){
+  return String(row?.authUid || row?.auth_uid || "").trim();
+}
+
+function managedUserKeyV453(row){
+  return String(row?.id || managedUserAuthUidV453(row) || "").trim();
+}
+
+function repairManagedUserIdentityV453(row){
+  if(!row || typeof row !== "object") return row;
+  const authUid = managedUserAuthUidV453(row);
+  if(authUid){
+    row.authUid = authUid;
+    if(!row.id) row.id = authUid;
+  }
+  if(!row.clinicSlug){
+    row.clinicSlug = clinicSlugFromSyntheticEmailV453(row.loginEmail || row.email || "", row.username || "");
+  }
+  return row;
+}
+
+function findManagedUserByKeyV453(db, key){
+  const wanted = String(key || "").trim();
+  if(!wanted) return null;
+  return (db?.users || []).find(row=>{
+    const id = String(row?.id || "").trim();
+    const authUid = managedUserAuthUidV453(row);
+    return id === wanted || authUid === wanted;
+  }) || null;
+}
+
+function managedUserLoginLabelV453(row){
+  const username = String(row?.username || "").trim();
+  if(username) return username;
+  return String(row?.email || row?.loginEmail || "").trim();
+}
+
 function normalizeDBShape(db){
   const base = freshDB();
   const out = (db && typeof db === "object") ? { ...base, ...db } : base;
   if(!Array.isArray(out.masters)) out.masters = [];
   if(!Array.isArray(out.users)) out.users = [];
+  out.users = out.users.filter(Boolean).map(repairManagedUserIdentityV453);
   if(!Array.isArray(out.contacts)) out.contacts = [];
   if(!Array.isArray(out.entries)) out.entries = [];
   if(!Array.isArray(out.tasks)) out.tasks = [];
@@ -7622,17 +7661,65 @@ function normalizeUsername(value){
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeClinicLoginKey(value){
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+}
+
 function usernameToSyntheticEmail(username){
+  // Compatibilidade com contas antigas, criadas antes do isolamento por clínica.
   const clean = normalizeUsername(username).replace(/[^a-z0-9._-]/g, "");
   if(!clean) return "";
   return `${clean}@users.cronos.local`;
 }
 
-function resolveUserLoginEmail(login){
+function usernameToScopedSyntheticEmail(username, clinicKey){
+  const cleanUser = normalizeUsername(username).replace(/[^a-z0-9._-]/g, "");
+  const cleanClinic = normalizeClinicLoginKey(clinicKey);
+  if(!cleanUser || !cleanClinic) return "";
+  return `${cleanClinic}.${cleanUser}@users.cronos.local`;
+}
+
+function parseClinicUserLoginV453(login, clinicInput=""){
   const raw = String(login || "").trim().toLowerCase();
-  if(!raw) return "";
-  if(raw.includes("@")) return raw;
-  return usernameToSyntheticEmail(raw);
+  if(!raw) return { email:"", username:"", clinicKey:"", legacy:false };
+  if(raw.includes("@")) return { email:raw, username:"", clinicKey:"", legacy:false };
+
+  let username = raw;
+  let clinicKey = normalizeClinicLoginKey(clinicInput);
+  if(raw.includes("/")){
+    const parts = raw.split("/").map(part=>part.trim()).filter(Boolean);
+    if(parts.length >= 2){
+      clinicKey = normalizeClinicLoginKey(parts.shift());
+      username = parts.join("/");
+    }
+  }
+
+  username = normalizeUsername(username).replace(/[^a-z0-9._-]/g, "");
+  const email = clinicKey
+    ? usernameToScopedSyntheticEmail(username, clinicKey)
+    : usernameToSyntheticEmail(username);
+  return { email, username, clinicKey, legacy:!clinicKey };
+}
+
+function resolveUserLoginEmail(login, clinicInput=""){
+  return parseClinicUserLoginV453(login, clinicInput).email;
+}
+
+function clinicSlugFromSyntheticEmailV453(email, username=""){
+  const raw = String(email || "").trim().toLowerCase();
+  if(!raw.endsWith("@users.cronos.local")) return "";
+  const local = raw.slice(0, -"@users.cronos.local".length);
+  const cleanUser = normalizeUsername(username).replace(/[^a-z0-9._-]/g, "");
+  if(!cleanUser || local === cleanUser) return "";
+  const suffix = `.${cleanUser}`;
+  return local.endsWith(suffix) ? local.slice(0, -suffix.length) : "";
 }
 
 function ensureMasterRecordByEmail(db, email, fallbackName=""){
@@ -7682,7 +7769,7 @@ function ensureMemberMirror(db, membership){
 
   if(!userRow){
     userRow = {
-      id: uid("u"),
+      id: membership.auth_uid || uid("u"),
       authUid: membership.auth_uid,
       masterId,
       name: membership.name || membership.username || "Usuário",
@@ -7698,6 +7785,7 @@ function ensureMemberMirror(db, membership){
     db.users.push(userRow);
   }else{
     userRow.authUid = membership.auth_uid;
+    userRow.id = userRow.id || membership.auth_uid;
     userRow.masterId = userRow.masterId || masterId;
     userRow.name = membership.name || userRow.name || membership.username || "Usuário";
     userRow.username = membership.username || userRow.username || "";
@@ -8943,13 +9031,15 @@ async function insertClinicMemberRecord({ authUid, loginEmail, username, name, r
   return payload;
 }
 
-async function updateClinicMemberRecord(userRow, { name, role }){
+async function updateClinicMemberRecord(userRow, { name, role, username, email }){
   if(!userRow?.authUid) return;
   return callClinicUserManagerEdge({
     action:"update",
     auth_uid:userRow.authUid,
     name,
-    role
+    role,
+    username,
+    email
   });
 }
 
@@ -8984,6 +9074,14 @@ function applyManagedUserStateV450(userRow, result={}, fallback={}){
   if(has("blocked_reason")) userRow.blockedReason = source.blocked_reason || null;
   else if(has("blockedReason")) userRow.blockedReason = source.blockedReason || null;
   else if(Object.prototype.hasOwnProperty.call(fallback, "blockedReason")) userRow.blockedReason = fallback.blockedReason || null;
+
+  if(has("username")) userRow.username = source.username || "";
+  if(has("email")) userRow.email = source.email || "";
+  if(has("login_email")) userRow.loginEmail = source.login_email || "";
+  if(has("clinic_slug")) userRow.clinicSlug = source.clinic_slug || "";
+  if(has("name")) userRow.name = source.name || userRow.name;
+  if(has("role")) userRow.role = source.role || userRow.role;
+  repairManagedUserIdentityV453(userRow);
 
   return userRow;
 }
@@ -11990,14 +12088,16 @@ function userActionsHTMLV40(row, actor, canManage){
     return `<span class="muted" title="Aguardando aprovação do superadmin">—</span>`;
   }
   if(status.key === "inactive"){
-    return `<div class="usersActionsV40"><button class="miniBtn ok usersMiniActionV40 reactivate" title="Reativar usuário" aria-label="Reativar usuário" onclick="reactivateUser('${row.id}', this)">Reativar</button></div>`;
+    const userKey = escapeHTML(String(row.id || row.authUid || ""));
+    return `<div class="usersActionsV40"><button class="miniBtn ok usersMiniActionV40 reactivate" title="Reativar usuário" aria-label="Reativar usuário" onclick="reactivateUser('${userKey}', this)">Reativar</button></div>`;
   }
 
-  const edit = `<button class="miniBtn usersMiniActionV40" title="Editar usuário" aria-label="Editar usuário" onclick="openUserEdit('${row.id}')">Editar</button>`;
+  const userKey = escapeHTML(String(row.id || row.authUid || ""));
+  const edit = `<button class="miniBtn usersMiniActionV40" title="Editar usuário" aria-label="Editar usuário" onclick="openUserEdit('${userKey}')">Editar</button>`;
   const reset = row.authUid
-    ? `<button class="miniBtn usersMiniActionV40 password" title="Redefinir senha" aria-label="Redefinir senha" onclick="openResetUserPassword('${row.id}')">Senha</button>`
+    ? `<button class="miniBtn usersMiniActionV40 password" title="Redefinir senha" aria-label="Redefinir senha" onclick="openResetUserPassword('${userKey}')">Senha</button>`
     : ``;
-  const block = `<button class="miniBtn danger usersMiniActionV40" title="Bloquear usuário" aria-label="Bloquear usuário" onclick="deleteUser('${row.id}', this)">Bloquear</button>`;
+  const block = `<button class="miniBtn danger usersMiniActionV40" title="Bloquear usuário" aria-label="Bloquear usuário" onclick="deleteUser('${userKey}', this)">Bloquear</button>`;
 
   return `<div class="usersActionsV40">${edit}${reset}${block}</div>`;
 }
@@ -12029,10 +12129,10 @@ function renderUsers(){
     },
     ...users.map(u=>({
       kind:"USER",
-      id: u.id,
+      id: managedUserKeyV453(u),
       authUid: u.authUid || u.auth_uid || "",
       name: u.name || "Usuário",
-      login: u.username ? `${u.username}${u.email ? " / " + u.email : ""}` : (u.email || u.loginEmail || ""),
+      login: `${managedUserLoginLabelV453(u)}${u.email && u.username ? " / " + u.email : ""}`,
       role: u.role || "SECRETARIA",
       createdAt: u.createdAt,
       active: u.active !== false,
@@ -14613,11 +14713,11 @@ function userFormHTML(user){
       </div>
       <div>
         <label>Usuário / login</label>
-        <input id="uf_username" value="${escapeHTML(u.username||"")}" placeholder="Ex: secretaria1" ${isCloudUser ? "disabled" : ""}/>
+        <input id="uf_username" value="${escapeHTML(u.username||"")}" placeholder="Ex: secretaria1"/>
       </div>
       <div>
         <label>E-mail (opcional)</label>
-        <input id="uf_email" value="${escapeHTML(visibleEmail||"")}" placeholder="email@clinica.com" ${isCloudUser ? "disabled" : ""}/>
+        <input id="uf_email" value="${escapeHTML(visibleEmail||"")}" placeholder="email@clinica.com"/>
       </div>
       <div style="grid-column:1/-1">
         <label>Senha</label>
@@ -14626,7 +14726,7 @@ function userFormHTML(user){
       <div class="muted" style="font-size:12px; grid-column:1/-1">
         ${
           isCloudUser
-            ? 'Este acesso já existe no sistema. Aqui você altera <b>nome</b> e <b>nível</b>. Para criar uma senha temporária, use o botão <b>Senha</b> na tabela de usuários.'
+            ? 'Este acesso já existe no sistema. Aqui você altera <b>nome</b>, <b>nível</b> e o <b>login</b>. Usuários com o mesmo nome podem existir em clínicas diferentes. Para criar uma senha temporária, use o botão <b>Senha</b> na tabela.'
             : 'Se preencher <b>usuário</b>, ele vira o login principal. O <b>e-mail</b> fica como contato. Se deixar o usuário vazio, o login será pelo e-mail.'
         }
       </div>
@@ -14704,7 +14804,7 @@ function openResetUserPassword(userId){
   const actor = currentActor();
   if(!actor?.perms?.manageUsers) return toast("Sem permissão", "Somente Master pode redefinir senhas.");
   const db = loadDB();
-  const user = (db.users || []).find(item=>String(item.id) === String(userId));
+  const user = findManagedUserByKeyV453(db, userId);
   if(!user) return toast("Usuário não encontrado");
   if(!guardActiveManagedUserV449(user, "redefinir a senha")) return;
   if(!user.authUid) return toast("Acesso sem vínculo", "Esse usuário ainda não possui um acesso cloud válido.");
@@ -14788,6 +14888,8 @@ function openNewUser(){
     `,
     onMount: ()=>{
       el("btnSaveUser").addEventListener("click", async ()=>{
+        const saveButton = el("btnSaveUser");
+        if(saveButton?.disabled) return;
         const db = loadDB();
         const name = val("uf_name").trim();
         const role = val("uf_role");
@@ -14804,6 +14906,12 @@ function openNewUser(){
         if(email && db.users.some(u=>u.masterId===actor.masterId && String(u.email||"").toLowerCase()===email)) return toast("E-mail já existe");
 
         try{
+          if(saveButton){
+            saveButton.disabled = true;
+            saveButton.classList.add("loading");
+            saveButton.textContent = "Salvando...";
+          }
+          toast("Salvando usuário...", "Aguarde a confirmação do sistema.");
           const result = await createClinicUserViaEdge({
             name,
             username,
@@ -14813,14 +14921,16 @@ function openNewUser(){
           });
 
           const authUid = result?.user?.auth_uid || result?.auth_uid || null;
-          const loginEmail = result?.user?.login_email || (username ? usernameToSyntheticEmail(username) : email);
+          const clinicSlug = result?.user?.clinic_slug || result?.clinic_slug || "";
+          const loginEmail = result?.user?.login_email || (username ? usernameToScopedSyntheticEmail(username, clinicSlug) : email);
           const explicitEmail = result?.user?.email || email || "";
           const pendingApproval = result?.pending_approval === true;
 
-          db.users.push({
-            id: uid("u"),
+          db.users.push(repairManagedUserIdentityV453({
+            id: authUid || uid("u"),
             authUid,
             masterId: actor.masterId,
+            clinicSlug,
             name,
             username: username || "",
             email: explicitEmail || "",
@@ -14830,21 +14940,28 @@ function openNewUser(){
             pendingApproval,
             blockedReason: result?.blocked_reason || null,
             createdAt: new Date().toISOString()
-          });
+          }));
 
-          cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
-          closeModal();
+          DB = normalizeDBShape(db);
+          safeSetLocalDB(DB);
+          closeModal({ force:true, source:"user-save" });
 
+          const loginHint = username ? ` Login: ${username}.` : "";
           if(pendingApproval){
-            toast("Usuário enviado para aprovação ⏳", `${name} foi criado, mas ficará bloqueado até liberação do superadmin.`);
+            toast("Usuário enviado para aprovação ⏳", `${name} foi criado, mas ficará bloqueado até liberação do superadmin.${loginHint}`);
           }else{
-            toast("Usuário criado ✅", `${name} já pode entrar no sistema.`);
+            toast("Usuário criado ✅", `${name} já pode entrar no sistema.${loginHint}`);
           }
           renderAll();
         }catch(err){
           console.error("Erro ao criar usuário cloud:", err);
           const msg = String(err?.message || err?.error_description || "Não foi possível criar o usuário.");
           toast("Falha ao criar usuário", msg);
+          if(saveButton){
+            saveButton.disabled = false;
+            saveButton.classList.remove("loading");
+            saveButton.textContent = "Salvar";
+          }
         }
       });
     }
@@ -14855,12 +14972,12 @@ function openUserEdit(userId){
   const actor = currentActor();
   if(!actor.perms.manageUsers) return toast("Sem permissão");
   const db = loadDB();
-  const u = db.users.find(x=>x.id===userId);
+  const u = findManagedUserByKeyV453(db, userId);
   if(!u) return toast("Usuário não encontrado");
   if(!guardActiveManagedUserV449(u, "editar os dados")) return;
   openModal({
     title: "Editar usuário",
-    sub: u.authUid ? "Nome e nível podem ser alterados aqui. Credenciais cloud de terceiros precisam de rota administrativa." : "Altere nível e login. (Senha opcional)",
+    sub: u.authUid ? "Nome, nível e login ficam restritos a esta clínica. A senha continua no botão Senha." : "Altere nível e login. (Senha opcional)",
     bodyHTML: userFormHTML(u),
     footHTML: `
       <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
@@ -14871,23 +14988,47 @@ function openUserEdit(userId){
         el("uf_pass").placeholder = "deixe vazio para manter";
       }
       el("btnSaveUser").addEventListener("click", async ()=>{
+        const saveButton = el("btnSaveUser");
+        if(saveButton?.disabled) return;
         const name = val("uf_name").trim();
         const role = val("uf_role");
         if(role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode promover para MASTER.");
         if(!name) return toast("Nome obrigatório");
 
         if(u.authUid){
+          const username = normalizeUsername(val("uf_username"));
+          const email = val("uf_email").trim().toLowerCase();
+          if(!email && !username) return toast("Informe um usuário ou e-mail");
+          if(username && db.users.some(x=>x.masterId===actor.masterId && normalizeUsername(x.username)===username && managedUserKeyV453(x)!==managedUserKeyV453(u))) return toast("Usuário já existe nesta clínica");
+          if(email && db.users.some(x=>x.masterId===actor.masterId && String(x.email||"").toLowerCase()===email && managedUserKeyV453(x)!==managedUserKeyV453(u))) return toast("E-mail já existe nesta clínica");
+
           try{
+            if(saveButton){
+              saveButton.disabled = true;
+              saveButton.classList.add("loading");
+              saveButton.textContent = "Salvando...";
+            }
+            toast("Salvando usuário...", "Aguarde a confirmação do sistema.");
+            const result = await updateClinicMemberRecord(u, { name, role, username, email });
+            applyManagedUserStateV450(u, result, { active:true });
             u.name = name;
             u.role = role;
-            await updateClinicMemberRecord(u, { name, role });
-            cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
-            closeModal();
-            toast("Usuário atualizado ✅");
+            u.username = username;
+            u.email = email;
+            DB = normalizeDBShape(db);
+            safeSetLocalDB(DB);
+            closeModal({ force:true, source:"user-save" });
+            const visibleLogin = managedUserLoginLabelV453(u);
+            toast("Usuário atualizado ✅", visibleLogin ? `Login: ${visibleLogin}` : "Dados atualizados.");
             renderAll();
           }catch(err){
             console.error("Erro ao atualizar usuário cloud:", err);
             toast("Falha ao atualizar usuário", String(err?.message || "Tente novamente."));
+            if(saveButton){
+              saveButton.disabled = false;
+              saveButton.classList.remove("loading");
+              saveButton.textContent = "Salvar";
+            }
           }
           return;
         }
@@ -14900,6 +15041,12 @@ function openUserEdit(userId){
         if(username && db.users.some(x=>x.masterId===actor.masterId && normalizeUsername(x.username)===username && x.id!==u.id)) return toast("Usuário já existe");
         if(email && db.users.some(x=>x.masterId===actor.masterId && String(x.email||"").toLowerCase()===email && x.id!==u.id)) return toast("E-mail já existe");
 
+        if(saveButton){
+          saveButton.disabled = true;
+          saveButton.classList.add("loading");
+          saveButton.textContent = "Salvando...";
+        }
+        toast("Salvando usuário...", "Aguarde a confirmação do sistema.");
         u.name = name;
         u.role = role;
         u.username = username;
@@ -14907,8 +15054,8 @@ function openUserEdit(userId){
         if(pass){
           u.passHash = await hashPass(pass);
         }
-        cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
-        closeModal();
+        await cronosPersistMetaPatch(db, { users:db.users }, { silent:true });
+        closeModal({ force:true, source:"user-save" });
         toast("Usuário atualizado ✅");
         renderAll();
       });
@@ -14959,7 +15106,7 @@ async function deleteUser(userId, triggerButton=null){
   const actor = currentActor();
   if(!actor?.perms?.manageUsers) return toast("Sem permissão");
   const db = loadDB();
-  const u = db.users.find(x=>x.id===userId);
+  const u = findManagedUserByKeyV453(db, userId);
   if(!u) return toast("Usuário não encontrado");
   if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode bloquear outros masters.");
   if(u.pendingApproval === true) return toast("Aguardando aprovação", "Esse acesso ainda depende da aprovação do superadmin.");
@@ -15002,7 +15149,7 @@ async function reactivateUser(userId, triggerButton=null){
   const actor = currentActor();
   if(!actor?.perms?.manageUsers) return toast("Sem permissão");
   const db = loadDB();
-  const u = db.users.find(x=>x.id===userId);
+  const u = findManagedUserByKeyV453(db, userId);
   if(!u) return toast("Usuário não encontrado");
   if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode reativar outros masters.");
   if(u.pendingApproval === true) return toast("Aguardando aprovação", "A aprovação inicial desse acesso pertence ao superadmin.");
@@ -16661,25 +16808,89 @@ function bindActions(){
   if(el("waTemplate")) el("waTemplate").value = (dbInitPrefs.settings && dbInitPrefs.settings.waTemplate) ? String(dbInitPrefs.settings.waTemplate) : "";
   if(el("waChargeTemplate")) el("waChargeTemplate").value = (dbInitPrefs.settings && dbInitPrefs.settings.waChargeTemplate) ? String(dbInitPrefs.settings.waChargeTemplate) : "";
   const btnClinicIdentity = el("btnSaveClinicIdentity");
-  if(btnClinicIdentity) btnClinicIdentity.onclick = ()=>{
+  if(btnClinicIdentity) btnClinicIdentity.onclick = async ()=>{
     const actor = currentActor();
     if(actor && !canAccessView("settings", actor)) return toast("Sem permissão", "Seu nível não pode alterar configurações.");
     if(!(actor && actor.kind === "master")) return toast("Sem permissão", "Só o master principal pode alterar a identidade da clínica.");
+
     const db = loadDB();
     const master = db.masters.find(m=>m.id===actor.masterId);
     const clinicDisplayName = String(val("clinicDisplayName") || "").trim();
     if(!clinicDisplayName) return toast("Nome da clínica", "Digite um nome para a clínica antes de salvar.");
-    if(master){
+    if(!master) return toast("Falha ao salvar identidade", "O cadastro do Master principal não foi encontrado.");
+
+    const previousName = String(master.name || "");
+    const previousButtonText = btnClinicIdentity.textContent;
+    const hint = el("clinicIdentitySavedHint");
+    btnClinicIdentity.disabled = true;
+    btnClinicIdentity.textContent = "Salvando...";
+    if(hint) hint.textContent = "Salvando identidade...";
+
+    try{
+      const ownerUid = String(CLOUD_CLINIC_OWNER_UID || CLOUD_OWNER_UID || "").trim();
+      if(!ownerUid) throw new Error("A clínica vinculada à sessão não foi identificada.");
+      if(typeof supabaseClient === "undefined" || !supabaseClient){
+        throw new Error("A conexão com o Supabase não está disponível.");
+      }
+
+      // clinic_state.clinic_name é a fonte autoritativa usada no próximo F5.
+      // Antes, apenas o espelho V4 em masters era alterado e o carregamento
+      // sobrescrevia o nome salvo com o valor antigo (normalmente o e-mail antes do @).
+      const { data: clinicRow, error: clinicError } = await supabaseClient
+        .from(CLOUD_TABLE)
+        .update({ clinic_name:clinicDisplayName })
+        .eq("owner_uid", ownerUid)
+        .select("id, clinic_name, updated_at")
+        .maybeSingle();
+
+      if(clinicError) throw clinicError;
+      if(!clinicRow?.id) throw new Error("A identidade da clínica não foi confirmada pelo banco.");
+
       master.name = clinicDisplayName;
-      cronosPersistMetaPatch(db, { masters:db.masters }, { silent:true });
+      DB = normalizeDBShape(db);
+      safeSetLocalDB(DB);
+      CLOUD_CLINIC_NAME = clinicDisplayName;
+      try{
+        if(__cloudAccessContextCache?.ctx?.row){
+          __cloudAccessContextCache.ctx.row.clinic_name = clinicDisplayName;
+        }
+      }catch(_){ }
+
+      // Mantém também o espelho de metadados coerente, sem fila persistente em falha.
+      try{
+        const metaSaved = await cronosPersistMetaPatch(DB, { masters:DB.masters }, {
+          silent:true,
+          restoreOnFailure:false,
+          keepPendingOnFailure:false
+        });
+        if(!metaSaved){
+          console.warn("Cronos V456: clinic_name foi salvo, mas o espelho de masters não confirmou a atualização.");
+        }
+      }catch(error){
+        console.warn("Cronos V456: falha não crítica ao alinhar o espelho de masters.", error);
+      }
+
       try{
         const actorNow = currentActor();
         if(actorNow) showApp(actorNow);
         renderUsers();
-      }catch(_){}
-      const hint = el("clinicIdentitySavedHint");
-      if(hint){ hint.textContent = "Identidade salva."; setTimeout(()=>hint.textContent="", 2200); }
+      }catch(_){ }
+
+      if(hint){
+        hint.textContent = "Identidade salva.";
+        setTimeout(()=>{ if(hint.textContent === "Identidade salva.") hint.textContent = ""; }, 2200);
+      }
       toast("Identidade da clínica salva.");
+    }catch(error){
+      master.name = previousName;
+      DB = normalizeDBShape(db);
+      safeSetLocalDB(DB);
+      console.error("Cronos V456: falha ao salvar identidade da clínica.", error);
+      if(hint) hint.textContent = "Não foi possível salvar.";
+      toast("Falha ao salvar identidade", String(error?.message || "Tente novamente."));
+    }finally{
+      btnClinicIdentity.disabled = false;
+      btnClinicIdentity.textContent = previousButtonText || "⿻ Salvar identidade da clínica";
     }
   };
 
@@ -16732,7 +16943,7 @@ function bindActions(){
 }
 
 function bindAuth(){ 
-  el("authMode").addEventListener("change", ()=>{
+  const syncAuthModeV454 = ()=>{
     const mode = val("authMode");
     const sel = el("authMasterSelect");
     const wrap = el("authMasterNameWrap");
@@ -16745,7 +16956,9 @@ function bindAuth(){
       if(wrap) wrap.classList.add("hidden");
       el("authLogin").placeholder = "Usuário ou e-mail do usuário";
     }
-  });
+  };
+  el("authMode").addEventListener("change", syncAuthModeV454);
+  syncAuthModeV454();
 
   el("btnLogin").addEventListener("click", async ()=>{
     if(window.__SUPABASE_CLOUD_LOGIN__) return;
@@ -17748,6 +17961,89 @@ async function finalizeCloudLogin(){
   window.__CRONOS_EXPLICIT_LOGIN__ = false;
 }
 
+async function loginClinicUserViaEdgeV454({ username, password, candidateAuthUid="" }){
+  const res = await fetch(`${supabaseUrl}/functions/v1/${LOGIN_CLINIC_USER_ENDPOINT}`, {
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "Authorization":`Bearer ${supabaseKey}`,
+      "apikey":supabaseKey
+    },
+    body:JSON.stringify({
+      username:String(username || "").trim(),
+      password:String(password || ""),
+      candidate_auth_uid:String(candidateAuthUid || "").trim() || null
+    })
+  });
+
+  const payload = await res.json().catch(()=>({}));
+  if(res.status === 409 && payload?.ambiguous === true) return payload;
+  if(!res.ok){
+    const error = new Error(String(payload?.error || "Login ou senha inválidos."));
+    error.status = res.status;
+    throw error;
+  }
+  return payload || {};
+}
+
+function chooseClinicForInternalLoginV454(candidates=[]){
+  return new Promise(resolve=>{
+    const rows = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+    if(!rows.length){ resolve(""); return; }
+
+    const overlay = document.createElement("div");
+    overlay.className = "authClinicPickerOverlayV454";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Escolher clínica");
+
+    const card = document.createElement("div");
+    card.className = "authClinicPickerCardV454";
+    const title = document.createElement("h3");
+    title.textContent = "Em qual clínica você quer entrar?";
+    const text = document.createElement("p");
+    text.textContent = "Este login e esta senha existem em mais de uma clínica. Escolha uma vez para continuar.";
+    const list = document.createElement("div");
+    list.className = "authClinicPickerListV454";
+
+    let settled = false;
+    const finish = value=>{
+      if(settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      resolve(String(value || ""));
+    };
+    const onKey = event=>{ if(event.key === "Escape") finish(""); };
+
+    rows.forEach(item=>{
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "authClinicPickerOptionV454";
+      const name = document.createElement("b");
+      name.textContent = String(item?.clinic_name || "Clínica");
+      const detail = document.createElement("small");
+      detail.textContent = String(item?.role || "Usuário interno");
+      button.append(name, detail);
+      button.addEventListener("click", ()=>finish(item?.candidate_id || item?.auth_uid || ""));
+      list.appendChild(button);
+    });
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "authClinicPickerCancelV454";
+    cancel.textContent = "Cancelar";
+    cancel.addEventListener("click", ()=>finish(""));
+
+    card.append(title, text, list, cancel);
+    overlay.appendChild(card);
+    overlay.addEventListener("click", event=>{ if(event.target === overlay) finish(""); });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(overlay);
+    setTimeout(()=>list.querySelector("button")?.focus(), 0);
+  });
+}
+
 async function cronosHandleLoginSubmit(event){
   if(event && typeof event.preventDefault === "function") event.preventDefault();
   if(window.__CRONOS_LOGIN_BUSY__) return;
@@ -17756,20 +18052,11 @@ async function cronosHandleLoginSubmit(event){
   suppressCloudFailureToasts(12000);
 
   const mode = String(document.getElementById("authMode")?.value || "master");
-  const rawLogin = String(document.getElementById("authLogin").value || "").trim();
+  const rawLogin = String(document.getElementById("authLogin")?.value || "").trim();
   const password = document.getElementById("authPass").value;
 
-  if (!rawLogin || !password) {
+  if(!rawLogin || !password){
     toast("Preencha login e senha");
-    return;
-  }
-
-  const email = mode === "user"
-    ? resolveUserLoginEmail(rawLogin)
-    : String(rawLogin || "").trim().toLowerCase();
-
-  if(!email){
-    toast("Login inválido");
     return;
   }
 
@@ -17785,26 +18072,58 @@ async function cronosHandleLoginSubmit(event){
     __cronosPolicyBootstrapContext = "";
     clearClinicAccessState();
 
-    const { data:signInData, error } = await supabaseClient.auth.signInWithPassword({
-      email,
-      password
-    });
+    let signInData = null;
 
-    if (error) {
-      toast("Login ou senha inválidos", "Confere os dados e tenta de novo.");
-      return;
+    if(mode === "user" && !rawLogin.includes("@")){
+      let result = await loginClinicUserViaEdgeV454({ username:rawLogin, password });
+
+      if(result?.ambiguous === true){
+        setLoginLoading(false);
+        const selectedCandidate = await chooseClinicForInternalLoginV454(result?.candidates || []);
+        if(!selectedCandidate) return;
+        setLoginLoading(true, "Abrindo a clínica escolhida...");
+        result = await loginClinicUserViaEdgeV454({
+          username:rawLogin,
+          password,
+          candidateAuthUid:selectedCandidate
+        });
+      }
+
+      const accessToken = String(result?.session?.access_token || "");
+      const refreshToken = String(result?.session?.refresh_token || "");
+      if(!accessToken || !refreshToken) throw new Error("Não foi possível concluir o acesso do usuário.");
+
+      const { data, error } = await supabaseClient.auth.setSession({
+        access_token:accessToken,
+        refresh_token:refreshToken
+      });
+      if(error) throw error;
+      signInData = data;
+    }else{
+      const email = rawLogin.toLowerCase();
+      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if(error) throw error;
+      signInData = data;
     }
 
     __cronosSessionUserCache = signInData?.session?.user || signInData?.user || null;
     await finalizeCloudLogin();
   }catch(err){
     console.error("Falha no login:", err);
-    toast("Falha ao entrar", "O sistema demorou mais do que devia. Tenta de novo.");
+    const message = String(err?.message || "");
+    if(/aguarda aprovação/i.test(message)){
+      toast("Acesso aguardando aprovação", message);
+    }else if(/bloquead|inativ/i.test(message)){
+      toast("Acesso bloqueado", message);
+    }else if(/login|senha|credencial|invalid/i.test(message)){
+      toast("Login ou senha inválidos", "Confere os dados e tenta de novo.");
+    }else{
+      toast("Falha ao entrar", message || "O sistema demorou mais do que devia. Tenta de novo.");
+    }
   }finally{
     setLoginLoading(false);
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
   }
-
 }
 
 async function verificarSessao() {

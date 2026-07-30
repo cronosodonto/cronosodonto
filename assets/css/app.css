@@ -9109,3 +9109,52 @@ body.light #authView .authCardV439 select,
 @keyframes cronosUserActionSpinV451{
   to{ transform:rotate(360deg); }
 }
+
+/* Cronos V454 — escolha de clínica apenas no caso raro de credenciais idênticas. */
+.authClinicPickerOverlayV454{
+  position:fixed;
+  inset:0;
+  z-index:10050;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:22px;
+  background:rgba(3,8,20,.72);
+  backdrop-filter:blur(8px);
+}
+.authClinicPickerCardV454{
+  width:min(440px,100%);
+  border:1px solid rgba(135,181,255,.22);
+  border-radius:22px;
+  padding:24px;
+  background:#111a2b;
+  box-shadow:0 24px 80px rgba(0,0,0,.45);
+}
+.authClinicPickerCardV454 h3{margin:0 0 8px;font-size:21px;color:#f5f8ff}
+.authClinicPickerCardV454 p{margin:0 0 18px;color:#aebbd1;line-height:1.45}
+.authClinicPickerListV454{display:grid;gap:10px}
+.authClinicPickerOptionV454{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:14px;
+  width:100%;
+  padding:15px 16px;
+  border:1px solid rgba(126,167,235,.22);
+  border-radius:14px;
+  background:#17243a;
+  color:#f5f8ff;
+  cursor:pointer;
+  text-align:left;
+}
+.authClinicPickerOptionV454:hover,.authClinicPickerOptionV454:focus{border-color:#57d7c4;outline:none;transform:translateY(-1px)}
+.authClinicPickerOptionV454 small{color:#9eacc2;text-transform:capitalize}
+.authClinicPickerCancelV454{
+  width:100%;
+  margin-top:14px;
+  padding:12px;
+  border:0;
+  background:transparent;
+  color:#aebbd1;
+  cursor:pointer;
+}
