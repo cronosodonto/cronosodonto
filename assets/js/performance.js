@@ -173,7 +173,7 @@
       .perfStatusCard{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(22,119,255,.10),rgba(46,230,166,.04)),var(--panel2)}
       .perfStatusCard:before{content:'';position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--status-color,var(--brand)),rgba(46,230,166,.65));opacity:.9}
       .perfStatusBadge{display:inline-flex;align-items:center;gap:7px;border:1px solid color-mix(in srgb,var(--status-color,var(--brand)) 42%,transparent);border-radius:999px;background:color-mix(in srgb,var(--status-color,var(--brand)) 12%,transparent);color:var(--text);padding:6px 10px;font-size:12px;font-weight:950;margin-bottom:9px}
-      .perfKpi.isMissing b{color:var(--danger)}.perfKpi.isProjection b{color:var(--accent)}
+      .perfKpi.isMissing b.perfUp{color:var(--ok)}.perfKpi.isMissing b.perfDown{color:var(--danger)}.perfKpi.isMissing b.perfFlat{color:var(--muted)}.perfKpi.isProjection b{color:var(--accent)}
       .perfRead{display:grid;gap:10px;background:linear-gradient(135deg,rgba(22,119,255,.09),rgba(25,198,255,.035));border-color:rgba(25,198,255,.18)}
       :root.light .perfRead{background:linear-gradient(135deg,rgba(37,99,235,.08),rgba(6,182,212,.05));border-color:rgba(37,99,235,.16)}
       .perfReadHead{display:flex;align-items:center;gap:10px;font-weight:950;font-size:16px}.perfReadIcon{width:34px;height:34px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(22,119,255,.25),rgba(46,230,166,.12));border:1px solid rgba(25,198,255,.22);color:#67e8f9;flex:0 0 auto}.perfReadIcon svg{width:18px;height:18px;display:block}

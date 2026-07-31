@@ -191,3 +191,8 @@ Filtros são operações somente de leitura, sem autosave. Busca usa debounce e 
 ## v455 — feedback correto ao salvar usuários
 
 Corrige o alerta falso de alterações não salvas depois de uma atualização bem-sucedida e mostra o estado **Salvando...** durante a operação.
+## V457 — Cores condicionais em Performance
+- Acima da base: verde.
+- Abaixo da base: vermelho.
+- Empate: neutro.
+
