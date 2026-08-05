@@ -196,3 +196,15 @@ Corrige o alerta falso de alterações não salvas depois de uma atualização b
 - Abaixo da base: vermelho.
 - Empate: neutro.
 
+
+## V458 — Data da avaliação editável no prontuário
+- Permite corrigir a data da avaliação sem excluir procedimentos.
+- Atualiza a data dos itens vinculados à avaliação.
+- Reaproveita a avaliação automática enquanto ela estiver vazia.
+- Confirma a data antes do primeiro lançamento.
+
+## V459 — Data inicial inteligente no prontuário
+- Usa o agendamento mais recente do paciente como sugestão para a primeira avaliação.
+- Não assume mais a data atual quando não existe agendamento.
+- Mantém o seletor de avaliações cinza enquanto a primeira data estiver pendente.
+- Preserva avaliações já cadastradas e exige uma data válida antes de lançar procedimentos.

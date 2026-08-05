@@ -1,4 +1,4 @@
-// Cronos Repository v4.8.0 — quarentena de fila e trava de commit entre abas
+// Cronos Repository v4.9.0 — conflito terminal com recibo e zero reenvio manual
 /*
  * CronosRepository V4 — persistência central, transacional e concorrente.
  *
@@ -919,14 +919,31 @@
   }
 
   async function commitMutation(mutation){
-    // V448 nunca repete automaticamente um commit. Em erro de rede, apenas uma
-    // leitura oficial tenta confirmar se o servidor concluiu a operação.
+    // V460 nunca repete automaticamente um commit. O servidor também pode
+    // devolver um conflito terminal como JSON 200 para neutralizar clientes
+    // antigos que insistem na mesma operação sem gerar milhares de erros SQL.
     try{
-      return await rpc("cronos_v4_commit_changes", {
+      const result = await rpc("cronos_v4_commit_changes", {
         p_clinic_id:state.clinicId,
         p_operation_id:mutation.operationId,
         p_changes:mutation.changes
       }, { timeoutMs:RPC_TIMEOUT_MS });
+
+      if(result?.ok === false && (result?.conflict === true || String(result?.code || "") === "CONFLITO_V4")){
+        const controlledConflict = new CronosPersistenceError(
+          String(result?.message || "CONFLITO_V4: pacote com versão antiga."),
+          {
+            code:"40001",
+            operationId:mutation.operationId,
+            details:result,
+            conflict:true
+          }
+        );
+        controlledConflict.status = 409;
+        throw controlledConflict;
+      }
+
+      return result;
     }catch(error){
       if(isNetworkError(error) && !isInfrastructureBusyError(error)){
         const reconciled = await reconcileUncertainMutation(mutation);
@@ -983,9 +1000,14 @@
           const commitBusy = isCommitBusyError(error);
           traceCommit("failed", mutation, { code:String(error?.code || ""), infrastructureBusy, conflict, commitBusy });
           if(conflict){
-            // Um pacote com versão antiga nunca é repetido automaticamente: isso
-            // só produziria o mesmo conflito a cada F5. Arquivamos a tentativa,
-            // limpamos a fila e voltamos ao último estado confirmado do servidor.
+            // Um pacote com versão antiga nunca é repetido. Quando o wrapper do
+            // banco devolve o snapshot oficial, ele substitui a base local antes
+            // de limpar a fila, evitando que um cliente antigo finja que salvou.
+            const conflictPayload = error?.details;
+            if(conflictPayload?.__reconciled && conflictPayload?.state){
+              state.baseline = normalizeState(conflictPayload.state);
+              state.versions = normalizeVersions(conflictPayload.versions || {});
+            }
             archiveConflict(mutation, error);
             const affected = state.queue.splice(0);
             persistQueue();
@@ -1555,13 +1577,27 @@
   }
 
   function retryPending(){
+    // Compatibilidade segura: versões antigas chamavam este método pelo botão
+    // Atualizar. Na V460 ele jamais transmite novamente uma fila bloqueada.
+    const affected = state.queue.splice(0);
+    if(affected.length){
+      archiveUncertainMutations(
+        affected,
+        { code:"MANUAL_RETRY_DISABLED", message:"Reenvio manual desativado para impedir loops." },
+        "MANUAL_RETRY_QUARANTINED"
+      );
+    }
+    persistQueue();
     state.blocked = false;
-    return processQueue();
+    rebuildWorking();
+    affected.forEach(item=>resolveWaiter(item.operationId, false));
+    emit("cronos:persistence-idle", { quarantined:affected.length, retryDisabled:true });
+    return Promise.resolve({ ok:false, retryDisabled:true, quarantined:affected.length });
   }
 
   function diagnostics(){
     return {
-      version:"4.8.0",
+      version:"4.9.0",
       tabId:TAB_ID,
       clinicId:state.clinicId,
       enabled:state.enabled,
@@ -1586,7 +1622,7 @@
   }catch(_){ }
 
   global.CronosRepository = Object.freeze({
-    __cronosRepositoryVersion:"4.8.0",
+    __cronosRepositoryVersion:"4.9.0",
     __tabId:TAB_ID,
     CronosPersistenceError,
     setClient,

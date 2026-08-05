@@ -446,6 +446,87 @@ function ensureFinancialPlans(entry){
   return entry.financialPlans;
 }
 
+function cronosFichaISODate(value){
+  const raw = String(value || '').trim().slice(0,10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : '';
+}
+
+function getLatestAppointmentDateForEntry(entry, db=null){
+  if(!entry) return '';
+  const sourceDB = db || (typeof loadDB === 'function' ? loadDB() : null) || {};
+  const candidates = [];
+  const pushDate = (value)=>{
+    const iso = cronosFichaISODate(value);
+    if(iso) candidates.push(iso);
+  };
+  const collect = (item)=>{
+    if(!item || typeof item !== 'object') return;
+    pushDate(item.apptDate);
+    pushDate(item.agendamentoData);
+    pushDate(item.appointmentDate);
+    pushDate(item.appointment_date);
+  };
+
+  collect(entry);
+  const contactId = String(entry.contactId || entry.contact_id || '').trim();
+  if(contactId){
+    (Array.isArray(sourceDB.entries) ? sourceDB.entries : []).forEach(item=>{
+      if(String(item?.contactId || item?.contact_id || '').trim() === contactId) collect(item);
+    });
+    const contact = (Array.isArray(sourceDB.contacts) ? sourceDB.contacts : [])
+      .find(item=>String(item?.id || '').trim() === contactId);
+    collect(contact);
+  }
+
+  return Array.from(new Set(candidates)).sort().pop() || '';
+}
+
+function cronosFichaEvaluationHasContentLite(ficha, evaluationId){
+  const evalId = String(evaluationId || ficha?.activeEvaluationId || 'eval_1');
+  const evaluations = Array.isArray(ficha?.avaliacoes) ? ficha.avaliacoes : [];
+  const av = evaluations.find(item=>String(item?.id || '') === evalId) || null;
+  const hasPlan = (Array.isArray(ficha?.plano) ? ficha.plano : []).some(item=>{
+    if(typeof cronosIsDeletedLike === 'function' && cronosIsDeletedLike(item)) return false;
+    return String(item?.avaliacaoId || 'eval_1') === evalId;
+  });
+  const hasObservation = !!String(av?.observacoes || '').trim();
+  const odonto = (av?.odontograma && typeof av.odontograma === 'object') ? av.odontograma : {};
+  const hasOdontogram = Object.values(odonto).some(meta=>{
+    if(meta == null) return false;
+    if(typeof meta !== 'object') return Boolean(meta);
+    return Object.values(meta).some(value=>{
+      if(Array.isArray(value)) return value.length > 0;
+      if(value && typeof value === 'object') return Object.keys(value).length > 0;
+      return value !== '' && value !== null && value !== undefined && value !== false;
+    });
+  });
+  return hasPlan || hasObservation || hasOdontogram;
+}
+
+function cronosRefreshPendingEvaluationDate(entry, ficha, evaluation){
+  if(!evaluation || cronosFichaEvaluationHasContentLite(ficha, evaluation.id)) return evaluation;
+  const canRefresh = evaluation.provisional === true
+    || (typeof evaluation.provisional !== 'boolean' && !evaluation.dateConfirmedAt);
+  if(!canRefresh || evaluation.dateConfirmedAt) return evaluation;
+  const suggestedDate = getLatestAppointmentDateForEntry(entry);
+  evaluation.date = suggestedDate || '';
+  evaluation.provisional = true;
+  evaluation.dateSource = suggestedDate ? 'appointment' : 'pending';
+  return evaluation;
+}
+
+function cronosCreatePendingEvaluation(entry, id='eval_1', label='Avaliação 1'){
+  const suggestedDate = getLatestAppointmentDateForEntry(entry);
+  return {
+    id,
+    label,
+    date: suggestedDate || '',
+    provisional: true,
+    dateSource: suggestedDate ? 'appointment' : 'pending',
+    createdAt: new Date().toISOString()
+  };
+}
+
 function ensureFichaForRecebimentos(entry){
   if(!entry) return {plano:[], odontograma:{}, avaliacoes:[]};
   if(!entry.ficha || typeof entry.ficha !== "object"){
@@ -456,16 +537,13 @@ function ensureFichaForRecebimentos(entry){
   if(!Array.isArray(entry.ficha.avaliacoes)) entry.ficha.avaliacoes = [];
 
   if(!entry.ficha.avaliacoes.length){
-    const evalDate = String(entry.firstContactAt || entry.monthKey || todayISO()).slice(0,10);
-    entry.ficha.avaliacoes.push({
-      id: "eval_1",
-      label: "Avaliação 1",
-      date: /^\d{4}-\d{2}-\d{2}$/.test(evalDate) ? evalDate : todayISO(),
-      createdAt: new Date().toISOString()
-    });
+    entry.ficha.avaliacoes.push(cronosCreatePendingEvaluation(entry));
   }
   if(!entry.ficha.activeEvaluationId){
     entry.ficha.activeEvaluationId = entry.ficha.avaliacoes[entry.ficha.avaliacoes.length - 1]?.id || "eval_1";
+  }
+  if(entry.ficha.avaliacoes.length === 1){
+    cronosRefreshPendingEvaluationDate(entry, entry.ficha, entry.ficha.avaliacoes[0]);
   }
   const legacyOdontograma = (entry.ficha.odontograma && typeof entry.ficha.odontograma === "object") ? entry.ficha.odontograma : {};
   entry.ficha.avaliacoes.forEach((av, idx)=>{
@@ -479,12 +557,12 @@ function ensureFichaForRecebimentos(entry){
     }
   });
 
-  const firstEval = entry.ficha.avaliacoes[0] || { id:"eval_1", label:"Avaliação 1", date: todayISO() };
+  const firstEval = entry.ficha.avaliacoes[0] || { id:"eval_1", label:"Avaliação 1", date:"" };
   entry.ficha.plano.forEach(item=>{
     if(!item.id) item.id = uid("plan");
     if(!item.avaliacaoId) item.avaliacaoId = firstEval.id;
     if(!item.avaliacaoLabel) item.avaliacaoLabel = firstEval.label || "Avaliação 1";
-    if(!item.avaliacaoData) item.avaliacaoData = firstEval.date || todayISO();
+    if(!item.avaliacaoData) item.avaliacaoData = firstEval.date || "";
     if(item.recebimentoId && !item.financialPlanId) item.financialPlanId = item.recebimentoId;
     if(item.financialPlanId && !item.recebimentoId) item.recebimentoId = item.financialPlanId;
   });
@@ -12210,10 +12288,9 @@ async function refreshCloudDataNow({ force=false, reason="" } = {}){
           // Na V4, cada alteração real já entra por um comando direcionado.
           // O botão Atualizar nunca pode comparar/regravar a clínica inteira.
           if(window.CronosRepository.hasPending?.()){
-            await window.CronosRepository.retryPending?.();
-            if(window.CronosRepository.hasPending?.()){
-              throw new Error("Existe uma alteração pendente. Aguarde a confirmação antes de atualizar.");
-            }
+            // Atualizar é somente leitura. Uma alteração bloqueada nunca é
+            // reenviada; o usuário deve recarregar o estado oficial.
+            throw new Error("Existe uma alteração pendente ou bloqueada. Recarregue a página para conferir o estado oficial; o Cronos não repetirá o envio.");
           }
         }else{
           // Compatibilidade apenas para clínicas que ainda não usam a persistência V4.
@@ -19648,16 +19725,17 @@ document.addEventListener("DOMContentLoaded", () => {
       if(!Array.isArray(entry.ficha.avaliacoes)) entry.ficha.avaliacoes = [];
 
       if(!entry.ficha.avaliacoes.length){
-        const evalDate = String(entry.firstContactAt || entry.monthKey || todayISO()).slice(0,10);
-        entry.ficha.avaliacoes.push({
-          id: 'eval_1',
-          label: 'Avaliação 1',
-          date: /^\d{4}-\d{2}-\d{2}$/.test(evalDate) ? evalDate : todayISO(),
-          createdAt: new Date().toISOString()
-        });
+        entry.ficha.avaliacoes.push(cronosCreatePendingEvaluation(entry));
       }
       if(!entry.ficha.activeEvaluationId){
         entry.ficha.activeEvaluationId = entry.ficha.avaliacoes[entry.ficha.avaliacoes.length - 1]?.id || 'eval_1';
+      }
+      if(entry.ficha.avaliacoes.length === 1){
+        const onlyEvaluation = entry.ficha.avaliacoes[0];
+        if(typeof onlyEvaluation.provisional !== 'boolean' && !fichaEvaluationHasClinicalContent(entry.ficha, onlyEvaluation.id)){
+          onlyEvaluation.provisional = true;
+        }
+        cronosRefreshPendingEvaluationDate(entry, entry.ficha, onlyEvaluation);
       }
       if(!entry.ficha.dentitionType) entry.ficha.dentitionType = 'permanent';
       entry.ficha.avaliacoes.forEach((av, idx)=>{
@@ -19667,12 +19745,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       });
 
-      const firstEval = entry.ficha.avaliacoes[0] || { id:'eval_1', label:'Avaliação 1', date: todayISO(), dentitionType:'permanent' };
+      const firstEval = entry.ficha.avaliacoes[0] || { id:'eval_1', label:'Avaliação 1', date:'', dentitionType:'permanent' };
       entry.ficha.plano.forEach(item=>{
         if(!item.id) item.id = uid('plan');
         if(!item.avaliacaoId) item.avaliacaoId = firstEval.id;
         if(!item.avaliacaoLabel) item.avaliacaoLabel = firstEval.label || 'Avaliação 1';
-        if(!item.avaliacaoData) item.avaliacaoData = firstEval.date || todayISO();
+        if(!item.avaliacaoData) item.avaliacaoData = firstEval.date || '';
         if(!item.createdAt) item.createdAt = new Date().toISOString();
         if(item.recebimentoId && !item.financialPlanId) item.financialPlanId = item.recebimentoId;
         if(item.financialPlanId && !item.recebimentoId) item.recebimentoId = item.financialPlanId;
@@ -19733,7 +19811,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function getActiveFichaEvaluation(ficha, entry=null){
       ficha = ficha || ensureFicha(entry || {});
       if(!Array.isArray(ficha.avaliacoes) || !ficha.avaliacoes.length){
-        ficha.avaliacoes = [{id:'eval_1', label:'Avaliação 1', date: todayISO(), createdAt:new Date().toISOString()}];
+        ficha.avaliacoes = [cronosCreatePendingEvaluation(entry || {})];
       }
       let active = ficha.avaliacoes.find(a=>String(a.id)===String(ficha.activeEvaluationId));
       if(!active){
@@ -19746,6 +19824,53 @@ document.addEventListener("DOMContentLoaded", () => {
     function nextFichaEvaluationLabel(ficha){
       const n = (Array.isArray(ficha?.avaliacoes) ? ficha.avaliacoes.length : 0) + 1;
       return `Avaliação ${n}`;
+    }
+
+    function fichaEvaluationHasClinicalContent(ficha, evaluationId){
+      const evalId = String(evaluationId || ficha?.activeEvaluationId || 'eval_1');
+      const evaluations = Array.isArray(ficha?.avaliacoes) ? ficha.avaliacoes : [];
+      const av = evaluations.find(item=>String(item?.id || '') === evalId) || null;
+      const hasPlan = (Array.isArray(ficha?.plano) ? ficha.plano : []).some(item=>{
+        if(typeof cronosIsDeletedLike === 'function' && cronosIsDeletedLike(item)) return false;
+        return String(item?.avaliacaoId || 'eval_1') === evalId;
+      });
+      const hasObservation = !!String(av?.observacoes || '').trim();
+      const odonto = (av?.odontograma && typeof av.odontograma === 'object') ? av.odontograma : {};
+      const hasOdontogram = Object.values(odonto).some(meta=>{
+        if(meta == null) return false;
+        if(typeof meta !== 'object') return Boolean(meta);
+        return Object.values(meta).some(value=>{
+          if(Array.isArray(value)) return value.length > 0;
+          if(value && typeof value === 'object') return Object.keys(value).length > 0;
+          return value !== '' && value !== null && value !== undefined && value !== false;
+        });
+      });
+      return hasPlan || hasObservation || hasOdontogram;
+    }
+
+    function confirmFichaEvaluationDate(av){
+      if(!av || !/^\d{4}-\d{2}-\d{2}$/.test(String(av.date || ''))) return false;
+      av.provisional = false;
+      if(!av.dateConfirmedAt) av.dateConfirmedAt = new Date().toISOString();
+      if(!av.dateSource || av.dateSource === 'pending') av.dateSource = 'manual';
+      return true;
+    }
+
+    function updateFichaEvaluationDate(ficha, evaluationId, date){
+      const evalId = String(evaluationId || ficha?.activeEvaluationId || 'eval_1');
+      const av = (Array.isArray(ficha?.avaliacoes) ? ficha.avaliacoes : []).find(item=>String(item?.id || '') === evalId);
+      if(!av) return { evaluation:null, updatedItems:0 };
+      av.date = date;
+      av.updatedAt = new Date().toISOString();
+      confirmFichaEvaluationDate(av);
+      let updatedItems = 0;
+      (Array.isArray(ficha?.plano) ? ficha.plano : []).forEach(item=>{
+        if(String(item?.avaliacaoId || 'eval_1') !== evalId) return;
+        item.avaliacaoData = date;
+        item.updatedAt = new Date().toISOString();
+        updatedItems++;
+      });
+      return { evaluation:av, updatedItems };
     }
 
     function getFichaEvaluationObservation(ficha, evaluationId){
@@ -21058,6 +21183,19 @@ window.CRONOS_PROC_UI = {
             return selectedTeeth.some(t=>dentesItem.includes(String(t)));
           }).length
         : 0;
+      const activeEvaluationHasDate = /^\d{4}-\d{2}-\d{2}$/.test(String(activeEvaluation?.date || ''));
+      const hasRegisteredEvaluations = (ficha.avaliacoes || []).some(av=>{
+        const validDate = /^\d{4}-\d{2}-\d{2}$/.test(String(av?.date || ''));
+        return validDate && (av?.provisional !== true || !!av?.dateConfirmedAt || fichaEvaluationHasClinicalContent(ficha, av?.id));
+      });
+      const evaluationSelectDisabled = !activeEvaluationHasDate && !hasRegisteredEvaluations;
+      const evaluationDateHint = !activeEvaluationHasDate
+        ? 'Nenhuma data de agendamento foi encontrada. Defina a data da avaliação para liberar os lançamentos.'
+        : (activeEvaluation?.provisional === true && activeEvaluation?.dateSource === 'appointment'
+          ? `Data sugerida pelo agendamento mais recente (${fmtBR(activeEvaluation.date)}). Confirme antes do primeiro lançamento.`
+          : (activeEvaluation?.provisional === true
+            ? 'Confirme a data antes do primeiro lançamento.'
+            : 'A data pode ser corrigida depois; os procedimentos vinculados acompanham a alteração.'));
 
       box.innerHTML = `
         ${buildFichaHeader(entry, contact)}
@@ -21102,12 +21240,20 @@ window.CRONOS_PROC_UI = {
               </div>
               <div style="margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,.025)">
                 <div class="small muted">Avaliação ativa para novos procedimentos</div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-                  <select id="fichaEvalSelect" style="max-width:220px" onchange="CRONOS_FICHA_UI.setActiveEvaluation(this.value)">
-                    ${ficha.avaliacoes.map(av=>`<option value="${escapeHTML(av.id)}" ${String(av.id)===String(activeEvaluation.id) ? 'selected' : ''}>${escapeHTML(av.label)} • ${fmtBR(av.date)}</option>`).join('')}
-                  </select>
-                  <button type="button" class="miniBtn" onclick="CRONOS_FICHA_UI.newEvaluation()">Nova avaliação</button>
+                <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px">
+                  <div style="display:flex;flex-direction:column;gap:4px">
+                    <span class="small muted">Avaliação</span>
+                    <select id="fichaEvalSelect" ${evaluationSelectDisabled ? 'disabled' : ''} style="max-width:220px;${evaluationSelectDisabled ? 'opacity:.55;filter:grayscale(.35);cursor:not-allowed' : ''}" onchange="CRONOS_FICHA_UI.setActiveEvaluation(this.value)">
+                      ${ficha.avaliacoes.map(av=>`<option value="${escapeHTML(av.id)}" ${String(av.id)===String(activeEvaluation.id) ? 'selected' : ''}>${escapeHTML(av.label)} • ${/^\d{4}-\d{2}-\d{2}$/.test(String(av.date || '')) ? fmtBR(av.date) : 'data pendente'}</option>`).join('')}
+                    </select>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:4px">
+                    <span class="small muted">Data da avaliação</span>
+                    <input id="fichaEvalDate" type="date" value="${escapeHTML(activeEvaluation.date || '')}" onchange="CRONOS_FICHA_UI.changeEvaluationDate(this.value)" style="width:170px">
+                  </div>
+                  <button type="button" class="miniBtn" ${evaluationSelectDisabled ? 'disabled title="Defina primeiro a data da avaliação"' : ''} onclick="CRONOS_FICHA_UI.newEvaluation()">Nova avaliação</button>
                 </div>
+                <div class="small" style="margin-top:8px;color:${activeEvaluationHasDate ? (activeEvaluation.provisional === true ? '#f59e0b' : 'var(--muted)') : '#94a3b8'}">${escapeHTML(evaluationDateHint)}</div>
               </div>
               ${selectedTeeth.length ? `<div class="toothChipRow">${selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : `<div class="small muted" style="margin-top:8px">Nenhum dente selecionado ainda.</div>`}
 
@@ -21402,6 +21548,18 @@ window.CRONOS_PROC_UI = {
         const teeth = Array.isArray(s.selectedTeeth) ? s.selectedTeeth.slice() : [];
         const evalInfo = getActiveFichaEvaluation(ficha, entry);
         const dentitionType = getFichaDentitionType(ficha, entry);
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(String(evalInfo?.date || ''))){
+          toast('Data da avaliação', 'Defina a data da avaliação antes de adicionar procedimentos.');
+          try{ el('fichaEvalDate')?.focus(); el('fichaEvalDate')?.showPicker?.(); }catch(_){}
+          return;
+        }
+        if(evalInfo.provisional === true){
+          if(!confirm(`Confirmar esta avaliação em ${fmtBR(evalInfo.date)} antes de adicionar o procedimento?\n\nSe a data estiver errada, cancele e altere no campo "Data da avaliação".`)){
+            try{ el('fichaEvalDate')?.focus(); }catch(_){}
+            return;
+          }
+          confirmFichaEvaluationDate(evalInfo);
+        }
         if(proc.exigeDente && !teeth.length){
           return toast('Dente', 'Seleciona pelo menos um dente para esse procedimento.');
         }
@@ -21723,25 +21881,100 @@ window.CRONOS_PROC_UI = {
         }
         renderFichaApp();
       },
-      newEvaluation(){
+      async changeEvaluationDate(date){
         const s = getFichaState(); if(!s) return;
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))){
+          renderFichaApp();
+          return toast('Data inválida', 'Informe uma data válida para a avaliação.');
+        }
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
-        const date = prompt('Data da nova avaliação (AAAA-MM-DD):', todayISO());
+        const av = getActiveFichaEvaluation(ficha, entry);
+        if(String(av.date || '') === String(date || '')){
+          confirmFichaEvaluationDate(av);
+          renderFichaApp();
+          return;
+        }
+        const itemCount = getFichaEvaluationItems(ficha, av.id).length;
+        const hasContent = fichaEvaluationHasClinicalContent(ficha, av.id);
+        if(hasContent){
+          const suffix = itemCount
+            ? ` e atualizar a data de ${itemCount} procedimento(s) ligado(s) a ela`
+            : '';
+          if(!confirm(`Alterar a data de ${fmtBR(av.date)} para ${fmtBR(date)}${suffix}?`)){
+            renderFichaApp();
+            return;
+          }
+        }
+        updateFichaEvaluationDate(ficha, av.id, date);
+        renderFichaApp();
+        const ok = await confirmFichaMutation(
+          db,
+          entry,
+          before,
+          'Data da avaliação atualizada ✅',
+          itemCount ? `${itemCount} procedimento(s) acompanharam a nova data.` : `${av.label} • ${fmtBR(date)}`
+        );
+        if(!ok) renderFichaApp();
+      },
+      async newEvaluation(){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
+        const entry = getEntryById(s.entryId);
+        if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const current = getActiveFichaEvaluation(ficha, entry);
+        if(current && !fichaEvaluationHasClinicalContent(ficha, current.id) && !/^\d{4}-\d{2}-\d{2}$/.test(String(current.date || ''))){
+          toast('Data da avaliação', 'Defina a data da primeira avaliação no campo ao lado.');
+          try{ el('fichaEvalDate')?.focus(); el('fichaEvalDate')?.showPicker?.(); }catch(_){}
+          return;
+        }
+        const suggestedDate = getLatestAppointmentDateForEntry(entry, db);
+        const date = prompt('Data da nova avaliação (AAAA-MM-DD):', suggestedDate || '');
         if(!date) return;
         if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Data inválida', 'Use o formato AAAA-MM-DD.');
-        const av = { id: uid('eval'), label: nextFichaEvaluationLabel(ficha), date, dentitionType:getFichaDentitionType(ficha, entry), observacoes:'', createdAt:new Date().toISOString() };
-        ficha.avaliacoes.push(av);
+        const canReuseCurrent = current && !fichaEvaluationHasClinicalContent(ficha, current.id);
+        let av;
+        let reused = false;
+        if(canReuseCurrent){
+          av = current;
+          updateFichaEvaluationDate(ficha, av.id, date);
+          av.dentitionType = normalizeDentitionType(av.dentitionType || getFichaDentitionType(ficha, entry));
+          reused = true;
+        }else{
+          av = {
+            id: uid('eval'),
+            label: nextFichaEvaluationLabel(ficha),
+            date,
+            dentitionType:getFichaDentitionType(ficha, entry),
+            observacoes:'',
+            provisional:false,
+            dateSource:'manual',
+            dateConfirmedAt:new Date().toISOString(),
+            createdAt:new Date().toISOString()
+          };
+          ficha.avaliacoes.push(av);
+        }
         ficha.activeEvaluationId = av.id;
         s.activeEvaluationId = String(av.id);
         s.activeDentitionType = normalizeDentitionType(av.dentitionType || getFichaDentitionType(ficha, entry));
         s.dentitionRequestId = '';
         resetFichaTransientSelection(s);
-        saveFichaMutation(db, entry);
         renderFichaApp();
-        toast('Nova avaliação criada ✅', `${av.label} • ${fmtBR(date)}`);
+        const ok = await confirmFichaMutation(
+          db,
+          entry,
+          before,
+          reused ? 'Data da avaliação ajustada ✅' : 'Nova avaliação criada ✅',
+          reused
+            ? `${av.label} vazia foi reaproveitada em ${fmtBR(date)}.`
+            : `${av.label} • ${fmtBR(date)}`
+        );
+        if(!ok) renderFichaApp();
       },
       async removeItem(itemId){
         if(!confirm('Excluir este item do plano?')) return;
@@ -21935,7 +22168,7 @@ window.CRONOS_PROC_UI = {
       "setObs", "setDentitionType", "addToPlan", "refreshPlanBaseValues", "updateValue", "formatValue",
       "updateFace", "toggleDone", "togglePaid", "openReceivingForItems",
       "openReceivingForSelected", "confirmReceiving", "setActiveEvaluation",
-      "newEvaluation", "removeItem", "cycleToothStatus", "toggleAbsent",
+      "changeEvaluationDate", "newEvaluation", "removeItem", "cycleToothStatus", "toggleAbsent",
       "markSelectedProgress", "setAbsentForSelection", "saveToothMeta",
       "clearToothMeta"
     ].forEach(methodName=>{
