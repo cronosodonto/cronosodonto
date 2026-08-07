@@ -2568,8 +2568,7 @@ function persistLocalDBNow(db){
 }
 
 function canManageFinancialSensitiveActions(actor=currentActor()){
-  const role = String(actor?.role || "").toUpperCase();
-  return !!actor && (actor.isPrimaryMaster === true || role === "MASTER" || role === "GERENTE");
+  return !!actor && hasPermission("financial.sensitive", actor);
 }
 
 function blockedFinancialSensitiveAction(){
@@ -5162,7 +5161,7 @@ function persistInstallmentMutation(db, actor, entryId, successMsg, successSub="
 function deleteInstallmentPlan(entryId){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
-  if(!actor?.perms?.edit) return toast("Sem permissão");
+  if(!canEditRecords(actor)) return toast("Sem permissão");
   const db = loadDB();
   const entry = (db.entries||[]).find(e=>e.id===entryId);
   if(!entry || !entry.installPlan) return toast("Parcelamento não encontrado");
@@ -5195,7 +5194,7 @@ Isso vai remover ${totalParcelas} parcela(s), pagamentos lançados por parcelas 
 function deleteInstallment(entryId, number){
   const actor = currentActor();
   if(!canManageFinancialSensitiveActions(actor)) return blockedFinancialSensitiveAction();
-  if(!actor?.perms?.edit) return toast("Sem permissão");
+  if(!canEditRecords(actor)) return toast("Sem permissão");
   const db = loadDB();
   const entry = (db.entries||[]).find(e=>e.id===entryId);
   if(!entry || !entry.installPlan) return toast("Parcelamento não encontrado");
@@ -5343,14 +5342,26 @@ const APP_VIEWS = ["dashboard","leads","kanban","tasks","installments","users","
 const AUX_MODULES = ["todayCronos","creditSimulator","performance"];
 const ALL_ACCESS_MODULES = [...APP_VIEWS, ...AUX_MODULES];
 
-const PERMS = {
-  // O plano controla módulos da clínica; a matriz abaixo controla a função de cada perfil.
-  MASTER:     {viewAll:true, edit:true, delete:true, manageUsers:true, manageMasters:false, views:[...ALL_ACCESS_MODULES]},
-  GERENTE:    {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["dashboard","todayCronos","leads","kanban","tasks","installments","creditSimulator","performance","users","settings"]},
-  SECRETARIA: {viewAll:true, edit:true, delete:true, manageUsers:false, manageMasters:false, views:["todayCronos","leads","kanban","tasks","installments"]},
-  CRC:        {viewAll:true, edit:true, delete:false, manageUsers:false, manageMasters:false, views:["todayCronos","leads","kanban","tasks"]},
-  DENTISTA:   {viewAll:true, edit:false, delete:false, manageUsers:false, manageMasters:false, views:["dashboard","leads","kanban"]},
-};
+// V462 — permissões saem do hardcode de cargos e passam pela ACL central.
+// O catálogo local abaixo é apenas fallback seguro até o banco responder.
+const PERMS = Object.fromEntries(ROLES.map(role => [
+  role,
+  window.CronosPermissions?.legacyPerms?.(role) || {viewAll:true, edit:false, delete:false, manageUsers:false, manageMasters:false, views:["leads"]}
+]));
+
+function resolveActorLegacyPerms(role, options={}){
+  return window.CronosPermissions?.legacyPerms?.(role, options) || PERMS[role] || PERMS.DENTISTA;
+}
+function hasPermission(permissionKey, actor=currentActor()){
+  try{ return !!window.CronosPermissions?.can?.(permissionKey, actor); }catch(_){ return false; }
+}
+function canEditRecords(actor=currentActor()){ return !!actor && hasPermission("records.edit", actor); }
+function canDeleteRecords(actor=currentActor()){ return !!actor && hasPermission("records.delete", actor); }
+function canManageUsersACL(actor=currentActor()){ return !!actor && hasPermission("users.manage", actor); }
+function canManageMastersACL(actor=currentActor()){
+  return !!actor && (actor.isPrimaryMaster === true || hasPermission("masters.manage", actor));
+}
+window.cronosCan = hasPermission;
 
 function actorRoleKey(actor=currentActor()){
   return String(actor?.role || "").trim().toUpperCase();
@@ -5359,18 +5370,16 @@ function isCRCRole(actor=currentActor()){
   return actorRoleKey(actor) === "CRC";
 }
 function isFichaReadOnlyForActor(actor=currentActor()){
-  return isCRCRole(actor);
+  return !!actor && !hasPermission("ficha.edit", actor);
 }
 function denyCRCFichaEdit(){
-  toast("Ficha em visualização", "A CRC pode consultar e imprimir a ficha, mas não pode alterar tratamento ou recebimentos.");
+  toast("Ficha em visualização", "Seu acesso permite consultar e imprimir a ficha, mas não alterar tratamento ou recebimentos.");
   return false;
 }
 function canOperateRecebimentos(actor=currentActor()){
-  const role = actorRoleKey(actor);
   if(!actor || actor.isSupport === true) return false;
-  if(!["MASTER","GERENTE","SECRETARIA"].includes(role)) return false;
-  return canAccessView("installments", actor);
-}
+  return canAccessView("installments", actor) && hasPermission("installments.manage", actor);
+ }
 function blockedRecebimentosAction(){
   toast("Acesso limitado", "Seu perfil não pode criar ou alterar recebimentos.");
   return false;
@@ -5378,8 +5387,9 @@ function blockedRecebimentosAction(){
 
 function actorAccessModules(actor=currentActor()){
   if(!actor) return [];
-  const views = Array.isArray(actor?.perms?.views) && actor.perms.views.length ? actor.perms.views : ["dashboard"];
-  return [...new Set(views.filter(v=>ALL_ACCESS_MODULES.includes(v)))];
+  return ALL_ACCESS_MODULES.filter(moduleKey => {
+    try{ return !!window.CronosPermissions?.canModule?.(moduleKey, actor); }catch(_){ return false; }
+  });
 }
 function actorAllowedViews(actor=currentActor()){
   return actorAccessModules(actor).filter(v=>APP_VIEWS.includes(v));
@@ -5410,8 +5420,8 @@ function applyRoleVisibility(actor=currentActor()){
     if(btn) btn.classList.toggle("hidden", !canAccessModule(item.module, actor));
   });
 
-  const canEdit = !!actor?.perms?.edit;
-  const canUsers = canAccessView("users", actor) && !!actor?.perms?.manageUsers;
+  const canEdit = canEditRecords(actor);
+  const canUsers = canAccessView("users", actor) && canManageUsersACL(actor);
   const canSettings = canAccessView("settings", actor);
 
   ["btnNewLeadSide","btnNewLeadTop","btnNewLeadList","btnNewLeadKanban","btnNewTask"].forEach(id=>{
@@ -7588,8 +7598,9 @@ async function hydrateClinicArraysFromTables(db){
   return loaded;
 }
 async function deleteV2Ids(tableName, ids){
-  if(isCRCRole(typeof currentActor === "function" ? currentActor() : null)){
-    throw new Error("A CRC não pode excluir contatos ou leads.");
+  const deleteActor = (typeof currentActor === "function") ? currentActor() : null;
+  if([CLOUD_CONTACTS_V2_TABLE, CLOUD_LEADS_V2_TABLE].includes(tableName) && !hasPermission("leads.delete", deleteActor)){
+    throw new Error("Seu acesso não permite excluir contatos ou leads.");
   }
   for(let i=0; i<ids.length; i+=200){
     const slice = ids.slice(i, i+200);
@@ -9358,7 +9369,7 @@ function currentActor(){
       role:"MASTER",
       isPrimaryMaster:true,
       isSupport:true,
-      perms: {...PERMS.MASTER, manageMasters:true}
+      perms: resolveActorLegacyPerms("MASTER", {primaryMaster:true})
     };
   }
 
@@ -9367,7 +9378,7 @@ function currentActor(){
   if(s.kind==="master"){
     const m = db.masters.find(x=>x.id===s.id);
     if(!m) return null;
-    return {kind:"master", id:m.id, masterId:m.id, name:m.name, email:m.email, role:"MASTER", isPrimaryMaster:true, isSupport:false, perms: {...PERMS.MASTER, manageMasters:true} };
+    return {kind:"master", id:m.id, masterId:m.id, name:m.name, email:m.email, role:"MASTER", isPrimaryMaster:true, isSupport:false, perms: resolveActorLegacyPerms("MASTER", {primaryMaster:true}) };
   }
   if(s.kind==="user"){
     const u = db.users.find(x=>x.id===s.id);
@@ -9382,7 +9393,7 @@ function currentActor(){
       return null;
     }
     window.__CRONOS_ACCESS_BLOCK__ = null;
-    return {kind:"user", id:u.id, masterId:u.masterId, name:u.name, email:(u.email || u.loginEmail || ""), username:u.username, role:u.role, isPrimaryMaster:false, isSupport:false, perms: (PERMS[u.role] || PERMS.DENTISTA)};
+    return {kind:"user", id:u.id, masterId:u.masterId, name:u.name, email:(u.email || u.loginEmail || ""), username:u.username, role:u.role, isPrimaryMaster:false, isSupport:false, perms: resolveActorLegacyPerms(u.role)};
   }
   return null;
 }
@@ -11947,7 +11958,7 @@ function toggleLeadCampaign(evOrEntryId, maybeEntryId){
     window.__CRONOS_CAMPAIGN_CLICK_LOCK__[idKey] = nowMs;
 
     const actor = currentActor();
-    if(!actor?.perms?.edit){
+    if(!canEditRecords(actor)){
       toast("Sem permissão", "Seu nível não pode alterar campanhas.");
       return false;
     }
@@ -12159,7 +12170,7 @@ function updateUsersKpisV40(rows){
 
 function userActionsHTMLV40(row, actor, canManage){
   if(row.kind !== "USER" || !canManage) return `<span class="muted">—</span>`;
-  if(String(row.role || "").toUpperCase() === "MASTER" && !actor.perms.manageMasters) return `<span class="muted">—</span>`;
+  if(String(row.role || "").toUpperCase() === "MASTER" && !canManageMastersACL(actor)) return `<span class="muted">—</span>`;
 
   const status = userStatusInfoV40(row);
   if(status.key === "pending"){
@@ -12242,7 +12253,7 @@ function renderUsers(){
   if(empty) empty.classList.toggle("hidden", filtered.length > 0);
 
   tbody.innerHTML = filtered.map(r=>{
-    const canManage = !!actor?.perms?.manageUsers;
+    const canManage = canManageUsersACL(actor);
     const status = userStatusInfoV40(r);
     const role = userRoleLabelV40(r.role);
     const rowClass = status.key === "pending" ? "userRowPending usersRowV40" : (status.key === "inactive" ? "userRowInactive usersRowV40" : "usersRowV40");
@@ -12891,7 +12902,7 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
   const c = contact || {};
   const isNew = mode==="new";
   const actor = currentActor();
-  const ro = !actor.perms.edit;
+  const ro = !canEditRecords(actor);
 
   function opt(list, cur){
     const current = String(cur || "");
@@ -13296,7 +13307,7 @@ function cronosMergeEntryIntoTarget(db, targetEntry, sourceEntry, primaryContact
 
 async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateContactId, options={}){
   const actor = currentActor && currentActor();
-  if(!actor?.perms?.edit){ toast("Sem permissão", "Seu nível não permite mesclar cadastros."); return null; }
+  if(!canEditRecords(actor)){ toast("Sem permissão", "Seu nível não permite mesclar cadastros."); return null; }
   if(window.__CRONOS_MERGE_IN_PROGRESS__){
     toast("Mesclagem em andamento", "Aguarde a confirmação da operação atual.");
     return null;
@@ -13573,7 +13584,7 @@ function cronosDuplicateLeadNoticeHTML(contact){
 function openNewLead(){
   const actor = currentActor();
   if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
-  if(!actor.perms.edit || !canAccessView("leads", actor)) return toast("Sem permissão", "Seu nível não pode criar leads.");
+  if(!canEditRecords(actor) || !canAccessView("leads", actor)) return toast("Sem permissão", "Seu nível não pode criar leads.");
   let monthKey = val("fMonth", todayISO().slice(0,7));
   if(!monthKey || monthKey === "all") monthKey = todayISO().slice(0,7);
   const entry = { monthKey, firstContactAt: "", status:"", origin:"", treatment:"", tags:[] };
@@ -13608,7 +13619,7 @@ function openLeadEntry(entryId){
     bodyHTML: leadEntryFormHTML(entry, contact, "edit", ""),
     footHTML: `
       <button type="button" class="btn" onclick="closeModal()">Fechar</button>
-      ${actor.perms.edit ? `<button class="btn ok" id="btnSaveLead">Salvar</button>` : ``}
+      ${canEditRecords(actor) ? `<button class="btn ok" id="btnSaveLead">Salvar</button>` : ``}
     `,
     onMount: ()=>{
       wireLeadModal(actor, entryId, false);
@@ -14022,7 +14033,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
   const btn = el("btnSaveLead");
   btn?.addEventListener("click", async ()=>{
-    if(!actor.perms.edit) return toast("Sem permissão", "Seu nível não permite editar.");
+    if(!canEditRecords(actor)) return toast("Sem permissão", "Seu nível não permite editar.");
 
     const name = val("lf_name").trim();
     const phone = normPhone(val("lf_phone"));
@@ -14567,7 +14578,7 @@ function markOK(entryId){
   try{
     const actor = currentActor();
     if(!actor){ toast("Sessão expirada", "Faça login novamente."); showAuth(); return; }
-    if(!actor.perms.edit) return toast("Sem permissão", "Seu nível não permite editar.");
+    if(!canEditRecords(actor)) return toast("Sem permissão", "Seu nível não permite editar.");
     const db = loadDB();
     const entry = (db.entries||[]).find(e=>String(e.id)===String(entryId));
     if(!entry) return toast("Erro", "Lead não encontrado.");
@@ -14655,7 +14666,7 @@ function deleteLead(entryId){
 async function deleteEntry(entryId){
   const actor = currentActor();
   if(!actor) return toast("Sessão expirada", "Faça login novamente.");
-  if(!actor.perms.delete) return toast("Sem permissão", "Seu nível não permite excluir.");
+  if(!canDeleteRecords(actor)) return toast("Sem permissão", "Seu nível não permite excluir.");
 
   const id = String(entryId || "").trim();
   if(!id || __cronosLeadDeleteInFlight.has(id)) return false;
@@ -14785,7 +14796,7 @@ function userFormHTML(user){
       <div>
         <label>Nível</label>
         <select id="uf_role">
-          ${( (currentActor()?.perms?.manageMasters) ? ROLES : ROLES.filter(r=>r!=="MASTER") ).map(r=>`<option value="${r}" ${u.role===r?"selected":""}>${r}</option>`).join("")}
+          ${( (canManageMastersACL(currentActor())) ? ROLES : ROLES.filter(r=>r!=="MASTER") ).map(r=>`<option value="${r}" ${u.role===r?"selected":""}>${r}</option>`).join("")}
         </select>
       </div>
       <div>
@@ -14879,13 +14890,13 @@ function cronosGenerateTemporaryPassword(length=12){
 
 function openResetUserPassword(userId){
   const actor = currentActor();
-  if(!actor?.perms?.manageUsers) return toast("Sem permissão", "Somente Master pode redefinir senhas.");
+  if(!canManageUsersACL(actor)) return toast("Sem permissão", "Somente Master pode redefinir senhas.");
   const db = loadDB();
   const user = findManagedUserByKeyV453(db, userId);
   if(!user) return toast("Usuário não encontrado");
   if(!guardActiveManagedUserV449(user, "redefinir a senha")) return;
   if(!user.authUid) return toast("Acesso sem vínculo", "Esse usuário ainda não possui um acesso cloud válido.");
-  if(String(user.role || "").toUpperCase() === "MASTER" && !actor?.perms?.manageMasters){
+  if(String(user.role || "").toUpperCase() === "MASTER" && !canManageMastersACL(actor)){
     return toast("Ação bloqueada", "Só o Master principal pode redefinir a senha de outro Master.");
   }
 
@@ -14954,7 +14965,7 @@ window.openResetUserPassword = openResetUserPassword;
 
 function openNewUser(){
   const actor = currentActor();
-  if(!actor.perms.manageUsers) return toast("Sem permissão", "Somente Master pode gerenciar usuários.");
+  if(!canManageUsersACL(actor)) return toast("Sem permissão", "Somente Master pode gerenciar usuários.");
   openModal({
     title: "Novo usuário",
     sub: "Usuário interno vinculado ao Master.",
@@ -14970,7 +14981,7 @@ function openNewUser(){
         const db = loadDB();
         const name = val("uf_name").trim();
         const role = val("uf_role");
-        if(role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode criar outros masters.");
+        if(role==="MASTER" && !canManageMastersACL(actor)) return toast("Bloqueado", "Só o Master principal pode criar outros masters.");
 
         const username = normalizeUsername(val("uf_username"));
         const email = val("uf_email").trim().toLowerCase();
@@ -15047,7 +15058,7 @@ function openNewUser(){
 
 function openUserEdit(userId){
   const actor = currentActor();
-  if(!actor.perms.manageUsers) return toast("Sem permissão");
+  if(!canManageUsersACL(actor)) return toast("Sem permissão");
   const db = loadDB();
   const u = findManagedUserByKeyV453(db, userId);
   if(!u) return toast("Usuário não encontrado");
@@ -15069,7 +15080,7 @@ function openUserEdit(userId){
         if(saveButton?.disabled) return;
         const name = val("uf_name").trim();
         const role = val("uf_role");
-        if(role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode promover para MASTER.");
+        if(role==="MASTER" && !canManageMastersACL(actor)) return toast("Bloqueado", "Só o Master principal pode promover para MASTER.");
         if(!name) return toast("Nome obrigatório");
 
         if(u.authUid){
@@ -15181,11 +15192,11 @@ function beginUserMutationFeedbackV451(userId, action, triggerButton){
 
 async function deleteUser(userId, triggerButton=null){
   const actor = currentActor();
-  if(!actor?.perms?.manageUsers) return toast("Sem permissão");
+  if(!canManageUsersACL(actor)) return toast("Sem permissão");
   const db = loadDB();
   const u = findManagedUserByKeyV453(db, userId);
   if(!u) return toast("Usuário não encontrado");
-  if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode bloquear outros masters.");
+  if(u.role==="MASTER" && !canManageMastersACL(actor)) return toast("Bloqueado", "Só o Master principal pode bloquear outros masters.");
   if(u.pendingApproval === true) return toast("Aguardando aprovação", "Esse acesso ainda depende da aprovação do superadmin.");
   if(u.active === false){
     toast("Usuário já bloqueado", "Nenhuma nova operação foi enviada. Use Reativar para liberar a conta.");
@@ -15224,11 +15235,11 @@ async function deleteUser(userId, triggerButton=null){
 
 async function reactivateUser(userId, triggerButton=null){
   const actor = currentActor();
-  if(!actor?.perms?.manageUsers) return toast("Sem permissão");
+  if(!canManageUsersACL(actor)) return toast("Sem permissão");
   const db = loadDB();
   const u = findManagedUserByKeyV453(db, userId);
   if(!u) return toast("Usuário não encontrado");
-  if(u.role==="MASTER" && !actor.perms.manageMasters) return toast("Bloqueado", "Só o Master principal pode reativar outros masters.");
+  if(u.role==="MASTER" && !canManageMastersACL(actor)) return toast("Bloqueado", "Só o Master principal pode reativar outros masters.");
   if(u.pendingApproval === true) return toast("Aguardando aprovação", "A aprovação inicial desse acesso pertence ao superadmin.");
   if(u.active !== false){
     toast("Usuário já ativo", "Nenhuma operação foi necessária.");
@@ -15944,7 +15955,7 @@ function renderKanban(){
 
   function quickUpdateStatus(entryId, newStatus){
     const actor = currentActor();
-    if(!actor?.perms?.edit) return toast("Sem permissão para editar");
+    if(!canEditRecords(actor)) return toast("Sem permissão para editar");
     const db = loadDB();
     const e = db.entries.find(x=>x.id===entryId);
     if(!e) return;
@@ -16251,7 +16262,7 @@ function renderTasks(){
 
 function postponeTask(taskId, days=1){
   const actor = currentActor();
-  if(!actor?.perms?.edit) return toast("Sem permissão para editar");
+  if(!canEditRecords(actor)) return toast("Sem permissão para editar");
   const db = loadDB();
   const t = (db.tasks || []).find(x => x.id === taskId);
   if(!t) return;
@@ -16278,7 +16289,7 @@ function openLeadTaskShortcut(evOrEntryId, maybeEntryId){
     const entryId = maybeEntryId !== undefined ? maybeEntryId : evOrEntryId;
     const actor = currentActor();
     if(!actor) return false;
-    if(!actor.perms.edit || !canAccessView("tasks", actor)){
+    if(!canEditRecords(actor) || !canAccessView("tasks", actor)){
       toast("Sem permissão", "Seu nível não pode criar tarefas.");
       return false;
     }
@@ -16404,7 +16415,7 @@ window.openLeadTaskShortcut = openLeadTaskShortcut;
 function openNewTask(){
   const actor = currentActor();
   if(!actor) return;
-  if(!actor.perms.edit || !canAccessView("tasks", actor)) return toast("Sem permissão", "Seu nível não pode criar tarefas.");
+  if(!canEditRecords(actor) || !canAccessView("tasks", actor)) return toast("Sem permissão", "Seu nível não pode criar tarefas.");
   const db = loadDB();
   const masterId = String(actor.masterId || "");
 
@@ -16668,14 +16679,13 @@ function toggleTaskDone(taskId){
 }
 function markTaskDone(taskId){ return toggleTaskDone(taskId); }
 function CRONOS_CAN_DELETE_TASKS(actor){
-  const role = String(actor?.role || (actor?.kind === "master" ? "MASTER" : "")).toUpperCase();
-  return !!actor && (role === "MASTER" || role === "GERENTE" || actor.isPrimaryMaster === true);
+  return !!actor && hasPermission("tasks.delete", actor);
 }
 
 function deleteTask(taskId){
   const actor = currentActor();
   if(!CRONOS_CAN_DELETE_TASKS(actor)){
-    return toast("Sem permissão", "Apenas Gerente ou Master pode apagar tarefas.");
+    return toast("Sem permissão", "Seu acesso não permite apagar tarefas.");
   }
 
   const db = loadDB();
@@ -17104,6 +17114,19 @@ async function boot(options={}){
   await ensureCloudDBLoaded();
   if(options.actorAlreadySynced !== true){
     await syncCurrentCloudActor();
+  }
+
+  // V462 — resolve as permissões efetivas antes de montar o menu.
+  // Prioridade: usuário > clínica/cargo > padrão global.
+  try{
+    const preliminaryActor = currentActor();
+    if(preliminaryActor && window.CronosPermissions?.hydrateForActor){
+      await window.CronosPermissions.hydrateForActor(preliminaryActor);
+      // Recalcula o formato legado para os pontos ainda não migrados do app.
+      preliminaryActor.perms = resolveActorLegacyPerms(preliminaryActor.role, {primaryMaster:preliminaryActor.isPrimaryMaster === true});
+    }
+  }catch(permissionError){
+    console.warn("Cronos V462: permissões abriram no padrão global.", permissionError);
   }
 
   fillSelectOptions();
@@ -21366,7 +21389,7 @@ window.CRONOS_PROC_UI = {
         box.insertAdjacentHTML("afterbegin", `
           <div style="margin:0 0 14px;padding:12px 14px;border-radius:14px;border:1px solid rgba(59,130,246,.25);background:rgba(59,130,246,.10)">
             <b>Visualização comercial</b>
-            <div class="small muted" style="margin-top:4px">A CRC pode consultar e imprimir esta ficha. Alterações clínicas e financeiras ficam bloqueadas.</div>
+            <div class="small muted" style="margin-top:4px">Seu acesso permite consultar e imprimir esta ficha. Alterações clínicas e financeiras ficam bloqueadas.</div>
           </div>
         `);
         box.querySelectorAll("input, textarea, select").forEach(node=>{

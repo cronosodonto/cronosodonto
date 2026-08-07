@@ -2678,7 +2678,12 @@
                 ? users.map(user => `
                   <div class="kv">
                     <strong>${escapeHtml(user.name || user.display_name || user.email || 'Usuário')}</strong>
-                    <span>${escapeHtml(user.role || '—')}</span>
+                    <span class="row-actions">
+                      <span>${escapeHtml(user.role || '—')}</span>
+                      ${(user.auth_uid || user.user_id || user.authUid) && String(user.role || '').toUpperCase() !== 'MASTER'
+                        ? `<button class="btn btn-danger" type="button" data-delete-clinic-user="${escapeHtml(user.auth_uid || user.user_id || user.authUid)}" data-delete-clinic-user-name="${escapeHtml(user.name || user.display_name || user.email || 'Usuário')}">Excluir definitivamente</button>`
+                        : ''}
+                    </span>
                   </div>
                 `).join('')
                 : `<div class="empty">Ainda não temos a listagem completa dos usuários via backend nessa versão.</div>`
@@ -3298,6 +3303,32 @@
       });
     }
 
+    async function handleDeleteClinicUser(button) {
+      const authUid = String(button?.dataset?.deleteClinicUser || '').trim();
+      const userName = String(button?.dataset?.deleteClinicUserName || 'este usuário').trim();
+      if (!state.selectedClinicId || !authUid) {
+        toast('Usuário ou clínica não identificado.', 'error', 3200);
+        return;
+      }
+      if (!confirm(`Excluir DEFINITIVAMENTE ${userName}?\n\nIsso remove o login do Supabase, o vínculo com a clínica e as permissões individuais. O histórico de atendimentos não será apagado.`)) return;
+      const typed = prompt('Para confirmar a exclusão definitiva, digite EXCLUIR:');
+      if (String(typed || '').trim().toUpperCase() !== 'EXCLUIR') {
+        toast('Exclusão cancelada.', 'info', 2200);
+        return;
+      }
+      await withButtonLoading(button, 'Excluindo...', async () => {
+        await callEdgeFunction('permissions-admin', {
+          action: 'delete_user',
+          clinic_id: state.selectedClinicId,
+          owner_uid: state.selectedClinicDetails?.clinic?.owner_uid || state.selectedClinicDetails?.private?.owner_uid || undefined,
+          owner_email: state.selectedClinicDetails?.clinic?.owner_email || state.selectedClinicDetails?.clinic?.master_email || undefined,
+          auth_uid: authUid
+        });
+        toast(`${userName} foi excluído definitivamente.`, 'success', 3400);
+        await loadClinicDetails(state.selectedClinicId);
+      });
+    }
+
     function bindDetailModalEvents() {
       const btnDelete = document.getElementById("btnDeleteClinic");
       const btnSupport = document.getElementById("btnDetailSupport");
@@ -3321,6 +3352,9 @@
       });
       if (btnCopyPassword) btnCopyPassword.addEventListener("click", () => copyText(document.getElementById("detail_master_new_password").value, "Senha copiada."));
       if (btnCopyAccess) btnCopyAccess.addEventListener("click", () => copyText(detailMasterAccessText(), "Acesso copiado."));
+      document.querySelectorAll('[data-delete-clinic-user]').forEach(button => {
+        button.addEventListener('click', () => handleDeleteClinicUser(button));
+      });
     }
 
     async function handleResetSuperadminPassword(button) {
@@ -4919,9 +4953,10 @@
     save: saveSupportSettings,
     link: buildWhatsLink
   };
-  window.__CRONOS_SUPERADMIN_SHARED__ = { CONFIG, state, supabaseClient, toast, loadSupportSettingsCloud, loadSupportSettings };
+  window.__CRONOS_SUPERADMIN_SHARED__ = { CONFIG, state, supabaseClient, toast, escapeHtml, withButtonLoading, callEdgeFunction, loadSupportSettingsCloud, loadSupportSettings };
 })();
 </script>
+<script src="../assets/js/superadmin-permissions.js?build=v462-2-20260807"></script>
 <script src="../assets/js/superadmin-site-chat.js?build=v4-1-4-whatsapp-20260715"></script>
 <script src="../assets/js/superadmin-today-config.js"></script>
 
