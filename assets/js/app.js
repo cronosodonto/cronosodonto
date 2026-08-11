@@ -10513,6 +10513,59 @@ function getDashboardEntryDate(e){
     (e?.monthKey ? `${String(e.monthKey).slice(0,7)}-01` : "")
   );
 }
+function cronosFichaEvaluationDateMap(entry){
+  const map = new Map();
+  const list = Array.isArray(entry?.ficha?.avaliacoes) ? entry.ficha.avaliacoes : [];
+  list.forEach((av,idx)=>{
+    const id = String(av?.id || `eval_${idx+1}`);
+    const iso = pickISOFlexible(av?.date || '');
+    if(id && iso) map.set(id, iso);
+  });
+  return map;
+}
+function cronosDashboardBudgetEvents(entry){
+  if(!entry) return [];
+  const items = cronosActiveFichaPlanItems(entry);
+  if(items.length){
+    const evalDates = cronosFichaEvaluationDateMap(entry);
+    const grouped = new Map();
+    items.forEach(item=>{
+      const value = cronosFichaItemBudgetValue(item);
+      if(!(value>0)) return;
+      const evalId = String(item?.avaliacaoId || entry?.ficha?.activeEvaluationId || 'eval_1');
+      const iso = pickISOFlexible(item?.avaliacaoData || evalDates.get(evalId) || getDashboardEntryDate(entry));
+      const key = `${evalId}|${iso}`;
+      if(!grouped.has(key)) grouped.set(key,{entry,evalId,iso,value:0});
+      grouped.get(key).value += value;
+    });
+    const out=[...grouped.values()].filter(x=>x.iso && x.value>0);
+    if(out.length) return out;
+  }
+  const value = getEntryBudgetValue(entry);
+  const iso = getDashboardEntryDate(entry);
+  return value>0 && iso ? [{entry,evalId:'',iso,value}] : [];
+}
+function dashboardBudgetEventMatchesFilters(ev, filters={}){
+  const iso = String(ev?.iso || '');
+  if(!iso) return false;
+  const mk = String(filters?.monthKey || '');
+  if(mk && mk !== 'all' && iso.slice(0,7)!==mk) return false;
+  const year = String(filters?.year || '');
+  if((!mk || mk==='all') && year && iso.slice(0,4)!==year) return false;
+  const fromISO = String(filters?.periodFrom || '').trim();
+  const toISO = String(filters?.periodTo || '').trim();
+  if((fromISO || toISO) && !dashboardDateInRange(iso,fromISO,toISO)) return false;
+  return true;
+}
+function getEntryBudgetValueForDashboardPeriod(entry, filters={}){
+  return cronosDashboardBudgetEvents(entry)
+    .filter(ev=>dashboardBudgetEventMatchesFilters(ev,filters))
+    .reduce((sum,ev)=>sum+Number(ev.value||0),0);
+}
+function dashboardBudgetSourceEntries(db, actor, filteredRows, filters={}){
+  if(cronosDashboardHasLeadScopedFilter(filters)) return Array.isArray(filteredRows)?filteredRows:[];
+  return (Array.isArray(db?.entries)?db.entries:[]).filter(e=>!actor?.masterId || e?.masterId===actor.masterId);
+}
 function dashboardDateInRange(iso, fromISO, toISO){
   if(!iso) return false;
   if(fromISO && iso < fromISO) return false;
@@ -10557,7 +10610,7 @@ function buildDashboardRevenueData(rows, db, actor, filters){
     contactsLength: Array.isArray(db?.contacts) ? db.contacts.length : 0,
     paymentsLength: Array.isArray(db?.payments) ? db.payments.length : 0,
     version: window.__CRONOS_DATA_VERSION__ || 0,
-    calcVersion: 'v38-finance-parcelas-distintas'
+    calcVersion: 'v39-budget-by-evaluation-date'
   });
   const cache = window.__CRONOS_DASH_REVENUE_CACHE__;
   if(cache && cache.rows === rowsSafe && cache.db === db && cache.key === cacheKey && (Date.now() - cache.ts) < 1500){
@@ -10617,24 +10670,25 @@ function buildDashboardRevenueData(rows, db, actor, filters){
   function addGrossToSeries(monthKey, series, details, monthRows){
     const daysMode = series.length > 12;
     (monthRows||[]).forEach(e=>{
-      const budget = getEntryBudgetValue(e);
-      if(!budget) return;
-      const iso = getDashboardEntryDate(e);
-      if(!iso || iso.slice(0,7)!==monthKey) return;
-      if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
-      if(daysMode){
-        const day = Number(iso.slice(8,10));
-        if(day>=1 && day<=series.length){
-          series[day-1] += budget;
-          details[day-1].push(detailItem("gross", budget, e, iso, "Orçamento/plano do lead"));
+      cronosDashboardBudgetEvents(e).forEach(ev=>{
+        const budget = Number(ev.value||0);
+        const iso = ev.iso || '';
+        if(!budget || !iso || iso.slice(0,7)!==monthKey) return;
+        if((fromISO || toISO) && !dashboardDateInRange(iso, fromISO, toISO)) return;
+        if(daysMode){
+          const day = Number(iso.slice(8,10));
+          if(day>=1 && day<=series.length){
+            series[day-1] += budget;
+            details[day-1].push(detailItem("gross", budget, e, iso, `Orçamento • ${ev.evalId || 'ficha'}`));
+          }
+        }else{
+          const idx = Number(monthKey.slice(5,7)) - 1;
+          if(idx>=0 && idx<12){
+            series[idx] += budget;
+            details[idx].push(detailItem("gross", budget, e, iso, `Orçamento • ${ev.evalId || 'ficha'}`));
+          }
         }
-      }else{
-        const idx = Number(monthKey.slice(5,7)) - 1;
-        if(idx>=0 && idx<12){
-          series[idx] += budget;
-          details[idx].push(detailItem("gross", budget, e, iso, "Orçamento/plano do lead"));
-        }
-      }
+      });
     });
   }
 
@@ -10651,7 +10705,7 @@ function buildDashboardRevenueData(rows, db, actor, filters){
     const monthEndISO = `${monthKey}-${String(daysInMonth).padStart(2,"0")}`;
     const effectiveFromISO = fromISO && fromISO > monthStartISO ? fromISO : monthStartISO;
     const effectiveToISO = toISO && toISO < monthEndISO ? toISO : monthEndISO;
-    const monthRowsSafe = rowsSafe.filter(e=>String(e?.monthKey||"")===monthKey);
+    const monthRowsSafe = dashboardBudgetSourceEntries(db, actor, rowsSafe, filters);
     addGrossToSeries(monthKey, grossSeries, grossDetails, monthRowsSafe);
 
     let monthPayments = cronosOfficialReceivedEventsForRange(db, actor, effectiveFromISO, effectiveToISO);
@@ -10688,18 +10742,11 @@ function buildDashboardRevenueData(rows, db, actor, filters){
   const receivedSeries = Array.from({length: 12}, ()=>0);
   const grossDetails = Array.from({length: 12}, ()=>[]);
   const receivedDetails = Array.from({length: 12}, ()=>[]);
-  const rowsByMonth = new Map();
-
-  rowsSafe.forEach(e=>{
-    const mk = String(e?.monthKey||"").slice(0,7);
-    if(!/^\d{4}-\d{2}$/.test(mk) || !mk.startsWith(`${selectedYear}-`)) return;
-    if(!rowsByMonth.has(mk)) rowsByMonth.set(mk, []);
-    rowsByMonth.get(mk).push(e);
-  });
-
-  rowsByMonth.forEach((monthRows, monthKey)=>{
-    addGrossToSeries(monthKey, grossSeries, grossDetails, monthRows);
-  });
+  const yearBudgetRows = dashboardBudgetSourceEntries(db, actor, rowsSafe, filters);
+  for(let mi=1;mi<=12;mi++){
+    const monthKey = `${selectedYear}-${String(mi).padStart(2,"0")}`;
+    addGrossToSeries(monthKey, grossSeries, grossDetails, yearBudgetRows);
+  }
 
   const yearStartISO = `${selectedYear}-01-01`;
   const yearEndISO = `${selectedYear}-12-31`;
@@ -10746,15 +10793,15 @@ function renderDashboard(){
   const uiFilters = getUIFilters();
   const dashRevenue = buildDashboardRevenueData(rows, db, actor, uiFilters);
   const leadScopedFinancialFilter = cronosDashboardHasLeadScopedFilter(uiFilters);
+  const budgetRows = dashboardBudgetSourceEntries(db, actor, rows, uiFilters);
   let totalPaid = dashRevenue.totalReceived;
 
   const isRescueEntry = (e)=> Array.isArray(e?.tags) && e.tags.includes("Resgatado");
   const totalBase = rows.length || 0;
 
-  rows.forEach(e=>{
+  budgetRows.forEach(e=>{
     if(isRescueEntry(e)) return;
-    const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
-    const budget = parseMoney(summary?.budget ?? getEntryBudgetValue(e));
+    const budget = parseMoney(getEntryBudgetValueForDashboardPeriod(e, uiFilters));
     totalBudget += (budget||0);
   });
 
@@ -10809,9 +10856,8 @@ function renderDashboard(){
   if(kpiApptPct) kpiApptPct.textContent = pctBaseNum(appt);
 
   try{
-    const budgetCount = rows.reduce((acc,e)=>{
-      const summary = (typeof cronosEntryFinancialSummary === "function") ? cronosEntryFinancialSummary(e, db) : null;
-      const b = isRescueEntry(e) ? 0 : parseMoney(summary?.budget ?? getEntryBudgetValue(e));
+    const budgetCount = budgetRows.reduce((acc,e)=>{
+      const b = isRescueEntry(e) ? 0 : parseMoney(getEntryBudgetValueForDashboardPeriod(e, uiFilters));
       return acc + ((b && b>0) ? 1 : 0);
     }, 0);
     const avg = budgetCount ? (totalBudget / budgetCount) : 0;
@@ -11916,6 +11962,7 @@ function renderLeadsTable(list){
         <div class="leadPrimaryActions">
           <button class="leadPrimaryBtn" type="button" onclick="openLeadEntry('${idAttr}')">${leadIconSvg.open}<span>Abrir lead</span></button>
           <button class="leadWhatsBtn" type="button" onclick="openWhats('${idAttr}')">${leadIconSvg.whats}<span>WhatsApp</span></button>
+          ${window.CronosPermissions?.can?.('exam.capture', currentActor()) ? `<button class="leadPrimaryBtn" style="grid-column:1/-1" type="button" data-cronos-new-exam-entry="${idAttr}"><span class="leadExamIcon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l1.4-2h7.2L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="4"/></svg></span><span>Exame digital</span></button>` : ''}
         </div>
 
         <div class="leadSecondaryActions">
@@ -12699,6 +12746,8 @@ function cronosModalDetectType(modalClass=""){
     const root = document.querySelector("#modalBg > .modal");
     if(/(^|\s)modalFichaWide(\s|$)/.test(String(modalClass || "")) || body?.querySelector?.("#fichaApp") || root?.classList?.contains?.("modalFichaWide")) return "ficha";
     if(body?.querySelector?.("#btnSaveLead, #lf_name, #lf_phone, #lf_month")) return "lead";
+    // Exame Digital é autosave e não deve fechar por clique acidental fora do modal.
+    if(root?.classList?.contains?.("modalIntraoralDiagnostic") || body?.querySelector?.(".intraoralDiag")) return "exam";
     if(body?.querySelector?.("input, select, textarea")) return "form";
   }catch(_){ }
   return "generic";
@@ -12739,7 +12788,7 @@ function cronosArmModalGuard(modalClass=""){
     CRONOS_MODAL_GUARD.armed = true;
     CRONOS_MODAL_GUARD.lastPulseAt = 0;
     // Ficha e formulários não fecham ao clicar fora. Evita perder cadastro por clique acidental.
-    CRONOS_MODAL_GUARD.blockOutside = (type === "ficha" || type === "lead" || type === "form");
+    CRONOS_MODAL_GUARD.blockOutside = (type === "ficha" || type === "lead" || type === "form" || type === "exam");
     // Confirmação explícita quando houver formulário editável com dados alterados.
     CRONOS_MODAL_GUARD.confirmOnDirty = (type === "lead" || type === "form");
 
@@ -12780,7 +12829,7 @@ function cronosCanCloseModal(source="button", force=false){
   if(source === "outside" && CRONOS_MODAL_GUARD.blockOutside){
     const msg = type === "lead"
       ? "Use Salvar, Cancelar ou o X para não perder os dados preenchidos."
-      : (type === "ficha" ? "A ficha não fecha por clique fora. Use o botão Fechar quando terminar." : "Use os botões do modal para concluir ou cancelar.");
+      : (type === "ficha" ? "A ficha não fecha por clique fora. Use o botão Fechar quando terminar." : (type === "exam" ? "O Exame Digital não fecha por clique fora. Use o X ou Fechar quando terminar." : "Use os botões do modal para concluir ou cancelar."));
     cronosModalPulse(msg);
     return false;
   }
@@ -21249,6 +21298,7 @@ window.CRONOS_PROC_UI = {
                 <div class="totalBox"><span class="label">Total realizado</span><div class="value" id="fichaTotalFeito">${moneyBR(totals.totalFeito)}</div></div>
                 <div class="totalBox"><span class="label">Total pago</span><div class="value" id="fichaTotalPago">${moneyBR(totals.totalPago)}</div></div>
                 <div class="totalBox"><span class="label">Em aberto</span><div class="value" id="fichaTotalAberto">${moneyBR(totals.emAberto)}</div></div>
+                ${window.CronosPermissions?.can?.('exam.view', currentActor()) ? `<div class="totalBox cronosExamCard"><div class="cronosExamText"><span class="label">Exames digitais</span><div class="value">Galeria de imagens</div><small>Visualizar fotos vinculadas ao paciente</small></div><button type="button" class="btn primary" data-cronos-exam-entry="${escapeHTML(String(entry.id || entry._id || ''))}">Abrir exame digital</button></div>` : ''}
               </div>
             </div>
 

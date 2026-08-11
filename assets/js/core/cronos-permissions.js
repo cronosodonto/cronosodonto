@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'v462.3-final-candidate';
+  const VERSION = 'v463-exame-digital';
   const ROLES = ['MASTER','GERENTE','SECRETARIA','CRC','DENTISTA'];
 
   // V462.1 cobre a matriz que já existia na V460. Recursos novos (como Exame
@@ -25,7 +25,10 @@
     {key:'ficha.edit', module:'leads', label:'Alterar ficha / prontuário', group:'Ações'},
     {key:'leads.delete', module:'leads', label:'Excluir contatos e leads', group:'Ações'},
     {key:'users.manage', module:'users', label:'Gerenciar usuários', group:'Ações'},
-    {key:'masters.manage', module:'users', label:'Gerenciar Masters', group:'Ações'}
+    {key:'masters.manage', module:'users', label:'Gerenciar Masters', group:'Ações'},
+    {key:'exam.view', module:'exam', label:'Visualizar Exame Digital', group:'Exame Digital'},
+    {key:'exam.capture', module:'exam', label:'Capturar / importar imagens', group:'Exame Digital'},
+    {key:'exam.delete', module:'exam', label:'Excluir imagens', group:'Exame Digital'}
   ];
 
   // Espelha a V460, com a única correção já aprovada: Dentista sem Dashboard.
@@ -33,27 +36,32 @@
     MASTER: {
       'dashboard.view':true,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,
       'installments.view':true,'creditSimulator.view':true,'performance.view':true,'users.view':true,'settings.view':true,
-      'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':true,'tasks.delete':true,'ficha.edit':true,'leads.delete':true,'users.manage':true,'masters.manage':false
+      'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':true,'tasks.delete':true,'ficha.edit':true,'leads.delete':true,'users.manage':true,'masters.manage':false,
+      'exam.view':true,'exam.capture':true,'exam.delete':true
     },
     GERENTE: {
       'dashboard.view':true,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,
       'installments.view':true,'creditSimulator.view':true,'performance.view':true,'users.view':true,'settings.view':true,
-      'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':true,'tasks.delete':true,'ficha.edit':true,'leads.delete':true,'users.manage':false,'masters.manage':false
+      'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':true,'tasks.delete':true,'ficha.edit':true,'leads.delete':true,'users.manage':false,'masters.manage':false,
+      'exam.view':true,'exam.capture':false,'exam.delete':false
     },
     SECRETARIA: {
       'dashboard.view':false,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,
       'installments.view':true,'creditSimulator.view':false,'performance.view':false,'users.view':false,'settings.view':false,
-      'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':true,'leads.delete':true,'users.manage':false,'masters.manage':false
+      'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':true,'leads.delete':true,'users.manage':false,'masters.manage':false,
+      'exam.view':true,'exam.capture':false,'exam.delete':false
     },
     CRC: {
       'dashboard.view':false,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,
       'installments.view':false,'creditSimulator.view':false,'performance.view':false,'users.view':false,'settings.view':false,
-      'records.edit':true,'records.delete':false,'installments.manage':false,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':false,'leads.delete':false,'users.manage':false,'masters.manage':false
+      'records.edit':true,'records.delete':false,'installments.manage':false,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':false,'leads.delete':false,'users.manage':false,'masters.manage':false,
+      'exam.view':true,'exam.capture':false,'exam.delete':false
     },
     DENTISTA: {
       'dashboard.view':false,'todayCronos.view':false,'leads.view':true,'kanban.view':true,'tasks.view':false,
       'installments.view':false,'creditSimulator.view':false,'performance.view':false,'users.view':false,'settings.view':false,
-      'records.edit':false,'records.delete':false,'installments.manage':false,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':false,'leads.delete':false,'users.manage':false,'masters.manage':false
+      'records.edit':false,'records.delete':false,'installments.manage':false,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':false,'leads.delete':false,'users.manage':false,'masters.manage':false,
+      'exam.view':true,'exam.capture':true,'exam.delete':true
     }
   };
 
