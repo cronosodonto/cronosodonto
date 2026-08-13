@@ -6,6 +6,7 @@
   const client = shared.supabaseClient;
   const toast = shared.toast || function(){};
   const TABLE = "today_cronos_settings";
+  const ADMIN_ENDPOINT = "permissions-admin";
 
   const DEFAULT = {
     iconMode: "mascot",
@@ -17,6 +18,10 @@
   };
 
   function qs(id){ return document.getElementById(id); }
+  function callAdmin(payload){
+    if(typeof shared.callEdgeFunction !== "function") throw new Error("Conector seguro do Super Admin indisponível.");
+    return shared.callEdgeFunction(ADMIN_ENDPOINT, payload);
+  }
 
   function esc(str){
     return String(str || "")
@@ -116,15 +121,7 @@
   async function save(){
     const cfg = readForm();
     try{
-      const { error } = await client
-        .from(TABLE)
-        .upsert({
-          id: "default",
-          suggestion_config: cfg,
-          updated_at: new Date().toISOString()
-        }, { onConflict: "id" });
-
-      if(error) throw error;
+      await callAdmin({ action: "today_cronos_settings_save", settings: cfg });
       toast("Sugestão do Hoje no Cronos salva.", "success", 2400);
       await load();
     }catch(error){

@@ -87,6 +87,8 @@
     panelOpen: false,
     pollTimer: null
   };
+  let syncChain = Promise.resolve(null);
+  let pollPromise = null;
 
   let settingsReady = Promise.resolve(siteSettings);
 
@@ -312,13 +314,12 @@
     els.body.scrollTop = els.body.scrollHeight;
   }
 
-  function pushMessage(sender, text, persistNow){
+  function pushMessage(sender, text, _persistNow){
     state.transcript.push({ id: cryptoRandomKey(), sender, text: String(text || '').trim(), at: new Date().toISOString() });
     if (!state.panelOpen && sender !== 'visitor') state.unreadBadge = Math.min(9, (Number(state.unreadBadge) || 0) + 1);
     renderBadge();
     persistState();
     renderTranscript();
-    if (persistNow) syncLead();
   }
 
   function renderBadge(){
@@ -392,28 +393,45 @@
     els.whatsapp.setAttribute('aria-disabled', 'true');
   }
 
-  async function syncLead(){
-    persistState();
-    const payload = buildPayload();
-    try {
-      const { data, error } = await client
-        .from(CONFIG.table)
-        .upsert(payload, { onConflict: 'session_key' })
-        .select('id, transcript, status')
-        .single();
-      if (error) throw error;
-      if (data && data.id) state.leadId = data.id;
-      if (data && Array.isArray(data.transcript) && data.transcript.length >= state.transcript.length) state.transcript = data.transcript;
-      if (data && data.status) state.status = data.status;
+  function mergeTranscripts(serverTranscript, localTranscript){
+    const merged = [];
+    const seen = new Set();
+    [...(Array.isArray(serverTranscript) ? serverTranscript : []), ...(Array.isArray(localTranscript) ? localTranscript : [])]
+      .forEach((message)=>{
+        const id = String(message && message.id || '').trim();
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        merged.push(message);
+      });
+    return merged;
+  }
+
+  function syncLead(){
+    const run = async()=>{
       persistState();
-      clearStatus();
-      renderTranscript();
-      return data;
-    } catch (error) {
-      flashStatus(STRINGS.offline, 'warn');
-      console.warn('site chat sync', error);
-      return null;
-    }
+      const payload = buildPayload();
+      try {
+        const { data, error } = await client.rpc('cronos_site_chat_public_sync', {
+          p_session_key: state.sessionKey,
+          p_payload: payload
+        });
+        if (error) throw error;
+        if (data && data.id) state.leadId = data.id;
+        if (data && Array.isArray(data.transcript)) state.transcript = mergeTranscripts(data.transcript, state.transcript);
+        if (data && data.status) state.status = data.status;
+        persistState();
+        clearStatus();
+        renderTranscript();
+        return data;
+      } catch (error) {
+        flashStatus(STRINGS.offline, 'warn');
+        console.warn('site chat sync', error);
+        return null;
+      }
+    };
+    const queued = syncChain.then(run, run);
+    syncChain = queued.catch(()=>null);
+    return queued;
   }
 
   function buildPayload(){
@@ -430,35 +448,37 @@
       current_step: state.currentStep || 'name',
       page_url: location.href,
       last_message: last.text || null,
-      transcript: state.transcript,
-      unread_admin: state.transcript.filter((msg)=>msg.sender === 'visitor').length,
-      unread_visitor: 0,
-      updated_at: new Date().toISOString()
+      transcript: state.transcript
     };
   }
 
-  async function pollLead(){
-    if (!state.sessionKey) return;
-    try {
-      const { data, error } = await client.from(CONFIG.table).select('id, transcript, status, unread_visitor').eq('session_key', state.sessionKey).maybeSingle();
-      if (error || !data) return;
-      state.leadId = data.id || state.leadId;
-      state.status = data.status || state.status;
-      const incoming = Array.isArray(data.transcript) ? data.transcript : [];
-      if (incoming.length > state.transcript.length) {
-        const newAdmin = incoming.slice(state.transcript.length).filter((msg)=>msg.sender === 'admin');
-        state.transcript = incoming;
+  function pollLead(){
+    if (!state.sessionKey || !state.leadId || pollPromise) return pollPromise;
+    pollPromise = (async()=>{
+      try {
+        const knownIds = new Set(state.transcript.map((message)=>String(message && message.id || '')).filter(Boolean));
+        const { data, error } = await client.rpc('cronos_site_chat_public_poll', { p_session_key: state.sessionKey });
+        if (error || !data) return;
+        state.leadId = data.id || state.leadId;
+        state.status = data.status || state.status;
+        const incoming = Array.isArray(data.transcript) ? data.transcript : [];
+        const newAdmin = incoming.filter((message)=>message && message.sender === 'admin' && !knownIds.has(String(message.id || '')));
+        state.transcript = mergeTranscripts(incoming, state.transcript);
         if (newAdmin.length && !state.panelOpen) state.unreadBadge = Math.min(9, (Number(state.unreadBadge) || 0) + newAdmin.length);
         persistState();
         renderBadge();
         renderTranscript();
+        if (state.panelOpen && Number(data.unread_visitor || 0) > 0) {
+          const mark = await client.rpc('cronos_site_chat_public_mark_read', { p_session_key: state.sessionKey });
+          if (mark.error) throw mark.error;
+        }
+      } catch (error) {
+        console.warn('site chat poll', error);
+      } finally {
+        pollPromise = null;
       }
-      if (state.panelOpen && data.unread_visitor > 0) {
-        await client.from(CONFIG.table).update({ unread_visitor: 0 }).eq('session_key', state.sessionKey);
-      }
-    } catch (error) {
-      console.warn('site chat poll', error);
-    }
+    })();
+    return pollPromise;
   }
 
   function startPolling(){

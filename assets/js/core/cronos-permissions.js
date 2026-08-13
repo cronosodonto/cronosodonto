@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'v463-exame-digital';
+  const VERSION = 'v463.2.4-rc3-acl-reactive';
   const ROLES = ['MASTER','GERENTE','SECRETARIA','CRC','DENTISTA'];
 
   // V462.1 cobre a matriz que já existia na V460. Recursos novos (como Exame
@@ -75,12 +75,35 @@
   let source = 'default';
   let actorKey = '';
   let loaded = false;
+  let validated = false;
+  let revision = 0;
+
+  function emitAclUpdated(reason){
+    revision += 1;
+    const detail = Object.freeze({
+      revision,
+      reason:String(reason || 'changed'),
+      source,
+      loaded:loaded === true,
+      validated:validated === true
+    });
+    try{
+      document.dispatchEvent(new CustomEvent('cronos:acl-updated', { detail }));
+    }catch(_){
+      try{
+        const event = document.createEvent('CustomEvent');
+        event.initCustomEvent('cronos:acl-updated', false, false, detail);
+        document.dispatchEvent(event);
+      }catch(__){ }
+    }
+  }
 
   function roleKey(role){
     const key = String(role || '').trim().toUpperCase();
     return ROLES.includes(key) ? key : 'DENTISTA';
   }
   function cloneDefault(role){ return {...(ROLE_DEFAULTS[roleKey(role)] || ROLE_DEFAULTS.DENTISTA)}; }
+  function denyAll(){ return Object.fromEntries(CATALOG.map(item=>[item.key,false])); }
 
   function cacheKey(actor){
     const clinic = String(window.CLOUD_CLINIC_OWNER_UID || window.CLOUD_OWNER_UID || '').trim();
@@ -100,8 +123,8 @@
     try{ localStorage.setItem(cacheKey(actor), JSON.stringify({savedAt:Date.now(),role:roleKey(actor?.role),source:resolvedSource||'remote',permissions})); }catch(_){ }
   }
 
-  function setEffective(actor, permissions, resolvedSource){
-    const base = cloneDefault(actor?.role);
+  function setEffective(actor, permissions, resolvedSource, options={}){
+    const base = options.trustedRoleDefaults === true ? cloneDefault(actor?.role) : denyAll();
     effective = {...base};
     if(permissions && typeof permissions === 'object'){
       Object.keys(permissions).forEach(k => {
@@ -111,6 +134,8 @@
     source = resolvedSource || 'default';
     actorKey = `${roleKey(actor?.role)}:${actor?.id || actor?.authUid || ''}`;
     loaded = true;
+    validated = resolvedSource === 'database' || resolvedSource === 'trusted-support';
+    emitAclUpdated(options.reason || resolvedSource || 'changed');
     return effective;
   }
 
@@ -124,38 +149,65 @@
   }
 
   async function hydrateForActor(actor, options={}){
-    if(!actor) return null;
+    if(!actor) throw new Error('Ator ausente ao resolver permissões.');
     const key=`${roleKey(actor.role)}:${actor.id||actor.authUid||''}`;
-    if(loaded && actorKey===key && options.force!==true) return effective;
+    if(validated && loaded && actorKey===key && options.force!==true){
+      emitAclUpdated('hydrate-current');
+      return effective;
+    }
 
-    const cached=readCache(actor);
-    if(cached?.permissions) setEffective(actor,cached.permissions,cached.source||'cache');
-    else setEffective(actor,null,'default');
+    // O cache local nunca concede acesso. Ele é mantido apenas como diagnóstico e
+    // é substituído depois que a RPC confirma a ACL da sessão atual.
+    setEffective(actor,null,'unvalidated',{reason:'hydrate-start'});
 
     try{
       const client=(typeof supabaseClient!=='undefined'&&supabaseClient)?supabaseClient:window.supabaseClient;
-      if(!client||typeof client.rpc!=='function') return effective;
+      if(!client||typeof client.rpc!=='function') throw new Error('Cliente de permissões indisponível.');
       const {data,error}=await client.rpc('cronos_get_my_permissions');
       if(error) throw error;
       const rows=Array.isArray(data)?data:(Array.isArray(data?.permissions)?data.permissions:[]);
-      if(!rows.length) return effective;
-      setEffective(actor,permissionMapFromRpcRows(rows),'database');
+      if(!rows.length) throw new Error('A RPC não retornou a matriz de permissões.');
+      setEffective(actor,permissionMapFromRpcRows(rows),'database',{reason:'hydrate-valid'});
       writeCache(actor,effective,'database');
       return effective;
     }catch(error){
-      console.warn('Cronos ACL V462: usando padrão global local.',error?.message||error);
-      return effective;
+      setEffective(actor,null,'unavailable',{reason:'hydrate-unavailable'});
+      try{ localStorage.removeItem(cacheKey(actor)); }catch(_){ }
+      console.error('Cronos ACL V463.2.4: validação indisponível; acesso negado.',error?.message||error);
+      throw error;
     }
   }
 
-  function getMap(role){ return effective || cloneDefault(role); }
+  function useTrustedRoleDefaultsForSupport(actor){
+    if(!actor || actor.isSupport !== true) throw new Error('Contexto de suporte inválido.');
+    return setEffective(actor,cloneDefault(actor.role),'trusted-support',{trustedRoleDefaults:true});
+  }
+
+  function reset(options={}){
+    if(options.clearCache === true){
+      try{
+        for(let i=localStorage.length-1;i>=0;i--){
+          const key=localStorage.key(i);
+          if(key && key.startsWith('cronos_acl_v462::')) localStorage.removeItem(key);
+        }
+      }catch(_){ }
+    }
+    effective=null;
+    source='unvalidated';
+    actorKey='';
+    loaded=false;
+    validated=false;
+    emitAclUpdated('reset');
+  }
+
+  function getMap(){ return effective || denyAll(); }
   function can(permissionKey,actor){
     const key=String(permissionKey||'').trim();
     return !!key && getMap(actor?.role)[key]===true;
   }
   function canModule(moduleKey,actor){
     const permission=MODULE_PERMISSION[String(moduleKey||'')];
-    return permission ? can(permission,actor) : true;
+    return permission ? can(permission,actor) : false;
   }
   function legacyPerms(role,options={}){
     const map=getMap(role);
@@ -172,10 +224,10 @@
 
   window.CronosPermissions={
     VERSION,ROLES,CATALOG,ROLE_DEFAULTS,MODULE_PERMISSION,
-    hydrateForActor,can,canModule,legacyPerms,
+    hydrateForActor,useTrustedRoleDefaultsForSupport,reset,can,canModule,legacyPerms,
     defaultsForRole:cloneDefault,
     getCatalog:()=>CATALOG.map(x=>({...x})),
     getRoleDefaults:()=>Object.fromEntries(ROLES.map(role=>[role,cloneDefault(role)])),
-    getEffectiveMap:()=>({...getMap()}),getSource:()=>source
+    getEffectiveMap:()=>({...getMap()}),getSource:()=>source,isValidated:()=>validated===true,getRevision:()=>revision
   };
 })();

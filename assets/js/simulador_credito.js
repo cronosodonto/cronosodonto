@@ -44,13 +44,17 @@
   function actor(){try{return window.currentActor()}catch(_){return null}}
   function toast(t,m=''){try{if(typeof window.toast==='function')return window.toast(t,m)}catch(_){} console.log('[Simulador]',t,m)}
   function canOpenCredit(){
-    try{return !window.CRONOS_CAN_ACCESS_MODULE || window.CRONOS_CAN_ACCESS_MODULE('creditSimulator')}catch(_){return true}
+    try{
+      if(typeof window.CRONOS_CAN_OPEN_MODULE==='function') return window.CRONOS_CAN_OPEN_MODULE('creditSimulator')===true
+      if(typeof window.CRONOS_CAN_ACCESS_MODULE==='function') return window.CRONOS_CAN_ACCESS_MODULE('creditSimulator')===true
+      return false
+    }catch(_){return false}
   }
   function canSeeRiskAnalysis(){
-    try{return !window.CRONOS_CAN_SEE_MODULE || window.CRONOS_CAN_SEE_MODULE('riskAnalysis')}catch(_){return true}
+    try{return typeof window.CRONOS_CAN_SEE_MODULE==='function' && window.CRONOS_CAN_SEE_MODULE('riskAnalysis')===true}catch(_){return false}
   }
   function canOpenRiskAnalysis(){
-    try{return !window.CRONOS_CAN_OPEN_MODULE || window.CRONOS_CAN_OPEN_MODULE('riskAnalysis')}catch(_){return true}
+    try{return typeof window.CRONOS_CAN_OPEN_MODULE==='function' && window.CRONOS_CAN_OPEN_MODULE('riskAnalysis')===true}catch(_){return false}
   }
   function denyCreditAccess(){toast('Acesso restrito','Seu nível de acesso não permite abrir o Simulador.')}
   function denyRiskAccess(){toast('Módulo indisponível','A Análise de Risco não está disponível para esta clínica.')}
@@ -570,6 +574,8 @@
     return v;
   }
   function ensureNav(){
+    // O menu fica congelado visualmente durante a revalidação silenciosa.
+    if(window.__CRONOS_ACCESS_UI_SUSPENDED__===true) return $(NAV_ID) || null;
     const existing=$(NAV_ID);
     if(existing){
       existing.classList.toggle('hidden',!canOpenCredit());

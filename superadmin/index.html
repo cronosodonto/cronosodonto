@@ -2346,12 +2346,40 @@
       });
     }
 
+    function validateSuperadminListContract(data) {
+      if (!data || typeof data !== 'object' || Array.isArray(data) || !Array.isArray(data.superadmins)) {
+        throw new Error('list-superadmins retornou um contrato inválido.');
+      }
+      const current = data.current_superadmin;
+      if (
+        !current || typeof current !== 'object' ||
+        !String(current.user_id || '').trim() ||
+        !String(current.email || '').trim() ||
+        typeof current.is_root !== 'boolean'
+      ) {
+        throw new Error('list-superadmins não identificou o solicitante atual.');
+      }
+      const invalidRow = data.superadmins.find(item =>
+        !item || typeof item !== 'object' ||
+        !String(item.user_id || '').trim() ||
+        typeof item.is_active !== 'boolean' ||
+        typeof item.is_root !== 'boolean' ||
+        typeof item.is_self !== 'boolean'
+      );
+      if (invalidRow) throw new Error('list-superadmins retornou um superadmin inválido.');
+      return { current, superadmins:data.superadmins };
+    }
+
     async function loadSuperadmins() {
       state.loadingSuperadmins = true;
       renderSuperadmins();
       try {
         const data = await callEdgeFunction(CONFIG.endpoints.listSuperadmins, {});
-        state.superadmins = Array.isArray(data?.superadmins) ? data.superadmins : [];
+        const contract = validateSuperadminListContract(data);
+        state.currentSuperadminId = String(contract.current.user_id);
+        state.currentSuperadminEmail = String(contract.current.email).trim().toLowerCase();
+        state.currentSuperadminIsRoot = contract.current.is_root === true;
+        state.superadmins = contract.superadmins;
         state.hasLoadedSuperadmins = true;
       } finally {
         state.loadingSuperadmins = false;
@@ -4957,8 +4985,8 @@
 })();
 </script>
 <script src="../assets/js/superadmin-permissions.js?build=v462-2-20260807"></script>
-<script src="../assets/js/superadmin-site-chat.js?build=v4-1-4-whatsapp-20260715"></script>
-<script src="../assets/js/superadmin-today-config.js"></script>
+<script src="../assets/js/superadmin-site-chat.js?build=v463-2-4-security-20260812"></script>
+<script src="../assets/js/superadmin-today-config.js?build=v463-2-4-security-20260812"></script>
 
 </body>
 </html>

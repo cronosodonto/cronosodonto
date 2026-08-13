@@ -1,4 +1,9 @@
-# Cronos Odonto — V456
+# Cronos Odonto — V463.2.4 Security & Integrity RC1
+
+Esta pasta é uma candidata de correção baseada integralmente na V463.2.3. Ela não
+está liberada para produção até a aplicação das migrações/Edge Functions e a
+conclusão do checklist real em Supabase e navegador descrito em
+`V463_2_4_RELEASE.md`.
 
 Sistema de gestão comercial e financeira para clínicas odontológicas.
 

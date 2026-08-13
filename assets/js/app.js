@@ -5357,6 +5357,7 @@ function hasPermission(permissionKey, actor=currentActor()){
 }
 function canEditRecords(actor=currentActor()){ return !!actor && hasPermission("records.edit", actor); }
 function canDeleteRecords(actor=currentActor()){ return !!actor && hasPermission("records.delete", actor); }
+function canDeleteLeads(actor=currentActor()){ return !!actor && hasPermission("leads.delete", actor); }
 function canManageUsersACL(actor=currentActor()){ return !!actor && hasPermission("users.manage", actor); }
 function canManageMastersACL(actor=currentActor()){
   return !!actor && (actor.isPrimaryMaster === true || hasPermission("masters.manage", actor));
@@ -5405,7 +5406,36 @@ function canAccessModule(moduleKey, actor=currentActor()){
 function firstAllowedView(actor=currentActor()){
   return actorAllowedViews(actor)[0] || "dashboard";
 }
+function applyExamNavVisibility(actor=currentActor()){
+  const btn = el("navIntraoralCamera");
+  if(!btn) return false;
+  const aclValidated = window.CronosPermissions?.isValidated?.() === true;
+  const allowed = !!actor && aclValidated && hasPermission("exam.capture", actor);
+  // A RC2 usava display:none inline. Removê-lo aqui permite que a classe
+  // centralizada reflita imediatamente cada novo estado validado da ACL.
+  try{ btn.style.removeProperty("display"); }catch(_){ btn.style.display = ""; }
+  btn.classList.toggle("hidden", !allowed);
+  btn.setAttribute("aria-hidden", allowed ? "false" : "true");
+  return allowed;
+}
+function cronosAccessUiWritesSuspended(){
+  return window.__CRONOS_ACCESS_UI_SUSPENDED__ === true;
+}
+function cronosSetInitialUiShield(active){
+  const app = el("appView");
+  if(app){
+    if(active){
+      app.style.visibility = "hidden";
+      app.setAttribute("aria-busy", "true");
+    }else{
+      app.style.visibility = "";
+      app.removeAttribute("aria-busy");
+    }
+  }
+  try{ document.body.classList.toggle("cronos-access-ui-boot", !!active); }catch(_){ }
+}
 function applyRoleVisibility(actor=currentActor()){
+  if(cronosAccessUiWritesSuspended()) return false;
   APP_VIEWS.forEach(view=>{
     const btn = qs(`.nav button[data-view="${view}"]`);
     if(btn) btn.classList.toggle("hidden", !canAccessView(view, actor));
@@ -5419,6 +5449,8 @@ function applyRoleVisibility(actor=currentActor()){
     const btn = el(item.id);
     if(btn) btn.classList.toggle("hidden", !canAccessModule(item.module, actor));
   });
+
+  applyExamNavVisibility(actor);
 
   const canEdit = canEditRecords(actor);
   const canUsers = canAccessView("users", actor) && canManageUsersACL(actor);
@@ -5438,9 +5470,34 @@ function applyRoleVisibility(actor=currentActor()){
     const node = el(id);
     if(node) node.classList.toggle("hidden", !canSettings);
   });
+  return true;
 }
+
+function reapplyAccessDrivenUI(actor=currentActor(), options={}){
+  if(cronosAccessUiWritesSuspended()){
+    window.__CRONOS_ACCESS_UI_PENDING__ = true;
+    return { deferred:true, reason:options.reason || "access-updated" };
+  }
+  window.__CRONOS_ACCESS_UI_PENDING__ = false;
+  applyRoleVisibility(actor);
+  try{
+    if(typeof window.CRONOS_REAPPLY_FEATURE_ACCESS_UI === "function"){
+      window.CRONOS_REAPPLY_FEATURE_ACCESS_UI(options.reason || "access-updated");
+    }
+  }catch(error){
+    console.error("Cronos: falha ao reaplicar Feature Access na interface.", error);
+  }
+}
+
+document.addEventListener("cronos:acl-updated", event=>{
+  reapplyAccessDrivenUI(currentActor(), { reason:event?.detail?.reason || "acl-updated" });
+});
+document.addEventListener("cronos:feature-access-updated", event=>{
+  reapplyAccessDrivenUI(currentActor(), { reason:event?.detail?.reason || "feature-access-updated" });
+});
 window.CRONOS_CAN_ACCESS_MODULE = canAccessModule;
 window.CRONOS_APPLY_ROLE_VISIBILITY = applyRoleVisibility;
+window.CRONOS_REAPPLY_ACCESS_UI = reapplyAccessDrivenUI;
 
 const el = (id)=>document.getElementById(id);
 
@@ -6290,12 +6347,36 @@ function validateSupportHydration(support){
   return { ok:true };
 }
 
+function validateSupportContractPayload(payload){
+  if(!payload || typeof payload !== "object" || Array.isArray(payload) || payload.ok !== true){
+    throw new Error("resolve-support-access retornou um contrato inválido.");
+  }
+  const support = payload.support;
+  if(!support || typeof support !== "object" || Array.isArray(support)){
+    throw new Error("Acesso de suporte validado, mas sem objeto support.");
+  }
+  const requiredText = ["clinic_id","owner_uid","owner_email","master_email","clinic_name","status","support_lookup"];
+  if(requiredText.some(key=>!String(support[key] || "").trim())){
+    throw new Error("resolve-support-access não retornou todos os campos obrigatórios.");
+  }
+  if(support.support_mode !== true || !support.data || typeof support.data !== "object" || Array.isArray(support.data)){
+    throw new Error("resolve-support-access não confirmou o modo suporte e seus dados.");
+  }
+  if(!support.data_sources || typeof support.data_sources !== "object" || Array.isArray(support.data_sources)){
+    throw new Error("resolve-support-access não retornou data_sources.");
+  }
+  if(!support.v2_hydration || typeof support.v2_hydration !== "object" || support.v2_hydration.ready !== true){
+    throw new Error("resolve-support-access não confirmou a hidratação operacional.");
+  }
+  return support;
+}
+
 async function fetchSupportAccessReady(supportToken, maxAttempts=3){
   let lastError = null;
 
   for(let attempt = 1; attempt <= maxAttempts; attempt++){
     try{
-      const res = await fetch(`${supabaseUrl}/functions/v1/resolve-support-access`, {
+      const res = await cronosFetchWithTimeout(`${supabaseUrl}/functions/v1/resolve-support-access`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -6309,10 +6390,7 @@ async function fetchSupportAccessReady(supportToken, maxAttempts=3){
         throw new Error(json?.error || "Falha ao validar o acesso de suporte.");
       }
 
-      const support = json.support || null;
-      if(!support){
-        throw new Error("Acesso de suporte validado, mas sem dados de suporte.");
-      }
+      const support = validateSupportContractPayload(json);
 
       const validation = validateSupportHydration(support);
       if(!validation.ok){
@@ -6343,23 +6421,11 @@ async function maybeInitSupportMode(){
 
   const supportToken = tokenFromUrl || tokenFromSession;
 
-  // Sem token novo nem token lembrado, mantém o contexto leve se existir.
+  // Sem token novo nem token lembrado, não há contexto de suporte a validar.
   if(!supportToken) return getSupportContext();
 
-  // Se ainda há DB válido de suporte na memória/sessionStorage, não precisa revalidar.
-  if(!tokenFromUrl){
-    const ctx = getSupportContext();
-    const cachedDB = getSupportDB();
-    const validation = validateSupportHydration({
-      ...ctx,
-      data: cachedDB || ctx?.data,
-      v2_hydration: ctx?.v2_hydration
-    });
-    const cachedSize = ((cachedDB?.contacts || []).length || 0) + ((cachedDB?.entries || []).length || 0);
-    if(ctx && validation.ok && (cachedSize > 0 || !supportSourceIsV2(ctx, "contacts") && !supportSourceIsV2(ctx, "entries"))){
-      return ctx;
-    }
-  }
+  // Inclusive no F5, o token e a clínica de suporte são revalidados na Edge.
+  // sessionStorage nunca libera dados operacionais por conta própria.
 
   // Link de suporte tem prioridade absoluta sobre qualquer login/cache já aberto nessa aba.
   if(tokenFromUrl){
@@ -6399,6 +6465,72 @@ const DEFAULT_RENEWAL_MESSAGE = "Olá! O acesso da clínica [CLINICA] ao Cronos 
 const DEFAULT_BLOCKED_FEATURE_MESSAGE = "Olá! Quero saber como liberar o recurso [RECURSO] no plano da clínica [CLINICA].";
 let CLINIC_ACCESS_STATE = null;
 let CLINIC_RENEWAL_CONTACT = null;
+let CLINIC_ACCESS_DIAGNOSTIC = null;
+let CLINIC_ACCESS_DIAGNOSTIC_REVISION = 0;
+const CRONOS_POLICY_TIMEOUT_MS = 12000;
+const CLINIC_ACCESS_CONTRACT_VERSION = "clinic-access-state-v2";
+const VALID_CLINIC_ACCESS_STATUSES = new Set(["active","trial","blocked","inactive","scheduled","expired","blocked_user"]);
+
+async function cronosFetchWithTimeout(url, options={}, timeoutMs=CRONOS_POLICY_TIMEOUT_MS){
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = controller ? setTimeout(()=>controller.abort(), Math.max(1000, Number(timeoutMs || CRONOS_POLICY_TIMEOUT_MS))) : null;
+  try{
+    return await fetch(url, controller ? { ...options, signal:controller.signal } : options);
+  }finally{
+    if(timer) clearTimeout(timer);
+  }
+}
+
+function clinicAccessValidationFailure(reason="ACCESS_VALIDATION_UNAVAILABLE"){
+  return { __cronos_validation_error:true, error_code:String(reason || "ACCESS_VALIDATION_UNAVAILABLE") };
+}
+
+function clonePolicyDiagnostic(value){
+  try{ return JSON.parse(JSON.stringify(value)); }catch(_){ return null; }
+}
+
+function recordClinicAccessDiagnostic(details={}){
+  CLINIC_ACCESS_DIAGNOSTIC_REVISION += 1;
+  CLINIC_ACCESS_DIAGNOSTIC = clonePolicyDiagnostic({
+    revision:CLINIC_ACCESS_DIAGNOSTIC_REVISION,
+    endpoint:ACCESS_STATUS_ENDPOINT,
+    expected_contract:CLINIC_ACCESS_CONTRACT_VERSION,
+    ...details
+  });
+  try{ console.info("Cronos Clinic Access RC5", CLINIC_ACCESS_DIAGNOSTIC); }catch(_){ }
+}
+
+function validateClinicAccessPayload(payload){
+  if(!payload || typeof payload !== "object" || Array.isArray(payload)){
+    throw new Error("A validação de acesso retornou um payload inválido.");
+  }
+  if(payload.ok !== true || payload.contract_version !== CLINIC_ACCESS_CONTRACT_VERSION){
+    throw new Error("Contrato incompatível em get-clinic-access-state.");
+  }
+  const access = payload.access;
+  if(!access || typeof access !== "object" || Array.isArray(access)){
+    throw new Error("A validação de acesso não retornou access.");
+  }
+
+  const clinicId = String(access.clinic_id || "").trim();
+  const clinicName = String(access.clinic_name || "").trim();
+  const masterUserId = String(access.master_user_id || "").trim();
+  const accessRole = String(access.access_role || "").trim();
+  const status = String(access.status || "").trim().toLowerCase();
+  if(!clinicId || !clinicName || !masterUserId || !accessRole || !VALID_CLINIC_ACCESS_STATUSES.has(status)){
+    throw new Error("A validação de acesso retornou campos obrigatórios inválidos.");
+  }
+  for(const key of ["access_starts_at","access_ends_at"]){
+    if(!Object.prototype.hasOwnProperty.call(access,key)){
+      throw new Error(`A validação de acesso não retornou ${key}.`);
+    }
+    const value = access[key];
+    if(value !== null && value !== "" && Number.isNaN(new Date(value).getTime())){
+      throw new Error(`A validação de acesso retornou ${key} inválido.`);
+    }
+  }
+  return { ...access, clinic_id:clinicId, clinic_name:clinicName, master_user_id:masterUserId, access_role:accessRole, status };
+}
 
 function parseAccessDate(value){
   if(!value) return null;
@@ -6446,7 +6578,7 @@ function buildRenewalWhatsappUrl(access, kind="expired", featureLabel=""){
 async function fetchRenewalContact(accessToken){
   if(!accessToken) return null;
   try{
-    const res = await fetch(`${supabaseUrl}/functions/v1/${RENEWAL_CONTACT_ENDPOINT}`, {
+    const res = await cronosFetchWithTimeout(`${supabaseUrl}/functions/v1/${RENEWAL_CONTACT_ENDPOINT}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -6474,6 +6606,7 @@ async function fetchRenewalContact(accessToken){
 function clearClinicAccessState(){
   CLINIC_ACCESS_STATE = null;
   CLINIC_RENEWAL_CONTACT = null;
+  CLINIC_ACCESS_DIAGNOSTIC = null;
 }
 async function fetchClinicAccessState(force=false){
   if(isSupportMode()) return null;
@@ -6481,15 +6614,17 @@ async function fetchClinicAccessState(force=false){
   if(cachedAccess && !force){
     return cachedAccess;
   }
-  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
-  const sessionResp = await supabaseClient.auth.getSession();
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return clinicAccessValidationFailure("AUTH_CLIENT_UNAVAILABLE");
+  const sessionResp = await supabaseClient.auth.getSession().catch(()=>null);
   const session = sessionResp?.data?.session;
-  if(!session?.access_token) return null;
+  if(!session?.access_token) return clinicAccessValidationFailure("AUTH_SESSION_UNAVAILABLE");
 
   try{
+    const requestedAt = new Date().toISOString();
+    recordClinicAccessDiagnostic({ phase:"request", requested_at:requestedAt, http_status:null, http_ok:false });
     // As duas funções são independentes. Antes o contato de renovação só começava
     // depois da validação de acesso, acrescentando quase 1s ao caminho crítico.
-    const accessRequest = fetch(`${supabaseUrl}/functions/v1/${ACCESS_STATUS_ENDPOINT}`, {
+    const accessRequest = cronosFetchWithTimeout(`${supabaseUrl}/functions/v1/${ACCESS_STATUS_ENDPOINT}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -6501,26 +6636,62 @@ async function fetchClinicAccessState(force=false){
     const renewalRequest = fetchRenewalContact(session.access_token);
     const [res, renewalContact] = await Promise.all([accessRequest, renewalRequest]);
     const json = await res.json().catch(() => ({}));
+    const responseDiagnostic = {
+      phase:"response",
+      requested_at:requestedAt,
+      completed_at:new Date().toISOString(),
+      http_status:Number.isFinite(Number(res.status)) ? Number(res.status) : null,
+      http_ok:res.ok === true,
+      status_text:String(res.statusText || ""),
+      payload_format:json && typeof json === "object" && !Array.isArray(json) ? "object" : (Array.isArray(json) ? "array" : typeof json),
+      payload_keys:json && typeof json === "object" && !Array.isArray(json) ? Object.keys(json).sort() : [],
+      contract_version:String(json?.contract_version || "") || null,
+      access_status:String(json?.access?.status || "") || null,
+      clinic_id:String(json?.access?.clinic_id || "") || null
+    };
     if(!res.ok){
-      throw new Error(json?.error || "Falha ao validar o período de acesso.");
+      const httpError = new Error(json?.error || "Falha ao validar o período de acesso.");
+      httpError.httpStatus = responseDiagnostic.http_status;
+      httpError.responseDiagnostic = responseDiagnostic;
+      throw httpError;
     }
-    CLINIC_ACCESS_STATE = { ...(json?.access || {}), ...(renewalContact || {}) };
+    const accessPayload = validateClinicAccessPayload(json);
+    CLINIC_ACCESS_STATE = { ...accessPayload, ...(renewalContact || {}) };
+    recordClinicAccessDiagnostic({ ...responseDiagnostic, phase:"validated" });
     return CLINIC_ACCESS_STATE;
   }catch(error){
     console.error("Falha ao consultar período de acesso:", error);
-    toast("Aviso", "Não foi possível validar o período de acesso agora.");
-    return null;
+    recordClinicAccessDiagnostic({
+      ...(error?.responseDiagnostic || {}),
+      phase:"failed",
+      completed_at:new Date().toISOString(),
+      http_status:error?.httpStatus ?? error?.responseDiagnostic?.http_status ?? null,
+      http_ok:false,
+      error:String(error?.message || error || "Falha desconhecida.")
+    });
+    return clinicAccessValidationFailure(error?.name === "AbortError" ? "ACCESS_VALIDATION_TIMEOUT" : "ACCESS_VALIDATION_UNAVAILABLE");
   }
 }
 function evaluateClinicAccessState(access){
-  if(!access) return { mode: "allow", warn: false, daysLeft: null, access: null };
+  if(!access || access.__cronos_validation_error === true){
+    return { mode:"unavailable", warn:false, daysLeft:null, access:null, errorCode:access?.error_code || "ACCESS_VALIDATION_UNAVAILABLE" };
+  }
   const now = new Date();
   const status = normalizeAccessStatus(access.status);
   const startsAt = parseAccessDate(access.access_starts_at);
   const endsAt = parseAccessDate(access.access_ends_at);
 
-  if(status === "blocked" || status === "inactive"){
+  if(!VALID_CLINIC_ACCESS_STATUSES.has(status)){
+    return { mode:"unavailable", warn:false, daysLeft:null, access:null, errorCode:"ACCESS_STATUS_INVALID" };
+  }
+  if(status === "blocked" || status === "inactive" || status === "blocked_user"){
     return { mode: "blocked", warn: false, daysLeft: null, access, startsAt, endsAt };
+  }
+  if(status === "scheduled"){
+    return { mode: "scheduled", warn: false, daysLeft: null, access, startsAt, endsAt };
+  }
+  if(status === "expired"){
+    return { mode: "expired", warn: false, daysLeft: -1, access, startsAt, endsAt };
   }
   if(startsAt && now < startsAt){
     return { mode: "scheduled", warn: false, daysLeft: null, access, startsAt, endsAt };
@@ -6536,6 +6707,7 @@ function evaluateClinicAccessState(access){
 
   return { mode: "allow", warn: false, daysLeft, access, startsAt, endsAt };
 }
+try{ window.CRONOS_CLINIC_ACCESS_DIAGNOSTICS = () => clonePolicyDiagnostic(CLINIC_ACCESS_DIAGNOSTIC); }catch(_){ }
 function fmtDateTimeLocal(value){
   if(!value) return "—";
   const date = value instanceof Date ? value : new Date(value);
@@ -6594,6 +6766,10 @@ function showAccessNotice(decision){
   el("accessNoticeModal").classList.add("show");
 }
 function showAccessGate(decision){
+  if(window.__CRONOS_ACCESS_UI_SUSPENDED__ === true){
+    window.__CRONOS_ACCESS_UI_SUSPENDED__ = false;
+    cronosSetInitialUiShield(false);
+  }
   hideBootSplash();
   const access = decision?.access || {};
   const mode = decision?.mode || "blocked";
@@ -6603,21 +6779,25 @@ function showAccessGate(decision){
   el("accessGateView").classList.remove("hidden");
   hideAccessNotice();
 
-  const badgeMap = { expired: "⛔", blocked: "🔒", scheduled: "⏳" };
+  const badgeMap = { expired: "⛔", blocked: "🔒", scheduled: "⏳", unavailable: "🔐" };
   const titleMap = {
     expired: "Seu acesso expirou",
     blocked: "Seu acesso está bloqueado",
-    scheduled: "Seu acesso ainda não iniciou"
+    scheduled: "Seu acesso ainda não iniciou",
+    unavailable: "Não foi possível validar seu acesso"
   };
   const textMap = {
     expired: "Para voltar a usar o Cronos, renove seu acesso com nossa equipe e envie o comprovante de pagamento.",
     blocked: "Entre em contato com nossa equipe para regularizar e reativar seu acesso ao Cronos.",
-    scheduled: "Seu período de acesso ainda não começou. Fale com nossa equipe se precisar antecipar ou confirmar a liberação."
+    scheduled: "Seu período de acesso ainda não começou. Fale com nossa equipe se precisar antecipar ou confirmar a liberação.",
+    unavailable: "Por segurança, nenhum dado da clínica foi liberado porque a validação online não pôde ser concluída. Verifique a conexão e tente novamente."
   };
 
   el("accessGateBadge").textContent = badgeMap[mode] || "⏳";
   el("accessGateTitle").textContent = titleMap[mode] || "Acesso indisponível";
-  el("accessGateSubtitle").textContent = access?.clinic_name ? `Clínica: ${access.clinic_name}` : "Verifique o período de acesso da clínica.";
+  el("accessGateSubtitle").textContent = access?.clinic_name
+    ? `Clínica: ${access.clinic_name}`
+    : (mode === "unavailable" ? "Validação online obrigatória" : "Verifique o período de acesso da clínica.");
   el("accessGateText").textContent = textMap[mode] || "Seu acesso está temporariamente indisponível.";
   el("accessGateMeta").innerHTML = renderAccessMeta(decision);
 
@@ -6680,7 +6860,7 @@ function cronosStartPolicyPrefetch(){
     __cronosAccessBootstrapPromise = Promise.resolve(fetchClinicAccessState(true))
       .catch(error=>{
         console.warn("Cronos V451: pré-validação de acesso indisponível.", error);
-        return null;
+        return clinicAccessValidationFailure("ACCESS_VALIDATION_UNAVAILABLE");
       });
   }
 
@@ -6688,6 +6868,7 @@ function cronosStartPolicyPrefetch(){
     __cronosFeatureBootstrapPromise = Promise.resolve(window.__refreshFeatureAccess(true))
       .catch(error=>{
         console.warn("Cronos V451: pré-carregamento de permissões indisponível.", error);
+        return false;
       });
   }
 
@@ -9518,6 +9699,8 @@ function refreshAuthMasters(){
 }
 
 function showAuth(){
+  cronosSetInitialUiShield(false);
+  window.__CRONOS_ACCESS_UI_SUSPENDED__ = false;
   hideBootSplash();
   window.__CRONOS_SESSION_CHECKING__ = false;
   window.__CRONOS_BOOTING__ = false;
@@ -9546,8 +9729,10 @@ function showAuth(){
 function showApp(actor, options={}){
   const keepSplash = !!options?.keepSplash;
   if(!keepSplash) hideBootSplash();
-  window.__CRONOS_SESSION_CHECKING__ = false;
-  window.__CRONOS_BOOTING__ = false;
+  if(!keepSplash){
+    window.__CRONOS_SESSION_CHECKING__ = false;
+    window.__CRONOS_BOOTING__ = false;
+  }
   window.__CRONOS_ACCESS_BLOCK__ = null;
   try{ resetFiltersToDefault({ ui:true }); }catch(_){ try{ localStorage.removeItem(FILTERKEY); }catch(__){} }
   setSupportEntryLoading(false);
@@ -11921,7 +12106,9 @@ function renderLeadsTable(list){
     const btnFicha = `<button type="button" class="leadActionSmall btnFicha" data-ficha-entry="${idAttr}" title="Prontuário" onpointerdown="return CRONOS_OPEN_FICHA_BTN(event,'${idAttr}')" onclick="return CRONOS_OPEN_FICHA_BTN(event,'${idAttr}')">${leadIconSvg.file}<span>Prontuário</span></button>`;
     const btnCampaign = `<button class="leadActionSmall campaignToggle ${inCampaign ? "active" : ""}" type="button" title="${inCampaign ? "Remover da campanha" : "Marcar para campanha"}" onclick="return toggleLeadCampaign(event,'${idAttr}')">${leadIconSvg.campaign}<span>Campanha</span></button>`;
     const btnOk    = `<button class="leadActionSmall" title="Criar tarefa para este lead" onclick="return openLeadTaskShortcut(event,'${idAttr}')">${leadIconSvg.task}<span>Tarefa</span></button>`;
-    const btnDel   = `<button class="leadActionSmall danger" title="Excluir" onclick="deleteLead('${idAttr}')">${leadIconSvg.trash}<span>Excluir</span></button>`;
+    const btnDel   = canDeleteLeads(currentActor())
+      ? `<button class="leadActionSmall danger" title="Excluir" onclick="deleteLead('${idAttr}')">${leadIconSvg.trash}<span>Excluir</span></button>`
+      : "";
 
     return `
       <article class="leadCard leadCardV2 accent-${accent}">
@@ -12879,6 +13066,10 @@ function closeModal(options){
   const force = options === true || (options && typeof options === "object" && options.force === true);
   const source = typeof options === "string" ? options : ((options && typeof options === "object" && options.source) || "button");
   if(!cronosCanCloseModal(source, force)) return false;
+  const closingModalType = CRONOS_MODAL_GUARD.type || cronosModalDetectType();
+  if(closingModalType === "exam"){
+    try{ window.CRONOS_EXAM_DIGITAL?.stop?.(); }catch(_){ }
+  }
   try{
     const active = document.activeElement;
     if(active && el("modalBg")?.contains(active) && typeof active.blur === "function") active.blur();
@@ -13354,6 +13545,31 @@ function cronosMergeEntryIntoTarget(db, targetEntry, sourceEntry, primaryContact
   return targetEntry;
 }
 
+async function cronosAllowPatientMutationWithoutOrphanImages(entryIds, actionLabel){
+  const ids = Array.from(new Set((entryIds || []).map(id=>String(id || '').trim()).filter(Boolean)));
+  if(!ids.length) return true;
+  if(!supabaseClient || typeof supabaseClient.rpc !== 'function'){
+    toast('Operação bloqueada', 'Não foi possível validar as imagens do Exame Digital. Tente novamente com o Supabase disponível.');
+    return false;
+  }
+  try{
+    const { data, error } = await supabaseClient.rpc('cronos_exam_entries_have_images', { p_entry_ids:ids });
+    if(error) throw error;
+    if(data === true){
+      toast(
+        `${actionLabel || 'Operação'} bloqueada`,
+        'O paciente possui imagens no Exame Digital. A operação foi interrompida para preservar imagens e metadados até a rotina transacional do backend ser integrada.'
+      );
+      return false;
+    }
+    return data === false;
+  }catch(error){
+    console.error('Cronos: falha ao validar vínculos do Exame Digital.', error);
+    toast('Operação bloqueada', 'Não foi possível confirmar os vínculos do Exame Digital. Nenhum dado foi alterado.');
+    return false;
+  }
+}
+
 async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateContactId, options={}){
   const actor = currentActor && currentActor();
   if(!canEditRecords(actor)){ toast("Sem permissão", "Seu nível não permite mesclar cadastros."); return null; }
@@ -13383,6 +13599,9 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
   const primaryId = String(primary.id);
   const secondaryId = String(secondary.id);
   const now = new Date().toISOString();
+
+  const mergeEntryIds = [...aEntries, ...bEntries].map(entry=>String(entry?.id || '')).filter(Boolean);
+  if(!await cronosAllowPatientMutationWithoutOrphanImages(mergeEntryIds, 'Mesclagem')) return null;
 
   const ok = options.skipConfirm === true || confirm(
     "Mesclar estes dois cadastros?\n\n" +
@@ -14715,7 +14934,7 @@ function deleteLead(entryId){
 async function deleteEntry(entryId){
   const actor = currentActor();
   if(!actor) return toast("Sessão expirada", "Faça login novamente.");
-  if(!canDeleteRecords(actor)) return toast("Sem permissão", "Seu nível não permite excluir.");
+  if(!canDeleteLeads(actor)) return toast("Sem permissão", "Seu nível não permite excluir Leads.");
 
   const id = String(entryId || "").trim();
   if(!id || __cronosLeadDeleteInFlight.has(id)) return false;
@@ -14723,6 +14942,8 @@ async function deleteEntry(entryId){
   const db = loadDB();
   const entry = (db.entries || []).find(x=>String(x?.id || "") === id);
   if(!entry) return false;
+
+  if(!await cronosAllowPatientMutationWithoutOrphanImages([id], 'Exclusão')) return false;
 
   const contactId = String(entry.contactId || "").trim();
   const contact = (db.contacts || []).find(x=>String(x?.id || "") === contactId);
@@ -16783,8 +17004,13 @@ function bindNav(){
       applyActiveViewShell(view);
     }, {capture:true});
     b.addEventListener("click", (ev)=>{
+      const view = String(b.dataset.view || "").trim();
+      // Somente as rotas nativas pertencem a este binder. Botões auxiliares,
+      // como a Câmera Intraoral, possuem fluxo próprio e não podem virar
+      // setActiveView(undefined) dentro da camada de Feature Access.
+      if(!view || !APP_VIEWS.includes(view)) return;
       try{ ev.preventDefault(); }catch(_){ }
-      setActiveView(b.dataset.view);
+      setActiveView(view);
     });
   });
 
@@ -17126,12 +17352,85 @@ function renderAll(){
   return syncCurrentCloudActor();
 }
 
+function cronosFirstRenderableView(actor=currentActor()){
+  const allowed = actorAllowedViews(actor);
+  if(typeof window.CRONOS_CAN_OPEN_MODULE === "function"){
+    const open = allowed.find(view=>{
+      try{ return window.CRONOS_CAN_OPEN_MODULE(view, actor) === true; }catch(_){ return false; }
+    });
+    if(open) return open;
+  }
+  return allowed[0] || "dashboard";
+}
+
+async function cronosCommitInitialAccessUI(actor){
+  const targetView = cronosFirstRenderableView(actor);
+
+  // A app pode ser desocultada estruturalmente atrás do shield, mas ACL/Feature
+  // Access continuam proibidos de escrever no DOM até este ponto.
+  bindNav();
+
+  window.__CRONOS_ACCESS_UI_SUSPENDED__ = false;
+  window.__CRONOS_INITIAL_UI_COMMITTED__ = true;
+  window.__CRONOS_ACCESS_UI_COMMITTED_AT__ = Date.now();
+  window.__CRONOS_SESSION_CHECKING__ = false;
+  window.__CRONOS_BOOTING__ = false;
+
+  // Único commit inicial de ACL + Feature Access.
+  reapplyAccessDrivenUI(actor, { reason:"initial-policy-commit" });
+
+  // Monta shell e conteúdo sem depender do RAF assíncrono de setActiveView.
+  closeAuxiliaryViews();
+  applyActiveViewShell(targetView);
+  try{ renderActiveViewOnly(targetView); }catch(error){
+    console.error("Cronos: falha no primeiro render autoritativo.", error);
+  }
+  try{ updateSidebarPills(); }catch(_){ }
+
+  // Dá ao DOM um paint completo ainda atrás do shield.
+  await new Promise(resolve=>{
+    if(typeof requestAnimationFrame === "function"){
+      requestAnimationFrame(()=>requestAnimationFrame(resolve));
+    }else{
+      setTimeout(resolve, 0);
+    }
+  });
+
+  // Um segundo render do Dashboard elimina dependência de qualquer cálculo de
+  // layout/cache disparado no primeiro frame.
+  if(targetView === "dashboard"){
+    try{ renderDashboard(); }catch(error){ console.error("Cronos: repaint inicial do Dashboard falhou.", error); }
+  }
+  try{ updateSidebarPills(); }catch(_){ }
+
+  await new Promise(resolve=>{
+    if(typeof requestAnimationFrame === "function") requestAnimationFrame(resolve);
+    else setTimeout(resolve, 0);
+  });
+
+  cronosSetInitialUiShield(false);
+  hideBootSplash();
+  console.info("Cronos: interface inicial consolidada.", {
+    view:targetView,
+    aclValidated:window.CronosPermissions?.isValidated?.() === true,
+    featureStatus:typeof window.CRONOS_FEATURE_ACCESS_STATUS === "function" ? window.CRONOS_FEATURE_ACCESS_STATUS() : null
+  });
+}
+
 async function boot(options={}){
+  window.__CRONOS_ACCESS_UI_COMMITTED_AT__ = 0;
+  window.__CRONOS_INITIAL_UI_COMMITTED__ = false;
+  window.__CRONOS_ACCESS_UI_SUSPENDED__ = true;
+  window.__CRONOS_ACCESS_UI_PENDING__ = false;
+  cronosSetInitialUiShield(true);
   window.__CRONOS_BOOTING__ = true;
   window.__CRONOS_SESSION_CHECKING__ = true;
   const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
+  let supportSessionTokenPresent = false;
+  try{ supportSessionTokenPresent = !!sessionStorage.getItem(SUPPORT_TOKEN_KEY); }catch(_){ }
+  const supportRequested = supportTokenPresent || supportSessionTokenPresent || isSupportMode();
 
-  if(supportTokenPresent || isSupportMode()){
+  if(supportRequested){
     setSupportEntryLoading(true, "Modo suporte • Validando acesso e carregando a clínica...");
   }
 
@@ -17140,7 +17439,7 @@ async function boot(options={}){
   }catch(error){
     console.error("Falha ao iniciar suporte:", error);
 
-    if(supportTokenPresent){
+    if(supportRequested){
       clearSupportContext();
       resetCloudContext();
       DB = null;
@@ -17152,12 +17451,8 @@ async function boot(options={}){
       return;
     }
 
-    const supportCtx = getSupportContext();
-
-    if(!supportCtx){
-      clearSupportContext();
-      toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
-    }
+    clearSupportContext();
+    toast("Falha no suporte", error?.message || "Não foi possível validar o acesso de suporte.");
   }
 
   await ensureCloudDBLoaded();
@@ -17167,39 +17462,26 @@ async function boot(options={}){
 
   // V462 — resolve as permissões efetivas antes de montar o menu.
   // Prioridade: usuário > clínica/cargo > padrão global.
+  let aclValidated = false;
   try{
     const preliminaryActor = currentActor();
-    if(preliminaryActor && window.CronosPermissions?.hydrateForActor){
-      await window.CronosPermissions.hydrateForActor(preliminaryActor);
+    if(preliminaryActor?.isSupport === true && isSupportMode() && window.CronosPermissions?.useTrustedRoleDefaultsForSupport){
+      window.CronosPermissions.useTrustedRoleDefaultsForSupport(preliminaryActor);
+      aclValidated = window.CronosPermissions.isValidated?.() === true;
+    }else if(preliminaryActor && window.CronosPermissions?.hydrateForActor){
+      await window.CronosPermissions.hydrateForActor(preliminaryActor, { force:true });
+      aclValidated = window.CronosPermissions.isValidated?.() === true;
       // Recalcula o formato legado para os pontos ainda não migrados do app.
       preliminaryActor.perms = resolveActorLegacyPerms(preliminaryActor.role, {primaryMaster:preliminaryActor.isPrimaryMaster === true});
     }
   }catch(permissionError){
-    console.warn("Cronos V462: permissões abriram no padrão global.", permissionError);
+    console.error("Cronos V463.2.4: não foi possível validar a ACL.", permissionError);
   }
-
-  fillSelectOptions();
-
-  const f = resetFiltersToDefault({ ui:false });
-  ensureYearOptions();
-  setUIFilters(f);
-  ensureMonthOptions();
-  setUIFilters(f);
-
-  try{
-    const db=loadDB();
-    if(migrateDBValues(db)){
-      safeSetLocalDB(db);
-      try{ window.CronosRepository?.adoptHydratedState?.(db, { reason:"boot_compat" }); }catch(_){ }
-    }
-  }catch(e){}
-
-  saveFilters(getUIFilters());
 
   const actor = currentActor();
 
   if(!actor){
-    if((supportTokenPresent || isSupportMode()) && (window.__SUPPORT_BOOT_RETRIES__ || 0) < 6){
+    if((supportRequested || isSupportMode()) && (window.__SUPPORT_BOOT_RETRIES__ || 0) < 6){
       window.__SUPPORT_BOOT_RETRIES__ = (window.__SUPPORT_BOOT_RETRIES__ || 0) + 1;
       setTimeout(()=>boot(), 180);
       return;
@@ -17216,6 +17498,11 @@ async function boot(options={}){
     return;
   }
 
+  if(!aclValidated){
+    showAccessGate({ mode:"unavailable", reason:"permissions" });
+    return;
+  }
+
   window.__SUPPORT_BOOT_RETRIES__ = 0;
 
   // Acesso, permissões e estado operacional começam a carregar juntos assim que
@@ -17224,10 +17511,12 @@ async function boot(options={}){
   const featureAccessPromise = prefetchedPolicies.featurePromise || (async ()=>{
     try{
       if(typeof window.__refreshFeatureAccess === "function"){
-        await window.__refreshFeatureAccess(true, actor);
+        return await window.__refreshFeatureAccess(true, actor);
       }
+      return false;
     }catch(error){
-      console.warn("Cronos: permissões abriram em modo seguro.", error);
+      console.error("Cronos: módulos não puderam ser validados.", error);
+      return false;
     }
   })();
 
@@ -17235,7 +17524,7 @@ async function boot(options={}){
     ? prefetchedPolicies.accessPromise.then(applyClinicAccessDecision)
     : applyClinicAccessRules();
 
-  const [accessDecision] = await Promise.all([
+  const [accessDecision, featureAccessOk] = await Promise.all([
     accessDecisionPromise,
     featureAccessPromise
   ]);
@@ -17243,12 +17532,30 @@ async function boot(options={}){
   if(accessDecision?.mode && accessDecision.mode !== "allow"){
     return;
   }
+  if(featureAccessOk !== true){
+    showAccessGate({ mode:"unavailable", reason:"features" });
+    return;
+  }
+
+  // Somente depois de clínica/usuário, ACL, assinatura e módulos confirmados o
+  // conteúdo operacional pode popular selects, filtros ou cache compatível.
+  fillSelectOptions();
+  const f = resetFiltersToDefault({ ui:false });
+  ensureYearOptions();
+  setUIFilters(f);
+  ensureMonthOptions();
+  setUIFilters(f);
+  try{
+    const db=loadDB();
+    if(migrateDBValues(db)){
+      safeSetLocalDB(db);
+      try{ window.CronosRepository?.adoptHydratedState?.(db, { reason:"boot_compat" }); }catch(_){ }
+    }
+  }catch(e){}
+  saveFilters(getUIFilters());
 
   showApp(actor, { keepSplash:true });
-  applyRoleVisibility(actor);
-  bindNav();
-  setActiveView(firstAllowedView(actor));
-  hideBootSplash();
+  await cronosCommitInitialAccessUI(actor);
 }
 
 /* One-time bindings */
@@ -17769,69 +18076,11 @@ function cronosGetCurrentVisibleView(){
   return "";
 }
 
-function cronosBootFromLocalCacheAfterF5(session){
-  try{
-    if(isSupportMode()) return false;
-    // V127: para a Mundo Odonto resgatada, não iniciamos a tela por cache local.
-    // O cache pode estar sem as coleções V2 e faz a UI parecer zerada antes da nuvem hidratar.
-    const sessionEmail = String(session?.user?.email || "").trim().toLowerCase();
-    if(sessionEmail === CRONOS_MO_OWNER_EMAIL || sessionEmail === "mundoodonto.admslz@gmail.com"){
-      console.info("Cronos V127: fast resume local desativado para Mundo Odonto; carregando direto da nuvem V2.");
-      return false;
-    }
-
-    const local = getLegacyLocalDB();
-    if(!cronosHasUsableLocalCache(local)) return false;
-
-    DB = normalizeDBShape(local);
-    const actor = currentActor();
-    if(!cronosActorMatchesSupabaseSession(actor, session)){
-      DB = null;
-      return false;
-    }
-
-    try{ cancelPendingCloudSync(); }catch(_){ }
-    try{ setSupportEntryLoading(false); }catch(_){ }
-    try{ setLoginLoading(false); }catch(_){ }
-
-    try{ fillSelectOptions(); }catch(e){ console.warn("Cronos F5 rápido: falha em fillSelectOptions", e); }
-
-    try{
-      const f = resetFiltersToDefault({ ui:false });
-      ensureYearOptions();
-      setUIFilters(f);
-      ensureMonthOptions();
-      setUIFilters(f);
-      saveFilters(getUIFilters());
-    }catch(e){ console.warn("Cronos F5 rápido: falha ao preparar filtros", e); }
-
-    try{
-      const db = loadDB();
-      if(migrateDBValues(db)){
-        safeSetLocalDB(db);
-        try{ window.CronosRepository?.adoptHydratedState?.(db, { reason:"fast_resume_compat" }); }catch(_){ }
-      }
-    }catch(e){ console.warn("Cronos F5 rápido: falha na migração leve", e); }
-
-    // Prepara a interface por baixo do splash, sem esconder e mostrar novamente.
-    showApp(actor, { keepSplash:true });
-    applyRoleVisibility(actor);
-    bindNav();
-
-    const target = cronosGetCurrentVisibleView() || firstAllowedView(actor);
-    setActiveView(target);
-
-    // O splash permanece somente enquanto a atualização real estiver pendente.
-    try{ document.body?.classList.add("cronos-fast-resume-pending"); }catch(_){ }
-    try{ showBootSplash("Atualizando dados da clínica..."); }catch(_){ }
-
-    window.__CRONOS_FAST_RESUME_ACTIVE__ = true;
-    window.__CRONOS_FAST_RESUME_AT__ = Date.now();
-    return true;
-  }catch(error){
-    console.warn("Cronos F5 rápido indisponível; usando boot completo.", error);
-    return false;
-  }
+function cronosBootFromLocalCacheAfterF5(_session){
+  // V463.2.4: dados locais nunca são exibidos antes da validação online de
+  // vínculo, assinatura, módulos e ACL. Mantemos a função para compatibilidade,
+  // mas o retorno seguro obriga o boot completo.
+  return false;
 }
 
 
@@ -17930,52 +18179,9 @@ function cronosRefreshSidebarCountersNow({ reason="", repeat=true, repairTasks=f
 }
 
 function cronosRefreshCloudAfterFastResume(){
-  if(window.__CRONOS_FAST_RESUME_REFRESHING__) return;
-  window.__CRONOS_FAST_RESUME_REFRESHING__ = true;
-
-  // V19: o app pode preparar a tela com cache local, mas a tela de carregamento
-  // precisa continuar cobrindo tudo até a nuvem terminar de baixar e a view ativa
-  // ser renderizada novamente. Assim o usuário não vê contagens antigas piscando.
-  try{ showBootSplash("Atualizando dados da clínica..."); }catch(_){ }
-
-  (async ()=>{
-    let refreshed = false;
-    try{
-      await ensureCloudDBLoaded(true);
-      cronosMarkCloudDBHydrated("fast_resume_pull");
-      const actorInfo = await syncCurrentCloudActor();
-      const actor = currentActor();
-
-      if(!actorInfo || !actor){
-        if(window.__CRONOS_ACCESS_BLOCK__?.title){
-          toast(window.__CRONOS_ACCESS_BLOCK__.title, window.__CRONOS_ACCESS_BLOCK__.message || "");
-          showAuth();
-        }
-        return;
-      }
-
-      try{ fillSelectOptions(); }catch(_){ }
-      try{ applyRoleVisibility(actor); }catch(_){ }
-      try{ if(typeof window.__refreshFeatureAccess === "function") await window.__refreshFeatureAccess(true, actor); }catch(_){ }
-
-      const active = cronosGetCurrentVisibleView() || firstAllowedView(actor);
-      try{ renderActiveViewOnly(active); }catch(_){ try{ renderAll(); }catch(__){} }
-      cronosRefreshSidebarCountersNow({ reason:"fast_resume_after_cloud", repeat:true });
-
-      window.__CRONOS_FAST_RESUME_REFRESHED_AT__ = Date.now();
-      refreshed = true;
-    }catch(error){
-      console.warn("Cronos: atualização após F5 falhou.", error);
-      // Se a nuvem falhar, libera o cache local com aviso leve. Melhor do que travar o usuário.
-      try{ toast("Atualização demorou", "Abri com os dados disponíveis. Atualize novamente em alguns segundos se as contagens parecerem antigas."); }catch(_){ }
-    }finally{
-      window.__CRONOS_FAST_RESUME_REFRESHING__ = false;
-      try{ hideBootSplash(); }catch(_){ }
-      if(refreshed){
-        try{ document.body?.classList.remove("cronos-fast-resume-pending"); }catch(_){ }
-      }
-    }
-  })();
+  // Compatibilidade apenas. O caminho antigo que liberava cache em falha foi
+  // neutralizado; toda retomada passa por finalizeCloudLogin/boot validado.
+  return false;
 }
 
 function cronosClearSupabaseAuthStorageFast(){
@@ -17994,10 +18200,55 @@ function cronosSignOutSupabaseInBackground(){
   }
 }
 
+function cronosClearSensitiveBrowserData(){
+  const exactKeys = new Set([DBKEY, "cronos_token", "authToken"]);
+  const sensitiveSessionKeys = new Set([
+    DBKEY,
+    SESSIONKEY,
+    CRONOS_MAIN_AUTH_STORAGE_KEY,
+    SUPPORT_STORAGE_KEY,
+    SUPPORT_DBKEY,
+    SUPPORT_TOKEN_KEY,
+    "cronos-site-chat-session-v1"
+  ]);
+  const sensitivePrefixes = [
+    `${DBKEY}:`,
+    "cronos_v4_pending:",
+    "cronos_v4_conflict:",
+    "cronos_v4_uncertain:",
+    "cronos_v4_commit_lease:",
+    "cronos_acl_v462::",
+    "cronos_feature_access_cache::"
+  ];
+  try{
+    for(let i=localStorage.length-1;i>=0;i--){
+      const key=localStorage.key(i);
+      if(!key) continue;
+      if(exactKeys.has(key) || sensitivePrefixes.some(prefix=>key.startsWith(prefix))){
+        localStorage.removeItem(key);
+      }
+    }
+  }catch(error){
+    console.warn("Cronos: não foi possível remover todo o cache sensível.", error);
+  }
+  try{
+    sensitiveSessionKeys.forEach(key=>sessionStorage.removeItem(key));
+  }catch(error){
+    console.warn("Cronos: não foi possível remover todo o cache sensível da sessão.", error);
+  }
+  try{ window.CronosPermissions?.reset?.({ clearCache:true }); }catch(_){ }
+  try{ window.__resetFeatureAccess?.({ clearCache:true }); }catch(_){ }
+  try{ __localMemoryDB = null; }catch(_){ }
+  try{ __localCacheDisabledForLargeDB = false; }catch(_){ }
+}
+
 function cronosInstantLogout({ supportRedirect=false }={}){
   try{ cancelPendingCloudSync(); }catch(_){ }
   try{ suppressCloudFailureToasts(6000); }catch(_){ }
+  try{ document.dispatchEvent(new CustomEvent("cronos:before-logout")); }catch(_){ }
+  try{ window.CRONOS_EXAM_DIGITAL?.stop?.(); }catch(_){ }
   try{ cronosClearSupabaseAuthStorageFast(); }catch(_){ }
+  cronosClearSensitiveBrowserData();
 
   DB = null;
   resetCloudContext();
@@ -18300,14 +18551,8 @@ async function verificarSessao() {
 
   if (data.session) {
     window.__CRONOS_EXPLICIT_LOGIN__ = false;
-
-    // Em F5, abre primeiro com o cache local da própria sessão e sincroniza a nuvem em segundo plano.
-    // Isso tira aquele carregamento longo de 8–10s sem voltar a mostrar dados de outra clínica.
-    if(cronosBootFromLocalCacheAfterF5(data.session)){
-      cronosRefreshCloudAfterFastResume();
-      return;
-    }
-
+    // F5 sempre percorre o boot validado. O cache local não é autoridade para
+    // vínculo, assinatura, módulos nem ACL.
     await finalizeCloudLogin();
     return;
   }
@@ -18349,10 +18594,20 @@ document.addEventListener("DOMContentLoaded", () => {
   const FEATURE_ACCESS_ENDPOINT = 'get-clinic-feature-access';
   const SUPABASE_FN_BASE = 'https://nsqpslierpulanxvsxaw.supabase.co/functions/v1/';
   const FEATURE_CACHE_PREFIX = 'cronos_feature_access_cache::';
+  const FEATURE_ACCESS_CONTRACT_VERSION = 'clinic-feature-access-v2';
 
   const featureStateMap = new Map();
   let lastResolvedContextKey = null;
   let overlayMounted = false;
+  let featureAccessValidated = false;
+  let featureFetchPromise = null;
+  let featureFetchContextKey = null;
+  let activeFeatureContextKey = null;
+  let lastForegroundRefreshAt = 0;
+  let featureGeneration = 0;
+  let featureRevision = 0;
+  let featureDiagnosticRevision = 0;
+  let lastFeatureAccessDiagnostic = null;
 
   const VIEW_TO_FEATURE = {
     dashboard: 'dashboard',
@@ -18384,6 +18639,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const VIEW_LABELS = { ...MODULE_LABELS };
+  const EXPECTED_AUX_FEATURE_KEYS = Object.freeze(['todayCronos','performance','creditSimulator']);
+  const VALID_FEATURE_VISIBILITY = new Set(['enabled','locked','hidden']);
 
   const AUX_MODULE_BUTTONS = [
     { module:'todayCronos', selector:'#navHojeCronos' },
@@ -18403,10 +18660,97 @@ document.addEventListener("DOMContentLoaded", () => {
     return VIEW_TO_FEATURE[raw] || raw;
   }
 
+  function canonicalFeatureKey(value){
+    // O contrato da Edge deve devolver uma feature_key real do catálogo.
+    // Aliases de rota (por exemplo, "simulador") continuam válidos somente
+    // na navegação interna e não podem mascarar divergência do backend.
+    const requested = normalizeFeatureKey(value);
+    if(!requested) return '';
+    return Object.keys(MODULE_LABELS).find(key => normalizeFeatureKey(key) === requested) || '';
+  }
+
+  function safeDiagnosticClone(value){
+    try{ return JSON.parse(JSON.stringify(value)); }catch(_){ return null; }
+  }
+
+  function responseFeatureContext(data){
+    const nested = data && typeof data.context === 'object' ? data.context
+      : (data && typeof data.clinic === 'object' ? data.clinic : {});
+    const source = { ...(data && typeof data === 'object' ? data : {}), ...(nested || {}) };
+    return {
+      clinic_id:String(source.clinic_id || source.clinicId || '').trim() || null,
+      owner_uid:String(source.owner_uid || source.ownerUid || '').trim() || null,
+      owner_email:String(source.owner_email || source.ownerEmail || '').trim().toLowerCase() || null
+    };
+  }
+
+  function normalizeFeatureContractRow(item){
+    const raw = item && typeof item === 'object' ? item : {};
+    const returnedKey = String(raw.feature_key || '').trim();
+    const canonicalKey = canonicalFeatureKey(returnedKey);
+    const visibilityMode = normalizeFeatureKey(raw.visibility_mode || '');
+    const enabled = typeof raw.enabled === 'boolean' ? raw.enabled : null;
+    const valid = !!canonicalKey && enabled !== null && VALID_FEATURE_VISIBILITY.has(visibilityMode);
+    return {
+      feature_key:returnedKey || null,
+      canonical_key:canonicalKey || null,
+      enabled,
+      visibility_mode:visibilityMode || null,
+      source:'flat',
+      valid
+    };
+  }
+
+  function inspectFeaturePayload(data, requestContext){
+    const items = data && Array.isArray(data.features) ? data.features : [];
+    const features = items.map(normalizeFeatureContractRow);
+    const responseContext = responseFeatureContext(data);
+    const mismatches = [];
+    ['clinic_id','owner_uid','owner_email'].forEach(field => {
+      const expected = String(requestContext?.[field] || '').trim().toLowerCase();
+      const returned = String(responseContext?.[field] || '').trim().toLowerCase();
+      if(expected && returned && expected !== returned) mismatches.push(field);
+    });
+    const expected = Object.fromEntries(EXPECTED_AUX_FEATURE_KEYS.map(key => {
+      const row = features.find(item => item.canonical_key === key) || null;
+      return [key, row ? {
+        feature_key:row.feature_key,
+        enabled:row.enabled,
+        visibility_mode:row.visibility_mode,
+        source:row.source,
+        valid:row.valid,
+        authorized:row.valid && row.enabled === true && row.visibility_mode === 'enabled'
+      } : { missing:true, authorized:false }];
+    }));
+    return {
+      payload_format:Array.isArray(data) ? 'array' : (data && typeof data === 'object'
+        ? (Array.isArray(data.features) ? 'object.features[]' : 'object-without-features[]')
+        : String(data === null ? 'null' : typeof data)),
+      payload_keys:data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data).sort() : [],
+      contract_version:String(data?.contract_version || '') || null,
+      features,
+      expected,
+      response_context:responseContext,
+      context_mismatches:mismatches
+    };
+  }
+
+  function recordFeatureAccessDiagnostic(diagnostic){
+    featureDiagnosticRevision += 1;
+    lastFeatureAccessDiagnostic = safeDiagnosticClone({
+      revision:featureDiagnosticRevision,
+      endpoint:FEATURE_ACCESS_ENDPOINT,
+      expected_contract:FEATURE_ACCESS_CONTRACT_VERSION,
+      cache_authoritative:false,
+      ...diagnostic
+    });
+    try{ console.info('Cronos Feature Access RC5', lastFeatureAccessDiagnostic); }catch(_){ }
+  }
+
   function getFeatureStateByKey(featureKey){
     const key = normalizeFeatureKey(featureKeyFor(featureKey));
-    if(!key) return { visibility_mode:'enabled', enabled:true };
-    return featureStateMap.get(key) || { visibility_mode:'enabled', enabled:true };
+    if(!key || !featureAccessValidated) return { visibility_mode:'locked', enabled:false, validation_unavailable:true };
+    return featureStateMap.get(key) || { visibility_mode:'locked', enabled:false, unresolved:true };
   }
 
   function getFeatureState(view){
@@ -18428,7 +18772,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function roleAllowsModule(moduleKey, actorOverride){
     const key = String(moduleKey || '').trim();
-    if(!key) return true;
+    if(!key) return false;
     if(SUB_FEATURES_WITHOUT_ROLE_GATE.has(key)) return true;
     try{
       if(typeof window.__CRONOS_ROLE_CAN_ACCESS_MODULE === 'function') return window.__CRONOS_ROLE_CAN_ACCESS_MODULE(key, actorOverride);
@@ -18436,7 +18780,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try{
       if(typeof canAccessModule === 'function') return canAccessModule(key, actorOverride || (typeof currentActor === 'function' ? currentActor() : null));
     }catch(_err){}
-    return true;
+    return false;
   }
 
   function canSeeModule(moduleKey, actorOverride){
@@ -18649,11 +18993,45 @@ document.addEventListener("DOMContentLoaded", () => {
   function syncCurrentViewState(){
     const activeBtn = document.querySelector('.nav button.active');
     const activeView = activeBtn ? (activeBtn.dataset && activeBtn.dataset.view || auxModuleFromButton(activeBtn)) : null;
-    if(activeView && isFeatureLocked(activeView)){
+    if(activeView && !activeBtn.classList.contains('hidden') && canSeeModule(activeView) && isFeatureLocked(activeView)){
       showBlockedOverlay(activeView);
       return;
     }
     hideBlockedOverlay();
+  }
+
+  function reapplyFeatureAccessUI(reason='manual'){
+    if(window.__CRONOS_ACCESS_UI_SUSPENDED__ === true){
+      window.__CRONOS_ACCESS_UI_PENDING__ = true;
+      return {
+        reason:String(reason || 'manual'),
+        validated:featureAccessValidated === true,
+        pending:!!featureFetchPromise,
+        revision:featureRevision,
+        ui_deferred:true
+      };
+    }
+    applyFeatureStatesToMenu();
+    syncCurrentViewState();
+    return {
+      reason:String(reason || 'manual'),
+      validated:featureAccessValidated === true,
+      pending:!!featureFetchPromise,
+      revision:featureRevision,
+      ui_deferred:false
+    };
+  }
+
+  function publishFeatureAccessState(reason){
+    featureRevision += 1;
+    reapplyFeatureAccessUI(reason);
+    const detail = Object.freeze({
+      revision:featureRevision,
+      reason:String(reason || 'changed'),
+      validated:featureAccessValidated === true,
+      pending:!!featureFetchPromise
+    });
+    try{ document.dispatchEvent(new CustomEvent('cronos:feature-access-updated', { detail })); }catch(_){ }
   }
 
   function wrapSetActiveView(){
@@ -18684,9 +19062,15 @@ document.addEventListener("DOMContentLoaded", () => {
     window.__featureSetActiveWrapped = true;
   }
 
-  function resolveOwnerContext(actorOverride){
+  function resolveFeatureContext(actorOverride){
     const actor = actorOverride || ((typeof currentActor === 'function') ? currentActor() : null);
     const support = (typeof getSupportContext === 'function') ? getSupportContext() : null;
+
+    const clinicId =
+      (typeof CLOUD_CLINIC_ID !== 'undefined' && CLOUD_CLINIC_ID) ||
+      (typeof CLINIC_ACCESS_STATE !== 'undefined' && CLINIC_ACCESS_STATE?.clinic_id) ||
+      (support && support.clinic_id) ||
+      null;
 
     const ownerUid =
       (typeof CLOUD_CLINIC_OWNER_UID !== 'undefined' && CLOUD_CLINIC_OWNER_UID) ||
@@ -18704,43 +19088,51 @@ document.addEventListener("DOMContentLoaded", () => {
       null;
 
     return {
-      owner_uid: ownerUid || null,
-      owner_email: ownerEmail || null
+      clinic_id:String(clinicId || '').trim() || null,
+      owner_uid:String(ownerUid || '').trim() || null,
+      owner_email:String(ownerEmail || '').trim().toLowerCase() || null
     };
   }
 
   function getContextCacheKey(ctx){
-    if(!ctx || (!ctx.owner_uid && !ctx.owner_email)) return null;
-    return FEATURE_CACHE_PREFIX + (ctx.owner_uid || ctx.owner_email || 'default');
+    if(!ctx || (!ctx.clinic_id && !ctx.owner_uid && !ctx.owner_email)) return null;
+    return FEATURE_CACHE_PREFIX + (ctx.clinic_id || ctx.owner_uid || ctx.owner_email || 'default');
   }
 
   function applyFeaturePayload(items){
     featureStateMap.clear();
-    (Array.isArray(items) ? items : []).forEach(item => {
-      const key = normalizeFeatureKey(item && item.feature_key);
-      if(!key) return;
+    const normalizedRows = (Array.isArray(items) ? items : []).map(normalizeFeatureContractRow);
+    const acceptedKeys = new Set();
+    const duplicateKeys = new Set();
+    normalizedRows.forEach(row => {
+      if(!row.valid || !row.canonical_key) return;
+      const key = normalizeFeatureKey(row.canonical_key);
+      if(acceptedKeys.has(key)){
+        duplicateKeys.add(key);
+        return;
+      }
+      acceptedKeys.add(key);
       featureStateMap.set(key, {
-        enabled: item && item.enabled !== false,
-        visibility_mode: normalizeFeatureKey(item && item.visibility_mode || 'enabled') || 'enabled'
+        enabled:row.enabled === true,
+        visibility_mode:row.visibility_mode
       });
     });
+    if(duplicateKeys.size){
+      featureStateMap.clear();
+      throw new Error(`Resposta de módulos ambígua: chave duplicada (${Array.from(duplicateKeys).join(', ')}).`);
+    }
+    if(!acceptedKeys.size){
+      featureStateMap.clear();
+      throw new Error('Resposta de módulos sem nenhuma feature reconhecida e válida.');
+    }
+    return { accepted_keys:Array.from(acceptedKeys), normalized_rows:normalizedRows };
   }
 
   function readFeatureCache(ctx){
-    try{
-      const key = getContextCacheKey(ctx);
-      if(!key) return false;
-      const raw = localStorage.getItem(key);
-      if(!raw) return false;
-      const parsed = JSON.parse(raw);
-      if(!Array.isArray(parsed && parsed.features)) return false;
-      applyFeaturePayload(parsed.features);
-      lastResolvedContextKey = JSON.stringify(ctx);
-      return true;
-    }catch(err){
-      console.warn('Falha ao ler cache de módulos:', err);
-      return false;
-    }
+    // Cache persistente não é uma autoridade de acesso. A função permanece por
+    // compatibilidade, mas nenhum módulo é liberado antes da resposta online.
+    void ctx;
+    return false;
   }
 
   function writeFeatureCache(ctx, features){
@@ -18756,77 +19148,180 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  async function fetchFeatureAccess(force, actorOverride){
-    try{
-      const ctx = resolveOwnerContext(actorOverride);
-      if(!ctx.owner_uid && !ctx.owner_email){
+  function canonicalFeatureContextKey(ctx){
+    const clinicId=String(ctx?.clinic_id||'').trim();
+    if(clinicId) return `clinic:${clinicId}`;
+    const ownerUid=String(ctx?.owner_uid||'').trim();
+    if(ownerUid) return `owner_uid:${ownerUid}`;
+    const ownerEmail=String(ctx?.owner_email||'').trim().toLowerCase();
+    if(ownerEmail) return `owner_email:${ownerEmail}`;
+    return '';
+  }
+
+async function fetchFeatureAccess(force, actorOverride){
+    const ctx = resolveFeatureContext(actorOverride);
+    if(!ctx.clinic_id && !ctx.owner_uid && !ctx.owner_email){
+      const mustInvalidate = activeFeatureContextKey !== null || featureAccessValidated || featureStateMap.size || featureFetchPromise;
+      if(mustInvalidate){
+        featureGeneration += 1;
+        activeFeatureContextKey = null;
+        featureFetchPromise = null;
+        featureFetchContextKey = null;
+        lastResolvedContextKey = null;
+      }
+      featureAccessValidated = false;
+      featureStateMap.clear();
+      recordFeatureAccessDiagnostic({
+        phase:'context-unavailable',
+        requested_at:new Date().toISOString(),
+        request_context:safeDiagnosticClone(ctx),
+        http_status:null,
+        http_ok:false,
+        error:'Clínica/owner não resolvido antes da consulta.'
+      });
+      if(mustInvalidate) publishFeatureAccessState('context-unavailable');
+      else reapplyFeatureAccessUI('context-unavailable');
+      return false;
+    }
+
+    const ctxKey = canonicalFeatureContextKey(ctx);
+    if(activeFeatureContextKey !== ctxKey){
+      // Só uma troca REAL de identidade clínica invalida imediatamente o estado.
+      // owner_uid/owner_email podem completar-se após o boot ou ao retomar a aba
+      // sem que isso represente outra clínica.
+      featureGeneration += 1;
+      activeFeatureContextKey = ctxKey;
+      featureFetchPromise = null;
+      featureFetchContextKey = null;
+      featureAccessValidated = false;
+      featureStateMap.clear();
+      lastResolvedContextKey = null;
+      publishFeatureAccessState('context-changed');
+    }
+
+    if(!force && featureAccessValidated && lastResolvedContextKey === ctxKey) return true;
+    if(featureFetchPromise && featureFetchContextKey === ctxKey) return await featureFetchPromise;
+
+    const generation = featureGeneration;
+    const request = (async()=>{
+      let diagnostic = {
+        phase:'request',
+        requested_at:new Date().toISOString(),
+        request_context:safeDiagnosticClone(ctx),
+        http_status:null,
+        http_ok:false,
+        payload_format:null,
+        payload_keys:[],
+        features:[],
+        expected:Object.fromEntries(EXPECTED_AUX_FEATURE_KEYS.map(key=>[key,{missing:true,authorized:false}]))
+      };
+      try{
+        let authToken = '';
+        let supportToken = '';
+        try{
+          const supportRequested = new URLSearchParams(location.search).has('support_token') ||
+            (typeof isSupportMode === 'function' && isSupportMode());
+          if(supportRequested){
+            supportToken = new URLSearchParams(location.search).get('support_token') ||
+              sessionStorage.getItem(SUPPORT_TOKEN_KEY) || '';
+          }
+        }catch(_supportTokenError){ supportToken = ''; }
+        if(!supportToken && typeof supabaseClient !== 'undefined' && supabaseClient?.auth){
+          const sessionResp = await supabaseClient.auth.getSession();
+          authToken = sessionResp?.data?.session?.access_token || '';
+        }
+        if(!authToken && !supportToken) throw new Error('Autoridade ausente ao validar módulos.');
+
+        const headers = { 'Content-Type':'application/json' };
+        if(authToken) headers.Authorization = 'Bearer ' + authToken;
+        try{ if(typeof supabaseKey !== 'undefined' && supabaseKey) headers['apikey'] = supabaseKey; }catch(_keyErr){}
+
+        const res = await cronosFetchWithTimeout(SUPABASE_FN_BASE + FEATURE_ACCESS_ENDPOINT, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            clinic_id:ctx.clinic_id,
+            owner_uid: ctx.owner_uid,
+            owner_email: ctx.owner_email,
+            ...(supportToken ? { support_token:supportToken } : {})
+          })
+        });
+
+        const data = await res.json().catch(() => null);
+        const inspection = inspectFeaturePayload(data, ctx);
+        diagnostic = {
+          ...diagnostic,
+          phase:'response',
+          completed_at:new Date().toISOString(),
+          http_status:Number.isFinite(Number(res.status)) ? Number(res.status) : null,
+          http_ok:res.ok === true,
+          status_text:String(res.statusText || ''),
+          ...inspection
+        };
+
+        if(!res.ok) throw new Error(`Feature Access indisponível (HTTP ${diagnostic.http_status || 'desconhecido'}).`);
+        if(!data || !Array.isArray(data.features)) throw new Error('Resposta de módulos inválida.');
+        if(data.contract_version !== FEATURE_ACCESS_CONTRACT_VERSION){
+          throw new Error('Contrato incompatível em get-clinic-feature-access. Republique a Edge RC5.');
+        }
+        if(!inspection.response_context.clinic_id || !inspection.response_context.owner_uid || !inspection.response_context.owner_email){
+          throw new Error('Resposta de módulos sem contexto autenticado completo.');
+        }
+        if(inspection.context_mismatches.length){
+          throw new Error(`Resposta de módulos pertence a outro contexto (${inspection.context_mismatches.join(', ')}).`);
+        }
+
+        if(generation !== featureGeneration || activeFeatureContextKey !== ctxKey) return false;
+        const applied = applyFeaturePayload(data.features);
+        writeFeatureCache(ctx, data.features);
+        lastResolvedContextKey = ctxKey;
+        featureAccessValidated = true;
+        recordFeatureAccessDiagnostic({
+          ...diagnostic,
+          phase:'validated',
+          accepted_feature_keys:applied.accepted_keys
+        });
+        publishFeatureAccessState('validated');
+        return true;
+      }catch(err){
+        if(generation !== featureGeneration || activeFeatureContextKey !== ctxKey) return false;
+        featureAccessValidated = false;
+        featureStateMap.clear();
+        lastResolvedContextKey = null;
+        recordFeatureAccessDiagnostic({
+          ...diagnostic,
+          phase:'failed',
+          completed_at:new Date().toISOString(),
+          error:String(err?.message || err || 'Falha desconhecida.')
+        });
+        publishFeatureAccessState('validation-unavailable');
+        console.error('Feature access indisponível; módulos bloqueados:', err && err.message || err);
         return false;
       }
+    })();
 
-      const ctxKey = JSON.stringify(ctx);
-
-      if(!force && !featureStateMap.size){
-        readFeatureCache(ctx);
+    featureFetchPromise = request;
+    featureFetchContextKey = ctxKey;
+    try{
+      return await request;
+    }finally{
+      if(featureFetchPromise === request){
+        featureFetchPromise = null;
+        featureFetchContextKey = null;
       }
-
-      if(!force && lastResolvedContextKey === ctxKey && featureStateMap.size){
-        return true;
-      }
-
-      let authToken =
-        localStorage.getItem('cronos_token') ||
-        localStorage.getItem('authToken') ||
-        '';
-
-      try{
-        if(typeof supabaseClient !== 'undefined' && supabaseClient?.auth){
-          const sessionResp = await supabaseClient.auth.getSession();
-          authToken = sessionResp?.data?.session?.access_token || authToken || '';
-        }
-      }catch(_sessionErr){}
-
-      const headers = { 'Content-Type':'application/json' };
-      try{ if(typeof supabaseKey !== 'undefined' && supabaseKey) headers['apikey'] = supabaseKey; }catch(_keyErr){}
-      if(authToken){
-        headers['Authorization'] = 'Bearer ' + authToken;
-      }
-
-      const res = await fetch(SUPABASE_FN_BASE + FEATURE_ACCESS_ENDPOINT, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          owner_uid: ctx.owner_uid,
-          owner_email: ctx.owner_email
-        })
-      });
-
-      if(!res.ok){
-        throw new Error('feature access unavailable');
-      }
-
-      const data = await res.json().catch(() => ({}));
-      const features = Array.isArray(data && data.features) ? data.features : [];
-      applyFeaturePayload(features);
-      writeFeatureCache(ctx, features);
-      lastResolvedContextKey = ctxKey;
-      return true;
-    }catch(err){
-      console.warn('Feature access em modo seguro:', err && err.message || err);
-      return false;
     }
   }
 
   async function refreshFeatureAccess(force, actorOverride){
     wrapSetActiveView();
-    const ctx = resolveOwnerContext(actorOverride);
-    if(featureStateMap.size === 0){
-      readFeatureCache(ctx);
+    // Stale-while-revalidate: se já existe estado autoritativo válido para a
+    // mesma clínica, mantém a UI estável enquanto consulta novamente.
+    if(featureAccessValidated !== true){
+      reapplyFeatureAccessUI('refresh-start');
     }
-    applyFeatureStatesToMenu();
-    syncCurrentViewState();
-    await fetchFeatureAccess(!!force, actorOverride);
-    applyFeatureStatesToMenu();
-    syncCurrentViewState();
+    const ok = await fetchFeatureAccess(!!force, actorOverride);
+    reapplyFeatureAccessUI(ok ? 'refresh-complete' : 'refresh-failed');
+    return ok;
   }
 
   function wrapSetSupportEntryLoading(){
@@ -18848,15 +19343,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const originalShowApp = window.showApp;
 
     window.showApp = function(actor){
-      const ctx = resolveOwnerContext(actor);
-      readFeatureCache(ctx);
-
       const result = originalShowApp.apply(this, arguments);
-      applyFeatureStatesToMenu();
-      syncCurrentViewState();
-      // O boot principal já aguarda as permissões. Aqui apenas reaplicamos o cache,
-      // sem atraso mínimo nem duas novas chamadas forçadas.
-      refreshFeatureAccess(false, actor);
+      reapplyFeatureAccessUI('show-app');
+      // O boot principal já aguardou a resposta autoritativa. Não abrimos uma
+      // segunda consulta no exato momento em que a primeira tela é montada.
       return result;
     };
 
@@ -18920,6 +19410,14 @@ document.addEventListener("DOMContentLoaded", () => {
     window.CRONOS_CAN_SEE_MODULE = canSeeModule;
     window.CRONOS_CAN_OPEN_MODULE = canOpenModule;
     window.CRONOS_SHOW_FEATURE_BLOCKED = showBlockedOverlay;
+    window.CRONOS_REAPPLY_FEATURE_ACCESS_UI = reapplyFeatureAccessUI;
+    window.CRONOS_FEATURE_ACCESS_STATUS = () => ({
+      validated:featureAccessValidated === true,
+      pending:!!featureFetchPromise,
+      revision:featureRevision,
+      context_key:activeFeatureContextKey
+    });
+    window.CRONOS_FEATURE_ACCESS_DIAGNOSTICS = () => safeDiagnosticClone(lastFeatureAccessDiagnostic);
     window.CRONOS_CAN_ACCESS_MODULE = function(moduleKey, actorOverride){
       return canSeeModule(moduleKey, actorOverride);
     };
@@ -18933,23 +19431,123 @@ document.addEventListener("DOMContentLoaded", () => {
     wrapShowApp();
     wrapBoot();
     wrapSetActiveView();
+    reapplyFeatureAccessUI('install');
 
-    const refreshWhenContextExists = (force=false) => {
-      const actor = (typeof currentActor === 'function') ? currentActor() : null;
-      const ctx = resolveOwnerContext(actor);
-      if(!ctx.owner_uid && !ctx.owner_email) return false;
-      refreshFeatureAccess(force, actor);
-      return true;
+    let foregroundHiddenAt = 0;
+    let foregroundValidationPromise = null;
+    const FOREGROUND_REVALIDATE_AFTER_MS = 60000;
+
+    const finishForegroundValidation = () => {
+      window.__CRONOS_ACCESS_UI_SUSPENDED__ = false;
+      window.__CRONOS_ACCESS_UI_PENDING__ = false;
     };
 
-    refreshWhenContextExists(false);
-    window.addEventListener('focus', () => refreshWhenContextExists(true));
+    const refreshWhenContextExists = async (force=false, reason='foreground') => {
+      if(window.__CRONOS_INITIAL_UI_COMMITTED__ !== true) return false;
+      if(window.__CRONOS_ACCESS_UI_SUSPENDED__ === true && !foregroundValidationPromise) return false;
+
+      const committedAt = Number(window.__CRONOS_ACCESS_UI_COMMITTED_AT__ || 0);
+      if(committedAt > 0 && Date.now() - committedAt < 8000) return false;
+
+      const actor = (typeof currentActor === 'function') ? currentActor() : null;
+      const ctx = resolveFeatureContext(actor);
+      if(!ctx.clinic_id && !ctx.owner_uid && !ctx.owner_email) return false;
+
+      const now = Date.now();
+      if(force && now - lastForegroundRefreshAt < 1500) return foregroundValidationPromise || true;
+      if(foregroundValidationPromise) return foregroundValidationPromise;
+
+      // Trocas rápidas de aba não justificam derrubar e revalidar toda a política.
+      const hiddenFor = foregroundHiddenAt > 0 ? Math.max(0, now - foregroundHiddenAt) : 0;
+      if(reason === 'visibility' && hiddenFor < FOREGROUND_REVALIDATE_AFTER_MS){
+        foregroundHiddenAt = 0;
+        return true;
+      }
+      if(reason === 'focus' && document.visibilityState === 'visible' && foregroundHiddenAt > 0 && hiddenFor < FOREGROUND_REVALIDATE_AFTER_MS){
+        return true;
+      }
+
+      lastForegroundRefreshAt = now;
+
+      foregroundValidationPromise = (async()=>{
+        // Revalidação autoritativa continua fail-closed, mas acontece em silêncio.
+        // Nenhuma política intermediária pode escrever "Bloq." no menu e a UI
+        // atual permanece visível até o commit final.
+        window.__CRONOS_ACCESS_UI_SUSPENDED__ = true;
+        window.__CRONOS_ACCESS_UI_PENDING__ = false;
+
+        let ok = false;
+        try{
+          ok = await refreshFeatureAccess(true, actor);
+        }catch(error){
+          console.error("Cronos: revalidação de módulos ao retomar a aba falhou.", error);
+          ok = false;
+        }
+
+        if(ok === true){
+          finishForegroundValidation();
+          try{ reapplyAccessDrivenUI(actor, { reason:"foreground-policy-commit" }); }catch(_){}
+          foregroundHiddenAt = 0;
+          console.info("Cronos: revalidação silenciosa de foreground consolidada.", {
+            clinic_id:ctx.clinic_id || null,
+            feature_status:window.CRONOS_FEATURE_ACCESS_STATUS?.() || null
+          });
+          return true;
+        }
+
+        finishForegroundValidation();
+        foregroundHiddenAt = 0;
+        try{ showAccessGate({ mode:"unavailable", reason:"features" }); }catch(_){}
+        return false;
+      })();
+
+      try{
+        return await foregroundValidationPromise;
+      }finally{
+        foregroundValidationPromise = null;
+      }
+    };
+
+    // Não revalida por simplesmente alternar abas por alguns segundos.
+    // Após 60s oculta, a volta é validada silenciosamente e commitada de uma vez.
+    window.addEventListener('focus', () => {
+      if(document.visibilityState === 'visible' && foregroundHiddenAt > 0){
+        refreshWhenContextExists(true, 'focus');
+      }
+    });
     document.addEventListener('visibilitychange', () => {
-      if(document.visibilityState === 'visible') refreshWhenContextExists(true);
+      if(document.visibilityState === 'hidden'){
+        foregroundHiddenAt = Date.now();
+        return;
+      }
+      refreshWhenContextExists(true, 'visibility');
     });
   }
 
+  function resetFeatureAccess(options={}){
+    featureGeneration += 1;
+    featureAccessValidated = false;
+    featureFetchPromise = null;
+    featureFetchContextKey = null;
+    activeFeatureContextKey = null;
+    lastFeatureAccessDiagnostic = null;
+    lastResolvedContextKey = null;
+    lastForegroundRefreshAt = 0;
+    featureStateMap.clear();
+    if(options.clearCache === true){
+      try{
+        for(let i=localStorage.length-1;i>=0;i--){
+          const key=localStorage.key(i);
+          if(key && key.startsWith(FEATURE_CACHE_PREFIX)) localStorage.removeItem(key);
+        }
+      }catch(_){ }
+    }
+    publishFeatureAccessState('reset');
+    hideBlockedOverlay();
+  }
+
   window.__refreshFeatureAccess = refreshFeatureAccess;
+  window.__resetFeatureAccess = resetFeatureAccess;
   window.addEventListener('resize', positionBlockedOverlay);
   window.addEventListener('scroll', positionBlockedOverlay, true);
 

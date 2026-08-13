@@ -378,9 +378,11 @@
 
   function canOpenToday(){
     try{
-      return !window.CRONOS_CAN_ACCESS_MODULE || window.CRONOS_CAN_ACCESS_MODULE("todayCronos");
+      if(typeof window.CRONOS_CAN_OPEN_MODULE === "function") return window.CRONOS_CAN_OPEN_MODULE("todayCronos") === true;
+      if(typeof window.CRONOS_CAN_ACCESS_MODULE === "function") return window.CRONOS_CAN_ACCESS_MODULE("todayCronos") === true;
+      return false;
     }catch(_){
-      return true;
+      return false;
     }
   }
 
@@ -890,6 +892,8 @@
   }
 
   function ensureNav(){
+    // Durante revalidação silenciosa, preserve exatamente o estado visual atual.
+    if(window.__CRONOS_ACCESS_UI_SUSPENDED__===true) return $(NAV_ID) || null;
     const existing = $(NAV_ID);
     if(existing){
       existing.classList.toggle("hidden", !canOpenToday());

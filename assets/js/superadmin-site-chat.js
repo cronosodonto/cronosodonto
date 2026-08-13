@@ -12,8 +12,8 @@
 
   const client = shared.supabaseClient;
   const toast = shared.toast || function(){};
-  const TABLE = 'site_chat_leads';
   const SETTINGS_TABLE = 'site_chat_settings';
+  const ADMIN_ENDPOINT = 'permissions-admin';
   const DEFAULT_FLOW = {
     welcome1: 'Olá! Eu sou o Cronos 👋',
     welcome2: 'Posso te ajudar a entender se o sistema faz sentido para a sua clínica. Primeiro: qual o seu nome?',
@@ -115,7 +115,9 @@
     status: 'all',
     selectedId: null,
     bound: false,
-    poll: null
+    poll: null,
+    loadPromise: null,
+    mutationVersion: 0
   };
 
   function qs(id){ return document.getElementById(id); }
@@ -126,30 +128,39 @@
     return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
   function selectedRow(){ return state.rows.find((row)=>row.id === state.selectedId) || null; }
+  function callAdmin(payload){
+    if (typeof shared.callEdgeFunction !== 'function') throw new Error('Conector seguro do Super Admin indisponível.');
+    return shared.callEdgeFunction(ADMIN_ENDPOINT, payload);
+  }
 
-  async function load(showToast){
+  function load(showToast){
+    if (state.loadPromise) return state.loadPromise;
+    const loadVersion = state.mutationVersion;
+    let stale = false;
     const list = qs('siteChatList');
     if (list) list.innerHTML = '<div class="sitechat-empty">Carregando chats do site...</div>';
-    try {
-      const { data, error } = await client
-        .from(TABLE)
-        .select('id, created_at, updated_at, dentist_name, clinic_name, city, phone, interest, status, last_message, transcript, unread_admin, unread_visitor, session_key')
-        .order('updated_at', { ascending: false })
-        .limit(200);
-      if (error) throw error;
-      state.rows = Array.isArray(data) ? data : [];
-      if (!state.selectedId && state.rows.length) state.selectedId = state.rows[0].id;
-      renderList();
-      renderDetail();
-      if (showToast) toast('Chats do site atualizados.', 'success', 2200);
-    } catch (error) {
-      if (list) list.innerHTML = '<div class="sitechat-empty">Não foi possível carregar os chats do site. Verifique a configuração do serviço.</div>';
-      const empty = qs('siteChatDetailEmpty');
-      const detail = qs('siteChatDetail');
-      if (detail) detail.classList.add('hidden');
-      if (empty) empty.classList.remove('hidden');
-      console.warn('superadmin site chat load', error);
-    }
+    state.loadPromise = (async()=>{
+      try {
+        const result = await callAdmin({ action: 'site_chat_list' });
+        if (loadVersion !== state.mutationVersion) { stale = true; return; }
+        state.rows = Array.isArray(result?.rows) ? result.rows : [];
+        if (!state.rows.some((row)=>row.id === state.selectedId)) state.selectedId = state.rows[0]?.id || null;
+        renderList();
+        renderDetail();
+        if (showToast) toast('Chats do site atualizados.', 'success', 2200);
+      } catch (error) {
+        if (list) list.innerHTML = '<div class="sitechat-empty">Não foi possível carregar os chats do site. Verifique a configuração do serviço.</div>';
+        const empty = qs('siteChatDetailEmpty');
+        const detail = qs('siteChatDetail');
+        if (detail) detail.classList.add('hidden');
+        if (empty) empty.classList.remove('hidden');
+        console.warn('superadmin site chat load', error);
+      } finally {
+        state.loadPromise = null;
+        if (stale) setTimeout(()=>load(false), 0);
+      }
+    })();
+    return state.loadPromise;
   }
 
   function filteredRows(){
@@ -212,7 +223,8 @@
 
   async function markRead(id){
     try {
-      await client.from(TABLE).update({ unread_admin: 0 }).eq('id', id);
+      await callAdmin({ action: 'site_chat_mark_read', id });
+      state.mutationVersion += 1;
       const row = state.rows.find((item)=>item.id === id);
       if (row) row.unread_admin = 0;
       renderList();
@@ -225,24 +237,12 @@
     if (!row || !input) return;
     const text = String(input.value || '').trim();
     if (!text) return;
-    const transcript = Array.isArray(row.transcript) ? row.transcript.slice() : [];
-    transcript.push({ id: `admin-${Date.now()}`, sender: 'admin', text, at: new Date().toISOString() });
     try {
-      const { error } = await client.from(TABLE).update({
-        transcript,
-        last_message: text,
-        status: row.status === 'novo' ? 'em_atendimento' : row.status,
-        unread_visitor: Number(row.unread_visitor || 0) + 1,
-        unread_admin: 0,
-        updated_at: new Date().toISOString()
-      }).eq('id', row.id);
-      if (error) throw error;
-      row.transcript = transcript;
-      row.last_message = text;
-      row.status = row.status === 'novo' ? 'em_atendimento' : row.status;
-      row.unread_visitor = Number(row.unread_visitor || 0) + 1;
-      row.unread_admin = 0;
-      row.updated_at = new Date().toISOString();
+      const result = await callAdmin({ action: 'site_chat_reply', id: row.id, text });
+      if (!result?.row?.id) throw new Error('Resposta do serviço sem a conversa atualizada.');
+      state.mutationVersion += 1;
+      const index = state.rows.findIndex((item)=>item.id === row.id);
+      if (index >= 0) state.rows[index] = result.row;
       input.value = '';
       renderList();
       renderDetail();
@@ -257,10 +257,11 @@
     const row = selectedRow();
     if (!row) return;
     try {
-      const { error } = await client.from(TABLE).update({ status: value, updated_at: new Date().toISOString() }).eq('id', row.id);
-      if (error) throw error;
-      row.status = value;
-      row.updated_at = new Date().toISOString();
+      const result = await callAdmin({ action: 'site_chat_status', id: row.id, status: value });
+      if (!result?.row?.id) throw new Error('Resposta do serviço sem a conversa atualizada.');
+      state.mutationVersion += 1;
+      const index = state.rows.findIndex((item)=>item.id === row.id);
+      if (index >= 0) state.rows[index] = result.row;
       renderList();
       renderDetail();
     } catch (error) {
@@ -297,15 +298,7 @@
   async function saveLandingSettings(){
     const settings = readLandingSettingsForm();
     try {
-      const { error } = await client.from(SETTINGS_TABLE).upsert({
-        id: 'default',
-        avatar_url: settings.avatar_url,
-        whatsapp: settings.whatsapp,
-        whatsapp_message: settings.whatsapp_message,
-        flow_config: settings.flow_config,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'id' });
-      if (error) throw error;
+      await callAdmin({ action: 'site_chat_settings_save', settings });
       toast('Configurações do chat salvas.', 'success', 2400);
       await loadLandingSettings();
     } catch (error) {

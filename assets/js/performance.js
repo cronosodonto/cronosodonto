@@ -31,7 +31,11 @@
   function money(v){try{if(typeof window.moneyBR==='function')return window.moneyBR(v)}catch(_){} return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
   function toast(t,m=''){try{if(typeof window.toast==='function')return window.toast(t,m)}catch(_){} console.log('[Performance]',t,m)}
   function canOpenPerformance(){
-    try{return !window.CRONOS_CAN_ACCESS_MODULE || window.CRONOS_CAN_ACCESS_MODULE('performance')}catch(_){return true}
+    try{
+      if(typeof window.CRONOS_CAN_OPEN_MODULE==='function') return window.CRONOS_CAN_OPEN_MODULE('performance')===true
+      if(typeof window.CRONOS_CAN_ACCESS_MODULE==='function') return window.CRONOS_CAN_ACCESS_MODULE('performance')===true
+      return false
+    }catch(_){return false}
   }
   function denyPerformanceAccess(){toast('Acesso restrito','Seu nível de acesso não permite abrir Performance.')}
   function num(v){const n=Number(v||0); return Number.isFinite(n)?n:0}
@@ -201,6 +205,8 @@
   }
 
   function ensureNav(){
+    // Não esconder/recriar o item enquanto ACL/Feature Access estão em commit atômico.
+    if(window.__CRONOS_ACCESS_UI_SUSPENDED__===true) return $(NAV_ID) || null;
     const nav=qs('.nav'); if(!nav) return;
     let btn=$(NAV_ID);
     if(btn){
