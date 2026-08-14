@@ -8117,7 +8117,7 @@ async function reconcileClinicMembersAuthoritative({ force=false, reason="" } = 
   if(typeof supabaseClient === "undefined" || !supabaseClient) return DB;
 
   const actor = currentActor();
-  if(!actor || actor.kind !== "master" || actor.isSupport === true) return DB;
+  if(!actor || actor.isSupport === true || !canManageUsersACL(actor)) return DB;
 
   const ownerUid = String(CLOUD_CLINIC_OWNER_UID || CLOUD_OWNER_UID || "").trim();
   if(!ownerUid) return DB;
@@ -10296,10 +10296,38 @@ function updateSidebarPills(){
   const allMonth = filteredEntries();
   const total = allMonth.length;
   const hotCount = allMonth.filter(e=>e.tags?.includes("Prioridade: Quente")).length;
-  const usersCount = db.users.filter(u=>u.masterId===actor.masterId).length + 1; // master
+  const canUseAuthoritativeUsers = actor.isSupport !== true && canManageUsersACL(actor);
+  let usersCount = null;
+
+  if(canUseAuthoritativeUsers){
+    if(Array.isArray(__cronosAuthoritativeMembersSnapshot)){
+      const master = db.masters.find(m=>m.id===actor.masterId);
+      const masterEmail = String(master?.email || CLOUD_CLINIC_OWNER_EMAIL || "").trim().toLowerCase();
+      const ownerUid = String(CLOUD_CLINIC_OWNER_UID || CLOUD_OWNER_UID || __cronosAuthoritativeMembersOwnerUid || "").trim();
+
+      const authoritativeMembersCount = __cronosAuthoritativeMembersSnapshot.filter(member=>{
+        const authUid = String(member?.auth_uid || "").trim();
+        const email = String(member?.email || "").trim().toLowerCase();
+        if(ownerUid && authUid === ownerUid) return false;
+        if(masterEmail && email === masterEmail) return false;
+        return true;
+      }).length;
+
+      // Linha da clínica principal + membros reais retornados pela Edge.
+      usersCount = authoritativeMembersCount + 1;
+    }
+  }else{
+    usersCount = db.users.filter(u=>u.masterId===actor.masterId).length + 1;
+  }
+
   el("pillTotal").textContent = String(total);
   el("pillHot").textContent = `${hotCount} hot`;
-  el("pillUsers").textContent = String(usersCount);
+
+  const pillUsers = el("pillUsers");
+  if(pillUsers){
+    // Nunca mostramos contagem antiga enquanto a Edge autoritativa ainda não respondeu.
+    pillUsers.textContent = usersCount === null ? "—" : String(usersCount);
+  }
 
 const currentMonth = todayISO().slice(0,7);
 const currentMonthTasks = (db.tasks||[]).filter(t=>t.masterId===actor.masterId && t.done!==true && String(t.dueDate||"").slice(0,7)===currentMonth);
@@ -12641,8 +12669,34 @@ function renderUsers(){
   }
   if(!canAccessView("users", actor)) return;
 
-  if(actor.kind === "master" && actor.isSupport !== true){
+  const needsAuthoritativeUsers = actor.isSupport !== true && canManageUsersACL(actor);
+
+  if(needsAuthoritativeUsers){
     scheduleClinicMembersReconcile({ force:false, reason:"render_users" });
+
+    // Depois de F5 não mostramos o cache local de usuários/status.
+    // Enquanto a Edge ainda não respondeu, a tela fica em estado neutro.
+    if(!Array.isArray(__cronosAuthoritativeMembersSnapshot)){
+      ["usersKpiTotal","usersKpiMasters","usersKpiGerentes","usersKpiSecretarias","usersKpiCrc","usersKpiDentistas","usersKpiPending"]
+        .forEach(id=>{ const node=el(id); if(node) node.textContent="—"; });
+
+      const empty = el("usersEmpty");
+      if(empty) empty.classList.add("hidden");
+
+      if(tbody){
+        tbody.innerHTML = `
+          <tr class="usersRowV40">
+            <td colspan="6">
+              <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:28px 12px;color:var(--muted,#94a3b8)">
+                <span class="spinner" aria-hidden="true"></span>
+                <span>Atualizando usuários...</span>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+      return;
+    }
   }
 
   const db = loadDB();
@@ -12656,8 +12710,7 @@ function renderUsers(){
   // Para Master cloud, se já existe snapshot da Edge, a tabela renderiza DIRETO dele.
   // db.users deixa de decidir existência/status nessa tela.
   if(
-    actor.kind === "master" &&
-    actor.isSupport !== true &&
+    needsAuthoritativeUsers &&
     Array.isArray(__cronosAuthoritativeMembersSnapshot)
   ){
     userRowsForView = __cronosAuthoritativeMembersSnapshot
