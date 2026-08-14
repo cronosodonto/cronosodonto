@@ -51,10 +51,14 @@
     }catch(_){return false}
   }
   function canSeeRiskAnalysis(){
-    try{return typeof window.CRONOS_CAN_SEE_MODULE==='function' && window.CRONOS_CAN_SEE_MODULE('riskAnalysis')===true}catch(_){return false}
+    // O Score interno é uma etapa do Simulador, não um módulo comercial separado.
+    // Se o usuário pode abrir o Simulador, também pode visualizar o Score.
+    return canOpenCredit();
   }
   function canOpenRiskAnalysis(){
-    try{return typeof window.CRONOS_CAN_OPEN_MODULE==='function' && window.CRONOS_CAN_OPEN_MODULE('riskAnalysis')===true}catch(_){return false}
+    // Mantém a mesma ACL/fail-closed do Simulador. A trava legada riskAnalysis
+    // não pode bloquear uma etapa interna quando creditSimulator está liberado.
+    return canOpenCredit();
   }
   function denyCreditAccess(){toast('Acesso restrito','Seu nível de acesso não permite abrir o Simulador.')}
   function denyRiskAccess(){toast('Módulo indisponível','A Análise de Risco não está disponível para esta clínica.')}
