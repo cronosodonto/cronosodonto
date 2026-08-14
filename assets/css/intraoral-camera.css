@@ -566,3 +566,24 @@ body.cronos-camera-expanded{overflow:hidden}
 @media(max-width:820px){
   #view-intraoralExam:not(.camera-expanded) .examCaptureSide{padding-top:0!important}
 }
+
+/* RC5.13 — acesso explícito à galeria pelo Prontuário */
+.cronosExamCard .cronosExamOpenBtn{
+  display:inline-flex!important;
+  align-items:center;
+  justify-content:center;
+  visibility:visible!important;
+  opacity:1!important;
+  flex:0 0 auto;
+  min-width:132px;
+  white-space:nowrap;
+}
+.intraoralGalleryOpenBtn{
+  width:calc(100% - 16px);
+  margin:0 8px 8px;
+  justify-content:center;
+}
+@media(max-width:680px){
+  .cronosExamCard{align-items:stretch!important;flex-direction:column!important}
+  .cronosExamCard .cronosExamOpenBtn{width:100%}
+}

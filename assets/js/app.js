@@ -5356,6 +5356,11 @@ function hasPermission(permissionKey, actor=currentActor()){
   try{ return !!window.CronosPermissions?.can?.(permissionKey, actor); }catch(_){ return false; }
 }
 function canEditRecords(actor=currentActor()){ return !!actor && hasPermission("records.edit", actor); }
+function canMoveLeadStatus(actor=currentActor()){
+  if(!actor) return false;
+  if(canEditRecords(actor)) return true;
+  return actorRoleKey(actor) === "DENTISTA" && canAccessView("kanban", actor);
+}
 function canDeleteRecords(actor=currentActor()){ return !!actor && hasPermission("records.delete", actor); }
 function canDeleteLeads(actor=currentActor()){ return !!actor && hasPermission("leads.delete", actor); }
 function canManageUsersACL(actor=currentActor()){ return !!actor && hasPermission("users.manage", actor); }
@@ -8068,6 +8073,208 @@ function ensureMemberMirror(db, membership){
   }
 
   return db;
+}
+
+
+let __cronosMembersReconcilePromise = null;
+let __cronosMembersReconciledAt = 0;
+let __cronosAuthoritativeMembersSnapshot = null;
+let __cronosAuthoritativeMembersOwnerUid = "";
+const CRONOS_MEMBERS_RECONCILE_TTL_MS = 5000;
+
+async function fetchClinicMembersAuthoritativeViaEdge(){
+  return callClinicUserManagerEdge({ action:"list" });
+}
+
+function cronosUserIdentityTokens(row={}){
+  const tokens = new Set();
+  const add = value=>{
+    const v = String(value || "").trim().toLowerCase();
+    if(v) tokens.add(v);
+  };
+
+  add(row?.username);
+  add(row?.email);
+  add(row?.loginEmail);
+  add(row?.login_email);
+
+  // Também indexa a parte anterior ao @ dos logins sintéticos.
+  for(const value of [row?.email,row?.loginEmail,row?.login_email]){
+    const v=String(value||"").trim().toLowerCase();
+    if(v.includes("@")){
+      const local=v.split("@")[0];
+      if(local) add(local);
+      // Ex.: mundo-odonto.dentistas@users.cronos.local -> dentistas
+      if(v.endsWith("@users.cronos.local") && local.includes(".")){
+        add(local.split(".").pop());
+      }
+    }
+  }
+  return [...tokens];
+}
+
+async function reconcileClinicMembersAuthoritative({ force=false, reason="" } = {}){
+  if(typeof supabaseClient === "undefined" || !supabaseClient) return DB;
+
+  const actor = currentActor();
+  if(!actor || actor.kind !== "master" || actor.isSupport === true) return DB;
+
+  const ownerUid = String(CLOUD_CLINIC_OWNER_UID || CLOUD_OWNER_UID || "").trim();
+  if(!ownerUid) return DB;
+
+  const now = Date.now();
+  if(!force && __cronosMembersReconciledAt && now - __cronosMembersReconciledAt < CRONOS_MEMBERS_RECONCILE_TTL_MS){
+    return DB;
+  }
+  if(__cronosMembersReconcilePromise) return __cronosMembersReconcilePromise;
+
+  __cronosMembersReconcilePromise = (async()=>{
+    const payload = await fetchClinicMembersAuthoritativeViaEdge();
+    const members = Array.isArray(payload?.users) ? payload.users : [];
+
+    // Snapshot autoritativo usado DIRETAMENTE pela tela Usuários.
+    // Ele não depende de db.users e não pode ser sobrescrito pela hidratação legada.
+    __cronosAuthoritativeMembersSnapshot = members.map(row=>({ ...(row || {}) }));
+    __cronosAuthoritativeMembersOwnerUid = String(payload?.owner_uid || ownerUid || "").trim();
+
+    let db = normalizeDBShape(DB || loadDB() || freshDB());
+    const master = db.masters.find(m=>String(m.id||"")===String(actor.masterId||"")) || db.masters[0] || null;
+    const masterId = String(actor.masterId || master?.id || CLOUD_CLINIC_OWNER_EMAIL || ownerUid);
+
+    const byAuthUid = new Map();
+    const byIdentity = new Map();
+
+    for(const row of db.users || []){
+      const key = managedUserAuthUidV453(row);
+      if(key) byAuthUid.set(String(key), row);
+
+      for(const token of cronosUserIdentityTokens(row)){
+        if(!byIdentity.has(token)) byIdentity.set(token,row);
+      }
+    }
+
+    const authoritativeIds = new Set();
+    const authoritativeIdentityTokens = new Set();
+    const matchedRows = new Set();
+    const masterEmail = String(master?.email || CLOUD_CLINIC_OWNER_EMAIL || "").trim().toLowerCase();
+
+    for(const member of members){
+      const authUid = String(member?.auth_uid || "").trim();
+      if(!authUid) continue;
+
+      const memberEmail = String(member?.email || "").trim().toLowerCase();
+
+      if(authUid === ownerUid || (masterEmail && memberEmail === masterEmail)) continue;
+
+      authoritativeIds.add(authUid);
+
+      const memberTokens = cronosUserIdentityTokens({
+        username:member?.username,
+        email:memberEmail,
+        loginEmail:memberEmail
+      });
+      memberTokens.forEach(t=>authoritativeIdentityTokens.add(t));
+
+      let row = byAuthUid.get(authUid) || null;
+
+      // Migração segura do espelho legado: se o authUid ainda não estava salvo,
+      // liga o membro real ao registro pela identidade de login.
+      if(!row){
+        for(const token of memberTokens){
+          const candidate = byIdentity.get(token);
+          if(candidate && !matchedRows.has(candidate)){
+            row = candidate;
+            break;
+          }
+        }
+      }
+
+      const visibleEmail = memberEmail.endsWith("@users.cronos.local") ? "" : memberEmail;
+
+      if(!row){
+        row = {
+          id: authUid,
+          authUid,
+          masterId,
+          name: member?.name || member?.username || "Usuário",
+          username: member?.username || "",
+          email: visibleEmail,
+          loginEmail: memberEmail,
+          role: member?.role || "SECRETARIA",
+          active: member?.active === true,
+          pendingApproval: member?.pending_approval === true,
+          blockedReason: member?.blocked_reason || null,
+          createdAt: member?.created_at || new Date().toISOString()
+        };
+        db.users.push(row);
+      }else{
+        row.id = row.id || authUid;
+        row.authUid = authUid;
+        row.masterId = row.masterId || masterId;
+        row.name = member?.name || row.name || member?.username || "Usuário";
+        row.username = member?.username || row.username || "";
+        row.email = visibleEmail || row.email || "";
+        row.loginEmail = memberEmail || row.loginEmail || row.email || "";
+        row.role = member?.role || row.role || "SECRETARIA";
+        row.active = member?.active === true;
+        row.pendingApproval = member?.pending_approval === true;
+        row.blockedReason = member?.blocked_reason || null;
+        row.createdAt = row.createdAt || member?.created_at || new Date().toISOString();
+        repairManagedUserIdentityV453(row);
+      }
+
+      matchedRows.add(row);
+      byAuthUid.set(authUid,row);
+      for(const token of cronosUserIdentityTokens(row)){
+        if(!byIdentity.has(token)) byIdentity.set(token,row);
+      }
+    }
+
+    db.users = (db.users || []).filter(row=>{
+      const authUid = managedUserAuthUidV453(row);
+
+      // Usuário cloud identificado: só existe se constar na Edge autoritativa.
+      if(authUid) return authoritativeIds.has(String(authUid));
+
+      // Registros pendentes pertencem ao fluxo cloud atual. Se não casaram com
+      // nenhum clinic_member, são resíduos de solicitação antiga e podem sair.
+      if(row?.pendingApproval === true) return matchedRows.has(row);
+
+      // Demais usuários legados sem authUid continuam preservados.
+      return true;
+    });
+
+    DB = normalizeDBShape(db);
+    safeSetLocalDB(DB);
+    __cronosMembersReconciledAt = Date.now();
+
+    try{ renderUsers(); }catch(_){}
+    try{ updateSidebarPills(); }catch(_){}
+
+    console.info("Cronos: usuários reconciliados pela Edge autoritativa.", {
+      reason,
+      owner_uid: ownerUid,
+      members: members.length,
+      users_after:(DB.users||[]).length
+    });
+
+    return DB;
+  })();
+
+  try{
+    return await __cronosMembersReconcilePromise;
+  }finally{
+    __cronosMembersReconcilePromise = null;
+  }
+}
+
+function scheduleClinicMembersReconcile({ force=false, reason="users_view" } = {}){
+  if(__cronosMembersReconcilePromise) return;
+  Promise.resolve().then(()=>{
+    reconcileClinicMembersAuthoritative({ force, reason }).catch(err=>{
+      console.error("Cronos: reconciliação de usuários não concluída.", err);
+    });
+  });
 }
 
 async function getClinicMembershipByAuthUid(authUid){
@@ -12434,9 +12641,72 @@ function renderUsers(){
   }
   if(!canAccessView("users", actor)) return;
 
+  if(actor.kind === "master" && actor.isSupport !== true){
+    scheduleClinicMembersReconcile({ force:false, reason:"render_users" });
+  }
+
   const db = loadDB();
   const master = db.masters.find(m=>m.id===actor.masterId);
-  const users = (db.users || []).filter(u=>u.masterId===actor.masterId);
+
+  const masterEmail = String(master?.email || CLOUD_CLINIC_OWNER_EMAIL || "").trim().toLowerCase();
+  const ownerUid = String(CLOUD_CLINIC_OWNER_UID || CLOUD_OWNER_UID || __cronosAuthoritativeMembersOwnerUid || "").trim();
+
+  let userRowsForView = null;
+
+  // Para Master cloud, se já existe snapshot da Edge, a tabela renderiza DIRETO dele.
+  // db.users deixa de decidir existência/status nessa tela.
+  if(
+    actor.kind === "master" &&
+    actor.isSupport !== true &&
+    Array.isArray(__cronosAuthoritativeMembersSnapshot)
+  ){
+    userRowsForView = __cronosAuthoritativeMembersSnapshot
+      .filter(member=>{
+        const authUid = String(member?.auth_uid || "").trim();
+        const email = String(member?.email || "").trim().toLowerCase();
+        if(ownerUid && authUid === ownerUid) return false;
+        if(masterEmail && email === masterEmail) return false;
+        return true;
+      })
+      .map(member=>{
+        const loginEmail = String(member?.email || "").trim();
+        const username = String(member?.username || "").trim();
+        const visibleEmail = loginEmail.toLowerCase().endsWith("@users.cronos.local") ? "" : loginEmail;
+        const login = username
+          ? `${username}${visibleEmail ? " / " + visibleEmail : ""}`
+          : (visibleEmail || loginEmail || "—");
+
+        return {
+          kind:"USER",
+          id:String(member?.auth_uid || member?.id || ""),
+          authUid:String(member?.auth_uid || ""),
+          name:member?.name || member?.username || "Usuário",
+          login,
+          role:member?.role || "SECRETARIA",
+          createdAt:member?.created_at || "",
+          active:member?.active === true,
+          pendingApproval:member?.pending_approval === true,
+          blockedReason:member?.blocked_reason || null
+        };
+      });
+  }
+
+  // Fallback apenas enquanto a Edge ainda não respondeu.
+  if(!Array.isArray(userRowsForView)){
+    const users = (db.users || []).filter(u=>u.masterId===actor.masterId);
+    userRowsForView = users.map(u=>({
+      kind:"USER",
+      id: managedUserKeyV453(u),
+      authUid: u.authUid || u.auth_uid || "",
+      name: u.name || "Usuário",
+      login: `${managedUserLoginLabelV453(u)}${u.email && u.username ? " / " + u.email : ""}`,
+      role: u.role || "SECRETARIA",
+      createdAt: u.createdAt,
+      active: u.active !== false,
+      pendingApproval: u.pendingApproval === true,
+      blockedReason: u.blockedReason || null
+    }));
+  }
 
   const rows = [
     {
@@ -12450,18 +12720,7 @@ function renderUsers(){
       pendingApproval: false,
       blockedReason: null
     },
-    ...users.map(u=>({
-      kind:"USER",
-      id: managedUserKeyV453(u),
-      authUid: u.authUid || u.auth_uid || "",
-      name: u.name || "Usuário",
-      login: `${managedUserLoginLabelV453(u)}${u.email && u.username ? " / " + u.email : ""}`,
-      role: u.role || "SECRETARIA",
-      createdAt: u.createdAt,
-      active: u.active !== false,
-      pendingApproval: u.pendingApproval === true,
-      blockedReason: u.blockedReason || null
-    }))
+    ...userRowsForView
   ];
 
   updateUsersKpisV40(rows);
@@ -12545,6 +12804,11 @@ async function refreshCloudDataNow({ force=false, reason="" } = {}){
       }
       await ensureCloudDBLoaded(true);
       await syncCurrentCloudActor();
+      try{
+        await reconcileClinicMembersAuthoritative({ force:true, reason:reason || "cloud_refresh" });
+      }catch(error){
+        console.warn("Cronos: dados principais atualizados, mas a lista de usuários não pôde ser reconciliada.", error);
+      }
       window.__CRONOS_LAST_CLOUD_PULL_AT__ = Date.now();
       return DB;
     }finally{
@@ -16183,15 +16447,12 @@ function renderKanban(){
     topScroll.scrollLeft = scrollArea.scrollLeft;
   }
 
-  function kanbanMoveTo(status){
+  async function kanbanMoveTo(status){
     const entryId = window.__KANBAN_DRAG_ID;
     window.__KANBAN_DRAG_ID = null;
     qsa(".kanCard", board).forEach(c=>c.classList.remove("kanSelected"));
     if(entryId && status){
-      quickUpdateStatus(entryId, status === KANBAN_EMPTY_STATUS ? "" : status);
-      setTimeout(() => {
-        renderKanban();
-      }, 50);
+      await quickUpdateStatus(entryId, status === KANBAN_EMPTY_STATUS ? "" : status);
     }
   }
 
@@ -16215,31 +16476,99 @@ function renderKanban(){
       }catch(e){}
 
       if(entryId) window.__KANBAN_DRAG_ID = entryId;
-      kanbanMoveTo(status);
+      kanbanMoveTo(status).catch(error=>console.error("Cronos: falha ao mover Lead no Funil.", error));
     });
 
     zone.addEventListener("click", ()=>{
-      if(window.__KANBAN_DRAG_ID) kanbanMoveTo(status);
+      if(window.__KANBAN_DRAG_ID){
+        kanbanMoveTo(status).catch(error=>console.error("Cronos: falha ao mover Lead no Funil.", error));
+      }
     });
   });
 
-  function quickUpdateStatus(entryId, newStatus){
+  async function quickUpdateStatus(entryId, newStatus){
     const actor = currentActor();
-    if(!canEditRecords(actor)) return toast("Sem permissão para editar");
+    if(!canMoveLeadStatus(actor)){
+      toast("Sem permissão", "Seu perfil não pode alterar o status no Funil.");
+      return false;
+    }
+
     const db = loadDB();
-    const e = db.entries.find(x=>x.id===entryId);
-    if(!e) return;
-    const old = e.status;
-    if(old===newStatus) return;
-    e.status = newStatus;
+    const e = db.entries.find(x=>String(x.id)===String(entryId));
+    if(!e) return false;
+
+    const old = String(e.status || "");
+    const next = String(newStatus || "");
+    if(old===next) return true;
+
+    // Snapshot apenas das coleções que o commit direcionado pode alterar.
+    const beforeSnapshot = cronosCloneTargetedCollections(db);
+
+    e.status = next;
     e.lastUpdateAt = new Date().toISOString();
     e.updatedAt = e.lastUpdateAt;
     e.updatedBy = cronosActorLabel(actor);
-    e.statusLog = e.statusLog || [];
-    e.statusLog.push({at: e.lastUpdateAt, from: old, to: newStatus, by: actor.name});
-    cronosAuditAction(db, { action:"status_changed", entityType:"entry", entityId:e.id, entryId:e.id, contactId:e.contactId, details:`Funil: ${old || "—"} → ${newStatus || "—"}`, before:{status:old}, after:{status:newStatus} });
-    saveDB(db);
-    renderAll();
+    e.statusLog = Array.isArray(e.statusLog) ? e.statusLog : [];
+    e.statusLog.push({
+      at:e.lastUpdateAt,
+      from:old,
+      to:next,
+      by:actor.name
+    });
+
+    cronosAuditAction(db, {
+      action:"status_changed",
+      entityType:"entry",
+      entityId:e.id,
+      entryId:e.id,
+      contactId:e.contactId,
+      details:`Funil: ${old || "—"} → ${next || "—"}`,
+      before:{status:old},
+      after:{status:next}
+    });
+
+    const batch = cronosBuildTargetedBatchFromSnapshot(beforeSnapshot, db);
+
+    // Atualização otimista da tela, mas sem salvar a clínica inteira.
+    DB = normalizeDBShape(db);
+    safeSetLocalDB(DB);
+    renderKanban();
+    try{ updateSidebarPills(); }catch(_){}
+
+    let ok = false;
+    try{
+      ok = await cronosPersistTargetedBatch(db, batch, {
+        immediate:true,
+        silent:true,
+        keepPendingOnFailure:false
+      });
+    }catch(error){
+      console.error("Cronos: falha ao alterar status do Lead no Funil.", error);
+      ok = false;
+    }
+
+    if(!ok){
+      // Reverte somente as coleções tocadas pela operação.
+      const current = loadDB();
+      current.contacts = beforeSnapshot.contacts || [];
+      current.entries = beforeSnapshot.entries || [];
+      current.tasks = beforeSnapshot.tasks || [];
+      current.payments = beforeSnapshot.payments || [];
+      current.activityLog = beforeSnapshot.activityLog || [];
+      DB = normalizeDBShape(current);
+      safeSetLocalDB(DB);
+      renderKanban();
+      try{ updateSidebarPills(); }catch(_){}
+      toast("Alteração não confirmada", "Não foi possível mover o paciente. O status anterior foi restaurado.");
+      return false;
+    }
+
+    toast("Status atualizado", `${old || "Sem status"} → ${next || "Sem status"}`);
+    try{
+      renderKanban();
+      updateSidebarPills();
+    }catch(_){}
+    return true;
   }
 }
 
@@ -21896,7 +22225,7 @@ window.CRONOS_PROC_UI = {
                 <div class="totalBox"><span class="label">Total realizado</span><div class="value" id="fichaTotalFeito">${moneyBR(totals.totalFeito)}</div></div>
                 <div class="totalBox"><span class="label">Total pago</span><div class="value" id="fichaTotalPago">${moneyBR(totals.totalPago)}</div></div>
                 <div class="totalBox"><span class="label">Em aberto</span><div class="value" id="fichaTotalAberto">${moneyBR(totals.emAberto)}</div></div>
-                ${window.CronosPermissions?.can?.('exam.view', currentActor()) ? `<div class="totalBox cronosExamCard"><div class="cronosExamText"><span class="label">Exames digitais</span><div class="value">Galeria de imagens</div><small>Visualizar fotos vinculadas ao paciente</small></div><button type="button" class="btn primary" data-cronos-exam-entry="${escapeHTML(String(entry.id || entry._id || ''))}">Abrir exame digital</button></div>` : ''}
+                ${window.CronosPermissions?.can?.('exam.view', currentActor()) ? `<div class="totalBox cronosExamCard"><div class="cronosExamText"><span class="label">Exames digitais</span><div class="value">Galeria de imagens</div><small>Visualizar fotos vinculadas ao paciente</small></div><button type="button" class="btn primary cronosExamOpenBtn" data-cronos-exam-entry="${escapeHTML(String(entry.id || entry._id || ''))}" onclick="event.preventDefault();event.stopPropagation();window.CRONOS_EXAM_DIGITAL?.openForPatient('${escapeHTML(String(entry.id || entry._id || ''))}')">Abrir galeria</button></div>` : ''}
               </div>
             </div>
 

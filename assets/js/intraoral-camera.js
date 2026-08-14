@@ -513,6 +513,7 @@ function render(){
       <div class="intraoralEvaluationMeta">${esc(evaluationLabel(x.evaluation_id))}</div>
       ${teeth?`<div class="intraoralClinicalMeta"><b>Dente${x.teeth.length>1?'s':''}: ${esc(teeth)}</b></div>`:''}
       ${obs?`<div class="intraoralClinicalNote">${esc(obs)}</div>`:''}
+      ${S.mode==='gallery'?`<button type="button" class="btn intraoralGalleryOpenBtn" data-open="${i}">Abrir foto</button>`:''}
       ${S.mode==='exam'&&!x.temporary&&can('exam.capture')?`<button type="button" class="btn examEditPhotoBtn" data-edit-photo="${esc(x.id)}">${editing?'Editando dados clínicos':'Editar dados / abrir foto'}</button>`:''}
     </article>`
   }).join(''):`<div class="intraoralEmptyGallery">${S.patient?'Nenhuma imagem nesta avaliação.':'Selecione um paciente para carregar a galeria.'}</div>`;
