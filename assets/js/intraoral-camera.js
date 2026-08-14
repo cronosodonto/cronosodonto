@@ -541,9 +541,20 @@ async function saveTeeth(id){
   const r=await client().rpc('cronos_replace_exam_image_teeth',{p_image_id:id,p_tooth_numbers:selected});
   if(r.error)throw r.error;
   if(version!==S.contextVersion)return false;
-  const saved=Array.isArray(r.data)?r.data.map(String):selected;
+  const saved=Array.isArray(r.data)
+    ? r.data
+        .map(item=>{
+          if(item && typeof item === 'object'){
+            return String(item.tooth_number ?? item.toothNumber ?? '').trim();
+          }
+          return String(item ?? '').trim();
+        })
+        .filter(Boolean)
+    : selected;
+
   S.editTeeth=new Set(saved);
-  const x=S.stored.find(v=>String(v.id)===String(id));if(x)x.teeth=saved;
+  const x=S.stored.find(v=>String(v.id)===String(id));
+  if(x)x.teeth=saved;
   return true
 }
 function renderPhotoEditor(){
