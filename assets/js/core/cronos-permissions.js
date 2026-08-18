@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'v463.2.4-rc3-acl-reactive';
+  const VERSION = 'v463.2.4-rc5.19-acl-resilient';
   const ROLES = ['MASTER','GERENTE','SECRETARIA','CRC','DENTISTA'];
 
   // V462.1 cobre a matriz que já existia na V460. Recursos novos (como Exame
@@ -77,6 +77,15 @@
   let loaded = false;
   let validated = false;
   let revision = 0;
+  let lastDiagnostic = null;
+
+  function setDiagnostic(value={}){
+    try{
+      lastDiagnostic = JSON.parse(JSON.stringify({ at:new Date().toISOString(), ...value }));
+    }catch(_){
+      lastDiagnostic = { at:new Date().toISOString(), phase:String(value?.phase || 'unknown') };
+    }
+  }
 
   function emitAclUpdated(reason){
     revision += 1;
@@ -163,16 +172,53 @@
     try{
       const client=(typeof supabaseClient!=='undefined'&&supabaseClient)?supabaseClient:window.supabaseClient;
       if(!client||typeof client.rpc!=='function') throw new Error('Cliente de permissões indisponível.');
-      const {data,error}=await client.rpc('cronos_get_my_permissions');
-      if(error) throw error;
-      const rows=Array.isArray(data)?data:(Array.isArray(data?.permissions)?data.permissions:[]);
-      if(!rows.length) throw new Error('A RPC não retornou a matriz de permissões.');
+      const loadRows=async()=>{
+        const response=await client.rpc('cronos_get_my_permissions');
+        const {data,error}=response||{};
+        if(error){
+          const wrapped=error instanceof Error?error:new Error(String(error?.message||error||'Falha ao validar permissões.'));
+          try{
+            if(error?.code) wrapped.code=error.code;
+            const status=Number(response?.status||error?.status||0);
+            if(Number.isFinite(status)&&status>0) wrapped.httpStatus=status;
+          }catch(_){ }
+          throw wrapped;
+        }
+        const rows=Array.isArray(data)?data:(Array.isArray(data?.permissions)?data.permissions:[]);
+        if(!rows.length){
+          const contractError=new Error('A RPC não retornou a matriz de permissões.');
+          contractError.code='ACL_EMPTY_RESPONSE';
+          throw contractError;
+        }
+        return rows;
+      };
+      const retry=typeof window.CRONOS_RUN_SAFE_READ_WITH_RETRY==='function'
+        ? window.CRONOS_RUN_SAFE_READ_WITH_RETRY
+        : async operation=>await operation({attempt:1,maxAttempts:1});
+      const rows=await retry(loadRows,{
+        label:'acl-permissions',
+        maxAttempts:3,
+        refreshSessionOnUnauthorized:true,
+        onRetry:({attempt,error})=>setDiagnostic({
+          phase:'retrying',
+          attempt,
+          code:String(error?.code||error?.name||''),
+          message:String(error?.message||error||'Falha temporária.')
+        })
+      });
       setEffective(actor,permissionMapFromRpcRows(rows),'database',{reason:'hydrate-valid'});
       writeCache(actor,effective,'database');
+      setDiagnostic({phase:'validated',source:'database',permissions:rows.length});
       return effective;
     }catch(error){
       setEffective(actor,null,'unavailable',{reason:'hydrate-unavailable'});
       try{ localStorage.removeItem(cacheKey(actor)); }catch(_){ }
+      setDiagnostic({
+        phase:'failed',
+        code:String(error?.code||error?.name||''),
+        attempts:Number(error?.cronosAttempts||1),
+        message:String(error?.message||error||'Falha desconhecida.')
+      });
       console.error('Cronos ACL V463.2.4: validação indisponível; acesso negado.',error?.message||error);
       throw error;
     }
@@ -197,6 +243,7 @@
     actorKey='';
     loaded=false;
     validated=false;
+    lastDiagnostic=null;
     emitAclUpdated('reset');
   }
 
@@ -228,6 +275,7 @@
     defaultsForRole:cloneDefault,
     getCatalog:()=>CATALOG.map(x=>({...x})),
     getRoleDefaults:()=>Object.fromEntries(ROLES.map(role=>[role,cloneDefault(role)])),
-    getEffectiveMap:()=>({...getMap()}),getSource:()=>source,isValidated:()=>validated===true,getRevision:()=>revision
+    getEffectiveMap:()=>({...getMap()}),getSource:()=>source,isValidated:()=>validated===true,getRevision:()=>revision,
+    getDiagnostics:()=>lastDiagnostic?{...lastDiagnostic}:null
   };
 })();

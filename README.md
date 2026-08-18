@@ -1,9 +1,9 @@
-# Cronos Odonto — V463.2.4 Security & Integrity RC1
+# Cronos Odonto — V463.2.4 RC5.19
 
-Esta pasta é uma candidata de correção baseada integralmente na V463.2.3. Ela não
-está liberada para produção até a aplicação das migrações/Edge Functions e a
-conclusão do checklist real em Supabase e navegador descrito em
-`V463_2_4_RELEASE.md`.
+Correção incremental baseada exclusivamente no pacote publicado
+`cronosodonto-desmembrado-fase0 (7).zip`. Consulte
+`V463_2_4_RC5_19_RELEASE.md` para implantação, testes e SQL condicional. Esta
+etapa não exige republicação de Edge Functions.
 
 Sistema de gestão comercial e financeira para clínicas odontológicas.
 

@@ -6472,7 +6472,11 @@ let CLINIC_ACCESS_STATE = null;
 let CLINIC_RENEWAL_CONTACT = null;
 let CLINIC_ACCESS_DIAGNOSTIC = null;
 let CLINIC_ACCESS_DIAGNOSTIC_REVISION = 0;
+let __cronosAccessGateRetryPromise = null;
 const CRONOS_POLICY_TIMEOUT_MS = 12000;
+const CRONOS_SAFE_READ_MAX_ATTEMPTS = 3;
+const CRONOS_SAFE_READ_RETRY_DELAYS_MS = Object.freeze([700, 1600]);
+const CRONOS_SAFE_READ_DIAGNOSTICS = [];
 const CLINIC_ACCESS_CONTRACT_VERSION = "clinic-access-state-v2";
 const VALID_CLINIC_ACCESS_STATUSES = new Set(["active","trial","blocked","inactive","scheduled","expired","blocked_user"]);
 
@@ -6485,6 +6489,144 @@ async function cronosFetchWithTimeout(url, options={}, timeoutMs=CRONOS_POLICY_T
     if(timer) clearTimeout(timer);
   }
 }
+
+function cronosReadErrorCode(error){
+  return String(error?.code || error?.error_code || error?.name || "").trim();
+}
+
+function cronosReadErrorHttpStatus(error){
+  const value = Number(error?.httpStatus ?? error?.status ?? error?.statusCode);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function cronosIsTransientReadError(error){
+  const status = cronosReadErrorHttpStatus(error);
+  if(status === 408 || status === 425 || status === 429 || (status !== null && status >= 500)) return true;
+
+  const code = cronosReadErrorCode(error).toUpperCase();
+  if(/^08/.test(code)) return true;
+  if(["53300","53400","57014","57P01","57P02","57P03","PGRST000","PGRST001","PGRST002","PGRST003"].includes(code)) return true;
+  if(error?.name === "AbortError" || error?.name === "TimeoutError") return true;
+
+  const message = String(error?.message || error || "").toLowerCase();
+  return /failed to fetch|network|timeout|timed out|connection|gateway|temporar|indispon[ií]vel|fetch failed|load failed|too many requests|rate limit/.test(message);
+}
+
+function cronosRecordSafeReadDiagnostic(details={}){
+  CRONOS_SAFE_READ_DIAGNOSTICS.push({ at:new Date().toISOString(), ...details });
+  if(CRONOS_SAFE_READ_DIAGNOSTICS.length > 40) CRONOS_SAFE_READ_DIAGNOSTICS.splice(0, CRONOS_SAFE_READ_DIAGNOSTICS.length - 40);
+}
+
+function cronosSafeReadDelay(attempt){
+  const index = Math.max(0, Math.min(CRONOS_SAFE_READ_RETRY_DELAYS_MS.length - 1, Number(attempt || 1) - 1));
+  return CRONOS_SAFE_READ_RETRY_DELAYS_MS[index] || 700;
+}
+
+async function cronosRefreshPolicySession(){
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth?.refreshSession) return null;
+  try{
+    const { data, error } = await supabaseClient.auth.refreshSession();
+    if(error) throw error;
+    return data?.session || null;
+  }catch(error){
+    cronosRecordSafeReadDiagnostic({ label:"auth-session", phase:"refresh-failed", code:cronosReadErrorCode(error) || null });
+    return null;
+  }
+}
+
+async function cronosGetPolicySession(){
+  if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return null;
+  const current = await supabaseClient.auth.getSession().catch(()=>null);
+  if(current?.data?.session?.access_token) return current.data.session;
+  return await cronosRefreshPolicySession();
+}
+
+async function cronosRunSafeReadWithRetry(operation, options={}){
+  const label = String(options.label || "safe-read");
+  const maxAttempts = Math.max(1, Math.min(3, Number(options.maxAttempts || CRONOS_SAFE_READ_MAX_ATTEMPTS)));
+  let lastError = null;
+  let authRefreshed = false;
+
+  for(let attempt = 1; attempt <= maxAttempts; attempt++){
+    try{
+      const value = await operation({ attempt, maxAttempts });
+      cronosRecordSafeReadDiagnostic({ label, phase:"success", attempt, max_attempts:maxAttempts });
+      return value;
+    }catch(error){
+      lastError = error;
+      const status = cronosReadErrorHttpStatus(error);
+      const canRefreshAuth = options.refreshSessionOnUnauthorized === true && status === 401 && authRefreshed === false;
+      if(canRefreshAuth){
+        authRefreshed = true;
+        const refreshed = await cronosRefreshPolicySession();
+        if(refreshed?.access_token && typeof options.onSessionRefreshed === "function"){
+          try{ options.onSessionRefreshed(refreshed); }catch(_){ }
+        }
+      }
+
+      const retryable = canRefreshAuth || cronosIsTransientReadError(error);
+      cronosRecordSafeReadDiagnostic({
+        label,
+        phase:retryable && attempt < maxAttempts ? "retry" : "failed",
+        attempt,
+        max_attempts:maxAttempts,
+        http_status:status,
+        code:cronosReadErrorCode(error) || null
+      });
+
+      if(!retryable || attempt >= maxAttempts){
+        try{ error.cronosAttempts = attempt; }catch(_){ }
+        throw error;
+      }
+
+      if(typeof options.onRetry === "function"){
+        try{ options.onRetry({ attempt, maxAttempts, error }); }catch(_){ }
+      }
+      await new Promise(resolve=>setTimeout(resolve, cronosSafeReadDelay(attempt)));
+    }
+  }
+
+  throw lastError || new Error("Leitura indisponível.");
+}
+
+async function cronosFetchPolicyWithRetry(url, options={}, retryOptions={}){
+  let requestOptions = { ...options, headers:{ ...(options.headers || {}) } };
+  return await cronosRunSafeReadWithRetry(async ({ attempt })=>{
+    const response = await cronosFetchWithTimeout(url, requestOptions, retryOptions.timeoutMs || CRONOS_POLICY_TIMEOUT_MS);
+    const status = Number(response?.status || 0);
+    const hasAuthorization = !!requestOptions?.headers?.Authorization;
+
+    if(status === 401 && hasAuthorization){
+      const error = new Error("Sessão recusada durante a validação.");
+      error.httpStatus = 401;
+      throw error;
+    }
+    if(status === 408 || status === 425 || status === 429 || status >= 500){
+      const error = new Error(`Leitura temporariamente indisponível (HTTP ${status || "desconhecido"}).`);
+      error.httpStatus = status || null;
+      throw error;
+    }
+
+    try{ response.__cronosAttempts = attempt; }catch(_){ }
+    return response;
+  }, {
+    label:retryOptions.label || "policy-fetch",
+    maxAttempts:retryOptions.maxAttempts || CRONOS_SAFE_READ_MAX_ATTEMPTS,
+    refreshSessionOnUnauthorized:true,
+    onSessionRefreshed:(session)=>{
+      requestOptions = {
+        ...requestOptions,
+        headers:{ ...requestOptions.headers, Authorization:`Bearer ${session.access_token}` }
+      };
+    },
+    onRetry:retryOptions.onRetry
+  });
+}
+
+try{
+  window.CRONOS_RUN_SAFE_READ_WITH_RETRY = cronosRunSafeReadWithRetry;
+  window.CRONOS_SAFE_READ_DIAGNOSTICS = () => clonePolicyDiagnostic(CRONOS_SAFE_READ_DIAGNOSTICS);
+}catch(_){ }
 
 function clinicAccessValidationFailure(reason="ACCESS_VALIDATION_UNAVAILABLE"){
   return { __cronos_validation_error:true, error_code:String(reason || "ACCESS_VALIDATION_UNAVAILABLE") };
@@ -6620,16 +6762,24 @@ async function fetchClinicAccessState(force=false){
     return cachedAccess;
   }
   if(typeof supabaseClient === "undefined" || !supabaseClient?.auth) return clinicAccessValidationFailure("AUTH_CLIENT_UNAVAILABLE");
-  const sessionResp = await supabaseClient.auth.getSession().catch(()=>null);
-  const session = sessionResp?.data?.session;
-  if(!session?.access_token) return clinicAccessValidationFailure("AUTH_SESSION_UNAVAILABLE");
+  const session = await cronosGetPolicySession();
+  if(!session?.access_token){
+    recordClinicAccessDiagnostic({
+      phase:"failed",
+      completed_at:new Date().toISOString(),
+      http_status:null,
+      http_ok:false,
+      error:"Sessão autenticada indisponível para validar o acesso."
+    });
+    return clinicAccessValidationFailure("AUTH_SESSION_UNAVAILABLE");
+  }
 
   try{
     const requestedAt = new Date().toISOString();
     recordClinicAccessDiagnostic({ phase:"request", requested_at:requestedAt, http_status:null, http_ok:false });
     // As duas funções são independentes. Antes o contato de renovação só começava
     // depois da validação de acesso, acrescentando quase 1s ao caminho crítico.
-    const accessRequest = cronosFetchWithTimeout(`${supabaseUrl}/functions/v1/${ACCESS_STATUS_ENDPOINT}`, {
+    const accessRequest = cronosFetchPolicyWithRetry(`${supabaseUrl}/functions/v1/${ACCESS_STATUS_ENDPOINT}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -6637,6 +6787,17 @@ async function fetchClinicAccessState(force=false){
         "apikey": supabaseKey
       },
       body: JSON.stringify({})
+    }, {
+      label:"clinic-access",
+      onRetry:({ attempt, error })=>recordClinicAccessDiagnostic({
+        phase:"retrying",
+        requested_at:requestedAt,
+        attempt,
+        max_attempts:CRONOS_SAFE_READ_MAX_ATTEMPTS,
+        http_status:cronosReadErrorHttpStatus(error),
+        http_ok:false,
+        error:String(error?.message || error || "Falha temporária.")
+      })
     });
     const renewalRequest = fetchRenewalContact(session.access_token);
     const [res, renewalContact] = await Promise.all([accessRequest, renewalRequest]);
@@ -6652,7 +6813,8 @@ async function fetchClinicAccessState(force=false){
       payload_keys:json && typeof json === "object" && !Array.isArray(json) ? Object.keys(json).sort() : [],
       contract_version:String(json?.contract_version || "") || null,
       access_status:String(json?.access?.status || "") || null,
-      clinic_id:String(json?.access?.clinic_id || "") || null
+      clinic_id:String(json?.access?.clinic_id || "") || null,
+      attempts:Number(res?.__cronosAttempts || 1)
     };
     if(!res.ok){
       const httpError = new Error(json?.error || "Falha ao validar o período de acesso.");
@@ -6778,6 +6940,7 @@ function showAccessGate(decision){
   hideBootSplash();
   const access = decision?.access || {};
   const mode = decision?.mode || "blocked";
+  try{ window.__CRONOS_LAST_ACCESS_GATE_DECISION__ = clonePolicyDiagnostic(decision || {}); }catch(_){ }
 
   el("authView").classList.add("hidden");
   el("appView").classList.add("hidden");
@@ -6817,10 +6980,61 @@ function showAccessGate(decision){
       renewBtn.removeAttribute("href");
     }
   }
+
+  const retryBtn = el("btnGateRetry");
+  if(retryBtn){
+    retryBtn.classList.toggle("hidden", mode !== "unavailable");
+    retryBtn.disabled = false;
+    retryBtn.textContent = "Tentar novamente";
+    retryBtn.removeAttribute("aria-busy");
+  }
 }
 function hideAccessGate(){
   el("accessGateView")?.classList.add("hidden");
 }
+
+async function retryAccessGateValidation(){
+  if(__cronosAccessGateRetryPromise) return await __cronosAccessGateRetryPromise;
+
+  const retryBtn = el("btnGateRetry");
+  __cronosAccessGateRetryPromise = (async()=>{
+    if(retryBtn){
+      retryBtn.disabled = true;
+      retryBtn.textContent = "Revalidando...";
+      retryBtn.setAttribute("aria-busy", "true");
+    }
+    const gateText = el("accessGateText");
+    if(gateText) gateText.textContent = "Revalidando sua sessão, permissões e módulos com segurança...";
+
+    clearClinicAccessState();
+    cronosReleasePolicyPrefetch();
+    try{ window.CronosPermissions?.reset?.({ clearCache:false }); }catch(_){ }
+    try{ window.__resetFeatureAccess?.({ clearCache:false }); }catch(_){ }
+
+    try{
+      await boot({ actorAlreadySynced:false });
+      return el("accessGateView")?.classList.contains("hidden") === true;
+    }catch(error){
+      console.error("Cronos: revalidação manual do acesso falhou.", error);
+      showAccessGate({ mode:"unavailable", reason:"manual-retry" });
+      return false;
+    }
+  })();
+
+  try{
+    return await __cronosAccessGateRetryPromise;
+  }finally{
+    __cronosAccessGateRetryPromise = null;
+    if(retryBtn){
+      retryBtn.removeAttribute("aria-busy");
+      if(!retryBtn.classList.contains("hidden")){
+        retryBtn.disabled = false;
+        retryBtn.textContent = "Tentar novamente";
+      }
+    }
+  }
+}
+
 function applyClinicAccessDecision(access){
   const decision = evaluateClinicAccessState(access);
   if(decision.mode !== "allow"){
@@ -13797,6 +14011,54 @@ function cronosMergeMetaPayload(db){
   return meta;
 }
 
+let CRONOS_EXAM_LINK_DIAGNOSTIC = null;
+
+function cronosRecordExamLinkDiagnostic(details={}){
+  CRONOS_EXAM_LINK_DIAGNOSTIC = clonePolicyDiagnostic({
+    at:new Date().toISOString(),
+    rpc:"cronos_exam_entries_have_images",
+    ...details
+  });
+  try{ console.info("Cronos Exame Digital — validação de vínculos", CRONOS_EXAM_LINK_DIAGNOSTIC); }catch(_){ }
+}
+
+function cronosSupabaseReadFailure(error, status, statusText=""){
+  const wrapped = error instanceof Error
+    ? error
+    : new Error(String(error?.message || error || "Falha na leitura do Supabase."));
+  try{
+    if(error?.code) wrapped.code = error.code;
+    if(error?.details) wrapped.details = error.details;
+    if(error?.hint) wrapped.hint = error.hint;
+    const httpStatus = Number(status || error?.status || 0);
+    if(Number.isFinite(httpStatus) && httpStatus > 0) wrapped.httpStatus = httpStatus;
+    if(statusText) wrapped.statusText = String(statusText);
+  }catch(_){ }
+  return wrapped;
+}
+
+function cronosExamLinkFailureMessage(error){
+  const code = cronosReadErrorCode(error).toUpperCase();
+  const status = cronosReadErrorHttpStatus(error);
+  const message = String(error?.message || error || "").toLowerCase();
+
+  if(code === "PGRST202" || /schema cache|could not find.*function|function.*not found|cronos_exam_entries_have_images.*does not exist/.test(message)){
+    return "A validação do Exame Digital precisa ser atualizada no servidor. Nenhum dado foi alterado. (EXAM-RPC)";
+  }
+  if(code === "42501" || status === 401 || status === 403 || /permission denied|not authorized|jwt/.test(message)){
+    return "Sua sessão não recebeu permissão para validar o Exame Digital. Nenhum dado foi alterado. (EXAM-AUTH)";
+  }
+  if(code === "EXAM_INVALID_RESPONSE"){
+    return "O servidor devolveu uma resposta inválida para o Exame Digital. Nenhum dado foi alterado. (EXAM-CONTRACT)";
+  }
+  if(cronosIsTransientReadError(error)){
+    return "O servidor não respondeu após novas tentativas. Tente novamente em instantes. Nenhum dado foi alterado. (EXAM-TEMP)";
+  }
+  return "Não foi possível confirmar os vínculos do Exame Digital. Nenhum dado foi alterado. (EXAM-CHECK)";
+}
+
+try{ window.CRONOS_EXAM_LINK_DIAGNOSTICS = () => clonePolicyDiagnostic(CRONOS_EXAM_LINK_DIAGNOSTIC); }catch(_){ }
+
 function cronosRebindMergedReference(item, leadRemap, secondaryContactId, primaryContactId){
   if(!item || typeof item !== "object") return item;
   const leadFields = ["entryId", "leadId", "entry_id", "lead_id"];
@@ -13866,12 +14128,34 @@ async function cronosAllowPatientMutationWithoutOrphanImages(entryIds, actionLab
   const ids = Array.from(new Set((entryIds || []).map(id=>String(id || '').trim()).filter(Boolean)));
   if(!ids.length) return true;
   if(!supabaseClient || typeof supabaseClient.rpc !== 'function'){
+    cronosRecordExamLinkDiagnostic({ phase:"failed", code:"SUPABASE_CLIENT_UNAVAILABLE", entries:ids.length });
     toast('Operação bloqueada', 'Não foi possível validar as imagens do Exame Digital. Tente novamente com o Supabase disponível.');
     return false;
   }
   try{
-    const { data, error } = await supabaseClient.rpc('cronos_exam_entries_have_images', { p_entry_ids:ids });
-    if(error) throw error;
+    const data = await cronosRunSafeReadWithRetry(async ()=>{
+      const response = await supabaseClient.rpc('cronos_exam_entries_have_images', { p_entry_ids:ids });
+      if(response?.error) throw cronosSupabaseReadFailure(response.error, response.status, response.statusText);
+      return response?.data;
+    }, {
+      label:"exam-entry-links",
+      maxAttempts:CRONOS_SAFE_READ_MAX_ATTEMPTS,
+      refreshSessionOnUnauthorized:true,
+      onRetry:({ attempt, error })=>cronosRecordExamLinkDiagnostic({
+        phase:"retrying",
+        attempt,
+        max_attempts:CRONOS_SAFE_READ_MAX_ATTEMPTS,
+        entries:ids.length,
+        code:cronosReadErrorCode(error) || null,
+        http_status:cronosReadErrorHttpStatus(error)
+      })
+    });
+    if(data !== true && data !== false){
+      const contractError = new Error('A RPC do Exame Digital não retornou boolean.');
+      contractError.code = 'EXAM_INVALID_RESPONSE';
+      throw contractError;
+    }
+    cronosRecordExamLinkDiagnostic({ phase:"validated", entries:ids.length, has_images:data === true });
     if(data === true){
       toast(
         `${actionLabel || 'Operação'} bloqueada`,
@@ -13881,8 +14165,16 @@ async function cronosAllowPatientMutationWithoutOrphanImages(entryIds, actionLab
     }
     return data === false;
   }catch(error){
+    cronosRecordExamLinkDiagnostic({
+      phase:"failed",
+      entries:ids.length,
+      code:cronosReadErrorCode(error) || null,
+      http_status:cronosReadErrorHttpStatus(error),
+      attempts:Number(error?.cronosAttempts || 1),
+      message:String(error?.message || error || "Falha desconhecida.")
+    });
     console.error('Cronos: falha ao validar vínculos do Exame Digital.', error);
-    toast('Operação bloqueada', 'Não foi possível confirmar os vínculos do Exame Digital. Nenhum dado foi alterado.');
+    toast('Operação bloqueada', cronosExamLinkFailureMessage(error));
     return false;
   }
 }
@@ -17424,6 +17716,8 @@ function bindActions(){
   if(btnGateLogout) btnGateLogout.onclick = ()=>{
     cronosInstantLogout();
   };
+  const btnGateRetry = el("btnGateRetry");
+  if(btnGateRetry) btnGateRetry.onclick = ()=>retryAccessGateValidation();
   const btnCloseAccessNotice = el("btnCloseAccessNotice");
   if(btnCloseAccessNotice) btnCloseAccessNotice.onclick = hideAccessNotice;
   const btnAccessNoticeContinue = el("btnAccessNoticeContinue");
@@ -17881,6 +18175,9 @@ async function boot(options={}){
   }
 
   if(!aclValidated){
+    // A pré-validação pode ter começado durante a hidratação dos dados. Se a ACL
+    // falhar, não preserve uma Promise rejeitada para a tentativa manual seguinte.
+    cronosReleasePolicyPrefetch();
     showAccessGate({ mode:"unavailable", reason:"permissions" });
     return;
   }
@@ -18383,7 +18680,7 @@ async function ensureCloudDBLoaded(force=false){
 }
 
 async function ensureCloudDBForLoginWithRetry(maxAttempts=2){
-  const attempts = Math.max(1, Math.min(2, Number(maxAttempts || 2)));
+  const attempts = Math.max(1, Math.min(3, Number(maxAttempts || 2)));
   for(let attempt = 1; attempt <= attempts; attempt++){
     await ensureCloudDBLoaded(true);
 
@@ -19609,8 +19906,8 @@ async function fetchFeatureAccess(force, actorOverride){
           }
         }catch(_supportTokenError){ supportToken = ''; }
         if(!supportToken && typeof supabaseClient !== 'undefined' && supabaseClient?.auth){
-          const sessionResp = await supabaseClient.auth.getSession();
-          authToken = sessionResp?.data?.session?.access_token || '';
+          const session = await cronosGetPolicySession();
+          authToken = session?.access_token || '';
         }
         if(!authToken && !supportToken) throw new Error('Autoridade ausente ao validar módulos.');
 
@@ -19618,7 +19915,7 @@ async function fetchFeatureAccess(force, actorOverride){
         if(authToken) headers.Authorization = 'Bearer ' + authToken;
         try{ if(typeof supabaseKey !== 'undefined' && supabaseKey) headers['apikey'] = supabaseKey; }catch(_keyErr){}
 
-        const res = await cronosFetchWithTimeout(SUPABASE_FN_BASE + FEATURE_ACCESS_ENDPOINT, {
+        const res = await cronosFetchPolicyWithRetry(SUPABASE_FN_BASE + FEATURE_ACCESS_ENDPOINT, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -19626,6 +19923,17 @@ async function fetchFeatureAccess(force, actorOverride){
             owner_uid: ctx.owner_uid,
             owner_email: ctx.owner_email,
             ...(supportToken ? { support_token:supportToken } : {})
+          })
+        }, {
+          label:'feature-access',
+          onRetry:({ attempt, error })=>recordFeatureAccessDiagnostic({
+            ...diagnostic,
+            phase:'retrying',
+            attempt,
+            max_attempts:CRONOS_SAFE_READ_MAX_ATTEMPTS,
+            http_status:cronosReadErrorHttpStatus(error),
+            http_ok:false,
+            error:String(error?.message || error || 'Falha temporária.')
           })
         });
 
@@ -19638,6 +19946,7 @@ async function fetchFeatureAccess(force, actorOverride){
           http_status:Number.isFinite(Number(res.status)) ? Number(res.status) : null,
           http_ok:res.ok === true,
           status_text:String(res.statusText || ''),
+          attempts:Number(res?.__cronosAttempts || 1),
           ...inspection
         };
 
