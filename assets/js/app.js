@@ -13112,10 +13112,54 @@ function setLoadingButtonState(btn, isLoading){
 }
 
 async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
+  const previousAccessUiSuspended = window.__CRONOS_ACCESS_UI_SUSPENDED__ === true;
+  const previousAccessUiPending = window.__CRONOS_ACCESS_UI_PENDING__ === true;
+  let manualUiCommitted = false;
+  let policyPrefetchStarted = false;
+
+  const commitManualRefreshUi = (reason)=>{
+    window.__CRONOS_MANUAL_REFRESH_ACTIVE__ = false;
+    window.__CRONOS_ACCESS_UI_SUSPENDED__ = previousAccessUiSuspended;
+
+    if(previousAccessUiSuspended){
+      window.__CRONOS_ACCESS_UI_PENDING__ = previousAccessUiPending || window.__CRONOS_ACCESS_UI_PENDING__ === true;
+      return;
+    }
+
+    window.__CRONOS_ACCESS_UI_PENDING__ = false;
+    try{ reapplyAccessDrivenUI(currentActor(), { reason }); }
+    catch(error){ console.error("Cronos: falha ao consolidar a interface após atualizar.", error); }
+  };
+
   try{
     setLoadingButtonState(btn, true);
     const activeView = (typeof getCurrentMainView === "function") ? getCurrentMainView() : "dashboard";
+
+    // O refresh manual é transacional também na interface: ACL e Feature Access
+    // podem terminar em momentos diferentes, mas nenhuma política intermediária
+    // escreve "Bloq." nem oculta a tela que o usuário já estava utilizando.
+    window.__CRONOS_MANUAL_REFRESH_ACTIVE__ = true;
+    window.__CRONOS_ACCESS_UI_SUSPENDED__ = true;
+    window.__CRONOS_ACCESS_UI_PENDING__ = false;
+
     await refreshCloudDataNow({ force:true, reason: installmentsOnly ? "installments_button" : "manual_button" });
+
+    // ensureCloudDBLoaded inicia a política em paralelo com os dados. Antes de
+    // devolver a tela, aguardamos o commit autoritativo de módulos que já está
+    // em voo; assim o primeiro clique após F5 não observa um estado parcial.
+    const prefetchedPolicies = cronosStartPolicyPrefetch();
+    policyPrefetchStarted = true;
+    let featureAccessOk = window.CRONOS_FEATURE_ACCESS_STATUS?.().validated === true;
+    if(prefetchedPolicies.featurePromise){
+      featureAccessOk = await prefetchedPolicies.featurePromise;
+    }
+    const featureStatus = window.CRONOS_FEATURE_ACCESS_STATUS?.();
+    if(featureAccessOk !== true || featureStatus?.validated !== true){
+      throw new Error("Não foi possível validar os módulos após atualizar.");
+    }
+
+    commitManualRefreshUi("manual-refresh-policy-commit");
+    manualUiCommitted = true;
 
     // Atualizar é uma leitura da fonte oficial. Renderizamos apenas a área visível,
     // sem reconstruir todas as telas nem disparar rotinas de reparo/salvamento.
@@ -13127,6 +13171,10 @@ async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
         repairTasks:false
       });
     }else{
+      if(APP_VIEWS.includes(activeView) && typeof applyActiveViewShell === "function"){
+        closeAuxiliaryViews();
+        applyActiveViewShell(activeView);
+      }
       if(typeof renderActiveViewOnly === "function"){
         renderActiveViewOnly(activeView);
       }else{
@@ -13149,6 +13197,10 @@ async function runManualCloudRefresh(btn, { installmentsOnly=false } = {}){
         : "Não foi possível buscar os dados agora."
     );
   }finally{
+    if(policyPrefetchStarted) cronosReleasePolicyPrefetch();
+    if(!manualUiCommitted){
+      commitManualRefreshUi("manual-refresh-finished");
+    }
     setLoadingButtonState(btn, false);
   }
 }
@@ -19291,6 +19343,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let featureFetchPromise = null;
   let featureFetchContextKey = null;
   let activeFeatureContextKey = null;
+  let activeFeatureContext = null;
   let lastForegroundRefreshAt = 0;
   let featureGeneration = 0;
   let featureRevision = 0;
@@ -19685,7 +19738,26 @@ document.addEventListener("DOMContentLoaded", () => {
       showBlockedOverlay(activeView);
       return;
     }
+    const overlay = document.getElementById('featureBlockedOverlay');
+    const overlayWasShown = overlay?.classList.contains('show') === true;
     hideBlockedOverlay();
+
+    // showBlockedOverlay esconde todas as views nativas. Se uma validação
+    // posterior confirmar o módulo, remover apenas o overlay deixaria o centro
+    // da aplicação vazio até outro clique no menu. Restauramos a aba que já
+    // estava ativa somente quando foi este overlay que a ocultou.
+    if(overlayWasShown && activeView && getAppViewsList().includes(activeView) && canOpenModule(activeView)){
+      const activeNode = document.getElementById(`view-${activeView}`);
+      if(activeNode?.classList.contains('hidden')){
+        try{
+          if(typeof closeAuxiliaryViews === 'function') closeAuxiliaryViews();
+          if(typeof applyActiveViewShell === 'function') applyActiveViewShell(activeView);
+          if(typeof renderActiveViewOnly === 'function') renderActiveViewOnly(activeView);
+        }catch(error){
+          console.error('Cronos: falha ao restaurar o módulo após validar o acesso.', error);
+        }
+      }
+    }
   }
 
   function reapplyFeatureAccessUI(reason='manual'){
@@ -19846,13 +19918,45 @@ document.addEventListener("DOMContentLoaded", () => {
     return '';
   }
 
+  function normalizedFeatureContext(ctx){
+    return {
+      clinic_id:String(ctx?.clinic_id || '').trim() || null,
+      owner_uid:String(ctx?.owner_uid || '').trim() || null,
+      owner_email:String(ctx?.owner_email || '').trim().toLowerCase() || null
+    };
+  }
+
+  function featureContextsEquivalent(leftContext, rightContext){
+    const left = normalizedFeatureContext(leftContext);
+    const right = normalizedFeatureContext(rightContext);
+    let matchedIdentity = false;
+
+    for(const field of ['clinic_id','owner_uid','owner_email']){
+      if(!left[field] || !right[field]) continue;
+      if(left[field] !== right[field]) return false;
+      matchedIdentity = true;
+    }
+    return matchedIdentity;
+  }
+
+  function mergeEquivalentFeatureContexts(previousContext, nextContext){
+    const previous = normalizedFeatureContext(previousContext);
+    const next = normalizedFeatureContext(nextContext);
+    return {
+      clinic_id:next.clinic_id || previous.clinic_id,
+      owner_uid:next.owner_uid || previous.owner_uid,
+      owner_email:next.owner_email || previous.owner_email
+    };
+  }
+
 async function fetchFeatureAccess(force, actorOverride){
-    const ctx = resolveFeatureContext(actorOverride);
+    let ctx = normalizedFeatureContext(resolveFeatureContext(actorOverride));
     if(!ctx.clinic_id && !ctx.owner_uid && !ctx.owner_email){
-      const mustInvalidate = activeFeatureContextKey !== null || featureAccessValidated || featureStateMap.size || featureFetchPromise;
+      const mustInvalidate = activeFeatureContextKey !== null || activeFeatureContext !== null || featureAccessValidated || featureStateMap.size || featureFetchPromise;
       if(mustInvalidate){
         featureGeneration += 1;
         activeFeatureContextKey = null;
+        activeFeatureContext = null;
         featureFetchPromise = null;
         featureFetchContextKey = null;
         lastResolvedContextKey = null;
@@ -19872,19 +19976,45 @@ async function fetchFeatureAccess(force, actorOverride){
       return false;
     }
 
-    const ctxKey = canonicalFeatureContextKey(ctx);
-    if(activeFeatureContextKey !== ctxKey){
-      // Só uma troca REAL de identidade clínica invalida imediatamente o estado.
-      // owner_uid/owner_email podem completar-se após o boot ou ao retomar a aba
-      // sem que isso represente outra clínica.
-      featureGeneration += 1;
-      activeFeatureContextKey = ctxKey;
-      featureFetchPromise = null;
-      featureFetchContextKey = null;
-      featureAccessValidated = false;
-      featureStateMap.clear();
-      lastResolvedContextKey = null;
-      publishFeatureAccessState('context-changed');
+    let ctxKey = canonicalFeatureContextKey(ctx);
+    const sameKeyButConflictingIdentity = activeFeatureContextKey === ctxKey &&
+      activeFeatureContext !== null && !featureContextsEquivalent(activeFeatureContext, ctx);
+
+    if(activeFeatureContextKey !== ctxKey || sameKeyButConflictingIdentity){
+      const isSameClinicEnriched = featureAccessValidated === true &&
+        featureContextsEquivalent(activeFeatureContext, ctx);
+
+      if(isSameClinicEnriched){
+        const previousContextKey = activeFeatureContextKey;
+        ctx = mergeEquivalentFeatureContexts(activeFeatureContext, ctx);
+        ctxKey = canonicalFeatureContextKey(ctx);
+        activeFeatureContext = normalizedFeatureContext(ctx);
+        activeFeatureContextKey = ctxKey;
+        if(lastResolvedContextKey) lastResolvedContextKey = ctxKey;
+        try{
+          console.info('Cronos: contexto de módulos enriquecido sem invalidar a clínica ativa.', {
+            previous_context_key:previousContextKey,
+            context_key:ctxKey
+          });
+        }catch(_){ }
+      }else{
+        // Somente uma troca REAL de identidade clínica invalida o estado. A
+        // descoberta posterior do clinic_id para o mesmo owner é enriquecimento,
+        // não uma nova clínica.
+        featureGeneration += 1;
+        activeFeatureContextKey = ctxKey;
+        activeFeatureContext = normalizedFeatureContext(ctx);
+        featureFetchPromise = null;
+        featureFetchContextKey = null;
+        featureAccessValidated = false;
+        featureStateMap.clear();
+        lastResolvedContextKey = null;
+        publishFeatureAccessState('context-changed');
+      }
+    }else{
+      activeFeatureContext = featureContextsEquivalent(activeFeatureContext, ctx)
+        ? mergeEquivalentFeatureContexts(activeFeatureContext, ctx)
+        : normalizedFeatureContext(ctx);
     }
 
     if(!force && featureAccessValidated && lastResolvedContextKey === ctxKey) return true;
@@ -19973,8 +20103,16 @@ async function fetchFeatureAccess(force, actorOverride){
 
         if(generation !== featureGeneration || activeFeatureContextKey !== ctxKey) return false;
         const applied = applyFeaturePayload(data.features);
-        writeFeatureCache(ctx, data.features);
-        lastResolvedContextKey = ctxKey;
+        const resolvedContext = normalizedFeatureContext({
+          clinic_id:inspection.response_context.clinic_id || ctx.clinic_id,
+          owner_uid:inspection.response_context.owner_uid || ctx.owner_uid,
+          owner_email:inspection.response_context.owner_email || ctx.owner_email
+        });
+        const resolvedContextKey = canonicalFeatureContextKey(resolvedContext) || ctxKey;
+        activeFeatureContext = resolvedContext;
+        activeFeatureContextKey = resolvedContextKey;
+        writeFeatureCache(resolvedContext, data.features);
+        lastResolvedContextKey = resolvedContextKey;
         featureAccessValidated = true;
         recordFeatureAccessDiagnostic({
           ...diagnostic,
@@ -20230,6 +20368,7 @@ async function fetchFeatureAccess(force, actorOverride){
     featureFetchPromise = null;
     featureFetchContextKey = null;
     activeFeatureContextKey = null;
+    activeFeatureContext = null;
     lastFeatureAccessDiagnostic = null;
     lastResolvedContextKey = null;
     lastForegroundRefreshAt = 0;

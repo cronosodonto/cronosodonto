@@ -1,10 +1,10 @@
-# Cronos Odonto — V463.2.4 RC5.19.1
+# Cronos Odonto — V463.2.4 RC5.19.2
 
-Patch visual incremental construído sobre a RC5.19. A tela de progresso agora
-permanece visível entre o login e o primeiro quadro pronto do sistema, e a
-galeria do Exame Digital diferencia carregamento, vazio real e falha. Consulte
-`V463_2_4_RC5_19_1_RELEASE.md`. Esta etapa não exige novo SQL nem republicação
-de Edge Functions.
+Patch incremental construído sobre a RC5.19.1. O primeiro clique em
+**Atualizar** após um F5 agora mantém o contexto da mesma clínica, aguarda a
+validação de módulos como uma única operação e restaura a tela ativa sem falso
+bloqueio nem área vazia. Consulte `V463_2_4_RC5_19_2_RELEASE.md`. Esta etapa não
+exige novo SQL nem republicação de Edge Functions.
 
 Sistema de gestão comercial e financeira para clínicas odontológicas.
 
