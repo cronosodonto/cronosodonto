@@ -10122,6 +10122,7 @@ function refreshAuthMasters(){
 function showAuth(){
   cronosSetInitialUiShield(false);
   window.__CRONOS_ACCESS_UI_SUSPENDED__ = false;
+  try{ window.CRONOS_CLEAR_FICHA_VIEW?.(); }catch(_){ }
   hideBootSplash();
   window.__CRONOS_SESSION_CHECKING__ = false;
   window.__CRONOS_BOOTING__ = false;
@@ -13426,6 +13427,15 @@ function applyActiveViewShell(targetView){
       node.style.display = "";
     }
   });
+
+  const fichaView = el("view-ficha");
+  if(fichaView){
+    fichaView.classList.add("hidden");
+    fichaView.style.display = "none";
+  }
+  const fichaHost = el("fichaViewApp");
+  if(fichaHost) fichaHost.innerHTML = "";
+  window.__CRONOS_FICHA_ENTRY_ID__ = null;
 
   const sticky = el("stickyFilters");
   if(sticky){
@@ -19577,6 +19587,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const node = document.getElementById(`view-${v}`);
       if(node) node.classList.add('hidden');
     });
+    const fichaView = document.getElementById('view-ficha');
+    if(fichaView){
+      fichaView.classList.add('hidden');
+      fichaView.style.display = 'none';
+    }
+    const fichaHost = document.getElementById('fichaViewApp');
+    if(fichaHost) fichaHost.innerHTML = '';
+    window.__CRONOS_FICHA_ENTRY_ID__ = null;
     ['view-todayCronos','view-creditSimulator','view-performance'].forEach(id => {
       const node = document.getElementById(id);
       if(node){
@@ -22312,7 +22330,6 @@ window.CRONOS_PROC_UI = {
             return `<button type="button" class="faceChip ${active ? 'active' : ''}" ${enabled ? '' : 'disabled'} onclick="CRONOS_FICHA_UI.toggleFaceChip('${escapeHTML(value)}')">${escapeHTML(opt.label)}</button>`;
           }).join('')}
         </div>
-        <div class="faceSelectedText">${enabled ? (hasFaces ? `Selecionado: <b>${escapeHTML(Array.from(selected).join(', '))}</b>` : 'Sem face selecionada.') : 'Este procedimento não exige face.'}</div>
       `;
     }
     function normalizeProcSearchText(v){
@@ -22710,10 +22727,12 @@ window.CRONOS_PROC_UI = {
         ${buildFichaHeader(entry, contact)}
 
         <div class="odontoFull">
-          <div class="sectionTitle fichaSectionTitleV55">Odontograma</div>
-          <div class="dentitionToggle" role="group" aria-label="Tipo de dentição">
-            <button type="button" class="${activeDentition === 'permanent' ? 'active' : ''}" onclick="CRONOS_FICHA_UI.setDentitionType('permanent')">Dentes permanentes</button>
-            <button type="button" class="${activeDentition === 'deciduous' ? 'active' : ''}" onclick="CRONOS_FICHA_UI.setDentitionType('deciduous')">Dentes decíduos</button>
+          <div class="odontoTitleRowV521">
+            <div class="sectionTitle fichaSectionTitleV55">Odontograma</div>
+            <div class="dentitionToggle" role="group" aria-label="Tipo de dentição">
+              <button type="button" class="${activeDentition === 'permanent' ? 'active' : ''}" onclick="CRONOS_FICHA_UI.setDentitionType('permanent')">Dentes permanentes</button>
+              <button type="button" class="${activeDentition === 'deciduous' ? 'active' : ''}" onclick="CRONOS_FICHA_UI.setDentitionType('deciduous')">Dentes decíduos</button>
+            </div>
           </div>
           <div class="odontoGrid">
             <div>
@@ -22748,25 +22767,25 @@ window.CRONOS_PROC_UI = {
                 <div><span class="muted">Dentição</span><b>${dentitionLabel(activeDentition)}</b></div>
                 <div><span class="muted">Itens ligados</span><b>${selectedPlanCount}</b></div>
               </div>
-              <div style="margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,.025)">
-                <div class="small muted">Avaliação ativa para novos procedimentos</div>
-                <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px">
-                  <div style="display:flex;flex-direction:column;gap:4px">
+              <div class="fichaEvaluationBoxV523">
+                <div class="small muted fichaEvaluationTitleV523">Avaliação ativa para novos procedimentos</div>
+                <div class="fichaEvaluationRowV523">
+                  <div class="fichaEvaluationFieldV523 fichaEvaluationSelectFieldV523">
                     <span class="small muted">Avaliação</span>
-                    <select id="fichaEvalSelect" ${evaluationSelectDisabled ? 'disabled' : ''} style="max-width:220px;${evaluationSelectDisabled ? 'opacity:.55;filter:grayscale(.35);cursor:not-allowed' : ''}" onchange="CRONOS_FICHA_UI.setActiveEvaluation(this.value)">
+                    <select id="fichaEvalSelect" ${evaluationSelectDisabled ? 'disabled' : ''} style="${evaluationSelectDisabled ? 'opacity:.55;filter:grayscale(.35);cursor:not-allowed' : ''}" onchange="CRONOS_FICHA_UI.setActiveEvaluation(this.value)">
                       ${ficha.avaliacoes.map(av=>`<option value="${escapeHTML(av.id)}" ${String(av.id)===String(activeEvaluation.id) ? 'selected' : ''}>${escapeHTML(av.label)} • ${/^\d{4}-\d{2}-\d{2}$/.test(String(av.date || '')) ? fmtBR(av.date) : 'data pendente'}</option>`).join('')}
                     </select>
                   </div>
-                  <div style="display:flex;flex-direction:column;gap:4px">
+                  <div class="fichaEvaluationFieldV523 fichaEvaluationDateFieldV523">
                     <span class="small muted">Data da avaliação</span>
-                    <input id="fichaEvalDate" type="date" value="${escapeHTML(activeEvaluation.date || '')}" onchange="CRONOS_FICHA_UI.changeEvaluationDate(this.value)" style="width:170px">
+                    <input id="fichaEvalDate" type="date" value="${escapeHTML(activeEvaluation.date || '')}" onchange="CRONOS_FICHA_UI.changeEvaluationDate(this.value)">
                   </div>
-                  <button type="button" class="miniBtn" ${evaluationSelectDisabled ? 'disabled title="Defina primeiro a data da avaliação"' : ''} onclick="CRONOS_FICHA_UI.newEvaluation()">Nova avaliação</button>
+                  <button type="button" class="miniBtn fichaNewEvaluationBtnV523" ${evaluationSelectDisabled ? 'disabled title="Defina primeiro a data da avaliação"' : ''} onclick="CRONOS_FICHA_UI.newEvaluation()">Nova avaliação</button>
                 </div>
-                <div class="small" style="margin-top:8px;color:${activeEvaluationHasDate ? (activeEvaluation.provisional === true ? '#f59e0b' : 'var(--muted)') : '#94a3b8'}">${escapeHTML(evaluationDateHint)}</div>
               </div>
               ${selectedTeeth.length ? `<div class="toothChipRow">${selectedTeeth.map(tooth=>`<span class="toothChip">${tooth} • ${deriveToothType(tooth)}</span>`).join('')}</div>` : `<div class="small muted" style="margin-top:8px">Nenhum dente selecionado ainda.</div>`}
 
+              <div class="fichaProcCompactV524">
               <label>Procedimento</label>
               <div class="procPickerWrap">
                 <input id="fichaProcPicker" autocomplete="off" value="${escapeHTML(procInputValue)}" placeholder="Digite para filtrar o procedimento" onfocus="CRONOS_FICHA_UI.openProcMenu(false)" oninput="CRONOS_FICHA_UI.pickProcByText(this.value)">
@@ -22775,8 +22794,9 @@ window.CRONOS_PROC_UI = {
                   ${procMenuHTML}
                 </div>
               </div>
+              </div>
 
-              <div class="sideFormGrid">
+              <div class="sideFormGrid fichaValuesCompactV524">
                 <div>
                   <label>Valor do paciente</label>
                   <input type="number" step="0.01" value="${escapeHTML(selectedPrice)}" oninput="CRONOS_FICHA_UI.setPrice(this.value)" placeholder="0,00">
@@ -22788,7 +22808,6 @@ window.CRONOS_PROC_UI = {
                 <div class="full">
                   <label>Face(s)</label>
                   ${getFaceChipsHTML(state.selectedFace || '', !!selectedProc?.exigeFace)}
-                  <div class="small muted" style="margin-top:6px">${selectedProc?.exigeFace ? 'Clique nas faces para marcar ou desmarcar. Pode selecionar mais de uma.' : 'Este procedimento não exige face.'}</div>
                 </div>
               </div>
 
@@ -23443,32 +23462,30 @@ window.CRONOS_PROC_UI = {
           try{ el('fichaEvalDate')?.focus(); el('fichaEvalDate')?.showPicker?.(); }catch(_){}
           return;
         }
-        const suggestedDate = getLatestAppointmentDateForEntry(entry, db);
-        const date = prompt('Data da nova avaliação (AAAA-MM-DD):', suggestedDate || '');
+        // RC5.34: uma NOVA avaliação deve nascer com a data local atual
+        // do momento do clique. Não herda data da avaliação anterior nem
+        // reaproveita data de agendamento antigo; a data segue editável no seletor.
+        const suggestedDate = todayISO();
+        const date = prompt('Data da nova avaliação (AAAA-MM-DD):', suggestedDate);
         if(!date) return;
         if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Data inválida', 'Use o formato AAAA-MM-DD.');
-        const canReuseCurrent = current && !fichaEvaluationHasClinicalContent(ficha, current.id);
-        let av;
-        let reused = false;
-        if(canReuseCurrent){
-          av = current;
-          updateFichaEvaluationDate(ficha, av.id, date);
-          av.dentitionType = normalizeDentitionType(av.dentitionType || getFichaDentitionType(ficha, entry));
-          reused = true;
-        }else{
-          av = {
-            id: uid('eval'),
-            label: nextFichaEvaluationLabel(ficha),
-            date,
-            dentitionType:getFichaDentitionType(ficha, entry),
-            observacoes:'',
-            provisional:false,
-            dateSource:'manual',
-            dateConfirmedAt:new Date().toISOString(),
-            createdAt:new Date().toISOString()
-          };
-          ficha.avaliacoes.push(av);
-        }
+        // RC5.33: "Nova avaliação" deve SEMPRE criar uma ficha independente.
+        // Corrigir a data da avaliação atual é responsabilidade exclusiva do campo
+        // "Data da avaliação". Nunca reaproveitamos uma avaliação vazia aqui, pois
+        // isso fazia o botão apenas trocar a data do plano atual em vez de preservar
+        // o histórico e iniciar um novo plano de tratamento em branco.
+        const av = {
+          id: uid('eval'),
+          label: nextFichaEvaluationLabel(ficha),
+          date,
+          dentitionType:getFichaDentitionType(ficha, entry),
+          observacoes:'',
+          provisional:false,
+          dateSource:'manual',
+          dateConfirmedAt:new Date().toISOString(),
+          createdAt:new Date().toISOString()
+        };
+        ficha.avaliacoes.push(av);
         ficha.activeEvaluationId = av.id;
         s.activeEvaluationId = String(av.id);
         s.activeDentitionType = normalizeDentitionType(av.dentitionType || getFichaDentitionType(ficha, entry));
@@ -23479,10 +23496,8 @@ window.CRONOS_PROC_UI = {
           db,
           entry,
           before,
-          reused ? 'Data da avaliação ajustada ✅' : 'Nova avaliação criada ✅',
-          reused
-            ? `${av.label} vazia foi reaproveitada em ${fmtBR(date)}.`
-            : `${av.label} • ${fmtBR(date)}`
+          'Nova avaliação criada ✅',
+          `${av.label} • ${fmtBR(date)} • plano de tratamento iniciado em branco.`
         );
         if(!ok) renderFichaApp();
       },
@@ -23712,22 +23727,101 @@ window.CRONOS_PROC_UI = {
 
     window.__cronosRenderFichaApp = renderFichaApp;
 
+    window.__CRONOS_FICHA_RETURN_VIEW__ = window.__CRONOS_FICHA_RETURN_VIEW__ || "leads";
+    window.__CRONOS_FICHA_ENTRY_ID__ = window.__CRONOS_FICHA_ENTRY_ID__ || null;
+
     window.openFicha = function(entryId){
       ensureProcedureCatalogSeeded();
       const st = setupFichaState(entryId);
       if(!st) return toast('Prontuário', 'Lead não encontrado.');
+
       const entry = getEntryById(entryId);
       const contact = getContactForEntry(entry);
-      openModal({
-        title:'Prontuário do paciente',
-        sub:`${contact?.name || entry?.name || 'Lead'} • ${isFichaReadOnlyForActor(currentActor()) ? 'visualização comercial / impressão' : 'plano de tratamento, valores e odontograma'}`,
-        bodyHTML:'<div id="fichaApp" style="width:100%"></div>',
-        footHTML:`<button class="btn fichaPrintBtn" onclick="printFicha('${escapeHTML(String(entryId))}')">Imprimir prontuário</button><button type="button" class="btn" onclick="closeModal()">Fechar</button>`,
-        onMount: renderFichaApp,
-        maxWidth:'min(99vw, 1880px)',
-        width:'min(99vw, 1880px)',
-        modalClass:'modalFichaWide'
+      const currentView = getCurrentMainView();
+
+      if(currentView && APP_VIEWS.includes(currentView)){
+        window.__CRONOS_FICHA_RETURN_VIEW__ = currentView;
+      }else if(!window.__CRONOS_FICHA_RETURN_VIEW__){
+        window.__CRONOS_FICHA_RETURN_VIEW__ = "leads";
+      }
+      window.__CRONOS_FICHA_ENTRY_ID__ = String(entryId);
+
+      closeAuxiliaryViews();
+
+      APP_VIEWS.forEach(v=>{
+        const node = el(`view-${v}`);
+        if(node){
+          node.classList.add("hidden");
+          node.style.display = "none";
+        }
       });
+
+      const sticky = el("stickyFilters");
+      if(sticky){
+        sticky.classList.add("hidden");
+        sticky.style.display = "none";
+      }
+
+      const view = el("view-ficha");
+      const host = el("fichaViewApp");
+      if(!view || !host) return toast('Prontuário', 'Não foi possível abrir a tela.');
+
+      host.innerHTML = '<div id="fichaApp" style="width:100%"></div>';
+
+      const subtitle = el("fichaViewSubtitle");
+      if(subtitle){
+        subtitle.textContent = `${contact?.name || entry?.name || 'Lead'} • ${isFichaReadOnlyForActor(currentActor()) ? 'visualização comercial / impressão' : 'plano de tratamento, valores e odontograma'}`;
+      }
+
+      const returnView = window.__CRONOS_FICHA_RETURN_VIEW__ || "leads";
+      const backLabel = el("fichaBackLabel");
+      if(backLabel){
+        const labels = {
+          leads:"Voltar para Leads",
+          kanban:"Voltar para Funil",
+          dashboard:"Voltar para Dashboard",
+          tasks:"Voltar para Tarefas",
+          todayCronos:"Voltar"
+        };
+        backLabel.textContent = labels[returnView] || "Voltar";
+      }
+
+      const printBtn = el("btnFichaViewPrint");
+      if(printBtn){
+        printBtn.onclick = ()=>window.printFicha && window.printFicha(String(entryId));
+      }
+
+      // Mantemos o item de origem destacado na sidebar para dar contexto.
+      syncCronosNavActive(b=>b.dataset.view === returnView);
+
+      view.classList.remove("hidden");
+      view.style.display = "";
+      try{ window.scrollTo({top:0, behavior:"instant"}); }catch(_){ try{ window.scrollTo(0,0); }catch(__){} }
+
+      renderFichaApp();
+    };
+
+    window.CRONOS_CLEAR_FICHA_VIEW = function(){
+      const view = el("view-ficha");
+      const host = el("fichaViewApp");
+      if(view){
+        view.classList.add("hidden");
+        view.style.display = "none";
+      }
+      if(host) host.innerHTML = "";
+      window.__CRONOS_FICHA_ENTRY_ID__ = null;
+    };
+
+    window.CRONOS_CLOSE_FICHA_VIEW = function(){
+      window.CRONOS_CLEAR_FICHA_VIEW();
+
+      const target = window.__CRONOS_FICHA_RETURN_VIEW__ || "leads";
+
+      if(APP_VIEWS.includes(target)){
+        setActiveView(target);
+      }else{
+        setActiveView("leads");
+      }
     };
 
     window.CRONOS_OPEN_FICHA_BTN = function(ev, entryId){

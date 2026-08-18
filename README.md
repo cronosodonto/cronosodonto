@@ -1,10 +1,12 @@
-# Cronos Odonto — V463.2.4 RC5.19.2
+# Cronos Odonto — V463.2.4 RC5.19.3
 
-Patch incremental construído sobre a RC5.19.1. O primeiro clique em
-**Atualizar** após um F5 agora mantém o contexto da mesma clínica, aguarda a
-validação de módulos como uma única operação e restaura a tela ativa sem falso
-bloqueio nem área vazia. Consulte `V463_2_4_RC5_19_2_RELEASE.md`. Esta etapa não
-exige novo SQL nem republicação de Edge Functions.
+Patch incremental construído sobre a RC5.19.2 autoritativa. Incorpora somente o
+novo Prontuário do Paciente da RC5.32: página integrada, odontograma, avaliações,
+plano de tratamento, resumo financeiro, galeria, observações e os estilos claro
+e escuro. As correções posteriores de autenticação, permissões, atualização
+atômica, câmera e persistência permanecem na implementação da base. Consulte
+`V463_2_4_RC5_19_3_RELEASE.md`. Esta etapa não exige SQL nem republicação de Edge
+Functions.
 
 Sistema de gestão comercial e financeira para clínicas odontológicas.
 

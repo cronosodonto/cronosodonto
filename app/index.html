@@ -19,6 +19,7 @@
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link href="../assets/css/app.css?build=v451-user-action-feedback-20260730" rel="stylesheet"/>
+<link href="../assets/css/prontuario-rc5-32.css?build=v463-2-4-rc5-19-3-prontuario-rc5-32-20260818" rel="stylesheet"/>
 <link href="../assets/css/intraoral-camera.css?build=v463-2-4-rc5-19-1-loading-states-20260818" rel="stylesheet"/>
 
 <style id="cronos-v101-leads-footer-darkref">
@@ -791,6 +792,29 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 </div>
 <div id="leadsPagination" class="leadsPaginationModern"></div>
 </div></section>
+
+<!-- Prontuário dedicado -->
+<section class="hidden cronosFichaView" id="view-ficha">
+  <div class="cronosFichaViewHead">
+    <div class="cronosFichaViewHeadLeft">
+      <button type="button" class="btn cronosFichaBackBtn" id="btnFichaBack" onclick="CRONOS_CLOSE_FICHA_VIEW()">
+        <span aria-hidden="true">←</span>
+        <span id="fichaBackLabel">Voltar para Leads</span>
+      </button>
+      <div class="titleBlock cronosFichaViewTitle">
+        <h2>Prontuário do paciente</h2>
+        <p id="fichaViewSubtitle">Plano de tratamento, valores e odontograma.</p>
+      </div>
+    </div>
+    <div class="actions cronosFichaViewActions">
+      <button class="btn fichaPrintBtn" id="btnFichaViewPrint" type="button">Imprimir prontuário</button>
+    </div>
+  </div>
+  <div class="cronosFichaViewBody">
+    <div id="fichaViewApp"></div>
+  </div>
+</section>
+
 <!-- Funil comercial -->
 <section class="hidden" id="view-kanban">
 <div class="topbar">
@@ -1219,7 +1243,7 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 
 <script src="../assets/js/core/cronos-repository.js?build=v4-8-0-v448-quarantine-lock-20260730"></script>
 <script src="../assets/js/core/cronos-permissions.js?build=v463-2-4-rc5-19-access-resilience-20260818"></script>
-<script src="../assets/js/app.js?build=v463-2-4-rc5-19-2-atomic-refresh-20260818"></script>
+<script src="../assets/js/app.js?build=v463-2-4-rc5-19-3-prontuario-rc5-32-20260818"></script>
 <script src="../assets/js/intraoral-camera.js?build=v463-2-4-rc5-19-1-loading-states-20260818"></script>
 <script src="../assets/js/hoje_no_cronos.js?build=v463-2-4-aux-freeze-20260813"></script>
 <script src="../assets/js/cronos_fluxos.js?build=public"></script>
