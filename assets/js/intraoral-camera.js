@@ -10,7 +10,7 @@ const S={
   selected:new Set(),lightboxIndex:0,evaluationId:'',galleryEvaluationId:'',editImageId:'',
   editTeeth:new Set(),mode:'gallery',noteTimer:null,contextVersion:0,viewActive:false,
   returnView:'dashboard',viewObserver:null,learning:null,captureBusy:false,lastPhysicalCaptureAt:0,
-  cameraRequestVersion:0
+  cameraRequestVersion:0,galleryLoading:false,galleryLoadError:''
 };
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
@@ -61,6 +61,7 @@ function clearPatientState({stopCamera=false,clearSearch=true}={}){
   clearTimeout(S.noteTimer);S.noteTimer=null;
   S.patient=null;S.session=[];S.stored=[];S.selected.clear();S.lightboxIndex=0;
   S.evaluationId='';S.galleryEvaluationId='';S.editImageId='';S.editTeeth.clear();S.captureBusy=false;
+  S.galleryLoading=false;S.galleryLoadError='';
   if(stopCamera)stop();
   clearLightbox();
   const search=$('intraoralPatientSearch');if(search&&clearSearch)search.value='';
@@ -456,31 +457,43 @@ async function uploadFiles(files){
 function blobDataUrl(b){return new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(b)})}
 function dataUrlBlob(u){const [h,b]=u.split(','),mime=/data:([^;]+)/.exec(h)?.[1]||'image/jpeg',bin=atob(b),a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return new Blob([a],{type:mime})}
 async function loadStored(){
-  if(!S.patient||!can('exam.view')){S.stored=[];render();return}
+  if(!S.patient||!can('exam.view')){
+    S.stored=[];S.galleryLoading=false;S.galleryLoadError='';render();return
+  }
   const version=S.contextVersion,patientEntryId=pkey(),mode=S.mode;
   const filter=mode==='gallery'?S.galleryEvaluationId:S.evaluationId;
   const isCurrent=()=>version===S.contextVersion&&patientEntryId===pkey()&&mode===S.mode&&filter===(S.mode==='gallery'?S.galleryEvaluationId:S.evaluationId);
-  let q=client().from('cronos_exam_images').select('*').eq('owner_uid',owner()).eq('patient_entry_id',patientEntryId).is('deleted_at',null);
-  if(filter&&filter!=='__all__')q=q.eq('evaluation_id',filter);
-  const {data,error}=await q.order('captured_at',{ascending:false});
-  if(!isCurrent())return;
-  if(error){console.warn(error);status('Não foi possível carregar a galeria.');return}
-  const ids=(data||[]).map(x=>x.id);
-  let toothRows=[];
-  if(ids.length){
-    const tr=await client().from('cronos_exam_image_teeth').select('image_id,tooth_number').in('image_id',ids);
+  S.galleryLoading=true;S.galleryLoadError='';render();
+  try{
+    let q=client().from('cronos_exam_images').select('*').eq('owner_uid',owner()).eq('patient_entry_id',patientEntryId).is('deleted_at',null);
+    if(filter&&filter!=='__all__')q=q.eq('evaluation_id',filter);
+    const {data,error}=await q.order('captured_at',{ascending:false});
     if(!isCurrent())return;
-    if(!tr.error)toothRows=tr.data||[];
+    if(error)throw error;
+    const ids=(data||[]).map(x=>x.id);
+    let toothRows=[];
+    if(ids.length){
+      const tr=await client().from('cronos_exam_image_teeth').select('image_id,tooth_number').in('image_id',ids);
+      if(!isCurrent())return;
+      if(!tr.error)toothRows=tr.data||[];
+    }
+    const byImage={};
+    toothRows.forEach(t=>(byImage[t.image_id]??=[]).push(String(t.tooth_number)));
+    const stored=await Promise.all((data||[]).map(async x=>{
+      const {data:s}=await client().storage.from(BUCKET).createSignedUrl(x.storage_path,3600);
+      return{...x,teeth:byImage[x.id]||[],url:s?.signedUrl||''}
+    }));
+    if(!isCurrent())return;
+    S.stored=stored;S.galleryLoading=false;S.galleryLoadError='';
+    render();renderPhotoEditor();
+  }catch(error){
+    if(!isCurrent())return;
+    console.warn(error);
+    S.galleryLoading=false;
+    S.galleryLoadError='Não foi possível carregar as imagens agora.';
+    status('Não foi possível carregar a galeria.');
+    render();
   }
-  const byImage={};
-  toothRows.forEach(t=>(byImage[t.image_id]??=[]).push(String(t.tooth_number)));
-  const stored=await Promise.all((data||[]).map(async x=>{
-    const {data:s}=await client().storage.from(BUCKET).createSignedUrl(x.storage_path,3600);
-    return{...x,teeth:byImage[x.id]||[],url:s?.signedUrl||''}
-  }));
-  if(!isCurrent())return;
-  S.stored=stored;
-  render();renderPhotoEditor();
 }
 async function saveSession(){if(!S.patient||!S.session.length)return;if(!can('exam.capture'))return alert('Sem permissão para salvar exames.');status('Salvando imagens...');for(const x of [...S.session]){const path=`${owner()}/${pkey()}/${new Date(x.createdAt).toISOString().slice(0,10)}/${crypto.randomUUID()}.jpg`,blob=dataUrlBlob(x.dataUrl);let r=await client().storage.from(BUCKET).upload(path,blob,{contentType:'image/jpeg',upsert:false});if(r.error)throw r.error;const row={owner_uid:owner(),patient_entry_id:pkey(),patient_name:S.patient.name,evaluation_id:S.evaluationId||null,storage_path:path,source:x.source,mime_type:'image/jpeg',width:x.width,height:x.height,captured_at:x.createdAt};r=await client().from('cronos_exam_images').insert(row);if(r.error){await client().storage.from(BUCKET).remove([path]);throw r.error}}S.session=[];status('Exame salvo.');await loadStored()}
 function allItems(){
@@ -500,15 +513,24 @@ function selectEditImage(id){
 function render(){
   const g=$('intraoralGallery'),cnt=$('intraoralGalleryCount');
   if(!g)return;
-  const items=allItems();
-  if(cnt)cnt.textContent=`${items.length} foto(s)`;
-  g.innerHTML=items.length?items.map((x,i)=>{
+  const items=allItems(),loading=S.galleryLoading===true,loadError=String(S.galleryLoadError||'');
+  g.setAttribute('aria-busy',loading?'true':'false');
+  if(cnt)cnt.textContent=loading?'Carregando...':`${items.length} foto(s)`;
+  if(loading){
+    g.innerHTML=`<div class="intraoralGalleryLoading" role="status" aria-live="polite">
+      <div class="intraoralGalleryLoadingHead"><span class="intraoralGalleryLoaderDot" aria-hidden="true"></span><div><strong>Carregando imagens...</strong><small>Buscando as fotos do paciente com segurança.</small></div></div>
+      <div class="intraoralGallerySkeleton" aria-hidden="true">${'<span class="intraoralGallerySkeletonItem"></span>'.repeat(6)}</div>
+    </div>`;
+  }else if(loadError){
+    g.innerHTML=`<div class="intraoralGalleryLoadError" role="alert"><strong>${esc(loadError)}</strong><small>Confira a conexão e tente novamente.</small><button type="button" class="btn" data-retry-gallery>Tentar novamente</button></div>`;
+  }else{
+    g.innerHTML=items.length?items.map((x,i)=>{
     const teeth=(x.teeth||[]).join(', ');
     const obs=String(x.observation||'').trim();
     const editing=String(S.editImageId)===String(x.id);
     return`<article class="intraoralThumb ${S.selected.has(x.storageId)?'is-selected':''} ${editing?'is-editing':''}">
       <input class="intraoralSelect" type="checkbox" data-select="${esc(x.storageId)}" ${S.selected.has(x.storageId)?'checked':''}>
-      <button type="button" class="intraoralThumbOpen" data-open="${i}"><img src="${esc(x.url)}" alt="Imagem ${i+1}"><span>${i+1}</span></button>
+      <button type="button" class="intraoralThumbOpen" data-open="${i}"><img src="${esc(x.url)}" alt="Imagem ${i+1}" decoding="async"><span>${i+1}</span></button>
       <div class="intraoralThumbMeta"><span>${new Date(x.captured_at||x.createdAt).toLocaleString('pt-BR')}</span><span class="intraoralPersistBadge">${x.temporary?'salvando':x.source==='upload'?'upload':'câmera'}</span></div>
       <div class="intraoralEvaluationMeta">${esc(evaluationLabel(x.evaluation_id))}</div>
       ${teeth?`<div class="intraoralClinicalMeta"><b>Dente${x.teeth.length>1?'s':''}: ${esc(teeth)}</b></div>`:''}
@@ -516,10 +538,16 @@ function render(){
       ${S.mode==='gallery'?`<button type="button" class="btn intraoralGalleryOpenBtn" data-open="${i}">Abrir foto</button>`:''}
       ${S.mode==='exam'&&!x.temporary&&can('exam.capture')?`<button type="button" class="btn examEditPhotoBtn" data-edit-photo="${esc(x.id)}">${editing?'Editando dados clínicos':'Editar dados / abrir foto'}</button>`:''}
     </article>`
-  }).join(''):`<div class="intraoralEmptyGallery">${S.patient?'Nenhuma imagem nesta avaliação.':'Selecione um paciente para carregar a galeria.'}</div>`;
-  const info=$('intraoralSelectionInfo');if(info)info.textContent=`${S.selected.size} selecionada(s)`;
-  ['btnExamDownload','btnExamPdf'].forEach(id=>{const e=$(id);if(e)e.disabled=!S.selected.size});
-  const del=$('btnExamDelete');if(del){del.disabled=!S.selected.size||!can('exam.delete');del.hidden=!can('exam.delete')}
+    }).join(''):`<div class="intraoralEmptyGallery">${S.patient?'Nenhuma imagem nesta avaliação.':'Selecione um paciente para carregar a galeria.'}</div>`;
+    g.querySelectorAll('.intraoralThumb img').forEach(img=>{
+      const ready=()=>img.closest('.intraoralThumb')?.classList.add('image-ready');
+      if(img.complete&&img.naturalWidth>0)ready();else img.addEventListener('load',ready,{once:true});
+    });
+  }
+  const info=$('intraoralSelectionInfo');if(info)info.textContent=loading?'Carregando fotos...':`${S.selected.size} selecionada(s)`;
+  const selectAll=$('btnExamSelectAll');if(selectAll)selectAll.disabled=loading||!!loadError||!items.length;
+  ['btnExamDownload','btnExamPdf'].forEach(id=>{const e=$(id);if(e)e.disabled=loading||!S.selected.size});
+  const del=$('btnExamDelete');if(del){del.disabled=loading||!S.selected.size||!can('exam.delete');del.hidden=!can('exam.delete')}
   refreshExpandedLastPreview();
 }
 async function updateImageMetadata(id,{evaluationId,observation}={}){
@@ -850,11 +878,12 @@ function leaveExamView({restore=false}={}){
   }
 }
 function clearImagesForEvaluation(){
-  S.contextVersion+=1;clearTimeout(S.noteTimer);S.noteTimer=null;S.session=[];S.stored=[];S.selected.clear();S.editImageId='';S.editTeeth.clear();S.captureBusy=false;clearLightbox();render();renderPhotoEditor();syncCameraButtons()
+  S.contextVersion+=1;clearTimeout(S.noteTimer);S.noteTimer=null;S.session=[];S.stored=[];S.selected.clear();S.editImageId='';S.editTeeth.clear();S.captureBusy=false;S.galleryLoading=!!S.patient;S.galleryLoadError='';clearLightbox();render();renderPhotoEditor();syncCameraButtons()
 }
 async function selectExamPatient(entryId,search){
   clearPatientState({stopCamera:false,clearSearch:false});
   if(!setPatientById(entryId)){if(search)search.value='';status('Paciente não encontrado.');return false}
+  S.galleryLoading=true;S.galleryLoadError='';
   syncPatientUI();render();renderPhotoEditor();results('');if(search)search.value=S.patient.name;
   const galleryLabel=document.querySelector('.examWorkspaceGallery header small');if(galleryLabel)galleryLabel.textContent=evaluationLabel(S.evaluationId);
   status(S.stream?'Paciente alterado. O estado anterior foi limpo.':'Paciente selecionado. Abra o preview.');
@@ -893,6 +922,7 @@ function bindExamView(){
   $('btnExamDelete')?.addEventListener('click',()=>deleteSelected().catch(e=>alert(e.message)));
   $('btnExamTrash')?.addEventListener('click',()=>openTrash().catch(e=>alert(e.message)));
   $('intraoralGallery')?.addEventListener('click',e=>{
+    const retry=e.target.closest('[data-retry-gallery]');if(retry){e.preventDefault();loadStored();return}
     const ed=e.target.closest('[data-edit-photo]');if(ed){e.preventDefault();selectEditImage(ed.dataset.editPhoto);return}
     const o=e.target.closest('[data-open]');if(o)lightbox(Number(o.dataset.open))
   });
@@ -911,6 +941,7 @@ async function openExam(opt={}){
   S.mode='exam';S.locked=!!opt.entryId;clearPatientState({stopCamera:true});
   if(opt.entryId&&!setPatientById(opt.entryId))return alert('Paciente não encontrado.');
   if(opt.evaluationId&&S.patient?.evaluations?.some(v=>String(v.id)===String(opt.evaluationId))){S.evaluationId=String(opt.evaluationId);S.galleryEvaluationId=S.evaluationId}
+  S.galleryLoading=!!S.patient;S.galleryLoadError='';
   enterExamView();bindExamView();syncPatientUI();render();renderPhotoEditor();
   if(S.patient)await loadStored()
 }
@@ -921,6 +952,7 @@ async function openGallery(opt={}){
   if(opt.entryId&&!setPatientById(opt.entryId))return alert('Paciente não encontrado.');
   if(opt.evaluationId)S.galleryEvaluationId=String(opt.evaluationId);
   if(!S.galleryEvaluationId)S.galleryEvaluationId=S.patient?.evaluationId||S.patient?.evaluations?.[0]?.id||'eval_1';
+  S.galleryLoading=!!S.patient;S.galleryLoadError='';
   openModal({title:'Galeria de Exames Digitais',sub:S.patient?.name||'',bodyHTML:`<div class="intraoralDiag intraoralGalleryOnly">
     <div class="examGalleryFilter">
       <label class="intraoralField"><span>Ficha / avaliação</span><select id="examGalleryEvaluation">${evaluationOptions(S.galleryEvaluationId,true)}</select></label>
@@ -934,12 +966,12 @@ async function openGallery(opt={}){
     onMount(){
       render();loadStored();
       const ge=$('examGalleryEvaluation');
-      ge?.addEventListener('change',async()=>{S.contextVersion+=1;S.galleryEvaluationId=ge.value;S.stored=[];S.selected.clear();clearLightbox();render();const l=$('examGalleryEvalLabel');if(l)l.textContent=evaluationLabel(S.galleryEvaluationId);await loadStored()});
+      ge?.addEventListener('change',async()=>{S.contextVersion+=1;S.galleryEvaluationId=ge.value;S.stored=[];S.selected.clear();S.galleryLoading=true;S.galleryLoadError='';clearLightbox();render();const l=$('examGalleryEvalLabel');if(l)l.textContent=evaluationLabel(S.galleryEvaluationId);await loadStored()});
       $('btnCloseGallery')?.addEventListener('click',()=>closeModal({force:true,source:'gallery'}));
       $('btnExamSelectAll')?.addEventListener('click',()=>{const a=allItems();if(S.selected.size===a.length)S.selected.clear();else a.forEach(x=>S.selected.add(x.storageId));render()});
       $('btnExamDownload')?.addEventListener('click',()=>downloadSelected().catch(e=>alert(e.message)));
       $('btnExamPdf')?.addEventListener('click',()=>pdfSelected().catch(e=>alert(e.message)));
-      $('intraoralGallery')?.addEventListener('click',e=>{const o=e.target.closest('[data-open]');if(o)lightbox(Number(o.dataset.open))});
+      $('intraoralGallery')?.addEventListener('click',e=>{const retry=e.target.closest('[data-retry-gallery]');if(retry){e.preventDefault();loadStored();return}const o=e.target.closest('[data-open]');if(o)lightbox(Number(o.dataset.open))});
       $('intraoralGallery')?.addEventListener('change',e=>{const c=e.target.closest('[data-select]');if(!c)return;c.checked?S.selected.add(c.dataset.select):S.selected.delete(c.dataset.select);render()});
       setTimeout(()=>{try{cronosResetModalGuard()}catch(_){}},80)
     }})

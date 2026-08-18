@@ -18101,6 +18101,15 @@ async function boot(options={}){
   cronosSetInitialUiShield(true);
   window.__CRONOS_BOOTING__ = true;
   window.__CRONOS_SESSION_CHECKING__ = true;
+  // No login explícito, o formulário era ocultado antes de o primeiro frame do
+  // ambiente estar pronto. Mantém uma tela de progresso visível durante essa
+  // troca para nunca expor um intervalo branco entre autenticação e aplicativo.
+  if(window.__CRONOS_EXPLICIT_LOGIN__ === true){
+    setLoginLoading(false);
+    el("authView")?.classList.add("hidden");
+    el("appView")?.classList.add("hidden");
+    showBootSplash("Preparando seu ambiente...");
+  }
   const supportTokenPresent = new URLSearchParams(location.search).has("support_token");
   let supportSessionTokenPresent = false;
   try{ supportSessionTokenPresent = !!sessionStorage.getItem(SUPPORT_TOKEN_KEY); }catch(_){ }

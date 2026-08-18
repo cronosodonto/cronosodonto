@@ -33,9 +33,17 @@ html.light .intraoralPanel,:root.light .intraoralPanel,body.light .intraoralPane
 .intraoralGridV461{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(380px,.95fr);gap:14px}
 .intraoralGallery{min-height:300px;max-height:410px;overflow:auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;align-content:start;padding:4px}
 .intraoralThumb{position:relative;aspect-ratio:4/3;border:1px solid rgba(148,163,184,.22);border-radius:12px;overflow:hidden;background:#05070b}.intraoralThumbOpen{width:100%;height:100%;padding:0;border:0;background:#05070b;cursor:zoom-in}.intraoralThumb img{width:100%;height:100%;object-fit:cover}.intraoralThumbOpen span{position:absolute;left:7px;bottom:7px;min-width:24px;height:24px;display:grid;place-items:center;border-radius:999px;background:rgba(2,6,23,.78);color:#fff;font-size:11px;font-weight:900}.intraoralThumbDelete{position:absolute;right:6px;top:6px;width:27px;height:27px;border:1px solid rgba(255,255,255,.25);border-radius:999px;background:rgba(127,29,29,.86);color:#fff;font-size:18px;line-height:1;cursor:pointer}.intraoralEmptyGallery{grid-column:1/-1;display:grid;place-items:center;min-height:280px;color:#94a3b8;text-align:center}
+.intraoralGalleryLoading,.intraoralGalleryLoadError{grid-column:1/-1;min-height:280px;display:grid;align-content:center;gap:16px;padding:18px;color:var(--muted,#94a3b8)}
+.intraoralGalleryLoadingHead{display:flex;align-items:center;justify-content:center;gap:12px;text-align:left}.intraoralGalleryLoadingHead div{display:grid;gap:3px}.intraoralGalleryLoadingHead strong,.intraoralGalleryLoadError strong{color:var(--text,#e2e8f0)}.intraoralGalleryLoadingHead small,.intraoralGalleryLoadError small{display:block}
+.intraoralGalleryLoaderDot{width:22px;height:22px;flex:0 0 22px;border-radius:999px;border:3px solid rgba(148,163,184,.22);border-top-color:#38bdf8;animation:intraoralGallerySpin .8s linear infinite}
+.intraoralGallerySkeleton{width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.intraoralGallerySkeletonItem{aspect-ratio:4/3;border-radius:12px;border:1px solid rgba(148,163,184,.14);background:linear-gradient(100deg,rgba(148,163,184,.08) 20%,rgba(148,163,184,.18) 42%,rgba(148,163,184,.08) 64%);background-size:220% 100%;animation:intraoralGalleryShimmer 1.25s ease-in-out infinite}
+.intraoralGalleryLoadError{justify-items:center;text-align:center}.intraoralGalleryLoadError .btn{margin-top:2px}
+.intraoralThumbOpen img{opacity:0;transition:opacity .16s ease}.intraoralThumb.image-ready .intraoralThumbOpen img{opacity:1}
+@keyframes intraoralGallerySpin{to{transform:rotate(360deg)}}
+@keyframes intraoralGalleryShimmer{0%{background-position:120% 0}100%{background-position:-120% 0}}
 .cronosExamCard{display:flex!important;align-items:center;justify-content:space-between;gap:12px;grid-column:1/-1!important;min-height:76px!important;background:linear-gradient(135deg,rgba(14,165,233,.09),rgba(124,58,237,.09))!important}.cronosExamCard .cronosExamText{display:grid;gap:4px}.cronosExamCard small{color:var(--muted)}
 @media(max-width:900px){.intraoralPatientSection{grid-template-columns:1fr}.intraoralGridV461{grid-template-columns:1fr}.intraoralGallery{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:560px){.intraoralGallery{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.intraoralGallery{grid-template-columns:repeat(2,minmax(0,1fr))}.intraoralGallerySkeleton{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 
 /* V463 — galeria persistente, seleção e lightbox */
