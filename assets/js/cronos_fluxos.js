@@ -275,6 +275,7 @@
     if(low.includes('identidade')) return 'nome exibido, e-mail do master, logo e identidade da ficha';
     if(low.includes('preferências de mensagens')) return 'WhatsApp, cobrança e aniversariantes';
     if(low.includes('segurança')) return 'senha e acesso do usuário';
+    if(low.includes('profissionais')) return 'dentistas e profissionais clínicos da clínica';
     if(low.includes('procedimentos')) return 'catálogo usado na ficha do paciente';
     return '';
   }

@@ -13729,6 +13729,50 @@ window.addEventListener("beforeunload", (event)=>{
 })();
 
 
+
+/* -------- Profissionais clínicos -------- */
+function cronosProfessionalStore(db=loadDB()){
+  if(!db.settings || typeof db.settings !== 'object') db.settings = {};
+  if(!Array.isArray(db.settings.professionals)) db.settings.professionals = [];
+  return db.settings.professionals;
+}
+function cronosProfessionalClinicKey(actor=currentActor()){
+  return String(actor?.masterId || actor?.clinicId || '').trim();
+}
+function cronosGetProfessionals(db=loadDB(), actor=currentActor(), {activeOnly=false}={}){
+  const clinicKey = cronosProfessionalClinicKey(actor);
+  return cronosProfessionalStore(db)
+    .filter(p=>!clinicKey || !p.masterId || String(p.masterId)===clinicKey)
+    .filter(p=>!activeOnly || p.active !== false)
+    .slice()
+    .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''), 'pt-BR'));
+}
+function cronosGetProfessionalById(id, db=loadDB(), actor=currentActor()){
+  const key=String(id||'').trim();
+  if(!key) return null;
+  return cronosGetProfessionals(db, actor, {activeOnly:false}).find(p=>String(p.id||'')===key) || null;
+}
+function cronosProfessionalDisplay(prof, {withCro=true}={}){
+  if(!prof) return 'Dentista não definido';
+  const name=String(prof.name||'').trim() || 'Dentista sem nome';
+  const cro=String(prof.cro||'').trim();
+  const uf=String(prof.uf||'').trim().toUpperCase();
+  if(!withCro || !cro) return name;
+  return `${name} • CRO${uf ? '-' + uf : ''} ${cro}`;
+}
+function cronosProfessionalOptionsHTML(selectedId=''){
+  const selected=String(selectedId||'').trim();
+  const list=cronosGetProfessionals(loadDB(), currentActor(), {activeOnly:false});
+  const active=list.filter(p=>p.active !== false);
+  const selectedInactive=list.find(p=>String(p.id||'')===selected && p.active===false);
+  let html=`<option value="" ${!selected?'selected':''}>Não definido</option>`;
+  html += active.map(p=>`<option value="${escapeHTML(String(p.id||''))}" ${String(p.id||'')===selected?'selected':''}>${escapeHTML(cronosProfessionalDisplay(p))}</option>`).join('');
+  if(selectedInactive){
+    html += `<option value="${escapeHTML(String(selectedInactive.id||''))}" selected>${escapeHTML(cronosProfessionalDisplay(selectedInactive))} (inativo)</option>`;
+  }
+  return html;
+}
+
 /* -------- Lead create/edit -------- */
 function leadEntryFormHTML(entry, contact, mode, suggestHTML){
   const e = entry || {};
@@ -13816,6 +13860,12 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
       <div>
         <label>Tratamento</label>
         <select id="lf_treatment" ${ro?"disabled":""}>${opt(TREATMENTS, e.treatment || "")}</select>
+      </div>
+
+      <div>
+        <label>Dentista responsável / avaliador</label>
+        <select id="lf_professional" ${ro?"disabled":""}>${cronosProfessionalOptionsHTML(e.professionalId || "")}</select>
+        <div class="help muted" style="font-size:12px">Lista cadastrada em Configurações → Profissionais.</div>
       </div>
 
       <div id="treatOtherWrap" class="${(e.treatment==="Outros")?"":"hidden"}">
@@ -14558,6 +14608,7 @@ function openLeadEntry(entryId){
     bodyHTML: leadEntryFormHTML(entry, contact, "edit", ""),
     footHTML: `
       <button type="button" class="btn" onclick="closeModal()">Fechar</button>
+      <button type="button" class="btn" onclick="window.CRONOS_PRINT_EVAL_SHEET && window.CRONOS_PRINT_EVAL_SHEET('${entryId}')">Ficha de avaliação</button>
       ${canEditRecords(actor) ? `<button class="btn ok" id="btnSaveLead">Salvar</button>` : ``}
     `,
     onMount: ()=>{
@@ -15118,6 +15169,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const originOther = origin==="Outros" ? val("lf_originOther").trim() : "";
     const treatment = val("lf_treatment");
     const treatmentOther = treatment==="Outros" ? val("lf_treatOther").trim() : "";
+    const professionalId = String(val("lf_professional") || "").trim();
     const city = val("lf_city").trim();
     const firstContactAt = firstContactInput;
     const apptDate = val("lf_apptDate") || "";
@@ -15222,6 +15274,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
     entry.originOther = originOther;
     entry.treatment = treatment;
     entry.treatmentOther = treatmentOther;
+    entry.professionalId = professionalId;
     entry.city = city;
     entry.notes = notes;
     if(hasLegacyBudgetField){
@@ -15283,6 +15336,7 @@ function wireLeadModal(actor, editingEntryId, isNew){
       rescueEntry.originOther = originOther;
       rescueEntry.treatment = treatment;
       rescueEntry.treatmentOther = treatmentOther;
+      rescueEntry.professionalId = professionalId;
       rescueEntry.city = city;
       rescueEntry.notes = notes;
       rescueEntry.valueBudget = rescueEntry.valueBudget ?? valueBudget ?? null;
@@ -15450,6 +15504,7 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
     setIf("lf_originOther", latest.originOther || "");
     setIf("lf_treatment", latest.treatment || "");
     setIf("lf_treatOther", latest.treatmentOther || "");
+    setIf("lf_professional", latest.professionalId || "");
     setIf("lf_apptDate", latest.apptDate || "");
     setIf("lf_apptTime", latest.apptTime || "");
     setIf("lf_calls", latest.callAttempts || "");
@@ -21761,9 +21816,9 @@ async function fetchFeatureAccess(force, actorOverride){
       if(!db.settings.clinicBranding) db.settings.clinicBranding = { byClinic:{} };
       if(!db.settings.clinicBranding.byClinic) db.settings.clinicBranding.byClinic = {};
       if(clinicId && !db.settings.clinicBranding.byClinic[String(clinicId)]){
-        db.settings.clinicBranding.byClinic[String(clinicId)] = { clinicName:'', logoDataUri:'' };
+        db.settings.clinicBranding.byClinic[String(clinicId)] = { clinicName:'', clinicPhone:'', logoDataUri:'' };
       }
-      return clinicId ? db.settings.clinicBranding.byClinic[String(clinicId)] : { clinicName:'', logoDataUri:'' };
+      return clinicId ? db.settings.clinicBranding.byClinic[String(clinicId)] : { clinicName:'', clinicPhone:'', logoDataUri:'' };
     }
     function getClinicDisplayName(db=loadDB(), actor=currentActor()){
       const branding = getClinicBranding(db, actor);
@@ -21789,7 +21844,10 @@ async function fetchFeatureAccess(force, actorOverride){
           <div>
             <label>Nome da clínica no prontuário</label>
             <input id="brandClinicName" type="text" value="${escapeHTML(branding?.clinicName || actor?.masterName || '')}" placeholder="Ex: Mundo Odonto">
-            <div class="brandCardHint">Se ficar vazio, a prontuário usa o nome padrão da clínica.</div>
+            <div class="brandCardHint">Se ficar vazio, o prontuário usa o nome padrão da clínica.</div>
+            <label style="margin-top:10px">Telefone da clínica</label>
+            <input id="brandClinicPhone" type="text" value="${escapeHTML(branding?.clinicPhone || '')}" placeholder="Ex: (98) 3333-4444">
+            <div class="brandCardHint">Se preenchido, aparece nos documentos emitidos pela clínica.</div>
           </div>
           <div>
             <label>Logo da clínica</label>
@@ -21844,12 +21902,101 @@ async function fetchFeatureAccess(force, actorOverride){
         const actor = currentActor();
         const branding = getClinicBranding(db, actor);
         branding.clinicName = String(val('brandClinicName') || '').trim();
+        branding.clinicPhone = String(val('brandClinicPhone') || '').trim();
         cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true });
         injectBrandingSettingsCard();
         toast('Identidade salva ✅', branding.clinicName || getClinicDisplayName(db, actor));
       }
     };
 
+
+
+    function injectProfessionalsSettingsCard(){
+      const host = el('view-settings');
+      if(!host) return;
+      let card = el('settingsProfessionalsCard');
+      const db = loadDB();
+      const actor = currentActor();
+      const professionals = cronosGetProfessionals(db, actor, {activeOnly:false});
+      const active = professionals.filter(p=>p.active !== false).length;
+      if(!card){
+        card = document.createElement('div');
+        card.className = 'card';
+        card.id = 'settingsProfessionalsCard';
+        card.innerHTML = `
+          <h3>Profissionais</h3>
+          <div class="muted" style="line-height:1.5; margin-bottom:10px">Cadastro clínico separado dos usuários de acesso. Alimenta o dentista responsável do Lead, o prontuário e as fichas impressas.</div>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+            <button class="btn ok" id="btnManageProfessionals" type="button">Gerenciar profissionais</button>
+            <span class="muted" id="professionalsCountHint" style="font-size:12px"></span>
+          </div>`;
+        host.appendChild(card);
+      }
+      const hint = el('professionalsCountHint');
+      if(hint) hint.textContent = `${professionals.length} cadastrados • ${active} ativos`;
+      const btn=el('btnManageProfessionals');
+      if(btn) btn.onclick=openProfessionalsModal;
+    }
+    function openProfessionalsModal(){
+      window.__cronosProfessionalState={editingId:null};
+      openModal({
+        title:'Profissionais',
+        sub:'Dentistas e profissionais clínicos da clínica. Não cria login no Cronos.',
+        bodyHTML:'<div id="professionalsApp"></div>',
+        footHTML:'<button type="button" class="btn" onclick="closeModal()">Fechar</button>',
+        onMount:renderProfessionalsApp,
+        maxWidth:'min(96vw, 1180px)', width:'min(96vw, 1180px)'
+      });
+    }
+    function renderProfessionalsApp(){
+      const box=el('professionalsApp'); if(!box) return;
+      const db=loadDB(), actor=currentActor();
+      const state=window.__cronosProfessionalState || {editingId:null};
+      const list=cronosGetProfessionals(db, actor, {activeOnly:false});
+      const edit=list.find(p=>String(p.id)===String(state.editingId)) || null;
+      const ufs=['','AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+      box.innerHTML=`
+        <div class="professionalsFormGrid">
+          <div><label>Nome *</label><input id="profName" value="${escapeHTML(edit?.name||'')}" placeholder="Nome do profissional"></div>
+          <div><label>CPF</label><input id="profCpf" value="${escapeHTML(formatCPF(edit?.cpf||''))}" placeholder="000.000.000-00"></div>
+          <div><label>C.R.O.</label><input id="profCro" value="${escapeHTML(edit?.cro||'')}" placeholder="Número do CRO"></div>
+          <div><label>UF do CRO</label><select id="profUf">${ufs.map(uf=>`<option value="${uf}" ${String(edit?.uf||'')===uf?'selected':''}>${uf||'Selecione'}</option>`).join('')}</select></div>
+          <div><label>Especialidade</label><input id="profSpecialty" value="${escapeHTML(edit?.specialty||'')}" placeholder="Especialidade"></div>
+          <div><label>Celular</label><input id="profPhone" value="${escapeHTML(formatPhoneBR(edit?.phone||''))}" placeholder="(98) 99999-9999"></div>
+          <div><label>E-mail</label><input id="profEmail" type="email" value="${escapeHTML(edit?.email||'')}" placeholder="dentista@clinica.com"></div>
+          <div><label>Status</label><select id="profActive"><option value="1" ${edit?.active===false?'':'selected'}>Ativo</option><option value="0" ${edit?.active===false?'selected':''}>Inativo</option></select></div>
+        </div>
+        <div style="display:flex;gap:8px;margin:12px 0 18px;flex-wrap:wrap">
+          <button class="btn ok" type="button" onclick="CRONOS_PROF_UI.save()">${edit?'Salvar alterações':'Adicionar profissional'}</button>
+          ${edit?`<button class="btn" type="button" onclick="CRONOS_PROF_UI.cancel()">Cancelar edição</button>`:''}
+        </div>
+        <div class="professionalsList">
+          ${list.length?list.map(p=>`<div class="professionalRow ${p.active===false?'is-inactive':''}">
+            <div><strong>${escapeHTML(p.name||'Sem nome')}</strong><div class="muted" style="font-size:12px">${escapeHTML(cronosProfessionalDisplay(p))}${p.specialty?` • ${escapeHTML(p.specialty)}`:''}</div></div>
+            <div class="professionalStatus">${p.active===false?'Inativo':'Ativo'}</div>
+            <div style="display:flex;gap:7px;justify-content:flex-end;flex-wrap:wrap"><button class="btn small" type="button" onclick="CRONOS_PROF_UI.edit('${escapeHTML(String(p.id))}')">Editar</button><button class="btn small" type="button" onclick="CRONOS_PROF_UI.toggle('${escapeHTML(String(p.id))}')">${p.active===false?'Reativar':'Inativar'}</button></div>
+          </div>`).join(''):`<div class="muted">Nenhum profissional cadastrado ainda.</div>`}
+        </div>`;
+    }
+    window.CRONOS_PROF_UI={
+      edit(id){ window.__cronosProfessionalState={editingId:String(id||'')}; renderProfessionalsApp(); },
+      cancel(){ window.__cronosProfessionalState={editingId:null}; renderProfessionalsApp(); },
+      toggle(id){
+        const db=loadDB(), actor=currentActor(); const list=cronosProfessionalStore(db);
+        const p=list.find(x=>String(x.id)===String(id) && (!x.masterId || String(x.masterId)===cronosProfessionalClinicKey(actor)));
+        if(!p) return; p.active = p.active===false ? true : false; p.updatedAt=new Date().toISOString();
+        cronosPersistSettingsPatch(db,{professionals:list},{silent:true}); renderProfessionalsApp(); injectProfessionalsSettingsCard();
+      },
+      save(){
+        const db=loadDB(), actor=currentActor(); const list=cronosProfessionalStore(db); const state=window.__cronosProfessionalState||{};
+        const name=String(val('profName')||'').trim(); if(!name) return toast('Nome obrigatório','Informe o nome do profissional.');
+        let p=state.editingId?list.find(x=>String(x.id)===String(state.editingId)):null;
+        const now=new Date().toISOString();
+        if(!p){ p={id:(crypto.randomUUID?crypto.randomUUID():uid('prof')),masterId:cronosProfessionalClinicKey(actor),createdAt:now}; list.push(p); }
+        p.name=name; p.cpf=String(val('profCpf')||'').replace(/\D/g,''); p.cro=String(val('profCro')||'').trim(); p.uf=String(val('profUf')||'').trim().toUpperCase(); p.specialty=String(val('profSpecialty')||'').trim(); p.phone=normPhone(val('profPhone')||''); p.email=String(val('profEmail')||'').trim(); p.active=String(val('profActive')||'1')!=='0'; p.updatedAt=now;
+        cronosPersistSettingsPatch(db,{professionals:list},{silent:true}); window.__cronosProfessionalState={editingId:null}; renderProfessionalsApp(); injectProfessionalsSettingsCard(); toast('Profissional salvo ✅',cronosProfessionalDisplay(p));
+      }
+    };
 
     function injectProcedureSettingsCard(){
       const host = el('view-settings');
@@ -22600,7 +22747,9 @@ window.CRONOS_PROC_UI = {
         ? cronosDisplayManualField(entry?.origin, entry?.originOther)
         : (entry?.origin || '');
       const origin = escapeHTML(originRaw || '—');
-      const leadId = escapeHTML(String(entry?.id || '—'));
+      const professional = cronosGetProfessionalById(entry?.professionalId, db, actor);
+      const professionalName = escapeHTML(professional?.name || 'Dentista não definido');
+      const professionalMeta = escapeHTML(professional ? ([professional.cro ? `CRO${professional.uf ? '-' + String(professional.uf).toUpperCase() : ''} ${professional.cro}` : '', professional.specialty || ''].filter(Boolean).join(' • ') || 'Profissional clínico') : 'Defina no cadastro do Lead');
       const logo = branding?.logoDataUri || '';
       return `
         <div class="fichaHead fichaHeroV55">
@@ -22630,12 +22779,12 @@ window.CRONOS_PROC_UI = {
 
           <div class="fichaTopCardV55">
             <div class="topCardIconV55 neutralIconV55">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"></path><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path><path d="M4 21a8 8 0 0 1 16 0"></path></svg>
             </div>
             <div>
-              <small>Lead</small>
-              <strong>${leadId}</strong>
-              <em>Origem: ${origin}</em>
+              <small>Dentista responsável</small>
+              <strong>${professionalName}</strong>
+              <em>${professionalMeta}</em>
             </div>
           </div>
 
@@ -23865,6 +24014,9 @@ window.CRONOS_PROC_UI = {
       const patientCpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
       const patientBirthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
       const patientTreatment = escapeHTML(entry?.treatment || '—');
+      const professional = cronosGetProfessionalById(entry?.professionalId, db, actor);
+      const patientDentist = escapeHTML(professional?.name || 'Dentista não definido');
+      const patientDentistCro = escapeHTML(professional?.cro ? `CRO${professional?.uf ? '-' + String(professional.uf).toUpperCase() : ''} ${professional.cro}` : '');
       const patientEvaluation = escapeHTML(`${activeEvaluation?.label || 'Avaliação'}${activeEvaluation?.date ? ` • ${fmtBR(activeEvaluation.date)}` : ''}`);
       const obs = escapeHTML(String(activeEvaluation?.observacoes || ficha?.observacoes || entry?.obs || '').trim() || '');
       const activeDentition = getFichaDentitionType(ficha, entry);
@@ -23915,7 +24067,7 @@ window.CRONOS_PROC_UI = {
           <div class="head">
             <div class="logo">${branding?.logoDataUri ? `<img src="${branding.logoDataUri}" alt="${clinicName}">` : `${clinicName}`}</div>
             <div class="title"><h2>FICHA DE AVALIAÇÃO</h2><p>PLANO DE TRATAMENTO / ODONTOGRAMA</p></div>
-            <div class="meta">Data: ${fmtBR(todayISO())}<br>Lead: ${escapeHTML(String(entry.id || '—'))}<br>Tratamento: ${patientTreatment}<br>Avaliação: ${patientEvaluation}</div>
+            <div class="meta">Data: ${fmtBR(todayISO())}<br>Dentista avaliador: ${patientDentist}${patientDentistCro ? ` • ${patientDentistCro}` : ''}<br>Tratamento: ${patientTreatment}<br>Avaliação: ${patientEvaluation}</div>
           </div>
           <div class="patient">
             <div class="field"><span class="lbl">Paciente</span><span class="val">${patientName}</span></div>
@@ -23986,6 +24138,28 @@ window.CRONOS_PROC_UI = {
       setTimeout(cleanup, 5000);
     };
 
+
+    window.CRONOS_PRINT_EVAL_SHEET = function(entryId){
+      const entry=getEntryById(entryId); if(!entry) return toast('Ficha de avaliação','Lead não encontrado.');
+      const db=loadDB(), actor=currentActor(), contact=getContactForEntry(entry), branding=getClinicBranding(db,actor);
+      const clinicName=escapeHTML(getClinicDisplayName(db,actor));
+      const prof=cronosGetProfessionalById(entry.professionalId,db,actor);
+      const dentist=escapeHTML(prof?.name||'Dentista não definido');
+      const cro=escapeHTML(prof?.cro?`CRO${prof?.uf?'-'+String(prof.uf).toUpperCase():''} ${prof.cro}`:'');
+      const patientName=escapeHTML(contact?.name||entry?.name||'Paciente');
+      const phone=escapeHTML(contact?.phone||entry?.phone||'—');
+      const cpf=escapeHTML(formatCPF(contact?.cpf||'')||'—');
+      const birth=escapeHTML(birthWithAgeLabel(contact?.birthDate||'')||'—');
+      const treatment=escapeHTML((typeof cronosDisplayManualField==='function'?cronosDisplayManualField(entry?.treatment,entry?.treatmentOther):entry?.treatment)||'—');
+      const blankRows=Array.from({length:30},(_,i)=>`<tr><td>${i+1}</td><td></td><td></td><td></td><td></td></tr>`).join('');
+      const neutralEntry={...entry};
+      const cronosFooterLogo = new URL('../assets/brand/cronos-symbol.png', window.location.href).href;
+      const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha de Avaliação - ${patientName}</title><style>
+        @page{size:A4;margin:8mm 9mm 7mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;margin:0;background:#fff}.sheet{width:100%;min-height:100%;display:flex;flex-direction:column}.head{display:grid;grid-template-columns:112px 1fr 235px;gap:10px;align-items:center;border-bottom:1.5px solid #777;padding-bottom:9px}.logo img{max-width:78px;max-height:60px}.logo{font-weight:800}.title h1{margin:0;font-size:23px;line-height:1.05}.title p{margin:4px 0 0;color:#555;font-weight:700;font-size:11px;line-height:1.15}.meta{text-align:right;font-size:10.5px;line-height:1.45}.patient{display:grid;grid-template-columns:1.55fr .88fr .92fr 1fr;gap:6px;margin-top:8px}.field{border:1px solid #999;padding:7px 8px;min-height:48px;display:flex;flex-direction:column;justify-content:center}.lbl{font-size:8.5px;text-transform:uppercase;font-weight:800;letter-spacing:.065em;color:#444;line-height:1}.val{margin-top:4px;font-size:12px;font-weight:800;line-height:1.15}.odontoWrap{border:1px solid #aaa;margin-top:8px;padding:6px}.odonto{position:relative;width:100%;border:1px solid #d1d5db;border-radius:8px;overflow:hidden;background:#fff}.odonto img{display:block;width:100%;height:auto;object-fit:contain}.section{font-size:15px;font-weight:800;text-align:center;margin:8px 0 4px;color:#397a9e;line-height:1.1}.planTableWrap{position:relative;width:100%;isolation:isolate}.planWatermark{position:absolute;z-index:0;left:50%;top:50%;transform:translate(-50%,-50%);width:52%;max-height:82%;object-fit:contain;opacity:.06;pointer-events:none;user-select:none}.planTableWrap table{position:relative;z-index:1;background:transparent}table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #333;height:18px;padding:1.5px 4px;line-height:1.05;background:transparent}th{height:19px;font-size:9px;font-weight:700;text-align:left;background:rgba(250,250,250,.82)}th:first-child,td:first-child{width:40px;text-align:center}th:nth-child(3){width:105px}th:nth-child(4){width:105px}th:last-child{width:90px}.cronosFooter{margin-top:6px;text-align:center;color:#6b7280;font-size:8.5px;line-height:1;white-space:nowrap}.cronosFooter b{font-weight:700;color:#4b5563}@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.sheet{page-break-inside:avoid}.planWatermark{opacity:.20 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.cronosFooter{break-inside:avoid;page-break-inside:avoid}}
+      </style></head><body><div class="sheet"><div class="head"><div class="logo">${branding?.logoDataUri?`<img src="${branding.logoDataUri}" alt="${clinicName}">`:clinicName}</div><div class="title"><h1>FICHA DE AVALIAÇÃO</h1><p>PLANO DE TRATAMENTO / ODONTOGRAMA</p></div><div class="meta"><b>Data:</b> ${fmtBR(todayISO())}<br><b>Dentista avaliador:</b> ${dentist}${cro?` • ${cro}`:''}<br><b>Tratamento:</b> ${treatment}</div></div><div class="patient"><div class="field"><div class="lbl">Paciente</div><div class="val">${patientName}</div></div><div class="field"><div class="lbl">Telefone</div><div class="val">${phone}</div></div><div class="field"><div class="lbl">CPF</div><div class="val">${cpf}</div></div><div class="field"><div class="lbl">Nascimento</div><div class="val">${birth}</div></div></div><div class="odontoWrap"><div class="odonto"><img src="../assets/img/odontograma_misto_ficha.jpg" alt="Odontograma com dentição permanente e decídua"></div></div><div class="section">Plano de tratamento</div><div class="planTableWrap"><img class="planWatermark" src="${cronosFooterLogo}" alt="" aria-hidden="true"><table><thead><tr><th>Nº</th><th>PROCEDIMENTO</th><th>DENTE</th><th>FACE</th><th>Valor</th></tr></thead><tbody>${blankRows}</tbody></table></div><div class="cronosFooter"><span>Documento emitido por <b>Cronos Odonto</b> • cronosodonto.com</span></div></div><script>window.onload=()=>setTimeout(()=>window.print(),350);<\/script></body></html>`;
+      const w=window.open('','_blank'); if(!w) return toast('Popup bloqueado','Permita popups para imprimir a ficha.'); w.document.open(); w.document.write(html); w.document.close();
+    };
+
     function enhanceLeadCardsWithFichaButtons(){
       qsa('#leadsCards .leadCard').forEach(card=>{
         const row = card.querySelector('.leadActionsRow');
@@ -24008,6 +24182,7 @@ window.CRONOS_PROC_UI = {
       renderSettings = function(){
         const out = __origRenderSettings_ficha.apply(this, arguments);
         try{ injectBrandingSettingsCard(); }catch(e){ console.error('Branding/settings', e); }
+        try{ injectProfessionalsSettingsCard(); }catch(e){ console.error('Profissionais/settings', e); }
         try{ injectProcedureSettingsCard(); }catch(e){ console.error('Procedimentos/settings', e); }
         return out;
       };
@@ -24025,6 +24200,7 @@ window.CRONOS_PROC_UI = {
     ensureProcedureCatalogSeeded();
     setTimeout(()=>{
       try{ injectBrandingSettingsCard(); }catch(_){ }
+      try{ injectProfessionalsSettingsCard(); }catch(_){ }
       try{ injectProcedureSettingsCard(); }catch(_){ }
       try{ enhanceLeadCardsWithFichaButtons(); }catch(_){ }
     }, 50);
