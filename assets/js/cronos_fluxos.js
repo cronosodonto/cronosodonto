@@ -249,10 +249,15 @@
       return true;
     });
 
-    if(!merged && outsideBrandingCards.length){
+    if(outsideBrandingCards.length){
       const first = outsideBrandingCards.shift();
-      merged = buildBrandingSubCardFrom(first);
-      primaryBody.appendChild(merged);
+      const fresh = buildBrandingSubCardFrom(first);
+      if(merged && merged.parentNode){
+        merged.replaceWith(fresh);
+      }else{
+        primaryBody.appendChild(fresh);
+      }
+      merged = fresh;
       first.remove();
     }
 

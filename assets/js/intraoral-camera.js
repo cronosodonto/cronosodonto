@@ -1,4 +1,4 @@
-/* Cronos V463.2.4 RC3 — Exame Digital: view dedicada, câmera local e ACL reativa. */
+
 (function(){
 'use strict';
 if(window.__CRONOS_EXAM_V463__) return; window.__CRONOS_EXAM_V463__=true;
@@ -19,7 +19,6 @@ const client=()=>typeof supabaseClient!=='undefined'?supabaseClient:window.supab
 const owner=()=>String((typeof CLOUD_CLINIC_OWNER_UID!=='undefined'&&CLOUD_CLINIC_OWNER_UID)||(typeof CLOUD_OWNER_UID!=='undefined'&&CLOUD_OWNER_UID)||'');
 const pkey=()=>S.patient?String(S.patient.entryId):'';
 
-// V463.2.3 — trava definitiva do backdrop do Exame Digital.
 // Usa fase de captura para impedir que o listener global do Cronos receba o clique fora.
 if(!window.__CRONOS_EXAM_BACKDROP_GUARD__){
   window.__CRONOS_EXAM_BACKDROP_GUARD__=true;

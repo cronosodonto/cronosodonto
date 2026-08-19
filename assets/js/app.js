@@ -1,4 +1,3 @@
-// Cronos Odonto v443 — salvamento direcionado de Lead + reparo de tarefas + login escuro fixo
 function debounce(fn, delay){
   let t;
   return function(...args){
@@ -430,7 +429,7 @@ function entryInstallmentSummary(entry){
 }
 
 
-/* CRONOS_PATCH_RECEBIMENTOS_BUSCA_SCROLL_V14_1 - busca sem re-render total e scroll de procedimentos preservado */
+
 /* Recebimentos */
 
 function ensureFinancialPlans(entry){
@@ -5342,7 +5341,6 @@ const APP_VIEWS = ["dashboard","leads","kanban","tasks","installments","users","
 const AUX_MODULES = ["todayCronos","creditSimulator","performance"];
 const ALL_ACCESS_MODULES = [...APP_VIEWS, ...AUX_MODULES];
 
-// V462 — permissões saem do hardcode de cargos e passam pela ACL central.
 // O catálogo local abaixo é apenas fallback seguro até o banco responder.
 const PERMS = Object.fromEntries(ROLES.map(role => [
   role,
@@ -6103,7 +6101,6 @@ let __localCacheQuotaWarned = false;
 let CLOUD_LOAD_TEMPORARY_FAILURE = false; // falha de leitura/timeout não é "usuário sem vínculo"
 let CLOUD_LAST_LOAD_ERROR = null;
 
-// V450 — contexto de login reaproveitado dentro da mesma sessão.
 // Evita validar o mesmo usuário e consultar a mesma clínica várias vezes durante o boot.
 let __cronosSessionUserCache = null;
 let __cloudAccessContextCache = null;
@@ -6111,7 +6108,6 @@ let __cronosAccessBootstrapPromise = null;
 let __cronosFeatureBootstrapPromise = null;
 let __cronosPolicyBootstrapContext = "";
 
-// V422 — proteção contra avalanche de leituras.
 // Uma única aba nunca deve iniciar duas hidratações completas da mesma clínica ao mesmo tempo.
 let __cloudLoadPromise = null;
 let __cloudLoadPromiseForce = false;
@@ -9043,9 +9039,12 @@ async function ensureCloudDBLoadedInternal(force=false){
           let loaded = normalizeDBShape(v4.state || freshDB());
           loaded = ensureMasterRecordByEmail(loaded, ctx?.ownerEmail || user.email || "");
           const cloudClinicName = String(ctx?.row?.clinic_name || "").trim();
-          if(cloudClinicName){
+          const savedClinicDisplayName = String(loaded?.settings?.clinicDisplayName || "").trim();
+          const resolvedClinicName = savedClinicDisplayName || cloudClinicName;
+          if(resolvedClinicName){
             const master = getMasterRecordByEmail(loaded, ctx?.ownerEmail || user.email || "") || loaded.masters?.[0];
-            if(master) master.name = cloudClinicName;
+            if(master) master.name = resolvedClinicName;
+            CLOUD_CLINIC_NAME = resolvedClinicName;
           }
           if(ctx?.member) loaded = ensureMemberMirror(loaded, ctx.member);
 
@@ -9083,9 +9082,12 @@ async function ensureCloudDBLoadedInternal(force=false){
       try{ loaded = applyPendingTaskPatches(loaded); }catch(e){ console.warn("Cronos autosave tarefas: patch não aplicado no carregamento.", e); }
       loaded = ensureMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "");
       const cloudClinicName = String(ctx.row.clinic_name || "").trim();
-      if(cloudClinicName){
+      const savedClinicDisplayName = String(loaded?.settings?.clinicDisplayName || "").trim();
+      const resolvedClinicName = savedClinicDisplayName || cloudClinicName;
+      if(resolvedClinicName){
         const master = getMasterRecordByEmail(loaded, ctx.ownerEmail || user.email || "") || loaded.masters?.[0];
-        if(master) master.name = cloudClinicName;
+        if(master) master.name = resolvedClinicName;
+        CLOUD_CLINIC_NAME = resolvedClinicName;
       }
       if(ctx.member){
         loaded = ensureMemberMirror(loaded, ctx.member);
@@ -12768,11 +12770,12 @@ function renderSettings(){
   if(taCharge) taCharge.value = (prefs && prefs.waChargeTemplate) ? String(prefs.waChargeTemplate) : "";
   const db = loadDB();
   const master = db.masters.find(m=>m.id===actor?.masterId);
+  const savedClinicDisplayName = String(db?.settings?.clinicDisplayName || CLOUD_CLINIC_NAME || master?.name || "").trim();
   const clinicInput = el("clinicDisplayName");
   const clinicHint = el("clinicDisplayNameHint");
   const ownerEmailInput = el("clinicOwnerEmail");
   if(clinicInput){
-    clinicInput.value = master?.name || "";
+    clinicInput.value = savedClinicDisplayName;
     const canEditClinicName = !!(actor && actor.kind === "master");
     clinicInput.disabled = !canEditClinicName;
     if(clinicHint){
@@ -17975,6 +17978,7 @@ function bindActions(){
     if(!master) return toast("Falha ao salvar identidade", "O cadastro do Master principal não foi encontrado.");
 
     const previousName = String(master.name || "");
+    const previousSettingName = db?.settings?.clinicDisplayName;
     const previousButtonText = btnClinicIdentity.textContent;
     const hint = el("clinicIdentitySavedHint");
     btnClinicIdentity.disabled = true;
@@ -17982,28 +17986,18 @@ function bindActions(){
     if(hint) hint.textContent = "Salvando identidade...";
 
     try{
-      const ownerUid = String(CLOUD_CLINIC_OWNER_UID || CLOUD_OWNER_UID || "").trim();
-      if(!ownerUid) throw new Error("A clínica vinculada à sessão não foi identificada.");
-      if(typeof supabaseClient === "undefined" || !supabaseClient){
-        throw new Error("A conexão com o Supabase não está disponível.");
-      }
-
-      // clinic_state.clinic_name é a fonte autoritativa usada no próximo F5.
-      // Antes, apenas o espelho V4 em masters era alterado e o carregamento
-      // sobrescrevia o nome salvo com o valor antigo (normalmente o e-mail antes do @).
-      const { data: clinicRow, error: clinicError } = await supabaseClient
-        .from(CLOUD_TABLE)
-        .update({ clinic_name:clinicDisplayName })
-        .eq("owner_uid", ownerUid)
-        .select("id, clinic_name, updated_at")
-        .maybeSingle();
-
-      if(clinicError) throw clinicError;
-      if(!clinicRow?.id) throw new Error("A identidade da clínica não foi confirmada pelo banco.");
-
       master.name = clinicDisplayName;
+      db.settings = db.settings || {};
+      db.settings.clinicDisplayName = clinicDisplayName;
       DB = normalizeDBShape(db);
       safeSetLocalDB(DB);
+
+      const settingsSaved = await cronosPersistSettingsPatch(DB, { clinicDisplayName }, {
+        silent:true,
+        keepPendingOnFailure:false
+      });
+      if(settingsSaved === false) throw new Error("A identidade não foi confirmada pelo armazenamento da clínica.");
+
       CLOUD_CLINIC_NAME = clinicDisplayName;
       try{
         if(__cloudAccessContextCache?.ctx?.row){
@@ -18011,24 +18005,35 @@ function bindActions(){
         }
       }catch(_){ }
 
-      // Mantém também o espelho de metadados coerente, sem fila persistente em falha.
       try{
-        const metaSaved = await cronosPersistMetaPatch(DB, { masters:DB.masters }, {
+        const ownerUid = String(CLOUD_CLINIC_OWNER_UID || CLOUD_OWNER_UID || "").trim();
+        if(ownerUid && typeof supabaseClient !== "undefined" && supabaseClient){
+          const { data:clinicRow, error:clinicError } = await supabaseClient
+            .from(CLOUD_TABLE)
+            .update({ clinic_name:clinicDisplayName })
+            .eq("owner_uid", ownerUid)
+            .select("id, clinic_name, updated_at")
+            .maybeSingle();
+          if(clinicError) throw clinicError;
+          if(clinicRow?.clinic_name) CLOUD_CLINIC_NAME = String(clinicRow.clinic_name).trim() || clinicDisplayName;
+        }
+      }catch(error){
+        console.warn("Não foi possível atualizar o espelho de nome da clínica.", error);
+      }
+
+      try{
+        await cronosPersistMetaPatch(DB, { masters:DB.masters }, {
           silent:true,
           restoreOnFailure:false,
           keepPendingOnFailure:false
         });
-        if(!metaSaved){
-          console.warn("Cronos V456: clinic_name foi salvo, mas o espelho de masters não confirmou a atualização.");
-        }
-      }catch(error){
-        console.warn("Cronos V456: falha não crítica ao alinhar o espelho de masters.", error);
-      }
+      }catch(_){ }
 
       try{
         const actorNow = currentActor();
         if(actorNow) showApp(actorNow);
         renderUsers();
+        renderSettings();
       }catch(_){ }
 
       if(hint){
@@ -18038,9 +18043,12 @@ function bindActions(){
       toast("Identidade da clínica salva.");
     }catch(error){
       master.name = previousName;
+      db.settings = db.settings || {};
+      if(previousSettingName === undefined) delete db.settings.clinicDisplayName;
+      else db.settings.clinicDisplayName = previousSettingName;
       DB = normalizeDBShape(db);
       safeSetLocalDB(DB);
-      console.error("Cronos V456: falha ao salvar identidade da clínica.", error);
+      console.error("Falha ao salvar identidade da clínica.", error);
       if(hint) hint.textContent = "Não foi possível salvar.";
       toast("Falha ao salvar identidade", String(error?.message || "Tente novamente."));
     }finally{
@@ -18262,7 +18270,6 @@ async function boot(options={}){
     await syncCurrentCloudActor();
   }
 
-  // V462 — resolve as permissões efetivas antes de montar o menu.
   // Prioridade: usuário > clínica/cargo > padrão global.
   let aclValidated = false;
   try{
@@ -18882,7 +18889,6 @@ function cronosGetCurrentVisibleView(){
 }
 
 function cronosBootFromLocalCacheAfterF5(_session){
-  // V463.2.4: dados locais nunca são exibidos antes da validação online de
   // vínculo, assinatura, módulos e ACL. Mantemos a função para compatibilidade,
   // mas o retorno seguro obriga o boot completo.
   return false;
@@ -21863,13 +21869,14 @@ async function fetchFeatureAccess(force, actorOverride){
         </div>
         <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
           <button class="btn ok" id="btnSaveBranding" type="button">Salvar identidade</button>
+          <span class="muted" id="brandingSaveHint" style="font-size:12px"></span>
         </div>
       `;
-      const saveBtn = el('btnSaveBranding');
+      const saveBtn = card.querySelector('#btnSaveBranding');
       if(saveBtn) saveBtn.onclick = ()=>window.CRONOS_BRAND_UI.save();
-      const remBtn = el('btnRemoveBrandLogo');
+      const remBtn = card.querySelector('#btnRemoveBrandLogo');
       if(remBtn) remBtn.onclick = ()=>window.CRONOS_BRAND_UI.removeLogo();
-      const fileInput = el('brandLogoInput');
+      const fileInput = card.querySelector('#brandLogoInput');
       if(fileInput){
         fileInput.onchange = ev => {
           const file = ev.target.files && ev.target.files[0];
@@ -21881,31 +21888,92 @@ async function fetchFeatureAccess(force, actorOverride){
       }
     }
     window.CRONOS_BRAND_UI = {
-      setLogo(dataUri){
+      async setLogo(dataUri){
         const db = loadDB();
         const actor = currentActor();
         const branding = getClinicBranding(db, actor);
+        const previous = String(branding.logoDataUri || '');
         branding.logoDataUri = dataUri || '';
-        cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true });
-        injectBrandingSettingsCard();
+        try{
+          const ok = await cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true, keepPendingOnFailure:false });
+          if(ok === false) throw new Error('A logo não foi confirmada pelo armazenamento da clínica.');
+          injectBrandingSettingsCard();
+          try{ window.CRONOS_FLUXOS?.normalizeClinicIdentityArea?.(); }catch(_){ }
+          const hint = el('brandingSaveHint');
+          if(hint){ hint.textContent = 'Logo salva.'; setTimeout(()=>{ if(hint.textContent === 'Logo salva.') hint.textContent=''; },1800); }
+        }catch(error){
+          branding.logoDataUri = previous;
+          DB = normalizeDBShape(db);
+          safeSetLocalDB(DB);
+          injectBrandingSettingsCard();
+          try{ window.CRONOS_FLUXOS?.normalizeClinicIdentityArea?.(); }catch(_){ }
+          toast('Falha ao salvar logo', String(error?.message || 'Tente novamente.'));
+        }
       },
-      removeLogo(){
+      async removeLogo(){
         const db = loadDB();
         const actor = currentActor();
         const branding = getClinicBranding(db, actor);
+        const previous = String(branding.logoDataUri || '');
         branding.logoDataUri = '';
-        cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true });
-        injectBrandingSettingsCard();
+        try{
+          const ok = await cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true, keepPendingOnFailure:false });
+          if(ok === false) throw new Error('A remoção da logo não foi confirmada pelo armazenamento da clínica.');
+          injectBrandingSettingsCard();
+          try{ window.CRONOS_FLUXOS?.normalizeClinicIdentityArea?.(); }catch(_){ }
+          const hint = el('brandingSaveHint');
+          if(hint){ hint.textContent = 'Logo removida.'; setTimeout(()=>{ if(hint.textContent === 'Logo removida.') hint.textContent=''; },1800); }
+        }catch(error){
+          branding.logoDataUri = previous;
+          DB = normalizeDBShape(db);
+          safeSetLocalDB(DB);
+          injectBrandingSettingsCard();
+          try{ window.CRONOS_FLUXOS?.normalizeClinicIdentityArea?.(); }catch(_){ }
+          toast('Falha ao remover logo', String(error?.message || 'Tente novamente.'));
+        }
       },
-      save(){
+      async save(){
         const db = loadDB();
         const actor = currentActor();
         const branding = getClinicBranding(db, actor);
-        branding.clinicName = String(val('brandClinicName') || '').trim();
-        branding.clinicPhone = String(val('brandClinicPhone') || '').trim();
-        cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true });
-        injectBrandingSettingsCard();
-        toast('Identidade salva ✅', branding.clinicName || getClinicDisplayName(db, actor));
+        const previous = {
+          clinicName:String(branding.clinicName || ''),
+          clinicPhone:String(branding.clinicPhone || ''),
+          logoDataUri:String(branding.logoDataUri || '')
+        };
+        const nextName = String(val('brandClinicName') || '').trim();
+        const nextPhone = String(val('brandClinicPhone') || '').trim();
+        const btn = el('btnSaveBranding');
+        const hint = el('brandingSaveHint');
+        const previousText = btn?.textContent || 'Salvar identidade';
+        if(btn){ btn.disabled = true; btn.textContent = 'Salvando...'; }
+        if(hint) hint.textContent = 'Salvando identidade...';
+        branding.clinicName = nextName;
+        branding.clinicPhone = nextPhone;
+        try{
+          const ok = await cronosPersistSettingsPatch(db, { clinicBranding:db.settings.clinicBranding }, { silent:true, keepPendingOnFailure:false });
+          if(ok === false) throw new Error('A identidade da ficha não foi confirmada pelo armazenamento da clínica.');
+          DB = normalizeDBShape(db);
+          safeSetLocalDB(DB);
+          if(btn) btn.textContent = 'Salvo ✓';
+          if(hint) hint.textContent = 'Identidade salva.';
+          toast('Identidade salva ✅', branding.clinicName || getClinicDisplayName(db, actor));
+          setTimeout(()=>{
+            const liveBtn = el('btnSaveBranding');
+            const liveHint = el('brandingSaveHint');
+            if(liveBtn){ liveBtn.disabled = false; liveBtn.textContent = previousText; }
+            if(liveHint && liveHint.textContent === 'Identidade salva.') liveHint.textContent = '';
+          },1800);
+        }catch(error){
+          branding.clinicName = previous.clinicName;
+          branding.clinicPhone = previous.clinicPhone;
+          branding.logoDataUri = previous.logoDataUri;
+          DB = normalizeDBShape(db);
+          safeSetLocalDB(DB);
+          if(btn){ btn.disabled = false; btn.textContent = previousText; }
+          if(hint) hint.textContent = 'Não foi possível salvar.';
+          toast('Falha ao salvar identidade', String(error?.message || 'Tente novamente.'));
+        }
       }
     };
 
@@ -23611,14 +23679,12 @@ window.CRONOS_PROC_UI = {
           try{ el('fichaEvalDate')?.focus(); el('fichaEvalDate')?.showPicker?.(); }catch(_){}
           return;
         }
-        // RC5.34: uma NOVA avaliação deve nascer com a data local atual
         // do momento do clique. Não herda data da avaliação anterior nem
         // reaproveita data de agendamento antigo; a data segue editável no seletor.
         const suggestedDate = todayISO();
         const date = prompt('Data da nova avaliação (AAAA-MM-DD):', suggestedDate);
         if(!date) return;
         if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Data inválida', 'Use o formato AAAA-MM-DD.');
-        // RC5.33: "Nova avaliação" deve SEMPRE criar uma ficha independente.
         // Corrigir a data da avaliação atual é responsabilidade exclusiva do campo
         // "Data da avaliação". Nunca reaproveitamos uma avaliação vazia aqui, pois
         // isso fazia o botão apenas trocar a data do plano atual em vez de preservar
@@ -24204,6 +24270,18 @@ window.CRONOS_PROC_UI = {
       try{ injectProcedureSettingsCard(); }catch(_){ }
       try{ enhanceLeadCardsWithFichaButtons(); }catch(_){ }
     }, 50);
+    if(!window.__CRONOS_SETTINGS_HYDRATION_SYNC__){
+      window.__CRONOS_SETTINGS_HYDRATION_SYNC__ = true;
+      window.addEventListener('cronos:persistence-hydrated', ()=>{
+        try{ renderSettings(); }catch(_){ }
+        try{ injectBrandingSettingsCard(); }catch(_){ }
+        try{ window.CRONOS_FLUXOS?.normalizeClinicIdentityArea?.(); }catch(_){ }
+        setTimeout(()=>{
+          try{ injectBrandingSettingsCard(); }catch(_){ }
+          try{ window.CRONOS_FLUXOS?.normalizeClinicIdentityArea?.(); }catch(_){ }
+        },80);
+      });
+    }
   }catch(err){
     console.error('Falha ao iniciar módulo de ficha/prontuário:', err);
   }

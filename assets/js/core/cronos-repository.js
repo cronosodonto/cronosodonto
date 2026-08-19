@@ -177,7 +177,6 @@
       }
       return {
         queue:safe,
-        // Filas criadas antes da V447 não guardavam a causa da falha. Elas são
         // reconciliadas com a nuvem, mas nunca reenviadas automaticamente.
         legacy:storedVersion < QUEUE_STORAGE_VERSION
       };
@@ -731,8 +730,6 @@
       ? { pending:[], confirmed:[] }
       : reconcileRestoredQueue(state.baseline, restored.queue);
 
-    // V448: nenhuma fila encontrada ao abrir a página volta para o banco. Mesmo
-    // uma fila criada pela própria V448 pode ter ficado sem resposta após o
     // navegador ser fechado. O estado oficial é consultado, itens já refletidos
     // são aceitos e todo o restante vai para quarentena para revisão manual.
     const quarantined = reconciled.pending;
@@ -919,7 +916,6 @@
   }
 
   async function commitMutation(mutation){
-    // V460 nunca repete automaticamente um commit. O servidor também pode
     // devolver um conflito terminal como JSON 200 para neutralizar clientes
     // antigos que insistem na mesma operação sem gerar milhares de erros SQL.
     try{
@@ -1578,7 +1574,6 @@
 
   function retryPending(){
     // Compatibilidade segura: versões antigas chamavam este método pelo botão
-    // Atualizar. Na V460 ele jamais transmite novamente uma fila bloqueada.
     const affected = state.queue.splice(0);
     if(affected.length){
       archiveUncertainMutations(

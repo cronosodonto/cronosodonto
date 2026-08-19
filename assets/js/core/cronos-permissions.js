@@ -4,7 +4,6 @@
   const VERSION = 'v463.2.4-rc5.19-acl-resilient';
   const ROLES = ['MASTER','GERENTE','SECRETARIA','CRC','DENTISTA'];
 
-  // V462.1 cobre a matriz que já existia na V460. Recursos novos (como Exame
   // Digital) só entram no catálogo quando forem promovidos da fase de teste.
   const CATALOG = [
     {key:'dashboard.view', module:'dashboard', label:'Dashboard', group:'Módulos'},
@@ -31,7 +30,6 @@
     {key:'exam.delete', module:'exam', label:'Excluir imagens', group:'Exame Digital'}
   ];
 
-  // Espelha a V460, com a única correção já aprovada: Dentista sem Dashboard.
   const ROLE_DEFAULTS = {
     MASTER: {
       'dashboard.view':true,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,

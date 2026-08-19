@@ -1,6 +1,6 @@
 
 
-/* RC5.19 — Prontuário como view principal, preservando a sidebar */
+
 .cronosFichaView{
   width:100%;
   min-width:0;
@@ -78,9 +78,7 @@
 }
 
 
-/* =======================================================================
-   RC5.20 — PRONTUÁRIO COMO PÁGINA: compactação real + tabela sem scroll X
-   ======================================================================= */
+
 
 /* Cabeçalho da view sempre acessível durante a rolagem */
 #view-ficha .cronosFichaViewHead{
@@ -392,9 +390,7 @@
 }
 
 
-/* =========================================================
-   RC5.21 — refinamento do prontuário
-   ========================================================= */
+
 
 /* Título do odontograma e seletor de dentição na mesma linha */
 #view-ficha .odontoTitleRowV521{
@@ -452,10 +448,7 @@
 }
 
 
-/* =========================================================
-   RC5.22 — mini cards do Plano de tratamento
-   Dente(s) ganha prioridade; Dentição e Itens ligados encolhem.
-   ========================================================= */
+
 
 #view-ficha .odontoPanel .panelMiniGrid{
   grid-template-columns:minmax(0,1.45fr) minmax(0,1fr) minmax(0,.72fr)!important;
@@ -501,9 +494,7 @@
 }
 
 
-/* =========================================================
-   RC5.23 — avaliação + data + nova avaliação em uma linha
-   ========================================================= */
+
 
 #view-ficha .fichaEvaluationBoxV523{
   margin-top:10px!important;
@@ -558,9 +549,7 @@
 }
 
 
-/* =========================================================
-   RC5.24 — procedimento compacto + faces em linha única
-   ========================================================= */
+
 
 #view-ficha .fichaProcCompactV524{
   margin-top:6px!important;
@@ -646,11 +635,7 @@
   }
 }
 
-/* =========================================================
-   RC5.25 — resumo financeiro simétrico sem quebra no desconto
-   Cards simples ocupam 1/4 da linha; Desconto total e Em aberto 1/2.
-   Mantém 3 cards por linha, com altura uniforme.
-   ========================================================= */
+
 @media(min-width:761px){
   #view-ficha .totalsGrid.fichaTotalsUnderOdonto{
     grid-template-columns:repeat(4,minmax(0,1fr))!important;
@@ -688,9 +673,7 @@
 }
 
 
-/* =========================================================
-   RC5.26 — resumo financeiro equilibrado + menos "rave"
-   ========================================================= */
+
 
 /* Proporção mais sutil: os cards especiais ganham só o necessário */
 #view-ficha .totalsGrid.fichaTotalsUnderOdonto{
@@ -800,10 +783,7 @@
 }
 
 
-/* =========================================================
-   RC5.27 — correção definitiva do grid financeiro
-   Mantém as cores da RC5.26.
-   ========================================================= */
+
 
 /* Zera qualquer posicionamento herdado das versões anteriores */
 #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox{
@@ -872,9 +852,7 @@
 }
 
 
-/* =========================================================
-   RC5.28 — galeria full width + alinhamento financeiro
-   ========================================================= */
+
 
 /* Desconto total segue o mesmo alinhamento visual dos demais cards */
 #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3){
@@ -931,9 +909,7 @@
 }
 
 
-/* =========================================================
-   RC5.29 — correção pelos seletores REAIS
-   ========================================================= */
+
 
 /* DESCONTO TOTAL
    Estrutura real:
@@ -1043,7 +1019,7 @@
   }
 }
 
-/* RC5.30 — Cabeçalho do prontuário integrado à página (sem faixa escura) */
+
 #view-ficha .cronosFichaViewHead{
   position:relative!important;
   top:auto!important;
@@ -1083,7 +1059,7 @@
   border-radius:10px!important;
 }
 
-/* RC5.31 — Prontuário: modo claro com hierarquia de superfícies (sem chapar tudo de branco) */
+
 html.light #view-ficha, body.light #view-ficha, :root.light #view-ficha{
   color:#172033!important;
 }
@@ -1166,7 +1142,7 @@ html.light #view-ficha .fichaTable td, body.light #view-ficha .fichaTable td, :r
   border-color:rgba(100,116,139,.10)!important;
 }
 
-/* RC5.32 — Prontuário claro: ações com presença na view dedicada */
+
 html.light #view-ficha .cronosFichaBackBtn,
 body.light #view-ficha .cronosFichaBackBtn,
 :root.light #view-ficha .cronosFichaBackBtn,

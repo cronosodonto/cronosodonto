@@ -1,4 +1,4 @@
-/* Cronos V460 — câmera intraoral: diagnóstico sem persistência */
+
 .modalIntraoralDiagnostic .modalBody{padding-top:14px}
 .intraoralDiag{display:grid;gap:14px}
 .intraoralNotice{padding:12px 14px;border:1px solid rgba(56,189,248,.28);border-radius:14px;background:rgba(14,165,233,.08);line-height:1.45}
@@ -23,7 +23,7 @@ html.light .intraoralPanel,:root.light .intraoralPanel,body.light .intraoralPane
 @media(max-width:900px){.intraoralToolbar{grid-template-columns:1fr 1fr}.intraoralField{grid-column:1/-1}.intraoralGrid{grid-template-columns:1fr}.intraoralMedia{min-height:230px}}
 @media(max-width:560px){.intraoralToolbar{grid-template-columns:1fr}.intraoralField{grid-column:auto}.intraoralPanel header{display:grid;gap:4px}}
 
-/* Cronos V461 — vínculo temporário, pesquisa e galeria */
+
 .intraoralPatientSection{position:relative;display:grid;grid-template-columns:minmax(280px,1fr) minmax(280px,1fr);gap:12px;align-items:end}
 .intraoralPatientCard{min-height:58px;border:1px solid var(--border);border-radius:14px;padding:10px 12px;background:rgba(148,163,184,.06);display:flex;align-items:center;justify-content:space-between;gap:12px}
 .intraoralPatientCard>div{display:grid;gap:2px}.intraoralPatientCard small,.intraoralPatientCard span{font-size:12px;color:var(--muted)}
@@ -46,7 +46,7 @@ html.light .intraoralPanel,:root.light .intraoralPanel,body.light .intraoralPane
 @media(max-width:560px){.intraoralGallery{grid-template-columns:repeat(2,minmax(0,1fr))}.intraoralGallerySkeleton{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 
-/* V463 — galeria persistente, seleção e lightbox */
+
 .intraoralActionsV463{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
 .intraoralActionsV463 .selectionInfo{margin-right:auto;color:var(--muted,#94a3b8);font-size:13px}
 .intraoralThumb{position:relative}
@@ -67,7 +67,7 @@ html.light .intraoralPanel,:root.light .intraoralPanel,body.light .intraoralPane
 .intraoralStoredSection header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
 .intraoralDangerHint{font-size:11px;color:#fca5a5}
 
-/* V463.1 */
+
 .intraoralAutosaveHint{padding:14px;border:1px solid rgba(148,163,184,.22);border-radius:12px;color:var(--muted,#94a3b8);font-size:13px}
 .intraoralGalleryOnly{min-height:300px}
 .intraoralTrashList{display:grid;gap:12px}
@@ -78,7 +78,7 @@ html.light .intraoralPanel,:root.light .intraoralPanel,body.light .intraoralPane
 .intraoralTrashActions{display:flex!important;flex-direction:row!important;flex-wrap:wrap}
 @media(max-width:700px){.intraoralTrashItem{grid-template-columns:1fr}.intraoralTrashItem img{width:100%;height:auto}}
 
-/* V463.2 — avaliação + odontograma + metadados clínicos */
+
 .examClinicalTop,.examGalleryFilter{display:grid;grid-template-columns:minmax(280px,420px) 1fr;gap:12px;align-items:end;margin:12px 0}
 .examClinicalLayout{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(380px,.88fr);gap:14px;align-items:start}
 .examClinicalPanel{display:grid;gap:12px}
@@ -109,7 +109,7 @@ html.light .intraoralPanel,:root.light .intraoralPanel,body.light .intraoralPane
   .examClinicalPanel{min-width:0}
 }
 
-/* V463.2.4 RC2 — Novo Exame Digital como view dedicada */
+
 .intraoralWorkspaceView{display:grid;gap:14px;min-width:0;padding-bottom:28px}
 .examWorkspaceHeader{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:2px 0}
 .examWorkspaceHeader .titleBlock h2{display:flex;align-items:center;gap:8px;font-size:20px}
@@ -164,7 +164,7 @@ html.light .examCameraConfig summary,:root.light .examCameraConfig summary,body.
   .examWorkspaceGallery .intraoralGallery{grid-template-columns:1fr}
 }
 
-/* V463.2.4 RC5.1 — Exame Digital: paciente no cabeçalho + lightbox clínico sob demanda */
+
 .examWorkspaceHeader{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,.9fr) auto;align-items:center}
 .examHeaderPatient{justify-self:center;min-width:min(360px,100%);display:grid;gap:2px;padding:8px 16px;border-left:1px solid rgba(148,163,184,.18);border-right:1px solid rgba(148,163,184,.18)}
 .examHeaderPatient small,.examHeaderPatient span{font-size:11px;color:var(--muted,#94a3b8)}
@@ -194,7 +194,7 @@ html.light .examCameraConfig summary,:root.light .examCameraConfig summary,body.
 }
 
 
-/* V463.2.4 RC5.2 — câmera full-width + ferramentas fora da lateral + visão expandida */
+
 .examUtilityBar{
   display:grid;
   grid-template-columns:minmax(280px,520px) 1fr;
@@ -526,7 +526,7 @@ body.cronos-camera-expanded{overflow:hidden}
   }
 }
 
-/* RC5 REBASE — restaura layout inicial compacto; clínico somente na foto aberta */
+
 #view-intraoralExam:not(.camera-expanded) .examCaptureWorkspaceInitial{
   display:grid!important;
   grid-template-columns:minmax(520px,1.7fr) minmax(300px,.62fr)!important;
@@ -561,7 +561,7 @@ body.cronos-camera-expanded{overflow:hidden}
   #view-intraoralExam:not(.camera-expanded) .examCaptureWorkspaceInitial .examCameraPanel{height:clamp(440px,calc(100dvh - 170px),620px)!important}
 }
 
-/* RC5.1 — lateral compacta e alinhada ao corpo da câmera */
+
 #view-intraoralExam:not(.camera-expanded) .examCaptureSide{
   padding-top:72px!important;
   align-content:start!important;
@@ -575,7 +575,7 @@ body.cronos-camera-expanded{overflow:hidden}
   #view-intraoralExam:not(.camera-expanded) .examCaptureSide{padding-top:0!important}
 }
 
-/* RC5.13 — acesso explícito à galeria pelo Prontuário */
+
 .cronosExamCard .cronosExamOpenBtn{
   display:inline-flex!important;
   align-items:center;
