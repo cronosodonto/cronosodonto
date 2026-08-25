@@ -161,6 +161,108 @@
       .settingsMsgSubCard textarea{min-height:100px}
       .settingsMsgHint{font-size:12px;color:var(--muted,#8b93a7);line-height:1.45;margin:6px 0 10px}
       @media(max-width:760px){.flowTwo,.flowThree{grid-template-columns:1fr}.settingsAccSummary{max-width:190px}.settingsAccTitle h3{font-size:15px}}
+
+      /* Configurações — launcher modular 3x2. A lógica dos cards continua intacta. */
+      #view-settings.settingsModulesReady > .card{display:none!important}
+      #view-settings .settingsModulesHome{
+        display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;
+        width:min(980px,100%);margin:18px auto 0;padding:4px 2px 26px;
+      }
+      #view-settings .settingsModuleTile{
+        min-width:0;min-height:176px;border:1px solid var(--line,rgba(148,163,184,.20));
+        border-radius:22px;background:rgba(255,255,255,.035);color:var(--text);
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+        padding:20px 14px;cursor:pointer;text-align:center;box-shadow:0 12px 28px rgba(2,6,23,.07);
+        transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease,background .16s ease;
+      }
+      #view-settings .settingsModuleTile:hover{transform:translateY(-2px);border-color:rgba(56,189,248,.52);box-shadow:0 16px 32px rgba(14,116,144,.12)}
+      #view-settings .settingsModuleIcon{
+        width:92px;height:92px;border-radius:22px;display:grid;place-items:center;
+        background:linear-gradient(145deg,rgba(37,99,235,.18),rgba(20,184,166,.12));
+        border:1px solid rgba(96,165,250,.28);box-shadow:inset 0 0 0 1px rgba(255,255,255,.035);
+      }
+      #view-settings .settingsModuleIcon svg{width:46px;height:46px;display:block;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+      #view-settings .settingsModuleName{font-size:15px;line-height:1.25;font-weight:800;max-width:200px}
+      #view-settings .settingsModuleNav{display:none;align-items:center;gap:12px;padding:18px clamp(18px,3vw,44px) 14px;border-bottom:1px solid var(--line,rgba(148,163,184,.18))}
+      #view-settings .settingsModuleBack{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line,rgba(148,163,184,.24));background:rgba(255,255,255,.04);color:inherit;border-radius:12px;padding:9px 13px;cursor:pointer;font-weight:750}
+      #view-settings .settingsModuleBack svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+      #view-settings .settingsModuleNavText{min-width:0;display:flex;flex-direction:column;gap:2px}
+      #view-settings .settingsModuleNavText strong{font-size:17px}.settingsModuleNavText small{font-size:12px;color:var(--muted,#8b93a7)}
+      #view-settings.settingsModuleOpen > .topbar,#view-settings.settingsModuleOpen > .settingsModulesHome{display:none!important}
+      #view-settings.settingsModuleOpen > .settingsModuleNav{display:flex}
+      #view-settings.settingsModuleOpen > .card.settingsModuleActive{
+        display:block!important;width:100%;max-width:none;min-height:calc(100dvh - 126px);margin:0!important;
+        border-radius:0!important;border-left:0!important;border-right:0!important;padding:24px clamp(18px,3vw,44px) 42px!important;
+        box-shadow:none!important;background:transparent!important;overflow:visible!important;
+      }
+      /* O conteúdo já existente fica aberto; só escondemos o cabeçalho de acordeão nesta visão. */
+      #view-settings.settingsModuleOpen > .card.settingsModuleActive > .settingsAccHeader{display:none!important}
+      #view-settings.settingsModuleOpen > .card.settingsModuleActive > .settingsAccBody{display:block!important;padding-top:0!important;max-width:1180px;margin:0 auto;display:flex!important;flex-direction:column;gap:18px}
+      #view-settings .settingsSectionLead{font-size:13px;line-height:1.65;color:var(--muted,#8b93a7);margin:0}
+      #view-settings .settingsSurface,
+      #view-settings .settingsMsgSubCard{
+        border:1px solid var(--line,rgba(148,163,184,.18));
+        border-radius:22px;padding:20px 22px;background:rgba(255,255,255,.03);
+        box-shadow:0 12px 30px rgba(2,6,23,.05);
+      }
+      #view-settings .settingsSurface + .settingsSurface,
+      #view-settings .settingsSurface + .settingsMsgSubCard,
+      #view-settings .settingsMsgSubCard + .settingsSurface,
+      #view-settings .settingsMsgSubCard + .settingsMsgSubCard{margin-top:0}
+      #view-settings .settingsSurface h4,
+      #view-settings .settingsMsgSubCard h4{margin:0 0 8px;font-size:16px;line-height:1.35}
+      #view-settings .settingsMsgSubCard .settingsMsgHint{margin:0 0 12px}
+      #view-settings .settingsFormGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+      #view-settings .settingsIdentityTop{display:flex;flex-direction:column;gap:14px}
+      #view-settings .settingsActionRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:2px}
+      #view-settings .settingsActionRow .muted{font-size:12px}
+      #view-settings .settingsInlineChip,
+      #view-settings #professionalsCountHint,
+      #view-settings #proceduresCountHint{
+        display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:999px;
+        border:1px solid rgba(56,189,248,.22);background:rgba(56,189,248,.08);color:var(--muted,#8b93a7);
+        font-size:12px;line-height:1.2
+      }
+      #view-settings .settingsActionSurface{
+        width:min(760px,100%);padding:26px 28px;display:flex;flex-direction:column;gap:14px
+      }
+      #view-settings .settingsActionSurface .settingsActionRow{margin-top:0}
+      #view-settings .settingsActionSurface .btn{align-self:flex-start}
+      #view-settings .settingsActionNote{font-size:12px;line-height:1.55;color:var(--muted,#8b93a7)}
+      #view-settings .settingsPaneTitle{display:flex;flex-direction:column;gap:4px;margin-bottom:2px}
+      #view-settings .settingsPaneTitle strong{font-size:18px;line-height:1.25}
+      #view-settings .settingsPaneTitle small{font-size:12px;color:var(--muted,#8b93a7)}
+      #view-settings textarea{min-height:120px}
+      #view-settings #settingsBrandingCard .procGrid,
+      #view-settings #clinicBrandingMergedBlock .procGrid{grid-template-columns:1.12fr .88fr!important;gap:18px}
+      #view-settings .brandRow{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+      #view-settings .brandPreview{min-width:72px;min-height:72px;border-radius:18px;padding:8px;background:rgba(255,255,255,.04);border:1px solid var(--line,rgba(148,163,184,.18))}
+      html.light #view-settings .settingsModuleTile,body.light #view-settings .settingsModuleTile,:root.light #view-settings .settingsModuleTile{background:rgba(255,255,255,.84);border-color:rgba(37,99,235,.12);box-shadow:0 13px 30px rgba(15,23,42,.07)}
+      html.light #view-settings .settingsSurface,
+      html.light #view-settings .settingsMsgSubCard,
+      body.light #view-settings .settingsSurface,
+      body.light #view-settings .settingsMsgSubCard,
+      :root.light #view-settings .settingsSurface,
+      :root.light #view-settings .settingsMsgSubCard{background:rgba(255,255,255,.88);border-color:rgba(37,99,235,.12);box-shadow:0 16px 34px rgba(15,23,42,.06)}
+      html.light #view-settings .settingsModuleTile:hover,body.light #view-settings .settingsModuleTile:hover,:root.light #view-settings .settingsModuleTile:hover{background:#fff;border-color:rgba(14,165,233,.38);box-shadow:0 17px 36px rgba(14,116,144,.10)}
+      html.light #view-settings .settingsModuleIcon,body.light #view-settings .settingsModuleIcon,:root.light #view-settings .settingsModuleIcon{background:linear-gradient(145deg,#eef6ff,#eefcf8);border-color:rgba(37,99,235,.16);color:#1677d2}
+      @media(max-width:900px){
+        #view-settings .settingsModulesHome{grid-template-columns:repeat(2,minmax(0,1fr));max-width:700px}
+        #view-settings .settingsFormGrid,
+        #view-settings #settingsBrandingCard .procGrid,
+        #view-settings #clinicBrandingMergedBlock .procGrid{grid-template-columns:1fr!important}
+      }
+      @media(max-width:560px){
+        #view-settings .settingsModulesHome{grid-template-columns:1fr;gap:14px}
+        #view-settings .settingsModuleTile{min-height:150px}
+        #view-settings .settingsModuleIcon{width:78px;height:78px}
+        #view-settings .settingsModuleIcon svg{width:40px;height:40px}
+        #view-settings.settingsModuleOpen > .card.settingsModuleActive{padding:18px 14px 28px!important}
+        #view-settings.settingsModuleOpen > .card.settingsModuleActive > .settingsAccBody{gap:14px}
+        #view-settings .settingsSurface,
+        #view-settings .settingsMsgSubCard,
+        #view-settings .settingsActionSurface{padding:16px}
+      }
     `;
     document.head.appendChild(style);
   }
@@ -396,6 +498,169 @@
     ensureBirthdayMessageBlock(prefBody);
     bindBirthdayTemplateButtons();
   }
+  const SETTINGS_MODULES = [
+    {key:'identity',title:'Identidade da clínica',subtitle:'Nome, e-mail, logo e identidade da ficha',find:()=>primaryClinicIdentityCard(),icon:`<svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/><path d="M9 9h.01M15 9h.01M9 12h.01M15 12h.01"/></svg>`},
+    {key:'messages',title:'Preferências de mensagens',subtitle:'WhatsApp, cobrança e aniversariantes',find:()=>findSettingsCardByTextarea('waTemplate'),icon:`<svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M7.5 9h9M7.5 13h6"/></svg>`},
+    {key:'flows',title:'Fluxos assistidos',subtitle:'Sequências manuais para o Hoje no Cronos',find:()=>$(CARD_ID),icon:`<svg viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="2"/><rect x="15" y="15" width="6" height="6" rx="2"/><path d="M9 6h4a4 4 0 0 1 4 4v5"/><path d="m14 12 3 3 3-3"/></svg>`},
+    {key:'security',title:'Segurança do acesso',subtitle:'Senha e acesso do usuário',find:()=>topLevelSettingsCards().find(card=>inferCardTitle(card).toLowerCase().includes('segurança'))||null,icon:`<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><rect x="9" y="10" width="6" height="5" rx="1"/><path d="M10.5 10V8.5a1.5 1.5 0 0 1 3 0V10"/></svg>`},
+    {key:'professionals',title:'Profissionais',subtitle:'Dentistas e profissionais clínicos',find:()=>$('settingsProfessionalsCard'),icon:`<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M16 11h6"/></svg>`},
+    {key:'procedures',title:'Procedimentos odontológicos',subtitle:'Catálogo usado na ficha do paciente',find:()=>$('settingsProceduresCard'),icon:`<svg viewBox="0 0 24 24"><path d="M8.7 3.2c1.6 0 2.2 1 3.3 1s1.7-1 3.3-1c2.7 0 4.7 2.2 4.7 5 0 4.7-2.4 11.8-5.1 11.8-1.4 0-1.3-4.5-2.9-4.5S10.5 20 9.1 20C6.4 20 4 12.9 4 8.2c0-2.8 2-5 4.7-5z"/></svg>`}
+  ];
+
+  function settingsModuleMetaForCard(card){ return SETTINGS_MODULES.find(meta=>{ try{return meta.find?.()===card}catch(_){return false} }) || null; }
+
+  function ensureSettingsModulesUI(){
+    const host=settingsHost(); if(!host) return;
+    /* Importante: inicializa uma vez. Nada aqui desmonta/remonta os cards existentes. */
+    if(host.dataset.settingsModulesInit==='1') return;
+
+    const home=document.createElement('div');
+    home.id='settingsModulesHome'; home.className='settingsModulesHome';
+    home.innerHTML=SETTINGS_MODULES.map(meta=>`<button type="button" class="settingsModuleTile" data-settings-module="${escapeHTML(meta.key)}"><span class="settingsModuleIcon">${meta.icon}</span><span class="settingsModuleName">${escapeHTML(meta.title)}</span></button>`).join('');
+
+    const nav=document.createElement('div');
+    nav.id='settingsModuleNav'; nav.className='settingsModuleNav';
+    nav.innerHTML=`<button type="button" class="settingsModuleBack" data-settings-module-back><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>Configurações</button><div class="settingsModuleNavText"><strong data-settings-module-title>Configurações</strong><small data-settings-module-subtitle></small></div>`;
+
+    const topbar=qs(':scope > .topbar',host);
+    if(topbar){ topbar.insertAdjacentElement('afterend',home); home.insertAdjacentElement('afterend',nav); }
+    else{ host.insertBefore(nav,host.firstChild); host.insertBefore(home,nav); }
+
+    home.addEventListener('click',event=>{
+      const btn=event.target.closest('[data-settings-module]'); if(!btn) return;
+      const meta=SETTINGS_MODULES.find(x=>x.key===btn.dataset.settingsModule); if(!meta) return;
+      let card=null; try{card=meta.find?.()}catch(_){}
+      if(!card){ toast('Configuração indisponível','Este módulo ainda não terminou de carregar.'); return; }
+      openSettingsModule(card,meta);
+    });
+    qs('[data-settings-module-back]',nav)?.addEventListener('click',closeSettingsModule);
+    host.dataset.settingsModulesInit='1';
+    host.classList.add('settingsModulesReady');
+  }
+
+  function openSettingsModule(card,metaOverride=null){
+    const host=settingsHost(); if(!host||!card) return;
+    const meta=metaOverride||settingsModuleMetaForCard(card)||{title:inferCardTitle(card),subtitle:cardSummary(card,inferCardTitle(card))};
+    topLevelSettingsCards().forEach(c=>c.classList.remove('settingsModuleActive'));
+    card.classList.add('settingsModuleActive','isOpen');
+    const nav=$('settingsModuleNav');
+    const title=nav?.querySelector('[data-settings-module-title]'); const sub=nav?.querySelector('[data-settings-module-subtitle]');
+    if(title) title.textContent=meta.title||inferCardTitle(card); if(sub) sub.textContent=meta.subtitle||'';
+    host.classList.add('settingsModuleOpen');
+    try{window.scrollTo({top:0,behavior:'instant'})}catch(_){window.scrollTo(0,0)}
+  }
+
+  function closeSettingsModule(){
+    const host=settingsHost(); if(!host) return;
+    host.classList.remove('settingsModuleOpen');
+    topLevelSettingsCards().forEach(c=>c.classList.remove('settingsModuleActive'));
+    try{window.scrollTo({top:0,behavior:'instant'})}catch(_){window.scrollTo(0,0)}
+  }
+
+  function directChildren(node){ return Array.from(node?.children || []); }
+  function wrapElements(elements, className, id=''){
+    const nodes=(elements||[]).filter(Boolean);
+    if(!nodes.length) return null;
+    const parent=nodes[0]?.parentNode; if(!parent) return null;
+    if(id){
+      const existing=$(id);
+      if(existing) return existing;
+    }
+    const wrap=document.createElement('div');
+    wrap.className=className;
+    if(id) wrap.id=id;
+    parent.insertBefore(wrap,nodes[0]);
+    nodes.forEach(node=>wrap.appendChild(node));
+    return wrap;
+  }
+  function buildPaneTitle(title, subtitle=''){
+    const box=document.createElement('div');
+    box.className='settingsPaneTitle';
+    box.innerHTML=`<strong>${escapeHTML(title||'')}</strong>${subtitle?`<small>${escapeHTML(subtitle)}</small>`:''}`;
+    return box;
+  }
+  function normalizeSettingsLayoutInternals(){
+    const host=settingsHost(); if(!host) return;
+
+    const identity=primaryClinicIdentityCard();
+    const identityBody=qs(':scope > .settingsAccBody', identity) || identity;
+    if(identityBody && !$('settingsIdentityPrimaryPanel')){
+      const kids=directChildren(identityBody);
+      const block=kids.filter(node=>node.id!=='clinicBrandingMergedBlock').slice(0,4);
+      const panel=wrapElements(block,'settingsSurface settingsIdentityTop','settingsIdentityPrimaryPanel');
+      if(panel && !qs('.settingsPaneTitle', panel)) panel.prepend(buildPaneTitle('Identidade da clínica','Nome exibido, e-mail do master e dados base da clínica.'));
+      const grid=qs('.twoCol', panel);
+      if(grid) grid.classList.add('settingsFormGrid');
+      const actionRow=Array.from(panel.children).find(node=>node.querySelector?.('#btnSaveClinicIdentity'));
+      if(actionRow) actionRow.classList.add('settingsActionRow');
+      const lead=Array.from(panel.children).find(node=>node.classList?.contains('muted'));
+      if(lead) lead.classList.add('settingsSectionLead');
+    }
+    const branding=$('clinicBrandingMergedBlock');
+    if(branding){
+      branding.classList.add('settingsSurface');
+      if(!qs('.settingsPaneTitle', branding)) branding.prepend(buildPaneTitle('Identidade da ficha e impressão','Cabeçalho do prontuário, PDF e materiais gerados pelo Cronos.'));
+      const saveRow=Array.from(branding.children).find(node=>node.querySelector?.('#btnSaveBranding'));
+      if(saveRow) saveRow.classList.add('settingsActionRow');
+      const lead=Array.from(branding.children).find(node=>node.classList?.contains('settingsMsgHint') || node.classList?.contains('muted'));
+      if(lead) lead.classList.add('settingsSectionLead');
+    }
+
+    const prefCard=findSettingsCardByTextarea('waTemplate');
+    const prefBody=qs(':scope > .settingsAccBody', prefCard) || prefCard;
+    if(prefBody && !$('settingsMessagesPrimaryPanel')){
+      const kids=directChildren(prefBody);
+      const block=[];
+      for(const node of kids){
+        if(node.classList?.contains('settingsMsgSubCard')) break;
+        block.push(node);
+      }
+      const panel=wrapElements(block,'settingsSurface','settingsMessagesPrimaryPanel');
+      if(panel && !qs('.settingsPaneTitle', panel)) panel.prepend(buildPaneTitle('WhatsApp padrão','Mensagem enviada ao lead quando o contato começa.'));
+      const actionRow=Array.from(panel.children).find(node=>node.querySelector?.('#btnSavePrefs'));
+      if(actionRow) actionRow.classList.add('settingsActionRow');
+      const lead=Array.from(panel.children).find(node=>node.classList?.contains('muted'));
+      if(lead) lead.classList.add('settingsSectionLead');
+    }
+    ['chargeTemplateSettingsBlock','birthdayTemplateSettingsBlock'].forEach(id=>{
+      const block=$(id); if(!block) return;
+      block.classList.add('settingsSurface');
+      const actionRow=Array.from(block.children).find(node=>node.querySelector?.('button'));
+      if(actionRow) actionRow.classList.add('settingsActionRow');
+    });
+
+    const security=topLevelSettingsCards().find(card=>String(inferCardTitle(card)||'').toLowerCase().includes('segurança'));
+    const secBody=qs(':scope > .settingsAccBody', security) || security;
+    if(secBody && !$('settingsSecurityActionPanel')){
+      const panel=wrapElements(directChildren(secBody),'settingsSurface settingsActionSurface','settingsSecurityActionPanel');
+      if(panel && !qs('.settingsPaneTitle', panel)) panel.prepend(buildPaneTitle('Segurança do acesso','Troca de senha do usuário logado sem depender do navegador.'));
+      const lead=Array.from(panel.children).find(node=>node.classList?.contains('muted'));
+      if(lead) lead.classList.add('settingsSectionLead');
+      const actionRow=Array.from(panel.children).find(node=>node.querySelector?.('#btnChangeMyPassword'));
+      if(actionRow){
+        actionRow.classList.add('settingsActionRow');
+        const note=Array.from(actionRow.children).find(node=>node.classList?.contains('muted'));
+        if(note) note.classList.add('settingsActionNote');
+      }
+    }
+
+    [['settingsProfessionalsCard','Gerenciar profissionais','Controle clínico separado dos usuários de acesso.'],['settingsProceduresCard','Catálogo de procedimentos','Base mestre usada no prontuário do paciente.']].forEach(([id,title,subtitle])=>{
+      const card=$(id); if(!card) return;
+      const body=qs(':scope > .settingsAccBody', card) || card;
+      const panelId=id+'Panel';
+      if(!$(panelId)){
+        const panel=wrapElements(directChildren(body),'settingsSurface settingsActionSurface',panelId);
+        if(panel && !qs('.settingsPaneTitle', panel)) panel.prepend(buildPaneTitle(title,subtitle));
+        const lead=Array.from(panel.children).find(node=>node.classList?.contains('muted'));
+        if(lead) lead.classList.add('settingsSectionLead');
+        const rows=Array.from(panel.children).filter(node=>node.querySelector?.('button'));
+        rows.forEach(row=>row.classList.add('settingsActionRow'));
+        const lastMuted=Array.from(panel.children).reverse().find(node=>node.classList?.contains('procCardHint'));
+        if(lastMuted) lastMuted.classList.add('settingsActionNote');
+      }
+    });
+  }
+
   function enhanceSettingsUI(){
     normalizeClinicIdentityArea();
     groupMessagePreferences();
@@ -403,11 +668,14 @@
     applySettingsAccordion();
     normalizeClinicIdentityArea();
     bindBirthdayTemplateButtons();
+    ensureSettingsModulesUI();
+    normalizeSettingsLayoutInternals();
   }
   function openSettingsCardById(id){
-    const card = $(id); if(!card) return;
+    const card=$(id); if(!card) return;
     enhanceSettingsUI();
-    setSettingsCardOpen(card, true);
+    const meta=settingsModuleMetaForCard(card);
+    if(meta) openSettingsModule(card,meta); else setSettingsCardOpen(card,true);
   }
 
   function ensureSettingsCard(force=false){
@@ -952,6 +1220,7 @@
     enhanceSettingsUI,
     normalizeClinicIdentityArea,
     openSettingsCardById,
+    closeSettingsModule,
     injectLeadButtons,
     openActivateFlow,
     activateFlow,
