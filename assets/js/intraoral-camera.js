@@ -12,6 +12,8 @@ const S={
   returnView:'dashboard',viewObserver:null,learning:null,captureBusy:false,lastPhysicalCaptureAt:0,
   cameraRequestVersion:0,galleryLoading:false,galleryLoadError:''
 };
+const COMPARE_SIGNED_URL_CACHE=new Map();
+const COMPARE_SIGNED_URL_TTL=50*60*1000;
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
 const can=(k,actorOverride)=>window.CronosPermissions?.can?.(k,actorOverride||(typeof currentActor==='function'?currentActor():null))===true;
@@ -206,6 +208,13 @@ function forgetCameraProfile(){
 }
 function isTextEditingTarget(target){return !!target?.closest?.('input, textarea, select, [contenteditable="true"], [contenteditable=""]')}
 function handleCameraKey(event){
+  /* O comparador tem navegação própria por setas.
+     Quando ele está aberto acima do lightbox, não deixa o atalho global
+     da galeria capturar a tecla antes do comparador. */
+  const compareRoot=document.getElementById('examCompareOverlay');
+  if(compareRoot&&(event.key==='ArrowLeft'||event.key==='ArrowRight')){
+    return;
+  }
   const lightboxRoot=$('intraoralLightbox');
   const lightboxOpen=!!lightboxRoot&&!lightboxRoot.hidden;
   if(lightboxOpen&&(event.key==='ArrowLeft'||event.key==='ArrowRight')&&!isTextEditingTarget(event.target)){
@@ -558,6 +567,7 @@ function render(){
   }
   const info=$('intraoralSelectionInfo');if(info)info.textContent=loading?'Carregando fotos...':`${S.selected.size} selecionada(s)`;
   const selectAll=$('btnExamSelectAll');if(selectAll)selectAll.disabled=loading||!!loadError||!items.length;
+  const compare=$('btnExamCompare');if(compare)compare.disabled=loading||!!loadError||!items.length;
   ['btnExamDownload','btnExamPdf'].forEach(id=>{const e=$(id);if(e)e.disabled=loading||!S.selected.size});
   const del=$('btnExamDelete');if(del){del.disabled=loading||!S.selected.size||!can('exam.delete');del.hidden=!can('exam.delete')}
   refreshExpandedLastPreview();
@@ -779,12 +789,13 @@ function lightbox(i,{keepClinical=false}={}){
   let b=$('intraoralLightbox');
   if(!b){
     b=document.createElement('div');b.id='intraoralLightbox';b.className='intraoralLightbox';
-    b.innerHTML='<div class="intraoralLightboxStage"><button class="intraoralLightboxClose">×</button><button class="intraoralLightboxPrev">‹</button><img class="intraoralLightboxMainImage"><button class="intraoralLightboxNext">›</button><button class="intraoralLightboxOdontoToggle" type="button">Dados clínicos</button><div class="intraoralLightboxThumbs" aria-label="Fotos desta avaliação"></div><div class="intraoralLightboxCaption"></div></div><aside class="intraoralLightboxOdonto" hidden></aside>';
+    b.innerHTML='<div class="intraoralLightboxStage"><button class="intraoralLightboxClose">×</button><button class="intraoralLightboxPrev">‹</button><img class="intraoralLightboxMainImage"><button class="intraoralLightboxNext">›</button><div class="intraoralLightboxTopActions"><button class="intraoralLightboxCompareToggle" type="button">Antes e depois</button><button class="intraoralLightboxOdontoToggle" type="button">Dados clínicos</button></div><div class="intraoralLightboxThumbs" aria-label="Fotos desta avaliação"></div><div class="intraoralLightboxCaption"></div></div><aside class="intraoralLightboxOdonto" hidden></aside>';
     document.body.appendChild(b);
     b.querySelector('.intraoralLightboxClose').onclick=()=>b.hidden=true;
     b.querySelector('.intraoralLightboxPrev').onclick=()=>{const n=allItems().length;if(n)lightbox((S.lightboxIndex-1+n)%n,{keepClinical:b.classList.contains('with-odonto')})};
     b.querySelector('.intraoralLightboxNext').onclick=()=>{const n=allItems().length;if(n)lightbox((S.lightboxIndex+1)%n,{keepClinical:b.classList.contains('with-odonto')})};
     b.querySelector('.intraoralLightboxOdontoToggle').onclick=()=>{const panel=b.querySelector('.intraoralLightboxOdonto');panel.hidden=!panel.hidden;b.classList.toggle('with-odonto',!panel.hidden)};
+    b.querySelector('.intraoralLightboxCompareToggle').onclick=()=>{const item=allItems()[S.lightboxIndex];openComparison({referenceId:item?.id||null}).catch(e=>alert(e.message))};
     b.querySelector('.intraoralLightboxThumbs').onclick=e=>{const thumb=e.target.closest('[data-lightbox-thumb]');if(!thumb)return;const idx=Number(thumb.dataset.lightboxThumb);if(Number.isInteger(idx))lightbox(idx,{keepClinical:true})};
   }
   const x=a[i],teeth=(x.teeth||[]).length?` • Dente${x.teeth.length>1?'s':''} ${(x.teeth||[]).join(', ')}`:'';
@@ -809,6 +820,206 @@ function lightbox(i,{keepClinical=false}={}){
     });
   }
 }
+
+async function comparisonSignedUrls(rows){
+  const now=Date.now(),result=new Map(),missing=[];
+  (rows||[]).forEach(row=>{
+    const path=String(row?.storage_path||'');if(!path)return;
+    const cached=COMPARE_SIGNED_URL_CACHE.get(path);
+    if(cached&&cached.url&&cached.expiresAt>now){result.set(path,cached.url);return}
+    missing.push(path);
+  });
+  if(missing.length){
+    const storage=client().storage.from(BUCKET);
+    let filled=false;
+    if(typeof storage.createSignedUrls==='function'){
+      try{
+        const {data,error}=await storage.createSignedUrls(missing,3600);
+        if(error)throw error;
+        (data||[]).forEach((entry,i)=>{
+          const path=String(entry?.path||missing[i]||''),url=entry?.signedUrl||entry?.signedURL||'';
+          if(path&&url){result.set(path,url);COMPARE_SIGNED_URL_CACHE.set(path,{url,expiresAt:now+COMPARE_SIGNED_URL_TTL})}
+        });
+        filled=missing.every(path=>result.has(path));
+      }catch(_){filled=false}
+    }
+    if(!filled){
+      const pending=missing.filter(path=>!result.has(path));
+      const limit=6;
+      for(let i=0;i<pending.length;i+=limit){
+        const chunk=pending.slice(i,i+limit);
+        const settled=await Promise.allSettled(chunk.map(async path=>{
+          const {data,error}=await storage.createSignedUrl(path,3600);if(error)throw error;
+          return{path,url:data?.signedUrl||data?.signedURL||''}
+        }));
+        settled.forEach(entry=>{
+          if(entry.status!=='fulfilled'||!entry.value?.url)return;
+          const {path,url}=entry.value;result.set(path,url);COMPARE_SIGNED_URL_CACHE.set(path,{url,expiresAt:now+COMPARE_SIGNED_URL_TTL});
+        });
+      }
+    }
+  }
+  return result;
+}
+async function comparisonItems(){
+  if(!S.patient||!can('exam.view'))return[];
+  let q=client().from('cronos_exam_images').select('*').eq('owner_uid',owner()).eq('patient_entry_id',pkey()).is('deleted_at',null);
+  const {data,error}=await q.order('captured_at',{ascending:false});
+  if(error)throw error;
+  const rows=data||[],ids=rows.map(x=>x.id);
+  let toothRows=[];
+  if(ids.length){
+    const tr=await client().from('cronos_exam_image_teeth').select('image_id,tooth_number').in('image_id',ids);
+    if(!tr.error)toothRows=tr.data||[];
+  }
+  const byImage={};toothRows.forEach(t=>(byImage[t.image_id]??=[]).push(String(t.tooth_number)));
+  const urls=await comparisonSignedUrls(rows);
+  return rows.map(x=>({...x,teeth:byImage[x.id]||[],url:urls.get(String(x.storage_path||''))||''}));
+}
+function comparisonDate(x){const d=new Date(x?.captured_at||x?.createdAt||0);return Number.isNaN(d.getTime())?null:d}
+function comparisonDateLabel(x){const d=comparisonDate(x);return d?d.toLocaleString('pt-BR'):'Data não informada'}
+function comparisonTeeth(x){return (x?.teeth||[]).map(String).filter(Boolean)}
+function automaticComparisonMatch(ref,items){
+  const rt=comparisonTeeth(ref);if(!ref||!rt.length)return null;
+  const rset=new Set(rt),rtime=comparisonDate(ref)?.getTime()||0;
+  const candidates=(items||[]).filter(x=>String(x.id)!==String(ref.id)).map(x=>{
+    const xt=comparisonTeeth(x),overlap=xt.filter(t=>rset.has(t)).length;
+    if(!overlap)return null;
+    const exact=xt.length===rt.length&&xt.every(t=>rset.has(t));
+    const t=comparisonDate(x)?.getTime()||0;
+    return{x,overlap,exact,future:t>rtime,t};
+  }).filter(Boolean);
+  candidates.sort((a,b)=>(Number(b.exact)-Number(a.exact))||(b.overlap-a.overlap)||(Number(b.future)-Number(a.future))||(b.t-a.t));
+  return candidates[0]?.x||null;
+}
+function comparisonRole(left,right,side){
+  if(!left||!right)return side==='left'?'REFERÊNCIA':'COMPARAÇÃO';
+  const lt=comparisonDate(left)?.getTime()||0,rt=comparisonDate(right)?.getTime()||0;
+  if(lt===rt)return side==='left'?'IMAGEM A':'IMAGEM B';
+  return side==='left'?(lt<rt?'ANTES':'DEPOIS'):(rt<lt?'ANTES':'DEPOIS');
+}
+function comparisonPanelHTML(side){
+  return`<section class="examComparePanel" data-compare-panel="${side}" tabindex="0"><div class="examComparePanelHead"><span class="examCompareRole" data-compare-role></span><strong data-compare-date>Selecione uma foto</strong></div><div class="examCompareImageStage is-empty" data-compare-stage><img data-compare-main alt="Foto para comparação" decoding="async" hidden><div class="examCompareStageHint" data-compare-placeholder>Escolha uma miniatura abaixo para comparar manualmente.</div></div><div class="examCompareMeta"><span data-compare-eval>Nenhuma imagem selecionada neste lado.</span><span data-compare-teeth></span></div><div class="examCompareThumbs" data-compare-thumbs="${side}"></div></section>`
+}
+function comparisonSetActiveSide(state,side){
+  state.activeSide=side==='right'?'right':'left';
+  const root=document.getElementById('examCompareOverlay');
+  root?.querySelectorAll('[data-compare-panel]').forEach(panel=>{
+    const active=panel.dataset.comparePanel===state.activeSide;
+    panel.classList.toggle('active-side',active);
+    panel.setAttribute('aria-label',`${panel.dataset.comparePanel==='left'?'Lado esquerdo':'Lado direito'}${active?' selecionado para navegar com as setas':''}`);
+  });
+  comparisonUpdateHint(state);
+}
+function comparisonPickItem(state,side,item,{allowAuto=false}={}){
+  if(!item)return;
+  state[side]=item;
+  if(side==='left'&&allowAuto&&!state.right){
+    const match=automaticComparisonMatch(item,state.items);
+    if(match){state.right=match;state.autoFound=true}else state.autoFound=false;
+  }else state.autoFound=false;
+  comparisonSetActiveSide(state,side);
+}
+function comparisonLoadThumb(img){
+  if(!img||img.src||!img.dataset.src)return;
+  img.src=img.dataset.src;delete img.dataset.src;
+}
+function comparisonObserveThumbs(strip){
+  if(!strip)return;
+  const imgs=[...strip.querySelectorAll('img[data-src]')];
+  if(!('IntersectionObserver'in window)){imgs.slice(0,12).forEach(comparisonLoadThumb);return}
+  const observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){comparisonLoadThumb(entry.target);observer.unobserve(entry.target)}}),{root:strip,rootMargin:'0px 260px',threshold:.01});
+  imgs.forEach(img=>observer.observe(img));
+  strip.__compareObserver=observer;
+}
+function comparisonMountThumbs(state,side){
+  const root=document.getElementById('examCompareOverlay'),strip=root?.querySelector(`[data-compare-thumbs="${side}"]`);if(!strip)return;
+  strip.__compareObserver?.disconnect?.();
+  strip.innerHTML=state.items.map((x,i)=>`<button type="button" class="examCompareThumb" data-compare-pick="${side}" data-compare-id="${esc(x.id)}" title="${esc(comparisonDateLabel(x))}"><img data-src="${esc(x.url)}" alt="" loading="lazy" decoding="async" fetchpriority="low"><span>${i+1}</span></button>`).join('');
+  comparisonObserveThumbs(strip);
+}
+function comparisonPrimeActiveThumb(root,side,item){
+  const strip=root?.querySelector(`[data-compare-thumbs="${side}"]`);if(!strip)return;
+  const old=strip.querySelector('.examCompareThumb.active');if(old)old.classList.remove('active');
+  if(!item)return;
+  const btn=[...strip.querySelectorAll('.examCompareThumb')].find(x=>String(x.dataset.compareId)===String(item.id));
+  if(!btn)return;
+  btn.classList.add('active');comparisonLoadThumb(btn.querySelector('img'));
+  const all=[...strip.querySelectorAll('.examCompareThumb')],idx=all.indexOf(btn);
+  for(let i=Math.max(0,idx-2);i<=Math.min(all.length-1,idx+2);i++)comparisonLoadThumb(all[i].querySelector('img'));
+  requestAnimationFrame(()=>btn.scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'}));
+}
+function comparisonUpdatePanel(state,side){
+  const root=document.getElementById('examCompareOverlay'),panel=root?.querySelector(`[data-compare-panel="${side}"]`);if(!panel)return;
+  const item=state[side],other=state[side==='left'?'right':'left'];
+  const role=panel.querySelector('[data-compare-role]'),date=panel.querySelector('[data-compare-date]'),stage=panel.querySelector('[data-compare-stage]'),placeholder=panel.querySelector('[data-compare-placeholder]'),img=panel.querySelector('[data-compare-main]'),evalEl=panel.querySelector('[data-compare-eval]'),teethEl=panel.querySelector('[data-compare-teeth]');
+  if(role)role.textContent=comparisonRole(side==='left'?item:other,side==='right'?item:other,side);
+  if(!item){
+    if(date)date.textContent='Selecione uma foto';
+    if(stage)stage.classList.add('is-empty');
+    if(placeholder)placeholder.hidden=false;
+    if(img){img.hidden=true;img.removeAttribute('src');img.dataset.currentId=''};
+    if(evalEl)evalEl.textContent='Nenhuma imagem selecionada neste lado.';if(teethEl)teethEl.textContent='';comparisonPrimeActiveThumb(root,side,null);return;
+  }
+  if(date)date.textContent=comparisonDateLabel(item);
+  if(stage)stage.classList.remove('is-empty');
+  if(placeholder)placeholder.hidden=true;
+  if(img&&String(img.dataset.currentId)!==String(item.id)){img.dataset.currentId=String(item.id);img.src=item.url||''}
+  if(img)img.hidden=false;
+  if(evalEl)evalEl.textContent=evaluationLabel(item.evaluation_id);
+  const teeth=comparisonTeeth(item);if(teethEl)teethEl.textContent=teeth.length?`Dente${teeth.length>1?'s':''}: ${teeth.join(', ')}`:'Sem dente marcado';
+  comparisonPrimeActiveThumb(root,side,item);
+}
+function comparisonUpdateHint(state){
+  const root=document.getElementById('examCompareOverlay'),hint=root?.querySelector('[data-compare-hint]');if(!hint)return;
+  const sideText=state.activeSide==='right'?'direito':'esquerdo';
+  if(state.autoFound&&state.left&&state.right)hint.textContent=`Correspondência automática encontrada${comparisonTeeth(state.left).length?` pelo dente ${comparisonTeeth(state.left).join(', ')}`:''}. Lado ${sideText} selecionado: use ← e → para navegar.`;
+  else if(state.left&&comparisonTeeth(state.left).length&&!state.right)hint.textContent=`Nenhuma foto com a mesma marcação foi encontrada. Escolha a imagem da direita manualmente. Lado ${sideText} selecionado: use ← e → para navegar.`;
+  else hint.textContent=`Clique em um dos lados para selecioná-lo e use ← e → para trocar as fotos desse lado.`;
+}
+function comparisonUpdateView(state,{sides=['left','right']}={}){
+  sides.forEach(side=>comparisonUpdatePanel(state,side));
+  comparisonSetActiveSide(state,state.activeSide);
+}
+function comparisonStep(state,direction){
+  const side=state.activeSide==='right'?'right':'left',items=state.items||[];if(!items.length)return;
+  const current=state[side];let idx=current?items.findIndex(x=>String(x.id)===String(current.id)):-1;
+  if(idx<0)idx=direction>0?-1:0;idx=(idx+direction+items.length)%items.length;
+  comparisonPickItem(state,side,items[idx],{allowAuto:false});
+  comparisonUpdateView(state,{sides:[side,side==='left'?'right':'left']});
+}
+function renderComparison(state){
+  const root=document.getElementById('examCompareOverlay'),grid=root?.querySelector('.examCompareGrid');if(!grid)return;
+  if(!state.mounted){
+    grid.innerHTML=comparisonPanelHTML('left')+comparisonPanelHTML('right');
+    comparisonMountThumbs(state,'left');comparisonMountThumbs(state,'right');state.mounted=true;
+  }
+  comparisonUpdateView(state);
+}
+async function openComparison({referenceId=null}={}){
+  if(!S.patient)return alert('Selecione um paciente primeiro.');
+  const items=await comparisonItems();if(!items.length)return alert('Este paciente ainda não possui fotos para comparar.');
+  document.getElementById('examCompareOverlay')?.remove();
+  const visible=allItems().filter(x=>!x.temporary),selectedId=referenceId||[...S.selected].find(id=>!String(id).startsWith('tmp:'));
+  let left=items.find(x=>String(x.id)===String(selectedId))||items.find(x=>String(x.id)===String(visible[0]?.id))||items[0];
+  let right=automaticComparisonMatch(left,items),autoFound=!!right;
+  const state={items,left,right,autoFound,activeSide:'left',mounted:false};
+  const overlay=document.createElement('div');overlay.id='examCompareOverlay';overlay.className='examCompareOverlay';overlay.tabIndex=-1;
+  overlay.innerHTML=`<div class="examCompareWindow"><header class="examCompareHeader"><div><strong>Comparação de fotos</strong><small>${esc(S.patient?.name||'')}</small></div><div class="examCompareHeaderActions"><span class="examCompareKeyHint">← → navegam no lado selecionado</span><button type="button" class="btn" data-compare-swap>Trocar lados ↔</button><button type="button" class="examCompareClose" aria-label="Fechar">×</button></div></header><div class="examCompareHint" data-compare-hint></div><div class="examCompareGrid"></div></div>`;
+  document.body.appendChild(overlay);renderComparison(state);setTimeout(()=>overlay.focus({preventScroll:true}),0);
+  overlay.addEventListener('click',e=>{
+    if(e.target===overlay||e.target.closest('.examCompareClose')){overlay.querySelectorAll('.examCompareThumbs').forEach(x=>x.__compareObserver?.disconnect?.());overlay.remove();return}
+    if(e.target.closest('[data-compare-swap]')){const t=state.left;state.left=state.right;state.right=t;state.activeSide=state.activeSide==='left'?'right':'left';state.autoFound=false;comparisonUpdateView(state);return}
+    const panel=e.target.closest('[data-compare-panel]');if(panel)comparisonSetActiveSide(state,panel.dataset.comparePanel);
+    const pick=e.target.closest('[data-compare-pick]');
+    if(pick){
+      const item=state.items.find(x=>String(x.id)===String(pick.dataset.compareId));if(!item)return;
+      const side=pick.dataset.comparePick;comparisonPickItem(state,side,item,{allowAuto:side==='left'&&!state.right});comparisonUpdateView(state,{sides:[side,side==='left'?'right':'left']});
+    }
+  });
+  overlay.addEventListener('keydown',e=>{if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return;e.preventDefault();e.stopPropagation();comparisonStep(state,e.key==='ArrowRight'?1:-1)});
+}
+
 async function downloadSelected(){for(const [i,x] of selected().entries()){const blob=x.temporary?dataUrlBlob(x.dataUrl):await(await fetch(x.url)).blob();const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=`exame-${(S.patient?.name||'paciente').replace(/\W+/g,'-')}-${i+1}.jpg`;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);await new Promise(r=>setTimeout(r,180))}}
 function jpegSize(bytes){let i=2;while(i<bytes.length){if(bytes[i]!==0xFF){i++;continue}const m=bytes[i+1];if([0xC0,0xC1,0xC2,0xC3,0xC5,0xC6,0xC7,0xC9,0xCA,0xCB,0xCD,0xCE,0xCF].includes(m))return{h:(bytes[i+5]<<8)+bytes[i+6],w:(bytes[i+7]<<8)+bytes[i+8]};i+=2+((bytes[i+2]<<8)+bytes[i+3])}return{w:1200,h:900}}
 function pdfSafe(v){
@@ -1040,7 +1251,7 @@ function examViewHTML(){
       </div>
 
       <section class="intraoralStoredSection examWorkspaceGallery"><header><div><strong>Fotos desta avaliação</strong><small>${esc(S.patient?evaluationLabel(S.evaluationId):'Nenhum paciente selecionado')}</small></div><small id="intraoralGalleryCount">0 foto(s)</small></header>
-        <div class="intraoralActionsV463"><span class="selectionInfo" id="intraoralSelectionInfo">0 selecionada(s)</span><button class="btn" id="btnExamSelectAll" type="button">Selecionar todas</button><button class="btn" id="btnExamDownload" type="button">Baixar</button><button class="btn" id="btnExamPdf" type="button">Gerar PDF</button><button class="btn danger" id="btnExamDelete" type="button">Mover para lixeira</button><button class="btn" id="btnExamTrash" type="button">Lixeira</button></div>
+        <div class="intraoralActionsV463"><span class="selectionInfo" id="intraoralSelectionInfo">0 selecionada(s)</span><button class="btn" id="btnExamSelectAll" type="button">Selecionar todas</button><button class="btn" id="btnExamDownload" type="button">Baixar</button><button class="btn" id="btnExamPdf" type="button">Gerar PDF</button><button class="btn" id="btnExamCompare" type="button">Antes e depois</button><button class="btn danger" id="btnExamDelete" type="button">Mover para lixeira</button><button class="btn" id="btnExamTrash" type="button">Lixeira</button></div>
         <div id="intraoralGallery" class="intraoralGallery"></div>
       </section>
 
@@ -1142,6 +1353,7 @@ function bindExamView(){
   $('btnExamSelectAll')?.addEventListener('click',()=>{const a=allItems();if(S.selected.size===a.length)S.selected.clear();else a.forEach(x=>S.selected.add(x.storageId));render()});
   $('btnExamDownload')?.addEventListener('click',()=>downloadSelected().catch(e=>alert(e.message)));
   $('btnExamPdf')?.addEventListener('click',()=>pdfSelected().catch(e=>alert(e.message)));
+  $('btnExamCompare')?.addEventListener('click',()=>openComparison().catch(e=>alert(e.message)));
   $('btnExamDelete')?.addEventListener('click',()=>deleteSelected().catch(e=>alert(e.message)));
   $('btnExamTrash')?.addEventListener('click',()=>openTrash().catch(e=>alert(e.message)));
   $('intraoralGallery')?.addEventListener('click',e=>{
@@ -1189,6 +1401,7 @@ async function openGallery(opt={}){
         <button class="btn" id="btnExamSelectAll" type="button">Selecionar</button>
         <button class="btn" id="btnExamDownload" type="button">Baixar</button>
         <button class="btn" id="btnExamPdf" type="button">Gerar PDF</button>
+        <button class="btn" id="btnExamCompare" type="button">Comparar</button>
         <button class="btn danger" id="btnExamDelete" type="button">Excluir</button>
         <button class="btn" id="btnExamTrash" type="button">Lixeira</button>
       </div>
@@ -1203,6 +1416,7 @@ async function openGallery(opt={}){
       $('btnExamSelectAll')?.addEventListener('click',()=>{const a=allItems();if(S.selected.size===a.length)S.selected.clear();else a.forEach(x=>S.selected.add(x.storageId));render()});
       $('btnExamDownload')?.addEventListener('click',()=>downloadSelected().catch(e=>alert(e.message)));
       $('btnExamPdf')?.addEventListener('click',()=>pdfSelected().catch(e=>alert(e.message)));
+      $('btnExamCompare')?.addEventListener('click',()=>openComparison().catch(e=>alert(e.message)));
       $('btnExamDelete')?.addEventListener('click',()=>deleteSelected().catch(e=>alert(e.message)));
       $('btnExamTrash')?.addEventListener('click',()=>openTrash().catch(e=>alert(e.message)));
       $('intraoralGallery')?.addEventListener('click',e=>{const retry=e.target.closest('[data-retry-gallery]');if(retry){e.preventDefault();loadStored();return}const o=e.target.closest('[data-open]');if(o)lightbox(Number(o.dataset.open))});

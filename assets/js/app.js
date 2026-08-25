@@ -23441,7 +23441,7 @@ window.CRONOS_PROC_UI = {
               <div class="small" style="margin:6px 0 10px">Selecione um ou vários dentes no odontograma e lance o procedimento aqui mesmo, sem descer a tela.</div>
 
               <div class="panelMiniGrid">
-                <div><span class="muted">Dente(s)</span><b>${escapeHTML(selectedTeethLabel)}</b></div>
+                <div><span class="muted">Dente(s)</span><b title="${escapeHTML(selectedTeethLabel)}">${escapeHTML(selectedTeethLabel)}</b></div>
                 <div><span class="muted">Dentição</span><b>${dentitionLabel(activeDentition)}</b></div>
                 <div><span class="muted">Itens ligados</span><b>${selectedPlanCount}</b></div>
               </div>

@@ -1275,3 +1275,19 @@ body.light #view-ficha .fichaQuickActions .btn:disabled,
     font-size:11.5px !important;
   }
 }
+
+
+/* === CRONOS 2026-08-25 — resumo de dentes sem invadir o quadro vizinho === */
+#view-ficha .odontoPanel .panelMiniGrid > div{
+  min-width:0 !important;
+  overflow:hidden !important;
+}
+#view-ficha .odontoPanel .panelMiniGrid > div b{
+  display:block !important;
+  max-width:100% !important;
+}
+#view-ficha .odontoPanel .panelMiniGrid > div:first-child b{
+  white-space:nowrap !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+}
