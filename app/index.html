@@ -5152,98 +5152,6 @@ body.light .cronosCreditAnticipationCard,
 }
 </style>
 
-<style id="cronos-leads-scroll-v104-opt">
-/* === CRONOS V104 — Leads: rolagem leve sem alterar o visual parado === */
-#view-leads .leadCardV2{
-  contain:layout paint style;
-  backface-visibility:hidden;
-}
-@supports (content-visibility:auto){
-  #view-leads .leadCardV2{
-    content-visibility:auto;
-    contain-intrinsic-size:auto 158px;
-  }
-}
-
-/* Durante o gesto de rolagem, removemos só efeitos caros de pintura.
-   Ao parar, o visual completo volta automaticamente. */
-body.cronos-leads-scrolling #view-leads .leadCardV2,
-body.cronos-leads-scrolling #view-leads .leadCardV2:hover{
-  box-shadow:none!important;
-  transform:none!important;
-  transition:none!important;
-  filter:none!important;
-}
-body.cronos-leads-scrolling #view-leads .leadCardV2 .leadAccent{
-  box-shadow:none!important;
-  filter:none!important;
-}
-body.cronos-leads-scrolling #view-leads .leadPrimaryBtn,
-body.cronos-leads-scrolling #view-leads .leadWhatsBtn,
-body.cronos-leads-scrolling #view-leads .leadActionSmall,
-body.cronos-leads-scrolling #view-leads .leadFlowBtn,
-body.cronos-leads-scrolling #view-leads .leadAvatar,
-body.cronos-leads-scrolling #view-leads .leadInfoIcon,
-body.cronos-leads-scrolling #view-leads .leadChip,
-body.cronos-leads-scrolling #view-leads .leadInfoGrid,
-body.cronos-leads-scrolling #view-leads .leadMoneyBox{
-  box-shadow:none!important;
-  transition:none!important;
-  transform:none!important;
-  filter:none!important;
-}
-
-/* O tema claro tinha dois radiais + sombra grande reativados por overrides
-   posteriores justamente durante a rolagem. Troca temporária por um único
-   gradiente simples, visualmente muito próximo e bem mais barato. */
-html.light body.cronos-leads-scrolling #view-leads .leadCardV2,
-:root.light body.cronos-leads-scrolling #view-leads .leadCardV2,
-body.light.cronos-leads-scrolling #view-leads .leadCardV2{
-  background:linear-gradient(180deg,#ffffff 0%,#f7fbff 100%)!important;
-  background-image:linear-gradient(180deg,#ffffff 0%,#f7fbff 100%)!important;
-  border-color:rgba(37,99,235,.12)!important;
-}
-html.light body.cronos-leads-scrolling #view-leads .leadsListPanel,
-:root.light body.cronos-leads-scrolling #view-leads .leadsListPanel,
-body.light.cronos-leads-scrolling #view-leads .leadsListPanel{
-  background:linear-gradient(180deg,rgba(247,251,255,.72),rgba(239,249,247,.68))!important;
-  background-image:linear-gradient(180deg,rgba(247,251,255,.72),rgba(239,249,247,.68))!important;
-  box-shadow:none!important;
-}
-
-/* Mesmo ganho no escuro, sem mudar a identidade do card. */
-body.cronos-leads-scrolling:not(.light) #view-leads .leadCardV2{
-  background:linear-gradient(180deg,rgba(12,28,57,.96),rgba(8,20,43,.96))!important;
-  background-image:linear-gradient(180deg,rgba(12,28,57,.96),rgba(8,20,43,.96))!important;
-}
-</style>
-<script id="cronos-leads-scroll-v104-opt-js">
-(function(){
-  if(window.__CRONOS_LEADS_SCROLL_V104__) return;
-  window.__CRONOS_LEADS_SCROLL_V104__ = true;
-  var timer = 0;
-  function leadsVisible(){
-    var v = document.getElementById('view-leads');
-    if(!v) return false;
-    if(v.classList.contains('hidden')) return false;
-    var cs = window.getComputedStyle(v);
-    return cs.display !== 'none' && cs.visibility !== 'hidden';
-  }
-  function mark(){
-    if(!document.body || !leadsVisible()) return;
-    if(!document.body.classList.contains('cronos-leads-scrolling')){
-      document.body.classList.add('cronos-leads-scrolling');
-    }
-    clearTimeout(timer);
-    timer = setTimeout(function(){
-      if(document.body) document.body.classList.remove('cronos-leads-scrolling');
-    }, 130);
-  }
-  document.addEventListener('scroll', mark, {passive:true,capture:true});
-  document.addEventListener('wheel', mark, {passive:true,capture:true});
-  document.addEventListener('touchmove', mark, {passive:true,capture:true});
-})();
-</script>
 
 </body>
 </html>
@@ -5552,7 +5460,7 @@ body.cronos-leads-scrolling:not(.light) #view-leads .leadCardV2{
   function isDenseView(){
     var active = document.querySelector('.view:not(.hidden)');
     if(!active) return true;
-    return /view-(dashboard|leads|installments|kanban)/.test(active.id || '');
+    return /view-(dashboard|installments|kanban)/.test(active.id || '');
   }
   function markScrolling(){
     if(!document.body || !isLightMode() || !isDenseView()) return;
@@ -8585,128 +8493,31 @@ body.light .cronosCreditAnticipationCard,
 </style>
 
 
-<style id="cronos-leads-light-scroll-v2-final">
-/* === CRONOS 2026-08-25 — Leads claro: prioridade total para fluidez durante scroll ===
-   Fica no fim do arquivo de propósito: vence os overrides visuais V102/V103/V104,
-   que estavam reativando radiais e sombras enquanto cronos-is-scrolling estava ativo. */
 
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads{
-  background:#eef8f8 !important;
-  background-image:none !important;
-}
 
-/* Card-mãe: sem múltiplos radiais/sombra durante o gesto. */
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadsListPanel,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .card.leadsListPanel,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadsListPanel,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .card.leadsListPanel,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadsListPanel,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .card.leadsListPanel{
-  background:#f4fafb !important;
-  background-image:none !important;
-  box-shadow:none !important;
-  border-color:rgba(37,99,235,.09) !important;
-  filter:none !important;
-}
 
-/* Cada lead vira uma superfície simples só enquanto a página está em movimento. */
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2:hover,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2:hover,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2:hover{
-  background:#ffffff !important;
-  background-image:none !important;
-  box-shadow:none !important;
-  border-color:rgba(37,99,235,.10) !important;
-  transform:none !important;
-  transition:none !important;
-  filter:none !important;
-}
 
-/* Elementos que tinham gradiente/sombra individual em cada card. */
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoGrid,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadMoneyBox,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadAvatar,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoIcon,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadPrimaryBtn,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadWhatsBtn,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadActionSmall,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadFlowBtn,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadChip,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoGrid,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadMoneyBox,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadAvatar,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoIcon,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadPrimaryBtn,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadWhatsBtn,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadActionSmall,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadFlowBtn,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadChip,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoGrid,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadMoneyBox,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadAvatar,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoIcon,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadPrimaryBtn,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadWhatsBtn,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadActionSmall,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadFlowBtn,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadChip{
-  box-shadow:none !important;
-  filter:none !important;
-  transition:none !important;
-  transform:none !important;
-}
 
-/* Mantém as cores dos botões, mas remove as camadas de gradiente enquanto rola. */
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadPrimaryBtn,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadPrimaryBtn,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadPrimaryBtn{
-  background:#1685df !important;
-  background-image:none !important;
-}
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadWhatsBtn,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadWhatsBtn,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadWhatsBtn{
-  background:#22a850 !important;
-  background-image:none !important;
-}
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoGrid,
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadMoneyBox,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoGrid,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadMoneyBox,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadInfoGrid,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadMoneyBox{
-  background:#f8fbff !important;
-  background-image:none !important;
-}
 
-/* Nada anima no interior dos cards enquanto o dedo/roda estiver em movimento. */
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2 *,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2 *,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadCardV2 *{
-  animation:none !important;
-  transition:none !important;
-}
 
-/* Paginação não precisa ser repintada com profundidade enquanto passa pela tela. */
-html.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadsPaginationModern,
-:root.light body.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadsPaginationModern,
-body.light.cronos-is-scrolling.cronos-leads-scrolling #view-leads .leadsPaginationModern{
-  background:#f8fbff !important;
-  background-image:none !important;
-  box-shadow:none !important;
-}
 
-/* Reforço para cards fora da viewport. */
+
+<style id="cronos-leads-safe-performance-no-visual-change">
+/* Leads: otimização estrutural permanente, sem modo visual alternativo durante scroll. */
+#view-leads .leadCardV2{
+  contain:layout paint style;
+  backface-visibility:hidden;
+}
 @supports (content-visibility:auto){
   #view-leads .leadCardV2{
-    content-visibility:auto !important;
+    content-visibility:auto;
     contain-intrinsic-size:auto 158px;
   }
+}
+/* Só evita animações desnecessárias de elementos fora da tela;
+   nenhuma cor, sombra, gradiente ou fundo é alterado. */
+#view-leads .leadCardV2[style*="content-visibility"]{
+  will-change:auto;
 }
 </style>
 

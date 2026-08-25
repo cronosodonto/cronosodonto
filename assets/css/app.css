@@ -9621,3 +9621,12 @@ body.light.cronos-is-scrolling .modalCard{
     radial-gradient(720px 260px at 100% 100%, rgba(20,184,166,.18), transparent 70%),
     linear-gradient(180deg, rgba(246,251,255,.96) 0%, rgba(229,244,255,.92) 54%, rgba(223,248,239,.90) 100%) !important;
 }
+
+
+/* === CRONOS final override — Leads: não trocar visual durante scroll === */
+html.light body.cronos-is-scrolling #view-leads .leadCardV2,
+html.light body.cronos-leads-scrolling #view-leads .leadCardV2,
+body.light.cronos-is-scrolling #view-leads .leadCardV2,
+body.light.cronos-leads-scrolling #view-leads .leadCardV2{
+  opacity:1 !important;
+}
