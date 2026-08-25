@@ -1234,3 +1234,44 @@ body.light #view-ficha .fichaQuickActions .btn:disabled,
 @media(max-width:560px){
   #view-ficha .fichaQuickActions{grid-template-columns:1fr !important;}
 }
+
+
+/* === CRONOS 2026-08-25 — ações do prontuário mais compactas ===
+   Objetivo: manter os rótulos em uma linha sempre que houver espaço,
+   com menos peso visual e sem estourar a largura do painel. */
+#view-ficha .fichaQuickActions .btn{
+  white-space:nowrap !important;
+  line-height:1.1 !important;
+  font-size:13px !important;
+  font-weight:600 !important;
+  padding:11px 12px !important;
+  letter-spacing:0 !important;
+}
+#view-ficha .fichaQuickActions .fichaAddPlanBtn{
+  font-size:14px !important;
+  font-weight:700 !important;
+}
+#view-ficha .fichaQuickActions .fichaPaidAction{
+  font-size:12px !important;
+}
+#view-ficha .fichaQuickActions .fichaDoneAction,
+#view-ficha .fichaQuickActions .fichaAbsentAction,
+#view-ficha .fichaQuickActions .fichaNeutralAction{
+  font-size:12px !important;
+  font-weight:600 !important;
+}
+@media(max-width:1100px){
+  #view-ficha .fichaQuickActions .btn{
+    font-size:12px !important;
+    padding:10px 11px !important;
+  }
+  #view-ficha .fichaQuickActions .fichaAddPlanBtn{
+    font-size:13px !important;
+  }
+  #view-ficha .fichaQuickActions .fichaPaidAction,
+  #view-ficha .fichaQuickActions .fichaDoneAction,
+  #view-ficha .fichaQuickActions .fichaAbsentAction,
+  #view-ficha .fichaQuickActions .fichaNeutralAction{
+    font-size:11.5px !important;
+  }
+}
