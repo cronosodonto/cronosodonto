@@ -9,6 +9,8 @@
   const STYLE_ID = "cronosFluxosStyle";
   const CARD_ID = "cronosFlowSettingsCard";
   const sleep = (ms)=>new Promise(r=>setTimeout(r, ms));
+  let settingsReadyRetryTimer = null;
+  let settingsReadyRetryCount = 0;
   const $ = (id)=>document.getElementById(id);
   const qs = (sel, root=document)=>root.querySelector(sel);
   const qsa = (sel, root=document)=>Array.from(root.querySelectorAll(sel));
@@ -131,20 +133,73 @@
     style.id = STYLE_ID;
     style.textContent = `
       .flowSettingsCard{position:relative}
-      .flowHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
-      .flowGrid{display:grid;gap:10px;margin-top:12px}
-      .flowCard{border:1px solid var(--line,rgba(255,255,255,.12));border-radius:16px;padding:12px;background:rgba(255,255,255,.035)}
-      .flowCardTop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
-      .flowTitle{font-weight:900;font-size:15px}
-      .flowMeta{font-size:12px;color:var(--muted,#8b93a7);line-height:1.35;margin-top:4px}
-      .flowActions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
-      .flowStepBox{border:1px solid var(--line,rgba(255,255,255,.12));border-radius:14px;padding:12px;margin:10px 0;background:rgba(255,255,255,.035)}
-      .flowStepHead{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}
+      .flowHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap}
+      .flowActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+      .flowIntroSurface{
+        display:flex;align-items:center;justify-content:space-between;gap:22px;
+        border:1px solid var(--line,rgba(148,163,184,.18));border-radius:22px;padding:20px 22px;
+        background:linear-gradient(145deg,rgba(37,99,235,.075),rgba(20,184,166,.035) 46%,rgba(255,255,255,.025));
+        box-shadow:0 12px 30px rgba(2,6,23,.045)
+      }
+      .flowIntroCopy{display:flex;align-items:center;gap:14px;min-width:0}
+      .flowIntroIcon{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;flex:0 0 auto;background:linear-gradient(145deg,rgba(37,99,235,.18),rgba(20,184,166,.12));border:1px solid rgba(96,165,250,.24)}
+      .flowIntroIcon svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+      .flowEyebrow{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--muted,#8b93a7);margin-bottom:3px}
+      .flowIntroTitle{font-size:17px;font-weight:850;line-height:1.25}
+      .flowIntroText{font-size:12.5px;color:var(--muted,#8b93a7);line-height:1.55;margin-top:4px;max-width:720px}
+      .flowOverview{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px}
+      .flowStatChip{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border-radius:999px;border:1px solid var(--line,rgba(148,163,184,.17));background:rgba(255,255,255,.025);font-size:11.5px;color:var(--muted,#8b93a7)}
+      .flowStatChip b{color:var(--text);font-size:12px}
+      .flowSectionHead{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin:22px 2px 10px}
+      .flowSectionHead h4{margin:0;font-size:15px}
+      .flowSectionHead .muted{font-size:12px;margin-top:3px}
+      .flowSearchWrap{display:flex;align-items:center;gap:8px;min-width:min(360px,100%);justify-content:flex-end}
+      .flowSearchBox{position:relative;display:flex;align-items:center;min-width:min(330px,100%)}
+      .flowSearchIcon{position:absolute;left:12px;width:17px;height:17px;opacity:.62;pointer-events:none}
+      .flowSearchInput{width:100%;height:40px;padding:0 38px 0 38px;border-radius:13px;border:1px solid var(--line,rgba(148,163,184,.18));background:rgba(255,255,255,.03);color:var(--text);outline:none;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+      .flowSearchInput:focus{border-color:rgba(59,130,246,.46);box-shadow:0 0 0 3px rgba(59,130,246,.10)}
+      .flowSearchInput::placeholder{color:var(--muted,#8b93a7);opacity:.82}
+      .flowSearchClear{position:absolute;right:7px;width:27px;height:27px;border:0;border-radius:9px;background:transparent;color:var(--muted,#8b93a7);cursor:pointer;display:none;place-items:center;font-size:18px;line-height:1}
+      .flowSearchClear.isVisible{display:grid}
+      .flowSearchClear:hover{background:rgba(148,163,184,.10);color:var(--text)}
+      .flowSearchResult{font-size:11.5px;color:var(--muted,#8b93a7);white-space:nowrap}
+      .flowNoSearchResults{display:none;align-items:center;justify-content:center;min-height:130px;text-align:center;padding:24px;border:1px dashed var(--line,rgba(148,163,184,.26));border-radius:20px;background:rgba(255,255,255,.015)}
+      .flowNoSearchResults.isVisible{display:flex}
+      .flowNoSearchResults strong{display:block;margin-bottom:5px;color:var(--text)}
+      .flowGrid{display:grid;gap:14px}
+      .flowCard{border:1px solid var(--line,rgba(148,163,184,.18));border-radius:20px;padding:0;background:rgba(255,255,255,.028);box-shadow:0 10px 26px rgba(2,6,23,.04);overflow:hidden}
+      .flowCardTop{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:18px;padding:17px 18px 15px}
+      .flowCardIdentity{display:flex;gap:12px;min-width:0}
+      .flowCardIcon{width:39px;height:39px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.18);font-size:17px}
+      .flowCardText{min-width:0}
+      .flowTitleRow{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+      .flowTitle{font-weight:850;font-size:15px;line-height:1.25}
+      .flowStatusBadge{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;font-size:10.5px;font-weight:750;border:1px solid var(--line,rgba(148,163,184,.16));background:rgba(255,255,255,.025);color:var(--muted,#8b93a7)}
+      .flowStatusBadge::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+      .flowStatusBadge.isActive{color:#16a34a;background:rgba(34,197,94,.07);border-color:rgba(34,197,94,.16)}
+      .flowMeta{font-size:12px;color:var(--muted,#8b93a7);line-height:1.45;margin-top:4px}
+      .flowTimeline{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:0 18px 15px 69px}
+      .flowStepChip{display:inline-flex;align-items:center;gap:7px;min-width:0;padding:6px 9px;border-radius:10px;border:1px solid var(--line,rgba(148,163,184,.15));background:rgba(255,255,255,.022);font-size:11px;color:var(--muted,#8b93a7)}
+      .flowStepChip b{font-size:10px;color:var(--text);font-weight:850}
+      .flowStepChip span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+      .flowCardFooter{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid var(--line,rgba(148,163,184,.14));padding:10px 14px 11px 18px;background:rgba(255,255,255,.018)}
+      .flowCardFooter .flowMeta{margin:0}
+      .flowCardFooter .btn{min-height:34px}
+      .flowEmpty{display:flex;align-items:center;justify-content:center;min-height:150px;text-align:center;padding:24px;border:1px dashed var(--line,rgba(148,163,184,.26));border-radius:20px;background:rgba(255,255,255,.015)}
+      .flowEmpty strong{display:block;margin-bottom:5px;color:var(--text)}
+      .flowStepBox{border:1px solid var(--line,rgba(148,163,184,.18));border-radius:18px;padding:15px 16px;margin:12px 0;background:rgba(255,255,255,.025);box-shadow:0 8px 22px rgba(2,6,23,.035)}
+      .flowStepHead{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:12px}
+      .flowStepLabel{display:flex;align-items:center;gap:9px}
+      .flowStepIndex{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;font-size:11px;font-weight:850;background:rgba(56,189,248,.09);border:1px solid rgba(56,189,248,.18)}
       .flowStepHead b{font-size:13px}
       .flowHelp{font-size:12px;color:var(--muted,#8b93a7);line-height:1.45}
-      .flowTwo{display:grid;grid-template-columns:1fr 150px;gap:10px}
-      .flowThree{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-      .flowEditor textarea{min-height:90px}
+      .flowTwo{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:12px}
+      .flowThree{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+      .flowEditor{display:flex;flex-direction:column;gap:14px}
+      .flowEditorBasics{border:1px solid var(--line,rgba(148,163,184,.18));border-radius:18px;padding:16px;background:rgba(255,255,255,.025)}
+      .flowEditorSectionHead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px}
+      .flowEditorSectionHead h4{margin:0;font-size:14px}
+      .flowEditor textarea{min-height:100px}
       .flowLeadBtn{white-space:nowrap}
       .flowRunBadge{display:inline-flex;border:1px solid var(--line,rgba(255,255,255,.12));border-radius:999px;padding:3px 8px;font-size:11px;color:var(--muted,#8b93a7);margin-top:5px}
       .settingsAccCard{overflow:hidden;transition:box-shadow .15s ease}
@@ -160,7 +215,33 @@
       .settingsMsgSubCard h4{margin:0 0 8px;font-size:14px}
       .settingsMsgSubCard textarea{min-height:100px}
       .settingsMsgHint{font-size:12px;color:var(--muted,#8b93a7);line-height:1.45;margin:6px 0 10px}
-      @media(max-width:760px){.flowTwo,.flowThree{grid-template-columns:1fr}.settingsAccSummary{max-width:190px}.settingsAccTitle h3{font-size:15px}}
+      @media(max-width:760px){
+        .flowTwo,.flowThree{grid-template-columns:1fr}
+        .flowIntroSurface{align-items:flex-start;flex-direction:column}
+        .flowIntroSurface .flowActions{width:100%}.flowIntroSurface .flowActions .btn{width:100%;justify-content:center}
+        .flowCardTop{grid-template-columns:1fr}.flowTimeline{padding-left:18px}.flowCardFooter{align-items:flex-start}
+        .flowSectionHead{align-items:stretch;flex-direction:column}.flowSearchWrap,.flowSearchBox{width:100%;min-width:0}.flowSearchResult{display:none}
+        .settingsAccSummary{max-width:190px}.settingsAccTitle h3{font-size:15px}
+      }
+
+      /* Fluxos — contraste dedicado no modo claro. Evita cards lavados sobre o fundo branco. */
+      :root.light .flowIntroSurface,html.light .flowIntroSurface,body.light .flowIntroSurface{
+        background:linear-gradient(145deg,rgba(37,99,235,.11),rgba(20,184,166,.055) 48%,rgba(255,255,255,.96));
+        border-color:rgba(15,23,42,.13);box-shadow:0 13px 32px rgba(15,23,42,.075)
+      }
+      :root.light .flowCard,html.light .flowCard,body.light .flowCard{
+        background:#fff;border-color:rgba(15,23,42,.13);box-shadow:0 10px 27px rgba(15,23,42,.085)
+      }
+      :root.light .flowCardFooter,html.light .flowCardFooter,body.light .flowCardFooter{background:rgba(248,250,252,.92);border-top-color:rgba(15,23,42,.09)}
+      :root.light .flowStepChip,html.light .flowStepChip,body.light .flowStepChip,
+      :root.light .flowStatChip,html.light .flowStatChip,body.light .flowStatChip{background:rgba(248,250,252,.96);border-color:rgba(15,23,42,.11)}
+      :root.light .flowCardIcon,html.light .flowCardIcon,body.light .flowCardIcon{background:rgba(37,99,235,.09);border-color:rgba(37,99,235,.19);color:#2563eb}
+      :root.light .flowStatusBadge,html.light .flowStatusBadge,body.light .flowStatusBadge{background:#f8fafc;border-color:rgba(15,23,42,.11);color:#64748b}
+      :root.light .flowStatusBadge.isActive,html.light .flowStatusBadge.isActive,body.light .flowStatusBadge.isActive{background:rgba(34,197,94,.10);border-color:rgba(22,163,74,.19);color:#15803d}
+      :root.light .flowSearchInput,html.light .flowSearchInput,body.light .flowSearchInput{background:#fff;border-color:rgba(15,23,42,.14);color:#0f172a;box-shadow:0 5px 16px rgba(15,23,42,.055)}
+      :root.light .flowSearchInput:focus,html.light .flowSearchInput:focus,body.light .flowSearchInput:focus{border-color:rgba(37,99,235,.42);box-shadow:0 0 0 3px rgba(37,99,235,.09),0 5px 16px rgba(15,23,42,.055)}
+      :root.light .flowSearchClear:hover,html.light .flowSearchClear:hover,body.light .flowSearchClear:hover{background:#f1f5f9}
+      :root.light .flowNoSearchResults,html.light .flowNoSearchResults,body.light .flowNoSearchResults{background:rgba(248,250,252,.78);border-color:rgba(15,23,42,.14)}
 
       /* Configurações — launcher modular 3x2. A lógica dos cards continua intacta. */
       #view-settings.settingsModulesReady > .card{display:none!important}
@@ -708,6 +789,24 @@
     }
   }
 
+  function scheduleSettingsReadyRetry(){
+    if(settingsReadyRetryTimer) return;
+    if(settingsReadyRetryCount >= 120) return;
+    settingsReadyRetryTimer = setTimeout(()=>{
+      settingsReadyRetryTimer = null;
+      settingsReadyRetryCount += 1;
+      try{ ensureSettingsCard(true); }catch(_){}
+    }, 500);
+  }
+
+  function clearSettingsReadyRetry(){
+    if(settingsReadyRetryTimer){
+      clearTimeout(settingsReadyRetryTimer);
+      settingsReadyRetryTimer = null;
+    }
+    settingsReadyRetryCount = 0;
+  }
+
   function renderSettingsCard(){
     const card = $(CARD_ID);
     if(!card) return;
@@ -716,47 +815,120 @@
     const db = load();
     const a = actor();
     if(!canOpenFlows()){
+      clearSettingsReadyRetry();
       card.innerHTML = `<h3>Fluxos assistidos</h3><div class="muted" style="line-height:1.5">Este recurso está bloqueado para esta clínica. Para liberar, entre em contato com o suporte.</div>`;
       return;
     }
     if(!db || !a){
       card.innerHTML = `<h3>Fluxos assistidos</h3><div class="muted">Carregando...</div>`;
+      scheduleSettingsReadyRetry();
       return;
     }
+    clearSettingsReadyRetry();
     const list = flows(db).filter(f=>!f.masterId || f.masterId===a.masterId);
+    const activeCount = list.filter(f=>f.active !== false).length;
+    const totalSteps = list.reduce((sum,f)=>sum + (Array.isArray(f.steps) ? f.steps.length : 0), 0);
     card.innerHTML = `
-      <div class="flowHeader">
+      <div class="flowIntroSurface">
         <div>
-          <h3 style="margin:0">Fluxos assistidos</h3>
-          <div class="muted" style="line-height:1.5;margin-top:6px">
-            Crie sequências de mensagens manuais. O Cronos lembra o dia certo; a equipe copia, abre o WhatsApp e marca como enviado.
+          <div class="flowIntroCopy">
+            <div class="flowIntroIcon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="2"/><rect x="15" y="15" width="6" height="6" rx="2"/><path d="M9 6h4a4 4 0 0 1 4 4v5"/><path d="m14 12 3 3 3-3"/></svg>
+            </div>
+            <div>
+              <div class="flowEyebrow">Automação assistida</div>
+              <div class="flowIntroTitle">Organize o acompanhamento sem automatizar o contato</div>
+              <div class="flowIntroText">Monte sequências manuais por etapa. O Cronos lembra a equipe no dia certo, mantém o contexto do atendimento e deixa o envio sob controle humano.</div>
+            </div>
+          </div>
+          <div class="flowOverview">
+            <span class="flowStatChip"><b>${list.length}</b> ${list.length===1?'fluxo':'fluxos'}</span>
+            <span class="flowStatChip"><b>${activeCount}</b> ${activeCount===1?'ativo':'ativos'}</span>
+            <span class="flowStatChip"><b>${totalSteps}</b> ${totalSteps===1?'etapa':'etapas'} configuradas</span>
           </div>
         </div>
         <div class="flowActions">
-          <button class="btn primary" type="button" onclick="CRONOS_FLUXOS.openEditor()">➕ Novo fluxo</button>
+          <button class="btn primary" type="button" onclick="CRONOS_FLUXOS.openEditor()">＋ Novo fluxo</button>
         </div>
       </div>
-      <div class="flowGrid">
-        ${list.length ? list.map(f=>renderFlowTemplateCard(f)).join("") : `<div class="muted" style="padding:12px;border:1px dashed var(--line);border-radius:14px">Nenhum fluxo criado ainda. O caos está sem roteiro, por enquanto.</div>`}
+      <div class="flowSectionHead">
+        <div>
+          <h4>Fluxos configurados</h4>
+          <div class="muted">Edite a sequência, altere o status ou crie um novo acompanhamento.</div>
+        </div>
+        ${list.length ? `<div class="flowSearchWrap">
+          <div class="flowSearchBox">
+            <svg class="flowSearchIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.7-3.7"/></svg>
+            <input id="flowSettingsSearch" class="flowSearchInput" type="search" autocomplete="off" placeholder="Buscar fluxo, descrição ou etapa..." oninput="CRONOS_FLUXOS.filterSettingsFlows(this.value)"/>
+            <button id="flowSettingsSearchClear" class="flowSearchClear" type="button" aria-label="Limpar busca" title="Limpar busca" onclick="CRONOS_FLUXOS.clearSettingsFlowSearch()">×</button>
+          </div>
+          <span id="flowSettingsSearchResult" class="flowSearchResult">${list.length} ${list.length===1?'fluxo':'fluxos'}</span>
+        </div>` : ''}
       </div>
+      <div class="flowGrid">
+        ${list.length ? list.map(f=>renderFlowTemplateCard(f)).join("") : `<div class="flowEmpty"><div><strong>Nenhum fluxo criado</strong><span class="muted">Crie o primeiro para organizar os próximos contatos sem perder o timing.</span></div></div>`}
+      </div>
+      ${list.length ? `<div id="flowNoSearchResults" class="flowNoSearchResults"><div><strong>Nenhum fluxo encontrado</strong><span class="muted">Tente outro nome, descrição ou etapa.</span></div></div>` : ''}
     `;
     setTimeout(()=>enhanceSettingsUI(), 0);
+  }
+
+  function normalizeFlowSearchText(value){
+    try{
+      return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
+    }catch(_){ return String(value||"").toLowerCase().trim(); }
+  }
+
+  function filterSettingsFlows(query=""){
+    const card=$(CARD_ID);
+    if(!card) return;
+    const needle=normalizeFlowSearchText(query);
+    const cards=Array.from(card.querySelectorAll(".flowGrid .flowCard"));
+    let visible=0;
+    cards.forEach(flowCard=>{
+      const haystack=normalizeFlowSearchText(flowCard.dataset.flowSearch || flowCard.textContent || "");
+      const match=!needle || haystack.includes(needle);
+      flowCard.style.display=match ? "" : "none";
+      if(match) visible += 1;
+    });
+    const result=$("flowSettingsSearchResult");
+    if(result) result.textContent = needle ? `${visible} de ${cards.length}` : `${cards.length} ${cards.length===1?'fluxo':'fluxos'}`;
+    const empty=$("flowNoSearchResults");
+    if(empty) empty.classList.toggle("isVisible", !!needle && visible===0);
+    const clear=$("flowSettingsSearchClear");
+    if(clear) clear.classList.toggle("isVisible", !!query);
+  }
+
+  function clearSettingsFlowSearch(){
+    const input=$("flowSettingsSearch");
+    if(input){ input.value=""; input.focus(); }
+    filterSettingsFlows("");
   }
 
   function renderFlowTemplateCard(f){
     const steps = Array.isArray(f.steps) ? f.steps : [];
     const active = f.active !== false;
     const ordered = steps.slice().sort((a,b)=>Number(a.dayOffset||0)-Number(b.dayOffset||0));
-    const summary = ordered.map((s,i)=>`D+${Number(s.dayOffset||0)}: ${escapeHTML(s.title || `Etapa ${i+1}`)}`).join(" • ");
+    const summary = ordered.map((s,i)=>`
+      <span class="flowStepChip"><b>D+${Number(s.dayOffset||0)}</b><span>${escapeHTML(s.title || `Etapa ${i+1}`)}</span></span>
+    `).join("");
     return `
-      <div class="flowCard" data-flow-id="${escapeHTML(f.id)}">
+      <div class="flowCard" data-flow-id="${escapeHTML(f.id)}" data-flow-search="${escapeHTML([f.name,f.description,...ordered.map(s=>`${s.title||''} ${s.message||''} ${s.internalNote||s.note||''}`)].join(' '))}">
         <div class="flowCardTop">
-          <div>
-            <div class="flowTitle">${escapeHTML(f.name || "Fluxo sem nome")}</div>
-            <div class="flowMeta">${escapeHTML(f.description || "Sem descrição")}</div>
-            <div class="flowMeta">${steps.length} etapa(s) • ${active ? "Ativo" : "Inativo"}</div>
-            ${summary ? `<div class="flowMeta">${summary}</div>` : ""}
+          <div class="flowCardIdentity">
+            <div class="flowCardIcon" aria-hidden="true">↗</div>
+            <div class="flowCardText">
+              <div class="flowTitleRow">
+                <div class="flowTitle">${escapeHTML(f.name || "Fluxo sem nome")}</div>
+                <span class="flowStatusBadge ${active ? "isActive" : ""}">${active ? "Ativo" : "Inativo"}</span>
+              </div>
+              <div class="flowMeta">${escapeHTML(f.description || "Sem descrição")}</div>
+            </div>
           </div>
+        </div>
+        ${summary ? `<div class="flowTimeline">${summary}</div>` : ""}
+        <div class="flowCardFooter">
+          <div class="flowMeta">${steps.length} ${steps.length===1?'etapa configurada':'etapas configuradas'}</div>
           <div class="flowActions">
             <button class="btn" type="button" onclick="CRONOS_FLUXOS.openEditor('${escapeHTML(f.id)}')">Editar</button>
             <button class="btn" type="button" onclick="CRONOS_FLUXOS.toggleFlow('${escapeHTML(f.id)}')">${active ? "Desativar" : "Ativar"}</button>
@@ -771,7 +943,7 @@
     return `
       <div class="flowStepBox" data-step-index="${idx}">
         <div class="flowStepHead">
-          <b>Etapa ${idx+1}</b>
+          <div class="flowStepLabel"><span class="flowStepIndex">${idx+1}</span><b>Etapa ${idx+1}</b></div>
           <button class="btn danger" type="button" onclick="CRONOS_FLUXOS.removeStep(this)">Remover</button>
         </div>
         <div class="flowTwo">
@@ -832,26 +1004,31 @@
       maxWidth:"980px",
       bodyHTML: `
         <div class="flowEditor">
-          <div class="twoCol">
-            <div>
-              <label>Nome do fluxo *</label>
-              <input id="flowName" value="${escapeHTML(flow.name || "")}" placeholder="Ex: Follow-up orçamento"/>
+          <div class="flowEditorBasics">
+            <div class="twoCol">
+              <div>
+                <label>Nome do fluxo *</label>
+                <input id="flowName" value="${escapeHTML(flow.name || "")}" placeholder="Ex: Follow-up orçamento"/>
+              </div>
+              <div>
+                <label>Status</label>
+                <select id="flowActive">
+                  <option value="1" ${flow.active!==false ? "selected" : ""}>Ativo</option>
+                  <option value="0" ${flow.active===false ? "selected" : ""}>Inativo</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label>Status</label>
-              <select id="flowActive">
-                <option value="1" ${flow.active!==false ? "selected" : ""}>Ativo</option>
-                <option value="0" ${flow.active===false ? "selected" : ""}>Inativo</option>
-              </select>
+            <div style="margin-top:12px">
+              <label>Descrição opcional</label>
+              <input id="flowDesc" value="${escapeHTML(flow.description || "")}" placeholder="Ex: sequência para paciente que recebeu orçamento e não respondeu"/>
             </div>
           </div>
-          <div style="margin-top:10px">
-            <label>Descrição opcional</label>
-            <input id="flowDesc" value="${escapeHTML(flow.description || "")}" placeholder="Ex: sequência para paciente que recebeu orçamento e não respondeu"/>
-          </div>
-          <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-            <h4 style="margin:0">Etapas do fluxo</h4>
-            <button class="btn" type="button" onclick="CRONOS_FLUXOS.addStep()">➕ Adicionar etapa</button>
+          <div class="flowEditorSectionHead">
+            <div>
+              <h4>Etapas do fluxo</h4>
+              <div class="flowHelp">Cada etapa entra no Hoje no Cronos conforme o intervalo definido.</div>
+            </div>
+            <button class="btn" type="button" onclick="CRONOS_FLUXOS.addStep()">＋ Adicionar etapa</button>
           </div>
           <div id="flowStepsWrap">${(flow.steps||[]).map((s,i)=>stepEditorHTML(s,i)).join("")}</div>
         </div>
@@ -878,6 +1055,8 @@
       box.dataset.stepIndex = String(idx);
       const b = qs(".flowStepHead b", box);
       if(b) b.textContent = `Etapa ${idx+1}`;
+      const badge = qs(".flowStepIndex", box);
+      if(badge) badge.textContent = String(idx+1);
       const title = qs(".flowStepTitle", box);
       if(title && !String(title.value||"").trim()) title.value = `Mensagem ${idx+1}`;
     });
@@ -1220,6 +1399,8 @@
     removeStep,
     toggleFlow,
     deleteFlow,
+    filterSettingsFlows,
+    clearSettingsFlowSearch,
     renderSettingsCard,
     ensureSettingsCard,
     enhanceSettingsUI,
