@@ -682,7 +682,10 @@
     const settings = $("view-settings");
     if(!settings) return;
     let card = $(CARD_ID);
-    if(!canSeeFlows()){
+    const visible = canSeeFlows();
+    const open = visible && canOpenFlows();
+    const accessSignature = `${visible ? 1 : 0}:${open ? 1 : 0}`;
+    if(!visible){
       if(card) card.remove();
       return;
     }
@@ -696,9 +699,11 @@
       else settings.appendChild(card);
       created = true;
     }
-    if(created || force || !card.dataset.rendered){
+    const accessChanged = card.dataset.flowAccessSignature !== accessSignature;
+    if(created || force || !card.dataset.rendered || accessChanged){
       renderSettingsCard();
       card.dataset.rendered = "1";
+      card.dataset.flowAccessSignature = accessSignature;
       setTimeout(()=>enhanceSettingsUI(), 0);
     }
   }
