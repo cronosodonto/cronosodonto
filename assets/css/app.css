@@ -3114,6 +3114,28 @@ body:not(.light) .modal .suggestBox{
   background:rgba(8,20,42,.42) !important;
   border-color:rgba(183,212,255,.12) !important;
 }
+
+/* Sugestões no modal com fundo fixo e opacidade total */
+:root.light .modal .suggestBox,
+html.light .modal .suggestBox,
+body.light .modal .suggestBox{
+  background:#ffffff !important;
+  border-color:rgba(15,23,42,.12) !important;
+  box-shadow:0 16px 40px rgba(15,23,42,.14) !important;
+  opacity:1 !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+:root:not(.light) .modal .suggestBox,
+html:not(.light) .modal .suggestBox,
+body:not(.light) .modal .suggestBox{
+  background:#0f1d3d !important;
+  border-color:rgba(183,212,255,.16) !important;
+  box-shadow:0 18px 44px rgba(0,0,0,.36) !important;
+  opacity:1 !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
 :root:not(.light) .modal th,
 html:not(.light) .modal th,
 body:not(.light) .modal th{
@@ -8559,7 +8581,12 @@ body.light #newFinancialInstallmentApp .financialPaymentTable td,
 html.light body.cronos-newfin-scrolling .modal:has(#newFinancialInstallmentApp),
 body.light.cronos-newfin-scrolling .modal:has(#newFinancialInstallmentApp),
 :root.light body.cronos-newfin-scrolling .modal:has(#newFinancialInstallmentApp){
-  background:#f8fbff !important;
+  /* Mantém o mesmo degradê durante a rolagem; só a sombra é simplificada para preservar desempenho. */
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg, #edf6ff 0%, #eefcff 46%, #effcf6 100%) !important;
   box-shadow:none !important;
 }
 html.light body.cronos-newfin-scrolling #newFinancialInstallmentApp .card,
@@ -9163,3 +9190,434 @@ body.light #authView .authCardV439 select,
 
 
 #view-settings > .card + .card{margin-top:10px}
+
+/* Cadastro do Lead em abas */
+.leadFormShell{min-width:0;}
+.leadFormTabs{
+  position:sticky;
+  top:0;
+  z-index:8;
+  display:flex;
+  gap:8px;
+  overflow-x:auto;
+  padding:2px 0 12px;
+  margin:0 0 14px;
+  border-bottom:1px solid var(--line);
+  background:var(--modal-surface-2, var(--panel2));
+  scrollbar-width:none;
+}
+.leadFormTabs::-webkit-scrollbar{display:none;}
+.leadFormTab{
+  appearance:none;
+  border:0;
+  border-bottom:2px solid transparent;
+  background:transparent;
+  color:var(--muted);
+  font:inherit;
+  font-size:13px;
+  font-weight:800;
+  white-space:nowrap;
+  padding:10px 12px 9px;
+  cursor:pointer;
+  transition:color .16s ease,border-color .16s ease,background .16s ease;
+}
+.leadFormTab:hover{color:var(--text);background:rgba(148,163,184,.08);border-radius:10px 10px 0 0;}
+.leadFormTab.active{color:var(--accent);border-bottom-color:var(--accent);}
+.leadFormPanel{display:none;min-width:0;}
+.leadFormPanel.active{display:block;}
+.leadFormIntro{
+  margin:0 0 14px;
+  padding:11px 13px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  color:var(--muted);
+  background:rgba(148,163,184,.06);
+  font-size:12px;
+  line-height:1.45;
+}
+.leadFinancialFields{margin-top:12px;}
+.leadFinancialFields.hidden{display:none!important;}
+html.light .leadFormTabs,body.light .leadFormTabs,:root.light .leadFormTabs{background:#fff!important;}
+html:not(.light) .leadFormTabs,body:not(.light) .leadFormTabs,:root:not(.light) .leadFormTabs{background:var(--modal-surface-2,#0f1d3d)!important;}
+@media(max-width:640px){
+  .leadFormTabs{gap:2px;}
+  .leadFormTab{font-size:12px;padding-left:9px;padding-right:9px;}
+}
+
+/* Ajustes visuais do cadastro do Lead: sem faixa escura nas abas e com sugestões opacas/fundo fixo */
+.leadFormTabs{
+  box-shadow:none;
+  backdrop-filter:none;
+}
+.leadFormShell .leadFormTabs{
+  background:inherit;
+}
+html.light .leadFormShell .leadFormTabs,
+body.light .leadFormShell .leadFormTabs,
+:root.light .leadFormShell .leadFormTabs{
+  background:#ffffff!important;
+}
+html:not(.light) .leadFormShell .leadFormTabs,
+body:not(.light) .leadFormShell .leadFormTabs,
+:root:not(.light) .leadFormShell .leadFormTabs{
+  background:var(--modal-surface-2,#0f1d3d)!important;
+}
+
+.suggestBox{
+  opacity:1!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+html.light .modal .suggestBox,
+body.light .modal .suggestBox,
+:root.light .modal .suggestBox{
+  background:#ffffff!important;
+  border-color:rgba(15,23,42,.12)!important;
+  box-shadow:0 16px 40px rgba(15,23,42,.14)!important;
+}
+html:not(.light) .modal .suggestBox,
+body:not(.light) .modal .suggestBox,
+:root:not(.light) .modal .suggestBox{
+  background:#0f1d3d!important;
+  border-color:rgba(183,212,255,.16)!important;
+  box-shadow:0 18px 44px rgba(0,0,0,.36)!important;
+}
+
+
+
+/* Prontuário: menu de procedimentos opaco no modo claro */
+:root.light #view-ficha .procSuggestMenu,
+html.light #view-ficha .procSuggestMenu,
+body.light #view-ficha .procSuggestMenu{
+  background:#ffffff !important;
+  opacity:1 !important;
+  border-color:rgba(15,23,42,.12) !important;
+  box-shadow:0 16px 40px rgba(15,23,42,.16) !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+:root.light #view-ficha .procSuggestItem,
+html.light #view-ficha .procSuggestItem,
+body.light #view-ficha .procSuggestItem{
+  background:#ffffff;
+  color:#0f172a;
+}
+:root.light #view-ficha .procSuggestItem:hover,
+html.light #view-ficha .procSuggestItem:hover,
+body.light #view-ficha .procSuggestItem:hover{
+  background:#eef6ff !important;
+}
+
+
+/* Modal do Lead no tema claro com fundo em degradê Cronos — cumulativo */
+html.light .modal:has(.leadFormShell),
+body.light .modal:has(.leadFormShell),
+:root.light .modal:has(.leadFormShell){
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg, #edf6ff 0%, #eefcff 46%, #effcf6 100%) !important;
+  border-color: rgba(20,126,219,.20) !important;
+  box-shadow: 0 24px 70px rgba(15,23,42,.18) !important;
+}
+html.light .modal:has(.leadFormShell) #modalBody,
+body.light .modal:has(.leadFormShell) #modalBody,
+:root.light .modal:has(.leadFormShell) #modalBody,
+html.light .modal:has(.leadFormShell) .modalHead,
+body.light .modal:has(.leadFormShell) .modalHead,
+:root.light .modal:has(.leadFormShell) .modalHead,
+html.light .modal:has(.leadFormShell) .leadFormShell,
+body.light .modal:has(.leadFormShell) .leadFormShell,
+:root.light .modal:has(.leadFormShell) .leadFormShell,
+html.light .modal:has(.leadFormShell) .leadFormPanel,
+body.light .modal:has(.leadFormShell) .leadFormPanel,
+:root.light .modal:has(.leadFormShell) .leadFormPanel{
+  background: transparent !important;
+}
+html.light .modal:has(.leadFormShell) .modalHead,
+body.light .modal:has(.leadFormShell) .modalHead,
+:root.light .modal:has(.leadFormShell) .modalHead{
+  border-bottom-color: rgba(20,126,219,.14) !important;
+}
+html.light .modal:has(.leadFormShell) .leadFormTabs,
+body.light .modal:has(.leadFormShell) .leadFormTabs,
+:root.light .modal:has(.leadFormShell) .leadFormTabs{
+  position:sticky;
+  top:0;
+  z-index:20;
+  margin:0 -6px 14px;
+  padding:4px 6px 12px;
+  background:linear-gradient(90deg, rgba(237,246,255,.985) 0%, rgba(238,252,255,.985) 48%, rgba(239,252,246,.985) 100%) !important;
+  border-bottom:1px solid rgba(20,126,219,.16) !important;
+  box-shadow:0 7px 12px rgba(15,23,42,.045);
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html.light .modal:has(.leadFormShell) .leadFormTab,
+body.light .modal:has(.leadFormShell) .leadFormTab,
+:root.light .modal:has(.leadFormShell) .leadFormTab{color:#334155}
+html.light .modal:has(.leadFormShell) .leadFormTab.active,
+body.light .modal:has(.leadFormShell) .leadFormTab.active,
+:root.light .modal:has(.leadFormShell) .leadFormTab.active{color:#078ec3;border-bottom-color:#11b5d9}
+html.light .modal:has(.leadFormShell) .leadFormTab:hover,
+body.light .modal:has(.leadFormShell) .leadFormTab:hover,
+:root.light .modal:has(.leadFormShell) .leadFormTab:hover{background:rgba(255,255,255,.62) !important}
+html.light .modal:has(.leadFormShell) input,
+html.light .modal:has(.leadFormShell) select,
+html.light .modal:has(.leadFormShell) textarea,
+body.light .modal:has(.leadFormShell) input,
+body.light .modal:has(.leadFormShell) select,
+body.light .modal:has(.leadFormShell) textarea,
+:root.light .modal:has(.leadFormShell) input,
+:root.light .modal:has(.leadFormShell) select,
+:root.light .modal:has(.leadFormShell) textarea{
+  background:#fff !important;
+  border-color:rgba(15,23,42,.12) !important;
+  box-shadow:0 2px 10px rgba(15,23,42,.035) !important;
+}
+html.light .modal:has(.leadFormShell) .leadFormIntro,
+body.light .modal:has(.leadFormShell) .leadFormIntro,
+:root.light .modal:has(.leadFormShell) .leadFormIntro{
+  background:rgba(255,255,255,.72) !important;
+  border-color:rgba(20,126,219,.13) !important;
+}
+html.light .modal:has(.leadFormShell) .help,
+body.light .modal:has(.leadFormShell) .help,
+:root.light .modal:has(.leadFormShell) .help{color:#475569 !important}
+
+
+/* Modal de Tarefas no tema claro com degradê Cronos */
+html.light .modal:has(#tf_title),
+body.light .modal:has(#tf_title),
+:root.light .modal:has(#tf_title){
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg, #edf6ff 0%, #eefcff 46%, #effcf6 100%) !important;
+  border-color:rgba(20,126,219,.20) !important;
+  box-shadow:0 24px 70px rgba(15,23,42,.18) !important;
+}
+html.light .modal:has(#tf_title) #modalBody,
+body.light .modal:has(#tf_title) #modalBody,
+:root.light .modal:has(#tf_title) #modalBody,
+html.light .modal:has(#tf_title) .modalHead,
+body.light .modal:has(#tf_title) .modalHead,
+:root.light .modal:has(#tf_title) .modalHead,
+html.light .modal:has(#tf_title) .modalFoot,
+body.light .modal:has(#tf_title) .modalFoot,
+:root.light .modal:has(#tf_title) .modalFoot{
+  background:transparent !important;
+}
+html.light .modal:has(#tf_title) .modalFoot,
+body.light .modal:has(#tf_title) .modalFoot,
+:root.light .modal:has(#tf_title) .modalFoot{
+  border-top-color:rgba(20,126,219,.14) !important;
+}
+html.light .modal:has(#tf_title) input,
+html.light .modal:has(#tf_title) select,
+html.light .modal:has(#tf_title) textarea,
+body.light .modal:has(#tf_title) input,
+body.light .modal:has(#tf_title) select,
+body.light .modal:has(#tf_title) textarea,
+:root.light .modal:has(#tf_title) input,
+:root.light .modal:has(#tf_title) select,
+:root.light .modal:has(#tf_title) textarea{
+  background:#ffffff !important;
+  color:#0f172a !important;
+  border-color:rgba(15,23,42,.12) !important;
+  box-shadow:0 2px 10px rgba(15,23,42,.035) !important;
+}
+html.light .modal:has(#tf_title) input::placeholder,
+html.light .modal:has(#tf_title) textarea::placeholder,
+body.light .modal:has(#tf_title) input::placeholder,
+body.light .modal:has(#tf_title) textarea::placeholder,
+:root.light .modal:has(#tf_title) input::placeholder,
+:root.light .modal:has(#tf_title) textarea::placeholder{
+  color:#64748b !important;
+  opacity:.82;
+}
+html.light .modal:has(#tf_title) .taskLeadFixedBox,
+body.light .modal:has(#tf_title) .taskLeadFixedBox,
+:root.light .modal:has(#tf_title) .taskLeadFixedBox{
+  background:#ffffff !important;
+  border-color:rgba(20,126,219,.16) !important;
+  box-shadow:0 3px 12px rgba(15,23,42,.045) !important;
+}
+html.light .modal:has(#tf_title) .taskLeadFixedBox strong,
+body.light .modal:has(#tf_title) .taskLeadFixedBox strong,
+:root.light .modal:has(#tf_title) .taskLeadFixedBox strong{
+  color:#0f172a !important;
+}
+html.light .modal:has(#tf_title) .taskLeadFixedBox span,
+body.light .modal:has(#tf_title) .taskLeadFixedBox span,
+:root.light .modal:has(#tf_title) .taskLeadFixedBox span{
+  color:#475569 !important;
+}
+html.light .modal:has(#tf_title) #taskLeadSuggest,
+body.light .modal:has(#tf_title) #taskLeadSuggest,
+:root.light .modal:has(#tf_title) #taskLeadSuggest{
+  background:#ffffff !important;
+  border-color:rgba(15,23,42,.12) !important;
+  box-shadow:0 16px 40px rgba(15,23,42,.14) !important;
+}
+
+
+/* Recebimentos — Novo recebimento e Gerenciar recebimento com degradê Cronos no modo claro */
+html.light .modal:has(#newFinancialInstallmentApp),
+body.light .modal:has(#newFinancialInstallmentApp),
+:root.light .modal:has(#newFinancialInstallmentApp){
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg, #edf6ff 0%, #eefcff 46%, #effcf6 100%) !important;
+  border-color:rgba(20,126,219,.20) !important;
+  box-shadow:0 24px 70px rgba(15,23,42,.18) !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html.light .modal:has(#newFinancialInstallmentApp) #modalBody,
+body.light .modal:has(#newFinancialInstallmentApp) #modalBody,
+:root.light .modal:has(#newFinancialInstallmentApp) #modalBody,
+html.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+body.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+:root.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+html.light .modal:has(#newFinancialInstallmentApp) .modalFoot,
+body.light .modal:has(#newFinancialInstallmentApp) .modalFoot,
+:root.light .modal:has(#newFinancialInstallmentApp) .modalFoot{
+  background:transparent !important;
+}
+html.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+body.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+:root.light .modal:has(#newFinancialInstallmentApp) .modalHead{
+  border-bottom-color:rgba(20,126,219,.14) !important;
+}
+html.light .modal:has(#newFinancialInstallmentApp) .modalFoot,
+body.light .modal:has(#newFinancialInstallmentApp) .modalFoot,
+:root.light .modal:has(#newFinancialInstallmentApp) .modalFoot{
+  border-top-color:rgba(20,126,219,.14) !important;
+}
+html.light #newFinancialInstallmentApp .card,
+body.light #newFinancialInstallmentApp .card,
+:root.light #newFinancialInstallmentApp .card,
+html.light #newFinancialInstallmentApp .selectedPlanPaymentEditor,
+body.light #newFinancialInstallmentApp .selectedPlanPaymentEditor,
+:root.light #newFinancialInstallmentApp .selectedPlanPaymentEditor{
+  background:#ffffff !important;
+  border-color:rgba(20,126,219,.14) !important;
+}
+html.light #newFinancialInstallmentApp input,
+html.light #newFinancialInstallmentApp select,
+html.light #newFinancialInstallmentApp textarea,
+body.light #newFinancialInstallmentApp input,
+body.light #newFinancialInstallmentApp select,
+body.light #newFinancialInstallmentApp textarea,
+:root.light #newFinancialInstallmentApp input,
+:root.light #newFinancialInstallmentApp select,
+:root.light #newFinancialInstallmentApp textarea{
+  background:#ffffff !important;
+}
+
+
+/* Recebimentos — preservar degradê durante rolagem */
+html.light body.cronos-newfin-scrolling #modalBg > .modal.cronosModalFinancial,
+body.light.cronos-newfin-scrolling #modalBg > .modal.cronosModalFinancial,
+:root.light body.cronos-newfin-scrolling #modalBg > .modal.cronosModalFinancial{
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg, #edf6ff 0%, #eefcff 46%, #effcf6 100%) !important;
+  box-shadow:none !important;
+}
+
+
+/* Antecipação de crédito — degradê Cronos no modo claro */
+html.light .cronosCreditAnticipationCard,
+body.light .cronosCreditAnticipationCard,
+:root.light .cronosCreditAnticipationCard{
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg, #edf6ff 0%, #eefcff 46%, #effcf6 100%) !important;
+  border-color:rgba(20,126,219,.20) !important;
+  box-shadow:0 24px 70px rgba(15,23,42,.18) !important;
+  color:#0f172a !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html.light .cronosCreditAnticipationCard input:not([type="checkbox"]),
+html.light .cronosCreditAnticipationCard select,
+html.light .cronosCreditAnticipationCard textarea,
+body.light .cronosCreditAnticipationCard input:not([type="checkbox"]),
+body.light .cronosCreditAnticipationCard select,
+body.light .cronosCreditAnticipationCard textarea,
+:root.light .cronosCreditAnticipationCard input:not([type="checkbox"]),
+:root.light .cronosCreditAnticipationCard select,
+:root.light .cronosCreditAnticipationCard textarea{
+  background:#ffffff !important;
+  color:#0f172a !important;
+  border-color:rgba(15,23,42,.12) !important;
+  box-shadow:0 2px 10px rgba(15,23,42,.035) !important;
+}
+html.light .cronosCreditAnticipationCard .creditAntSelectBar,
+body.light .cronosCreditAnticipationCard .creditAntSelectBar,
+:root.light .cronosCreditAnticipationCard .creditAntSelectBar,
+html.light .cronosCreditAnticipationCard .creditAntListPanel,
+body.light .cronosCreditAnticipationCard .creditAntListPanel,
+:root.light .cronosCreditAnticipationCard .creditAntListPanel{
+  background:rgba(255,255,255,.88) !important;
+  border-color:rgba(20,126,219,.14) !important;
+  box-shadow:0 3px 12px rgba(15,23,42,.035) !important;
+}
+html.light .cronosCreditAnticipationCard .creditAntSummaryPanel,
+body.light .cronosCreditAnticipationCard .creditAntSummaryPanel,
+:root.light .cronosCreditAnticipationCard .creditAntSummaryPanel{
+  background:rgba(255,255,255,.82) !important;
+  border-color:rgba(34,197,94,.20) !important;
+  box-shadow:inset 0 0 0 1px rgba(34,197,94,.035) !important;
+}
+html.light .cronosCreditAnticipationCard .muted,
+body.light .cronosCreditAnticipationCard .muted,
+:root.light .cronosCreditAnticipationCard .muted{
+  color:#475569 !important;
+}
+
+/* === CRONOS V106 — Modais claros com degradê Cronos mais vivo sem perder fluidez === */
+/* Ajuste 2: cores mais presentes, menos véu branco, mantendo poucas camadas para não matar a rolagem. */
+html.light .modal,
+body.light .modal,
+:root.light .modal,
+html.light .modalContent,
+body.light .modalContent,
+:root.light .modalContent,
+html.light .modalCard,
+body.light .modalCard,
+:root.light .modalCard{
+  background:
+    radial-gradient(780px 240px at 8% -14%, rgba(37,99,235,.30), transparent 62%),
+    radial-gradient(640px 220px at 92% 0%, rgba(6,182,212,.22), transparent 66%),
+    radial-gradient(720px 260px at 100% 100%, rgba(20,184,166,.18), transparent 70%),
+    linear-gradient(180deg, rgba(246,251,255,.96) 0%, rgba(229,244,255,.92) 54%, rgba(223,248,239,.90) 100%) !important;
+  border-color: rgba(15,23,42,.14) !important;
+  box-shadow: 0 24px 70px rgba(15,23,42,.22) !important;
+}
+
+html.light body.cronos-is-scrolling .modal,
+:root.light body.cronos-is-scrolling .modal,
+body.light.cronos-is-scrolling .modal,
+html.light body.cronos-is-scrolling .modalContent,
+:root.light body.cronos-is-scrolling .modalContent,
+body.light.cronos-is-scrolling .modalContent,
+html.light body.cronos-is-scrolling .modalCard,
+:root.light body.cronos-is-scrolling .modalCard,
+body.light.cronos-is-scrolling .modalCard{
+  background:
+    radial-gradient(780px 240px at 8% -14%, rgba(37,99,235,.30), transparent 62%),
+    radial-gradient(640px 220px at 92% 0%, rgba(6,182,212,.22), transparent 66%),
+    radial-gradient(720px 260px at 100% 100%, rgba(20,184,166,.18), transparent 70%),
+    linear-gradient(180deg, rgba(246,251,255,.96) 0%, rgba(229,244,255,.92) 54%, rgba(223,248,239,.90) 100%) !important;
+}

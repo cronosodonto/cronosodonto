@@ -1198,3 +1198,39 @@ body.light #view-ficha .fichaQuickActions .btn:disabled,
   filter:saturate(.72)!important;
   box-shadow:none!important;
 }
+
+
+/* === CRONOS 2026-08-25 — ações do odontograma alinhadas ===
+   Linha 1: Adicionar ao plano (7/12) + Pago/em pagamento (5/12).
+   Linha 2: quatro ações iguais, sem deixar “Limpar marcação” órfão. */
+#view-ficha .fichaQuickActions{
+  display:grid !important;
+  grid-template-columns:repeat(12,minmax(0,1fr)) !important;
+  gap:8px !important;
+  align-items:stretch !important;
+}
+#view-ficha .fichaQuickActions .btn{
+  width:100% !important;
+  max-width:none !important;
+  min-width:0 !important;
+  margin:0 !important;
+  justify-content:center !important;
+}
+#view-ficha .fichaQuickActions .fichaAddPlanBtn{grid-column:1 / span 7 !important;}
+#view-ficha .fichaQuickActions .fichaPaidAction{grid-column:8 / span 5 !important;}
+#view-ficha .fichaQuickActions .fichaDoneAction{grid-column:1 / span 3 !important;}
+#view-ficha .fichaQuickActions .fichaAbsentAction{grid-column:4 / span 3 !important;}
+#view-ficha .fichaQuickActions .fichaNeutralAction:nth-of-type(5){grid-column:7 / span 3 !important;}
+#view-ficha .fichaQuickActions .fichaNeutralAction:nth-of-type(6){grid-column:10 / span 3 !important;}
+
+@media(max-width:900px){
+  #view-ficha .fichaQuickActions{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}
+  #view-ficha .fichaQuickActions .fichaAddPlanBtn,
+  #view-ficha .fichaQuickActions .fichaPaidAction,
+  #view-ficha .fichaQuickActions .fichaDoneAction,
+  #view-ficha .fichaQuickActions .fichaAbsentAction,
+  #view-ficha .fichaQuickActions .fichaNeutralAction{grid-column:auto !important;}
+}
+@media(max-width:560px){
+  #view-ficha .fichaQuickActions{grid-template-columns:1fr !important;}
+}

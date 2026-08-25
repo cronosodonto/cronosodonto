@@ -19,8 +19,8 @@
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link href="../assets/css/app.css?build=v451-user-action-feedback-20260730" rel="stylesheet"/>
-<link href="../assets/css/prontuario-rc5-32.css?build=v463-2-4-rc5-19-3-prontuario-rc5-32-20260818" rel="stylesheet"/>
-<link href="../assets/css/intraoral-camera.css?build=v463-2-4-rc5-19-1-loading-states-20260818" rel="stylesheet"/>
+<link href="../assets/css/prontuario-rc5-32.css?build=20260825-actions-alinhadas" rel="stylesheet"/>
+<link href="../assets/css/intraoral-camera.css?build=20260825-lixeira-solida" rel="stylesheet"/>
 
 <style id="cronos-v101-leads-footer-darkref">
 html.light #view-leads .leadsPaginationModern,
@@ -1244,7 +1244,7 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 <script src="../assets/js/core/cronos-repository.js?build=v4-8-0-v448-quarantine-lock-20260730"></script>
 <script src="../assets/js/core/cronos-permissions.js?build=v463-2-4-rc5-19-access-resilience-20260818"></script>
 <script src="../assets/js/app.js?build=v463-2-4-rc5-19-3-prontuario-rc5-32-20260818"></script>
-<script src="../assets/js/intraoral-camera.js?build=v463-2-4-rc5-19-1-loading-states-20260818"></script>
+<script src="../assets/js/intraoral-camera.js?build=20260825-lixeira-solida"></script>
 <script src="../assets/js/hoje_no_cronos.js?build=v463-2-4-aux-freeze-20260813"></script>
 <script src="../assets/js/cronos_fluxos.js?build=public"></script>
 <script src="../assets/js/simulador_credito.js?build=v463-2-4-score-follows-simulator-20260814"></script>
@@ -4957,6 +4957,200 @@ body:not(.light) .sidebar .nav #navHojeCronos.active .todayNavBadge{
 }
 </style>
 
+
+<style id="cronos-final-modal-gradients-v2">
+/* FINAL: classes explícitas, sem depender de :has(). */
+html.light body #modalBg > .modal.cronosModalTask,
+html.light body #modalBg > .modal.cronosModalFinancial{
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.30), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.27), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.27), transparent 62%),
+    linear-gradient(135deg,#e8f3ff 0%,#ebfbff 46%,#eafbf2 100%) !important;
+  border:1px solid rgba(20,126,219,.22) !important;
+  box-shadow:0 24px 70px rgba(15,23,42,.18) !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html.light body #modalBg > .modal.cronosModalTask .modalHead,
+html.light body #modalBg > .modal.cronosModalTask #modalBody,
+html.light body #modalBg > .modal.cronosModalTask .modalFoot,
+html.light body #modalBg > .modal.cronosModalFinancial .modalHead,
+html.light body #modalBg > .modal.cronosModalFinancial #modalBody,
+html.light body #modalBg > .modal.cronosModalFinancial .modalFoot{
+  background:transparent !important;
+  background-image:none !important;
+}
+html.light body #modalBg > .modal.cronosModalTask .modalHead,
+html.light body #modalBg > .modal.cronosModalFinancial .modalHead{border-bottom-color:rgba(20,126,219,.14)!important;}
+html.light body #modalBg > .modal.cronosModalTask .modalFoot,
+html.light body #modalBg > .modal.cronosModalFinancial .modalFoot{border-top-color:rgba(20,126,219,.14)!important;}
+
+/* Tarefas: elimina a caixa cinza herdada do tema escuro. */
+html.light body #modalBg > .modal.cronosModalTask .taskLeadFixedBox{
+  background:#fff !important;
+  background-image:none !important;
+  border:1px solid rgba(20,126,219,.16) !important;
+  box-shadow:0 4px 14px rgba(15,23,42,.05) !important;
+}
+html.light body #modalBg > .modal.cronosModalTask .taskLeadFixedBox strong{color:#0f172a!important;-webkit-text-fill-color:#0f172a!important;}
+html.light body #modalBg > .modal.cronosModalTask .taskLeadFixedBox span{color:#475569!important;-webkit-text-fill-color:#475569!important;}
+html.light body #modalBg > .modal.cronosModalTask input,
+html.light body #modalBg > .modal.cronosModalTask select,
+html.light body #modalBg > .modal.cronosModalTask textarea,
+html.light body #modalBg > .modal.cronosModalTask #taskLeadSuggest{
+  background:#fff !important;
+  background-image:none !important;
+  color:#0f172a !important;
+  border-color:rgba(15,23,42,.12) !important;
+}
+
+/* Recebimentos: gradiente no modal; blocos de trabalho continuam brancos. */
+html.light body #modalBg > .modal.cronosModalFinancial #newFinancialInstallmentApp{
+  background:transparent !important;
+  background-image:none !important;
+}
+html.light body #modalBg > .modal.cronosModalFinancial #newFinancialInstallmentApp .card,
+html.light body #modalBg > .modal.cronosModalFinancial #newFinancialInstallmentApp .selectedPlanPaymentEditor{
+  background:#fff !important;
+  background-image:none !important;
+  border-color:rgba(20,126,219,.14) !important;
+}
+html.light body #modalBg > .modal.cronosModalFinancial #newFinancialInstallmentApp input,
+html.light body #modalBg > .modal.cronosModalFinancial #newFinancialInstallmentApp select,
+html.light body #modalBg > .modal.cronosModalFinancial #newFinancialInstallmentApp textarea{
+  background:#fff !important;
+  background-image:none !important;
+}
+
+/* O prontuário atual é página integrada; o degradê entra no contêiner da página. */
+html.light body #view-ficha{
+  background:
+    radial-gradient(1100px 620px at 0% 0%, rgba(22,119,255,.30), transparent 58%),
+    radial-gradient(920px 560px at 100% 6%, rgba(25,198,255,.27), transparent 60%),
+    radial-gradient(980px 620px at 90% 100%, rgba(46,230,166,.27), transparent 62%),
+    linear-gradient(135deg,#e8f3ff 0%,#ebfbff 46%,#eafbf2 100%) !important;
+  border:1px solid rgba(20,126,219,.18) !important;
+  border-radius:24px !important;
+  padding:14px !important;
+  box-shadow:0 18px 44px rgba(15,23,42,.08) !important;
+  box-sizing:border-box !important;
+}
+html.light body #view-ficha .fichaPatientHeroV55,
+html.light body #view-ficha .fichaTopCardV55,
+html.light body #view-ficha .odontoFull,
+html.light body #view-ficha .odontoPanel,
+html.light body #view-ficha .fichaEvaluationBoxV523,
+html.light body #view-ficha .fichaPlanToolbarV55,
+html.light body #view-ficha .fichaTableWrap,
+html.light body #view-ficha .fichaAddWrap,
+html.light body #view-ficha .totalBox,
+html.light body #view-ficha .panelMiniGrid>div,
+html.light body #view-ficha .cronosExamCard{
+  background:rgba(255,255,255,.94) !important;
+  background-image:none !important;
+  border-color:rgba(20,126,219,.13) !important;
+}
+html.light body #view-ficha input,
+html.light body #view-ficha select,
+html.light body #view-ficha textarea{background:#fff!important;background-image:none!important;}
+</style>
+
+
+<style id="cronos-perf-v1-static-visual-preserve">
+/* CRONOS PERF V1 — mesma identidade visual, pintura mais barata. */
+:root{
+  --cronos-light-fast-gradient:linear-gradient(135deg,#c7ddff 0%,#c9f2fb 48%,#cfeeda 100%);
+}
+
+/* Blur de tela inteira custa caro em qualquer rolagem dentro de modal. Mantemos o escurecimento sem blur. */
+html.light #modalBg.modalBg,
+body.light #modalBg.modalBg,
+:root.light #modalBg.modalBg,
+html.light .modalBg,
+body.light .modalBg,
+:root.light .modalBg{
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+  background:rgba(15,23,42,.38)!important;
+}
+html:not(.light) #modalBg.modalBg,
+body:not(.light) #modalBg.modalBg,
+:root:not(.light) #modalBg.modalBg{
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+  background:rgba(3,8,20,.86)!important;
+}
+
+/* Os modais estilizados mantêm azul/ciano/verde, mas em uma única camada de gradiente. */
+html.light body #modalBg > .modal.cronosModalLead,
+html.light body #modalBg > .modal.cronosModalTask,
+html.light body #modalBg > .modal.cronosModalFinancial,
+html.light body #modalBg > .modal.modalIntraoralDiagnostic,
+body.light #modalBg > .modal.cronosModalLead,
+body.light #modalBg > .modal.cronosModalTask,
+body.light #modalBg > .modal.cronosModalFinancial,
+body.light #modalBg > .modal.modalIntraoralDiagnostic,
+:root.light body #modalBg > .modal.cronosModalLead,
+:root.light body #modalBg > .modal.cronosModalTask,
+:root.light body #modalBg > .modal.cronosModalFinancial,
+:root.light body #modalBg > .modal.modalIntraoralDiagnostic{
+  background:var(--cronos-light-fast-gradient)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+html.light .cronosCreditAnticipationCard,
+body.light .cronosCreditAnticipationCard,
+:root.light .cronosCreditAnticipationCard{
+  background:var(--cronos-light-fast-gradient)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+
+/* Scroll containers: não animar scroll nem propagar overscroll para a página. */
+#modalBody,.modalBody,.cronosCreditAnticipationCard,.intraoralGallery,.intraoralLightboxOdonto,.examCaptureSide,.tableWrap{
+  scroll-behavior:auto!important;
+  overscroll-behavior:contain;
+}
+
+/* Enquanto rola, simplifica apenas efeitos caros; cores e gradientes permanecem. */
+.modal.cronos-local-scrolling,
+.cronosCreditAnticipationCard.cronos-local-scrolling,
+.intraoralLightbox.cronos-local-scrolling{
+  box-shadow:none!important;
+}
+.modal.cronos-local-scrolling .card,
+.modal.cronos-local-scrolling .selectedPlanPaymentEditor,
+.modal.cronos-local-scrolling .financialPaymentTable,
+.modal.cronos-local-scrolling .taskLeadFixedBox,
+.cronosCreditAnticipationCard.cronos-local-scrolling .creditAntSelectBar,
+.cronosCreditAnticipationCard.cronos-local-scrolling .creditAntListPanel,
+.cronosCreditAnticipationCard.cronos-local-scrolling .creditAntSummaryPanel{
+  box-shadow:none!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+.modal.cronos-local-scrolling *,
+.cronosCreditAnticipationCard.cronos-local-scrolling *,
+.intraoralLightbox.cronos-local-scrolling *{
+  transition:none!important;
+}
+
+/* Listas longas: o navegador deixa de pintar cards que estão muito fora da tela. */
+@supports (content-visibility:auto){
+  .intraoralGallery .intraoralThumb,
+  .intraoralTrashList .intraoralTrashItem,
+  #view-installments .receivablePatientCard{
+    content-visibility:auto;
+    contain-intrinsic-size:240px 320px;
+  }
+}
+.intraoralGallery .intraoralThumb,
+.intraoralTrashList .intraoralTrashItem,
+#view-installments .receivablePatientCard{
+  contain:layout paint style;
+}
+</style>
 </body>
 </html>
 <!-- update -->
@@ -5643,6 +5837,28 @@ body:not(.light) .modal table,
 body:not(.light) .modal .suggestBox{
   background:rgba(8,20,42,.42) !important;
   border-color:rgba(183,212,255,.12) !important;
+}
+
+/* Sugestões no modal com fundo fixo e opacidade total */
+:root.light .modal .suggestBox,
+html.light .modal .suggestBox,
+body.light .modal .suggestBox{
+  background:#ffffff !important;
+  border-color:rgba(15,23,42,.12) !important;
+  box-shadow:0 16px 40px rgba(15,23,42,.14) !important;
+  opacity:1 !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+:root:not(.light) .modal .suggestBox,
+html:not(.light) .modal .suggestBox,
+body:not(.light) .modal .suggestBox{
+  background:#0f1d3d !important;
+  border-color:rgba(183,212,255,.16) !important;
+  box-shadow:0 18px 44px rgba(0,0,0,.36) !important;
+  opacity:1 !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
 }
 :root:not(.light) .modal th,
 html:not(.light) .modal th,
@@ -8133,4 +8349,143 @@ body.light.cronos-is-scrolling #view-installments .receivablePatientCard.is-soon
   border-color:rgba(217,119,6,.24) !important;
 }
 
+</style>
+
+<style id="cronos-recebimentos-modal-degrade">
+
+/* Recebimentos — Novo recebimento e Gerenciar recebimento com degradê Cronos no modo claro */
+html.light .modal:has(#newFinancialInstallmentApp),
+body.light .modal:has(#newFinancialInstallmentApp),
+:root.light .modal:has(#newFinancialInstallmentApp){
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg, #edf6ff 0%, #eefcff 46%, #effcf6 100%) !important;
+  border-color:rgba(20,126,219,.20) !important;
+  box-shadow:0 24px 70px rgba(15,23,42,.18) !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html.light .modal:has(#newFinancialInstallmentApp) #modalBody,
+body.light .modal:has(#newFinancialInstallmentApp) #modalBody,
+:root.light .modal:has(#newFinancialInstallmentApp) #modalBody,
+html.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+body.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+:root.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+html.light .modal:has(#newFinancialInstallmentApp) .modalFoot,
+body.light .modal:has(#newFinancialInstallmentApp) .modalFoot,
+:root.light .modal:has(#newFinancialInstallmentApp) .modalFoot{
+  background:transparent !important;
+}
+html.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+body.light .modal:has(#newFinancialInstallmentApp) .modalHead,
+:root.light .modal:has(#newFinancialInstallmentApp) .modalHead{
+  border-bottom-color:rgba(20,126,219,.14) !important;
+}
+html.light .modal:has(#newFinancialInstallmentApp) .modalFoot,
+body.light .modal:has(#newFinancialInstallmentApp) .modalFoot,
+:root.light .modal:has(#newFinancialInstallmentApp) .modalFoot{
+  border-top-color:rgba(20,126,219,.14) !important;
+}
+html.light #newFinancialInstallmentApp .card,
+body.light #newFinancialInstallmentApp .card,
+:root.light #newFinancialInstallmentApp .card,
+html.light #newFinancialInstallmentApp .selectedPlanPaymentEditor,
+body.light #newFinancialInstallmentApp .selectedPlanPaymentEditor,
+:root.light #newFinancialInstallmentApp .selectedPlanPaymentEditor{
+  background:#ffffff !important;
+  border-color:rgba(20,126,219,.14) !important;
+}
+html.light #newFinancialInstallmentApp input,
+html.light #newFinancialInstallmentApp select,
+html.light #newFinancialInstallmentApp textarea,
+body.light #newFinancialInstallmentApp input,
+body.light #newFinancialInstallmentApp select,
+body.light #newFinancialInstallmentApp textarea,
+:root.light #newFinancialInstallmentApp input,
+:root.light #newFinancialInstallmentApp select,
+:root.light #newFinancialInstallmentApp textarea{
+  background:#ffffff !important;
+}
+
+</style>
+
+<style id="cronos-modal-visual-restore-exact-v1">
+/* Restaura o degradê visual pré-otimização sem reativar blur de tela inteira. */
+html.light body #modalBg > .modal.cronosModalLead,
+html.light body #modalBg > .modal.cronosModalTask,
+html.light body #modalBg > .modal.cronosModalFinancial,
+html.light body #modalBg > .modal.modalIntraoralDiagnostic,
+html.light body #modalBg > .modal.cronosModalAudit,
+body.light #modalBg > .modal.cronosModalLead,
+body.light #modalBg > .modal.cronosModalTask,
+body.light #modalBg > .modal.cronosModalFinancial,
+body.light #modalBg > .modal.modalIntraoralDiagnostic,
+body.light #modalBg > .modal.cronosModalAudit,
+:root.light body #modalBg > .modal.cronosModalLead,
+:root.light body #modalBg > .modal.cronosModalTask,
+:root.light body #modalBg > .modal.cronosModalFinancial,
+:root.light body #modalBg > .modal.modalIntraoralDiagnostic,
+:root.light body #modalBg > .modal.cronosModalAudit{
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg,#edf6ff 0%,#eefcff 46%,#effcf6 100%) !important;
+  border-color:rgba(20,126,219,.20)!important;
+  box-shadow:0 24px 70px rgba(15,23,42,.18)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+  opacity:1!important;
+}
+
+html.light body #modalBg > .modal.cronosModalLead .modalHead,
+html.light body #modalBg > .modal.cronosModalLead #modalBody,
+html.light body #modalBg > .modal.cronosModalLead .modalFoot,
+html.light body #modalBg > .modal.cronosModalTask .modalHead,
+html.light body #modalBg > .modal.cronosModalTask #modalBody,
+html.light body #modalBg > .modal.cronosModalTask .modalFoot,
+html.light body #modalBg > .modal.cronosModalFinancial .modalHead,
+html.light body #modalBg > .modal.cronosModalFinancial #modalBody,
+html.light body #modalBg > .modal.cronosModalFinancial .modalFoot,
+html.light body #modalBg > .modal.cronosModalAudit .modalHead,
+html.light body #modalBg > .modal.cronosModalAudit #modalBody,
+html.light body #modalBg > .modal.cronosModalAudit .modalFoot{
+  background:transparent!important;
+  background-image:none!important;
+}
+
+/* Histórico: os registros são superfícies sólidas; não deixam o conteúdo de trás 'vazar'. */
+html.light body #modalBg > .modal.cronosModalAudit .auditItem,
+body.light #modalBg > .modal.cronosModalAudit .auditItem,
+:root.light body #modalBg > .modal.cronosModalAudit .auditItem{
+  background:rgba(255,255,255,.88)!important;
+  border-color:rgba(20,126,219,.13)!important;
+  box-shadow:0 5px 14px rgba(15,23,42,.045)!important;
+}
+html.light body #modalBg > .modal.cronosModalAudit .modalHead,
+body.light #modalBg > .modal.cronosModalAudit .modalHead,
+:root.light body #modalBg > .modal.cronosModalAudit .modalHead{
+  border-bottom-color:rgba(20,126,219,.14)!important;
+}
+html.light body #modalBg > .modal.cronosModalAudit .modalFoot,
+body.light #modalBg > .modal.cronosModalAudit .modalFoot,
+:root.light body #modalBg > .modal.cronosModalAudit .modalFoot{
+  border-top-color:rgba(20,126,219,.14)!important;
+}
+
+/* Antecipação segue exatamente a mesma receita visual. */
+html.light .cronosCreditAnticipationCard,
+body.light .cronosCreditAnticipationCard,
+:root.light .cronosCreditAnticipationCard{
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(22,119,255,.25), transparent 58%),
+    radial-gradient(760px 480px at 100% 8%, rgba(25,198,255,.22), transparent 60%),
+    radial-gradient(820px 520px at 92% 100%, rgba(46,230,166,.22), transparent 62%),
+    linear-gradient(135deg,#edf6ff 0%,#eefcff 46%,#effcf6 100%) !important;
+  opacity:1!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
 </style>

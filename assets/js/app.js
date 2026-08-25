@@ -2990,7 +2990,7 @@ function openCreditAnticipationModal(){
   overlay.id = "cronosCreditAnticipationModal";
   overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(6px)";
   overlay.innerHTML = `
-    <div style="width:min(780px,96vw);max-height:92vh;overflow:auto;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:var(--shadow);padding:18px;color:var(--text)">
+    <div class="cronosCreditAnticipationCard" style="width:min(780px,96vw);max-height:92vh;overflow:auto;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:var(--shadow);padding:18px;color:var(--text)">
       <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap">
         <div>
           <div style="font-size:20px;font-weight:950">Antecipação de crédito</div>
@@ -3027,7 +3027,7 @@ function openCreditAnticipationModal(){
         <div class="muted" style="font-size:12px;margin-top:6px">Ao selecionar “Paciente específico”, use a busca e marque todos para baixar todas as parcelas pendentes de crédito desse paciente.</div>
       </div>
 
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.035)">
+      <div class="creditAntSelectBar" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.035)">
         <label style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:13px">
           <input type="checkbox" id="creditAntSelectAll" checked>
           Marcar todos
@@ -3035,9 +3035,9 @@ function openCreditAnticipationModal(){
         <div class="muted" id="creditAntContext" style="font-size:12px"></div>
       </div>
 
-      <div id="creditAntList" style="border:1px solid var(--line);border-radius:16px;overflow:auto;max-height:300px"></div>
+      <div id="creditAntList" class="creditAntListPanel" style="border:1px solid var(--line);border-radius:16px;overflow:auto;max-height:300px"></div>
 
-      <div id="creditAntSummary" style="margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(34,197,94,.08)"></div>
+      <div id="creditAntSummary" class="creditAntSummaryPanel" style="margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(34,197,94,.08)"></div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;flex-wrap:wrap">
         <button type="button" class="btn" id="creditAntCancel">Cancelar</button>
@@ -3802,7 +3802,8 @@ function openNewFinancialInstallment(entryId="", planId=""){
     footHTML:'<button type="button" class="btn" onclick="closeModal()">Fechar</button>',
     onMount: renderNewFinancialInstallmentApp,
     maxWidth:'min(97vw, 1120px)',
-    width:'min(97vw, 1120px)'
+    width:'min(97vw, 1120px)',
+    modalClass:'cronosModalFinancial'
   });
 }
 
@@ -5890,7 +5891,8 @@ window.CRONOS_SHOW_AUDIT = function(entityType, entityId){
           <div class="auditBy">Por: <b>${escapeHTML(r.actorName || "—")}</b></div>
         </div>`).join("")}</div>`,
       footHTML:`<button type="button" class="btn" onclick="closeModal()">Fechar</button>`,
-      maxWidth:"760px"
+      maxWidth:"760px",
+      modalClass:"cronosModalAudit"
     });
   }catch(err){
     console.warn("Falha ao abrir auditoria", err);
@@ -5941,6 +5943,19 @@ function formatPhoneBR(value){
   if(s.length <= 10) return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
   return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5, 9)}`;
 }
+
+// Formato usado nas fichas impressas. Apenas formata o número existente;
+// nunca troca, corrige ou inventa dígitos. Ex.: 98983393305 -> (98) 9 8339-3305.
+function formatPhoneFichaPrint(value){
+  const raw = String(value || "").trim();
+  if(!raw) return "";
+  if(cronosPhoneStartsInternational(raw)) return formatInternationalPhoneInput(raw);
+  const s = raw.replace(/\D/g, "").slice(0, 11);
+  if(!s) return "";
+  if(s.length === 11) return `(${s.slice(0,2)}) ${s[2]} ${s.slice(3,7)}-${s.slice(7,11)}`;
+  if(s.length === 10) return `(${s.slice(0,2)}) ${s.slice(2,6)}-${s.slice(6,10)}`;
+  return formatPhoneBR(s);
+}
 function cronosIsValidPhone(value){
   const normalized = normPhone(value);
   const digits = normalized.replace(/\D/g, "");
@@ -5964,6 +5979,164 @@ function formatCPFInput(v){
   if(s.length <= 6) return `${s.slice(0, 3)}.${s.slice(3)}`;
   if(s.length <= 9) return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6)}`;
   return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9, 11)}`;
+}
+function formatCPFCNPJInput(v){
+  const s = String(v||"").replace(/\D/g,"").slice(0, 14);
+  if(s.length <= 11) return formatCPFInput(s);
+  if(s.length <= 2) return s;
+  if(s.length <= 5) return `${s.slice(0,2)}.${s.slice(2)}`;
+  if(s.length <= 8) return `${s.slice(0,2)}.${s.slice(2,5)}.${s.slice(5)}`;
+  if(s.length <= 12) return `${s.slice(0,2)}.${s.slice(2,5)}.${s.slice(5,8)}/${s.slice(8)}`;
+  return `${s.slice(0,2)}.${s.slice(2,5)}.${s.slice(5,8)}/${s.slice(8,12)}-${s.slice(12,14)}`;
+}
+function formatCEPInput(v){
+  const s = String(v||"").replace(/\D/g,"").slice(0, 8);
+  if(s.length <= 5) return s;
+  return `${s.slice(0,5)}-${s.slice(5)}`;
+}
+
+// Consulta de CEP usada no cadastro do paciente e do responsável financeiro.
+// Apenas o CEP é enviado ao ViaCEP; nome, telefone e demais dados do paciente
+// permanecem no Cronos. O número e o complemento continuam sendo preenchidos
+// manualmente, pois não fazem parte do retorno confiável do CEP.
+const __cronosCepCache = new Map();
+
+async function cronosLookupCEP(value){
+  const cep = String(value || "").replace(/\D/g, "").slice(0, 8);
+  if(cep.length !== 8){
+    const err = new Error("CEP inválido");
+    err.code = "CEP_INVALID";
+    throw err;
+  }
+
+  if(__cronosCepCache.has(cep)) return __cronosCepCache.get(cep);
+
+  let response;
+  try{
+    response = await cronosFetchWithTimeout(
+      `https://viacep.com.br/ws/${cep}/json/`,
+      { method:"GET", headers:{ "Accept":"application/json" }, cache:"no-store" },
+      8000
+    );
+  }catch(error){
+    const err = new Error("Não foi possível consultar o CEP agora.");
+    err.code = "CEP_NETWORK";
+    err.cause = error;
+    throw err;
+  }
+
+  if(!response?.ok){
+    const err = new Error("Não foi possível consultar o CEP agora.");
+    err.code = "CEP_NETWORK";
+    throw err;
+  }
+
+  let data;
+  try{
+    data = await response.json();
+  }catch(_){
+    const err = new Error("Resposta inválida da consulta de CEP.");
+    err.code = "CEP_NETWORK";
+    throw err;
+  }
+
+  if(!data || data.erro){
+    const err = new Error("CEP não encontrado.");
+    err.code = "CEP_NOT_FOUND";
+    throw err;
+  }
+
+  const result = Object.freeze({
+    cep,
+    address:String(data.logradouro || "").trim(),
+    district:String(data.bairro || "").trim(),
+    city:String(data.localidade || "").trim(),
+    state:String(data.uf || "").trim().toUpperCase()
+  });
+
+  __cronosCepCache.set(cep, result);
+  return result;
+}
+
+function cronosBindCepAutofill(cepInput, fields={}){
+  if(!cepInput) return;
+
+  let timer = null;
+  let requestSeq = 0;
+  let lastResolvedCep = "";
+  let lastFailedCep = "";
+
+  const fieldNode = key => fields[key] ? el(fields[key]) : null;
+  const currentCep = () => String(cepInput.value || "").replace(/\D/g, "").slice(0, 8);
+
+  const scheduleLookup = ()=>{
+    const cep = currentCep();
+
+    if(timer){
+      clearTimeout(timer);
+      timer = null;
+    }
+
+    if(cep.length !== 8){
+      requestSeq++;
+      lastResolvedCep = "";
+      lastFailedCep = "";
+      cepInput.removeAttribute("aria-busy");
+      return;
+    }
+
+    if(cep === lastResolvedCep || cep === lastFailedCep) return;
+
+    const token = ++requestSeq;
+    const before = {
+      address:fieldNode("address")?.value || "",
+      district:fieldNode("district")?.value || "",
+      city:fieldNode("city")?.value || "",
+      state:fieldNode("state")?.value || ""
+    };
+
+    timer = setTimeout(async ()=>{
+      timer = null;
+      cepInput.setAttribute("aria-busy", "true");
+
+      try{
+        const result = await cronosLookupCEP(cep);
+        if(token !== requestSeq || currentCep() !== cep) return;
+
+        const safelyFill = (key, value)=>{
+          const node = fieldNode(key);
+          if(!node || !value) return;
+          // Se a pessoa digitou algo enquanto a consulta estava carregando,
+          // não atropelamos a edição manual.
+          if(String(node.value || "") === String(before[key] || "")){
+            node.value = value;
+            node.dispatchEvent(new Event("change", { bubbles:true }));
+          }
+        };
+
+        safelyFill("address", result.address);
+        safelyFill("district", result.district);
+        safelyFill("city", result.city);
+        safelyFill("state", result.state);
+
+        lastResolvedCep = cep;
+        lastFailedCep = "";
+      }catch(error){
+        if(token !== requestSeq || currentCep() !== cep) return;
+        lastFailedCep = cep;
+        if(error?.code === "CEP_NOT_FOUND"){
+          toast("CEP não encontrado", "Confira os números e tente novamente.");
+        }else if(error?.code !== "CEP_INVALID"){
+          toast("Consulta de CEP indisponível", "O endereço pode ser preenchido manualmente.");
+        }
+      }finally{
+        if(token === requestSeq) cepInput.removeAttribute("aria-busy");
+      }
+    }, 220);
+  };
+
+  cepInput.addEventListener("input", scheduleLookup);
+  cepInput.addEventListener("blur", scheduleLookup);
 }
 function monthKeyFromDate(iso){
   if(!iso) return todayISO().slice(0,7);
@@ -13803,10 +13976,22 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
   );
 
   const duplicateNoticeHTML = cronosDuplicateLeadNoticeHTML(c);
+  const maritalStatuses = ["Solteiro(a)","Casado(a)","União estável","Divorciado(a)","Viúvo(a)","Outro"];
+  const brazilStates = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
+  const fin = c.financialResponsible && typeof c.financialResponsible === "object" ? c.financialResponsible : {};
+  const finMode = fin.mode === "other" ? "other" : "self";
 
   return `
-    <div class="twoCol">
-      ${duplicateNoticeHTML}
+    <div class="leadFormShell">
+      <div class="leadFormTabs" role="tablist" aria-label="Cadastro do Lead">
+        <button type="button" class="leadFormTab active" data-lead-tab="lead" role="tab" aria-selected="true">Dados do Lead</button>
+        <button type="button" class="leadFormTab" data-lead-tab="complementary" role="tab" aria-selected="false">Informações complementares</button>
+        <button type="button" class="leadFormTab" data-lead-tab="financial" role="tab" aria-selected="false">Responsável financeiro</button>
+      </div>
+
+      <section class="leadFormPanel active" data-lead-panel="lead" role="tabpanel">
+        <div class="twoCol">
+          ${duplicateNoticeHTML}
       <div class="suggest">
         <label>Nome *</label>
         <input id="lf_name" ${ro?"disabled":""} value="${escapeHTML(c.name||"")}" placeholder="Ex: Jorge" autocomplete="off"/>
@@ -13942,6 +14127,130 @@ function leadEntryFormHTML(entry, contact, mode, suggestHTML){
         <div class="muted" style="font-size:12px">Histórico (meses):</div>
         <div id="lf_history" class="muted" style="font-size:12px; margin-top:6px"></div>
       </div>
+        </div>
+      </section>
+
+      <section class="leadFormPanel" data-lead-panel="complementary" role="tabpanel" hidden>
+        <div class="leadFormIntro">Dados cadastrais do paciente. Tudo aqui é opcional e pode ser completado depois.</div>
+        <div class="twoCol">
+          <div>
+            <label>Profissão</label>
+            <input id="lf_profession" ${ro?"disabled":""} value="${escapeHTML(c.profession||"")}" placeholder="Ex: Professora, Motorista, Autônomo..." autocomplete="off"/>
+          </div>
+          <div>
+            <label>Estado civil</label>
+            <select id="lf_marital_status" ${ro?"disabled":""}>${opt(maritalStatuses, c.maritalStatus || "")}</select>
+          </div>
+          <div>
+            <label>E-mail</label>
+            <input id="lf_email" type="email" ${ro?"disabled":""} value="${escapeHTML(c.email||"")}" placeholder="nome@exemplo.com" autocomplete="email"/>
+          </div>
+          <div>
+            <label>CEP</label>
+            <input id="lf_cep" ${ro?"disabled":""} value="${escapeHTML(formatCEPInput(c.cep||""))}" placeholder="00000-000" inputmode="numeric" maxlength="9" autocomplete="postal-code"/>
+          </div>
+          <div>
+            <label>Endereço</label>
+            <input id="lf_address" ${ro?"disabled":""} value="${escapeHTML(c.address||"")}" placeholder="Rua, avenida..." autocomplete="street-address"/>
+          </div>
+          <div>
+            <label>Número</label>
+            <input id="lf_address_number" ${ro?"disabled":""} value="${escapeHTML(c.addressNumber||"")}" placeholder="Nº"/>
+          </div>
+          <div>
+            <label>Complemento</label>
+            <input id="lf_address_complement" ${ro?"disabled":""} value="${escapeHTML(c.addressComplement||"")}" placeholder="Apto, sala, bloco..."/>
+          </div>
+          <div>
+            <label>Bairro</label>
+            <input id="lf_district" ${ro?"disabled":""} value="${escapeHTML(c.district||"")}" placeholder="Bairro"/>
+          </div>
+          <div>
+            <label>Cidade</label>
+            <input id="lf_city" ${ro?"disabled":""} value="${escapeHTML(c.city||e.city||"")}" placeholder="Cidade" autocomplete="address-level2"/>
+          </div>
+          <div>
+            <label>Estado</label>
+            <select id="lf_state" ${ro?"disabled":""}>${opt(brazilStates, c.state || "")}</select>
+          </div>
+          <div style="grid-column:1/-1">
+            <label>Informações adicionais</label>
+            <textarea id="lf_additional_info" ${ro?"disabled":""} placeholder="Informações cadastrais úteis que não cabem nos outros campos...">${escapeHTML(c.additionalInfo||"")}</textarea>
+          </div>
+        </div>
+      </section>
+
+      <section class="leadFormPanel" data-lead-panel="financial" role="tabpanel" hidden>
+        <div class="leadFormIntro">Defina quem responde financeiramente pelo tratamento. O próprio paciente vem selecionado por padrão.</div>
+        <div class="twoCol">
+          <div style="grid-column:1/-1">
+            <label>Responsável financeiro</label>
+            <select id="lf_fin_resp_mode" ${ro?"disabled":""}>
+              <option value="self" ${finMode==="self"?"selected":""}>O próprio paciente</option>
+              <option value="other" ${finMode==="other"?"selected":""}>Outra pessoa</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="lf_fin_resp_fields" class="twoCol leadFinancialFields ${finMode==="other"?"":"hidden"}">
+          <div>
+            <label>Nome do responsável</label>
+            <input id="lf_fin_name" ${ro?"disabled":""} value="${escapeHTML(fin.name||"")}" placeholder="Nome completo"/>
+          </div>
+          <div>
+            <label>Vínculo com o paciente</label>
+            <input id="lf_fin_relation" ${ro?"disabled":""} value="${escapeHTML(fin.relation||"")}" placeholder="Ex: Mãe, Pai, Cônjuge, Filho(a)..."/>
+          </div>
+          <div>
+            <label>CPF / CNPJ</label>
+            <input id="lf_fin_cpf_cnpj" ${ro?"disabled":""} value="${escapeHTML(formatCPFCNPJInput(fin.cpfCnpj||""))}" placeholder="CPF ou CNPJ" inputmode="numeric" maxlength="18"/>
+          </div>
+          <div>
+            <label>Profissão</label>
+            <input id="lf_fin_profession" ${ro?"disabled":""} value="${escapeHTML(fin.profession||"")}" placeholder="Profissão"/>
+          </div>
+          <div>
+            <label>Estado civil</label>
+            <select id="lf_fin_marital_status" ${ro?"disabled":""}>${opt(maritalStatuses, fin.maritalStatus || "")}</select>
+          </div>
+          <div>
+            <label>Telefone / Celular</label>
+            <input id="lf_fin_phone" ${ro?"disabled":""} value="${escapeHTML(formatPhoneBR(fin.phone||""))}" placeholder="(00) 00000-0000" inputmode="tel" maxlength="28"/>
+          </div>
+          <div>
+            <label>E-mail</label>
+            <input id="lf_fin_email" type="email" ${ro?"disabled":""} value="${escapeHTML(fin.email||"")}" placeholder="nome@exemplo.com"/>
+          </div>
+          <div>
+            <label>CEP</label>
+            <input id="lf_fin_cep" ${ro?"disabled":""} value="${escapeHTML(formatCEPInput(fin.cep||""))}" placeholder="00000-000" inputmode="numeric" maxlength="9"/>
+          </div>
+          <div>
+            <label>Endereço</label>
+            <input id="lf_fin_address" ${ro?"disabled":""} value="${escapeHTML(fin.address||"")}" placeholder="Rua, avenida..."/>
+          </div>
+          <div>
+            <label>Número</label>
+            <input id="lf_fin_number" ${ro?"disabled":""} value="${escapeHTML(fin.number||"")}" placeholder="Nº"/>
+          </div>
+          <div>
+            <label>Complemento</label>
+            <input id="lf_fin_complement" ${ro?"disabled":""} value="${escapeHTML(fin.complement||"")}" placeholder="Apto, sala, bloco..."/>
+          </div>
+          <div>
+            <label>Bairro</label>
+            <input id="lf_fin_district" ${ro?"disabled":""} value="${escapeHTML(fin.district||"")}" placeholder="Bairro"/>
+          </div>
+          <div>
+            <label>Cidade</label>
+            <input id="lf_fin_city" ${ro?"disabled":""} value="${escapeHTML(fin.city||"")}" placeholder="Cidade"/>
+          </div>
+          <div>
+            <label>Estado</label>
+            <select id="lf_fin_state" ${ro?"disabled":""}>${opt(brazilStates, fin.state || "")}</select>
+          </div>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -14004,9 +14313,31 @@ function cronosFichaHasContent(entryOrFicha){
 function cronosContactCompletenessScore(c){
   if(!c) return 0;
   let score = 0;
-  ["name","phone","cpf","birthDate","firstSeenAt","lastSeenAt","email","city","address","notes"].forEach(k=>{ if(cronosValueFilled(c[k])) score += 1; });
+  [
+    "name","phone","cpf","birthDate","firstSeenAt","lastSeenAt","profession","maritalStatus","email","cep",
+    "city","state","address","addressNumber","addressComplement","district","additionalInfo","notes"
+  ].forEach(k=>{ if(cronosValueFilled(c[k])) score += 1; });
+  const fin = c.financialResponsible && typeof c.financialResponsible === "object" ? c.financialResponsible : null;
+  if(fin?.mode === "other") Object.entries(fin).forEach(([key,value])=>{ if(key !== "mode" && cronosValueFilled(value)) score += 1; });
   if(String(c.cpf || "").replace(/\D/g, "").length >= 11) score += 3;
   return score;
+}
+
+function cronosMergeFinancialResponsibleSafe(primaryValue, secondaryValue){
+  const a = primaryValue && typeof primaryValue === "object" ? cronosCloneSafe(primaryValue) : {mode:"self"};
+  const b = secondaryValue && typeof secondaryValue === "object" ? cronosCloneSafe(secondaryValue) : {mode:"self"};
+  const score = obj=>{
+    if(!obj || obj.mode !== "other") return 0;
+    return Object.entries(obj).reduce((sum,[key,value])=>sum + (key !== "mode" && cronosValueFilled(value) ? 1 : 0), 0);
+  };
+  const preferred = score(b) > score(a) ? b : a;
+  const fallback = preferred === a ? b : a;
+  if(preferred.mode !== "other" && fallback.mode !== "other") return {mode:"self"};
+  const out = {mode:"other"};
+  ["name","relation","cpfCnpj","profession","maritalStatus","phone","email","cep","address","number","complement","district","city","state"].forEach(key=>{
+    out[key] = cronosFirstFilled(preferred[key], fallback[key]) || "";
+  });
+  return out;
 }
 
 function cronosEntryCompletenessScore(e){
@@ -14360,9 +14691,15 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
   const beforeMetaPayload = cronosMergeMetaPayload(db);
 
   try{
-    ["name","phone","cpf","birthDate","firstSeenAt","lastSeenAt","email","city","address","notes"].forEach(k=>{
+    [
+      "name","phone","cpf","birthDate","firstSeenAt","lastSeenAt","profession","maritalStatus","email","cep",
+      "city","state","address","addressNumber","addressComplement","district","additionalInfo","notes"
+    ].forEach(k=>{
       primary[k] = cronosFirstFilled(primary[k], secondary[k]);
     });
+    primary.financialResponsible = cronosMergeFinancialResponsibleSafe(primary.financialResponsible, secondary.financialResponsible);
+    delete primary.rg;
+    if(primary.financialResponsible && typeof primary.financialResponsible === "object") delete primary.financialResponsible.rg;
     primary.updatedAt = now;
     primary.lastUpdateAt = now;
 
@@ -14583,6 +14920,7 @@ function openNewLead(){
   const contact = { name:"", phone:"", cpf:"", birthDate:"", firstSeenAt:"", lastSeenAt:"" };
 
   openModal({
+    modalClass: "cronosModalLead",
     title: "Novo Lead",
     sub: "Se já existir, selecione a sugestão. Se existir e já tiver neste mês, ele abre pra editar.",
     bodyHTML: leadEntryFormHTML(entry, contact, "new", ""),
@@ -14606,6 +14944,7 @@ function openLeadEntry(entryId){
   const contact = db.contacts.find(c=>c.id===entry.contactId);
 
   openModal({
+    modalClass: "cronosModalLead",
     title: "Editar Lead",
     sub: "Atualize o que precisar. Histórico fica salvo.",
     bodyHTML: leadEntryFormHTML(entry, contact, "edit", ""),
@@ -14825,6 +15164,35 @@ function wireLeadModal(actor, editingEntryId, isNew){
   const db = loadDB();
   const suggestBox = el("leadSuggest");
 
+  const modalBody = el("modalBody");
+  const leadTabs = qsa("[data-lead-tab]", modalBody || document);
+  const leadPanels = qsa("[data-lead-panel]", modalBody || document);
+  const activateLeadTab = (tabName)=>{
+    const target = String(tabName || "lead");
+    leadTabs.forEach(btn=>{
+      const active = String(btn.dataset.leadTab || "") === target;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    leadPanels.forEach(panel=>{
+      const active = String(panel.dataset.leadPanel || "") === target;
+      panel.classList.toggle("active", active);
+      panel.hidden = !active;
+    });
+    try{ if(modalBody) modalBody.scrollTop = 0; }catch(_){ }
+  };
+  leadTabs.forEach(btn=>btn.addEventListener("click", ()=>activateLeadTab(btn.dataset.leadTab)));
+  activateLeadTab("lead");
+
+  const financialModeSel = el("lf_fin_resp_mode");
+  const financialFields = el("lf_fin_resp_fields");
+  const toggleFinancialFields = ()=>{
+    if(!financialFields) return;
+    financialFields.classList.toggle("hidden", String(financialModeSel?.value || "self") !== "other");
+  };
+  financialModeSel?.addEventListener("change", toggleFinancialFields);
+  toggleFinancialFields();
+
   const originSel = el("lf_origin");
   const treatSel = el("lf_treatment");
   const toggleOrigin = ()=> el("originOtherWrap").classList.toggle("hidden", originSel.value!=="Outros");
@@ -14913,6 +15281,27 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
   phoneInp?.addEventListener("input", ()=> applyMaskedValue(phoneInp, formatPhoneBR));
   cpfInp?.addEventListener("input", ()=> applyMaskedValue(cpfInp, formatCPFInput));
+  const cepInp = el("lf_cep");
+  const finPhoneInp = el("lf_fin_phone");
+  const finCpfCnpjInp = el("lf_fin_cpf_cnpj");
+  const finCepInp = el("lf_fin_cep");
+  cepInp?.addEventListener("input", ()=> applyMaskedValue(cepInp, formatCEPInput));
+  finPhoneInp?.addEventListener("input", ()=> applyMaskedValue(finPhoneInp, formatPhoneBR));
+  finCpfCnpjInp?.addEventListener("input", ()=> applyMaskedValue(finCpfCnpjInp, formatCPFCNPJInput));
+  finCepInp?.addEventListener("input", ()=> applyMaskedValue(finCepInp, formatCEPInput));
+
+  cronosBindCepAutofill(cepInp, {
+    address:"lf_address",
+    district:"lf_district",
+    city:"lf_city",
+    state:"lf_state"
+  });
+  cronosBindCepAutofill(finCepInp, {
+    address:"lf_fin_address",
+    district:"lf_fin_district",
+    city:"lf_fin_city",
+    state:"lf_fin_state"
+  });
 
   if(firstInp && monthInp){
     const initialFirstMonth = firstInp.value ? monthKeyFromDate(firstInp.value) : "";
@@ -15051,6 +15440,25 @@ function wireLeadModal(actor, editingEntryId, isNew){
     const now = new Date().toISOString();
 
     const selectedId = String(el("lf_name")?.dataset.contactId || el("lf_phone")?.dataset.contactId || "").trim();
+    const financialResponsibleMode = String(val("lf_fin_resp_mode", "self") || "self") === "other" ? "other" : "self";
+    const financialResponsible = financialResponsibleMode === "other" ? {
+      mode:"other",
+      name:val("lf_fin_name", "").trim(),
+      relation:val("lf_fin_relation", "").trim(),
+      cpfCnpj:String(val("lf_fin_cpf_cnpj", "") || "").replace(/\D/g, ""),
+      profession:val("lf_fin_profession", "").trim(),
+      maritalStatus:val("lf_fin_marital_status", "").trim(),
+      phone:normPhone(val("lf_fin_phone", "")),
+      email:val("lf_fin_email", "").trim(),
+      cep:String(val("lf_fin_cep", "") || "").replace(/\D/g, ""),
+      address:val("lf_fin_address", "").trim(),
+      number:val("lf_fin_number", "").trim(),
+      complement:val("lf_fin_complement", "").trim(),
+      district:val("lf_fin_district", "").trim(),
+      city:val("lf_fin_city", "").trim(),
+      state:val("lf_fin_state", "").trim()
+    } : { mode:"self" };
+
     const contactDraft = {
       id: null,
       masterId: actor.masterId,
@@ -15058,6 +15466,18 @@ function wireLeadModal(actor, editingEntryId, isNew){
       phone,
       cpf: String(val("lf_cpf") || "").replace(/\D/g, ""),
       birthDate: val("lf_birth") || "",
+      profession: val("lf_profession", "").trim(),
+      maritalStatus: val("lf_marital_status", "").trim(),
+      email: val("lf_email", "").trim(),
+      cep: String(val("lf_cep", "") || "").replace(/\D/g, ""),
+      address: val("lf_address", "").trim(),
+      addressNumber: val("lf_address_number", "").trim(),
+      addressComplement: val("lf_address_complement", "").trim(),
+      district: val("lf_district", "").trim(),
+      city: val("lf_city", "").trim(),
+      state: val("lf_state", "").trim(),
+      additionalInfo: val("lf_additional_info", "").trim(),
+      financialResponsible,
       firstSeenAt: firstContactInput,
       lastSeenAt: firstContactInput
     };
@@ -15122,11 +15542,12 @@ function wireLeadModal(actor, editingEntryId, isNew){
     if(editingEntryRef && existingIndex >= 0){
       const oldContact = db.contacts[existingIndex];
       const linkedCount = db.entries.filter(e=>String(e.contactId)===String(oldContact.id)).length;
-      const personalChanged =
-        String(oldContact.name || "") !== String(contactDraft.name || "") ||
-        String(oldContact.phone || "") !== String(contactDraft.phone || "") ||
-        String(oldContact.cpf || "") !== String(contactDraft.cpf || "") ||
-        String(oldContact.birthDate || "") !== String(contactDraft.birthDate || "");
+      const contactProfileFields = [
+        "name","phone","cpf","birthDate","profession","maritalStatus","email","cep","address",
+        "addressNumber","addressComplement","district","city","state","additionalInfo"
+      ];
+      const personalChanged = contactProfileFields.some(key=>String(oldContact?.[key] || "") !== String(contactDraft?.[key] || "")) ||
+        JSON.stringify(oldContact?.financialResponsible || {mode:"self"}) !== JSON.stringify(contactDraft.financialResponsible || {mode:"self"});
 
       if(linkedCount > 1 && personalChanged){
         // Telefone pode ser compartilhado por familiares. Ao editar dados pessoais
@@ -15140,14 +15561,16 @@ function wireLeadModal(actor, editingEntryId, isNew){
     let contact;
     const contactBeforeAudit = existingIndex >= 0 ? JSON.parse(JSON.stringify(db.contacts[existingIndex] || {})) : null;
     if(existingIndex >= 0){
-      db.contacts[existingIndex].name = contactDraft.name;
-      db.contacts[existingIndex].phone = contactDraft.phone;
-      db.contacts[existingIndex].cpf = contactDraft.cpf;
-      db.contacts[existingIndex].birthDate = contactDraft.birthDate;
+      [
+        "name","phone","cpf","birthDate","profession","maritalStatus","email","cep","address",
+        "addressNumber","addressComplement","district","city","state","additionalInfo","financialResponsible"
+      ].forEach(key=>{ db.contacts[existingIndex][key] = cronosCloneSafe(contactDraft[key]); });
       db.contacts[existingIndex].lastSeenAt = contactDraft.lastSeenAt;
       db.contacts[existingIndex].updatedAt = now;
       db.contacts[existingIndex].lastUpdateAt = now;
       if(!db.contacts[existingIndex].firstSeenAt) db.contacts[existingIndex].firstSeenAt = contactDraft.firstSeenAt;
+      delete db.contacts[existingIndex].rg;
+      if(db.contacts[existingIndex].financialResponsible && typeof db.contacts[existingIndex].financialResponsible === "object") delete db.contacts[existingIndex].financialResponsible.rg;
       contact = db.contacts[existingIndex];
     }else{
       contact = {
@@ -15161,7 +15584,8 @@ function wireLeadModal(actor, editingEntryId, isNew){
       cronosAuditAction(db, { action:"contact_created", entityType:"contact", entityId:contact.id, contactId:contact.id, details:`Paciente: ${contact.name}`, after:{ name:contact.name, phone:contact.phone } });
     }
     if(existingIndex >= 0 && contactBeforeAudit){
-      const contactChanged = ["name","phone","cpf","birthDate"].some(k=>String(contactBeforeAudit[k] || "") !== String(contact?.[k] || ""));
+      const contactChanged = ["name","phone","cpf","birthDate","profession","maritalStatus","email","cep","address","addressNumber","addressComplement","district","city","state","additionalInfo"].some(k=>String(contactBeforeAudit[k] || "") !== String(contact?.[k] || "")) ||
+        JSON.stringify(contactBeforeAudit.financialResponsible || {mode:"self"}) !== JSON.stringify(contact?.financialResponsible || {mode:"self"});
       if(contactChanged){
         cronosAuditAction(db, { action:"contact_updated", entityType:"contact", entityId:contact.id, contactId:contact.id, details:`Paciente: ${contact.name}`, before:{ name:contactBeforeAudit.name, phone:contactBeforeAudit.phone }, after:{ name:contact.name, phone:contact.phone } });
       }
@@ -15496,6 +15920,34 @@ function loadExistingContactIntoModal(contactId, actor, isNew){
   setIf("lf_phone", formatPhoneBR(c.phone || ""));
   setIf("lf_cpf", formatCPF(c.cpf || ""));
   setIf("lf_birth", c.birthDate || "");
+  setIf("lf_profession", c.profession || "");
+  setIf("lf_marital_status", c.maritalStatus || "");
+  setIf("lf_email", c.email || "");
+  setIf("lf_cep", formatCEPInput(c.cep || ""));
+  setIf("lf_address", c.address || "");
+  setIf("lf_address_number", c.addressNumber || "");
+  setIf("lf_address_complement", c.addressComplement || "");
+  setIf("lf_district", c.district || "");
+  setIf("lf_city", c.city || latest?.city || "");
+  setIf("lf_state", c.state || "");
+  setIf("lf_additional_info", c.additionalInfo || "");
+  const fin = c.financialResponsible && typeof c.financialResponsible === "object" ? c.financialResponsible : {mode:"self"};
+  setIf("lf_fin_resp_mode", fin.mode === "other" ? "other" : "self");
+  setIf("lf_fin_name", fin.name || "");
+  setIf("lf_fin_relation", fin.relation || "");
+  setIf("lf_fin_cpf_cnpj", formatCPFCNPJInput(fin.cpfCnpj || ""));
+  setIf("lf_fin_profession", fin.profession || "");
+  setIf("lf_fin_marital_status", fin.maritalStatus || "");
+  setIf("lf_fin_phone", formatPhoneBR(fin.phone || ""));
+  setIf("lf_fin_email", fin.email || "");
+  setIf("lf_fin_cep", formatCEPInput(fin.cep || ""));
+  setIf("lf_fin_address", fin.address || "");
+  setIf("lf_fin_number", fin.number || "");
+  setIf("lf_fin_complement", fin.complement || "");
+  setIf("lf_fin_district", fin.district || "");
+  setIf("lf_fin_city", fin.city || "");
+  setIf("lf_fin_state", fin.state || "");
+  el("lf_fin_resp_mode")?.dispatchEvent(new Event("change", { bubbles:true }));
   if(el("lf_name")) el("lf_name").dataset.contactId = String(c.id || "");
   if(el("lf_phone")) el("lf_phone").dataset.contactId = String(c.id || "");
 
@@ -17414,6 +17866,7 @@ function openLeadTaskShortcut(evOrEntryId, maybeEntryId){
         <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
         <button type="button" class="btn ok" id="btnSaveTask">Salvar tarefa</button>
       `,
+      modalClass:'cronosModalTask',
       onMount: ()=>{
         const actionEl = el("tf_action");
         const actionOtherWrap = el("tf_action_other_wrap");
@@ -17524,6 +17977,7 @@ function openNewTask(){
       <button type="button" class="btn" onclick="closeModal()">Cancelar</button>
       <button type="button" class="btn ok" id="btnSaveTask">Salvar</button>
     `,
+      modalClass:'cronosModalTask',
     onMount: ()=>{
       const searchEl = el("tf_entry_search");
       const hiddenEl = el("tf_entry");
@@ -17684,6 +18138,7 @@ function openTaskEdit(taskId){
       <button type="button" class="btn" onclick="closeModal()">Fechar</button>
       <button type="button" class="btn ok" id="btnSaveTask">Salvar</button>
     `,
+      modalClass:'cronosModalTask',
     onMount: ()=>{
       const actionEl = el("tf_action");
       const actionOtherWrap = el("tf_action_other_wrap");
@@ -22742,6 +23197,7 @@ window.CRONOS_PROC_UI = {
       const dentitionType = normalizeDentitionType(opts.dentitionType || opts.dentition || (entry?.ficha ? getFichaDentitionType(entry.ficha, entry) : 'permanent'));
       const selectedTeeth = sortTeethForDentition(Array.isArray(opts.selectedTeeth) ? opts.selectedTeeth.map(String) : [], dentitionType);
       const interactive = opts.interactive !== false;
+      const toggleHandler = String(opts.toggleHandler || 'CRONOS_FICHA_UI.toggleTooth').trim() || 'CRONOS_FICHA_UI.toggleTooth';
       const selectedSet = new Set(selectedTeeth);
       const visualStateForTooth = typeof opts.getVisualState === 'function' ? opts.getVisualState : ((tooth)=>getToothVisualState(entry, tooth));
       const rows = getOdontoRowsForDentition(dentitionType);
@@ -22770,7 +23226,7 @@ window.CRONOS_PROC_UI = {
         const box = boxes[tooth] || [0,0,0,0];
         const x = Number(box[0] || 0), y = Number(box[1] || 0), w = Math.max(0, Number(box[2] || 0) - x), h = Math.max(0, Number(box[3] || 0) - y);
         const r = isDeciduous ? 2.5 : 18;
-        return `<g class="${toothClass(tooth)}" data-tooth="${tooth}" tabindex="0" role="button" aria-label="Dente ${tooth}" onclick="CRONOS_FICHA_UI.toggleTooth('${tooth}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();CRONOS_FICHA_UI.toggleTooth('${tooth}')}"><rect class="toothHit" x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ry="${r}"></rect></g>`;
+        return `<g class="${toothClass(tooth)}" data-tooth="${tooth}" tabindex="0" role="button" aria-label="Dente ${tooth}" onclick="${toggleHandler}('${tooth}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${toggleHandler}('${tooth}')}"><rect class="toothHit" x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ry="${r}"></rect></g>`;
       }).join('') : '';
 
       const labelX = (tooth)=>{
@@ -22784,6 +23240,11 @@ window.CRONOS_PROC_UI = {
 
       return `<svg class="odontoStatusLayer ${dentitionType}" viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" preserveAspectRatio="xMidYMid meet">${lineWrap}</svg><svg class="odontoLabelLayer ${dentitionType}" viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" preserveAspectRatio="xMidYMid meet">${labelMarkup(upper, upperLabelY)}${labelMarkup(lower, lowerLabelY)}</svg>${interactive ? `<svg class="odontoClickLayer ${dentitionType}" viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-label="Camada interativa do odontograma" preserveAspectRatio="xMidYMid meet">${hitMarkup}</svg>` : ''}`;
     }
+    // O Exame Digital reutiliza o mesmo desenho e a mesma geometria clicável do Prontuário.
+    // Mantemos o renderer original como fonte única para evitar dois odontogramas divergindo.
+    window.CRONOS_RENDER_ODONTOGRAM = function(entry, opts = {}){
+      return renderOdontogramSVG(entry || {}, opts || {});
+    };
     function getItemVisualState(entry, item){
       if(!item) return '';
       // A linha deve refletir o próprio procedimento.
@@ -24068,6 +24529,8 @@ window.CRONOS_PROC_UI = {
       if(!entry) return toast('Prontuário', 'Lead não encontrado.');
       const db = loadDB();
       const actor = currentActor();
+      const printActorName = escapeHTML(cronosActorLabel(actor));
+      const printTimestamp = escapeHTML(cronosFormatDateTime(new Date().toISOString()));
       const contact = getContactForEntry(entry);
       const ficha = ensureFicha(entry);
       const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
@@ -24076,7 +24539,7 @@ window.CRONOS_PROC_UI = {
       const branding = getClinicBranding(db, actor);
       const clinicName = escapeHTML(getClinicDisplayName(db, actor));
       const patientName = escapeHTML(contact?.name || entry?.name || 'Paciente');
-      const patientPhone = escapeHTML(contact?.phone || entry?.phone || '—');
+      const patientPhone = escapeHTML(formatPhoneFichaPrint(contact?.phone || entry?.phone || '') || '—');
       const patientCpf = escapeHTML(formatCPF(contact?.cpf || '') || '—');
       const patientBirthAge = escapeHTML(birthWithAgeLabel(contact?.birthDate || '') || '—');
       const patientTreatment = escapeHTML(entry?.treatment || '—');
@@ -24111,13 +24574,14 @@ window.CRONOS_PROC_UI = {
           :root{--print-line:rgba(17,24,39,.42);--print-line-soft:rgba(17,24,39,.18)}
           body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0}
           .sheet{border:1px solid var(--print-line-soft);padding:22px 24px 28px}
-          .head{display:grid;grid-template-columns:120px 1fr 220px;gap:16px;align-items:center;border-bottom:1.5px solid var(--print-line);padding-bottom:14px}
+          .head{display:grid;grid-template-columns:120px minmax(0,1fr) 270px;gap:16px;align-items:center;border-bottom:1.5px solid var(--print-line);padding-bottom:14px}
           .logo{width:140px;height:84px;display:flex;align-items:center;justify-content:flex-start;text-align:center;font-size:12px;font-weight:700}
           .logo img{width:auto;height:76px;max-width:140px;display:block;object-fit:contain}
           .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:#444;letter-spacing:.08em}
-          .meta{text-align:right;font-size:12px;line-height:1.7}
-          .patient{margin-top:12px;display:grid;grid-template-columns:1.35fr .9fr .9fr 1fr;gap:10px}
-          .field{border:1px solid var(--print-line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}
+          .meta{text-align:right;font-size:12px;line-height:1.55}.meta .dentistLine{white-space:nowrap;font-size:11.5px}
+          .patientHighlight{margin-top:8px;padding:0 2px;font-size:18px;font-weight:800;line-height:1.2;color:#397a9e}
+          .patient{margin-top:10px;display:grid;grid-template-columns:1.15fr .95fr 1fr;gap:10px}
+          .field{border:1px solid var(--print-line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}.field.phoneField .val{white-space:nowrap;font-size:13.5px}
           .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px}
           .boxWrap{border:1.25px solid var(--print-line);padding:12px 12px 10px}
           .odonto{position:relative;width:100%;aspect-ratio:1536/560;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#fff;box-sizing:border-box}.odonto .odontoStatusLayer,.odonto .odontoLabelLayer{position:absolute;inset:0;width:100%;height:100%;display:block;user-select:none}.odonto .odontoStatusLayer{z-index:2;pointer-events:none;overflow:visible}.odonto .odontoLabelLayer{z-index:4;pointer-events:none;overflow:visible}.odontoStatusLayer .toothLine{fill:#6b7280;stroke:none;shape-rendering:geometricPrecision}.odontoStatusLayer .odontogramaTooth.paid .toothLine,.odontoStatusLayer .odontogramaTooth.plan .toothLine,.odontoStatusLayer .odontogramaTooth.closed .toothLine{fill:#ca8a04}.odontoStatusLayer .odontogramaTooth.done .toothLine{fill:#16a34a}.odontoStatusLayer .odontogramaTooth.absent .toothLine{fill:#dc2626}.odontoLabelLayer .odontoNumberText{fill:#111827;font-size:38px;font-weight:900;text-anchor:middle;dominant-baseline:middle;letter-spacing:.2px}.odontoLabelLayer.deciduous .odontoNumberText{font-size:10px;font-weight:900}.odontoStatusLayer.deciduous,.odontoLabelLayer.deciduous{transform:scale(.78);transform-origin:50% 50%}.odonto.printDeciduous{width:72%;margin-left:auto;margin-right:auto;aspect-ratio:384.53/233.56}.odonto.printDeciduous .odontoStatusLayer.deciduous,.odonto.printDeciduous .odontoLabelLayer.deciduous{transform:scale(.96);transform-origin:50% 50%}
@@ -24126,18 +24590,18 @@ window.CRONOS_PROC_UI = {
           table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--print-line);padding:6px 7px;vertical-align:top}th{background:#f7f8fa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
           .summary{border-top:1.25px solid var(--print-line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr);gap:0}.sum{box-sizing:border-box;border:1px solid var(--print-line);padding:8px 9px;min-height:62px;background:#fff}.sum + .sum{margin-left:-1px}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}.printNumHighlight{display:inline-block;border-radius:999px;padding:5px 12px;background:#dbeafe;box-shadow:inset 0 0 0 1px #93c5fd}.printNumHighlight.closed{background:#dbeafe;box-shadow:inset 0 0 0 1px #93c5fd}.printNumHighlight.discount{background:#dcfce7;box-shadow:inset 0 0 0 1px #86efac}
           .obs{margin-top:14px;border:1.25px solid var(--print-line);padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
-          .foot{margin-top:16px;font-size:11px;color:#333}
+          .foot{margin-top:16px;text-align:center;font-size:10.5px;line-height:1.35;color:#374151;font-weight:600}.foot .auditLine{margin-top:2px;font-size:9.5px;color:#4b5563;font-weight:500}.foot .auditLine b{font-weight:800;color:#1f2937}
           @media print{body{padding:0}.sheet{border:none}tr.done td{background:#bbf7d0 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.paid td,tr.closed td{background:#fef08a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.absent td{background:#fecaca !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.printNumHighlight,.printNumHighlight.closed,.printNumHighlight.discount{-webkit-print-color-adjust:exact;print-color-adjust:exact}.odontoPaintLayer .odontogramaTooth.paid .cls-2,.odontoPaintLayer .odontogramaTooth.plan .cls-2,.odontoPaintLayer .odontogramaTooth.closed .cls-2,.odontoPaintLayer .odontogramaTooth.done .cls-2,.odontoPaintLayer .odontogramaTooth.absent .cls-2{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>
         <div class="sheet">
           <div class="head">
             <div class="logo">${branding?.logoDataUri ? `<img src="${branding.logoDataUri}" alt="${clinicName}">` : `${clinicName}`}</div>
             <div class="title"><h2>FICHA DE AVALIAÇÃO</h2><p>PLANO DE TRATAMENTO / ODONTOGRAMA</p></div>
-            <div class="meta">Data: ${fmtBR(todayISO())}<br>Dentista avaliador: ${patientDentist}${patientDentistCro ? ` • ${patientDentistCro}` : ''}<br>Tratamento: ${patientTreatment}<br>Avaliação: ${patientEvaluation}</div>
+            <div class="meta">Data: ${fmtBR(todayISO())}<br><span class="dentistLine">Dentista avaliador: ${patientDentist}</span>${patientDentistCro ? `<br>${patientDentistCro}` : ''}<br>Tratamento: ${patientTreatment}<br>Avaliação: ${patientEvaluation}</div>
           </div>
+          <div class="patientHighlight">${patientName}</div>
           <div class="patient">
-            <div class="field"><span class="lbl">Paciente</span><span class="val">${patientName}</span></div>
-            <div class="field"><span class="lbl">Telefone</span><span class="val">${patientPhone}</span></div>
+            <div class="field phoneField"><span class="lbl">Telefone</span><span class="val">${patientPhone}</span></div>
             <div class="field"><span class="lbl">CPF</span><span class="val">${patientCpf}</span></div>
             <div class="field"><span class="lbl">Nascimento</span><span class="val">${patientBirthAge}</span></div>
           </div>
@@ -24163,7 +24627,7 @@ window.CRONOS_PROC_UI = {
           </div>
 
           <div class="obs"><div class="sectionTitle">Observações</div><div class="obsText">${obs || '—'}</div></div>
-          <div class="foot"><div>Documento gerado pelo Cronos</div></div>
+          <div class="foot"><div>Documento emitido por <b>Cronos Odonto</b> • cronosodonto.com</div><div class="auditLine">Impresso por <b>${printActorName}</b> • ${printTimestamp}</div></div>
         </div>
         </body></html>`;
 
@@ -24208,21 +24672,25 @@ window.CRONOS_PROC_UI = {
     window.CRONOS_PRINT_EVAL_SHEET = function(entryId){
       const entry=getEntryById(entryId); if(!entry) return toast('Ficha de avaliação','Lead não encontrado.');
       const db=loadDB(), actor=currentActor(), contact=getContactForEntry(entry), branding=getClinicBranding(db,actor);
+      const printActorName=escapeHTML(cronosActorLabel(actor));
+      const printTimestamp=escapeHTML(cronosFormatDateTime(new Date().toISOString()));
       const clinicName=escapeHTML(getClinicDisplayName(db,actor));
       const prof=cronosGetProfessionalById(entry.professionalId,db,actor);
       const dentist=escapeHTML(prof?.name||'Dentista não definido');
       const cro=escapeHTML(prof?.cro?`CRO${prof?.uf?'-'+String(prof.uf).toUpperCase():''} ${prof.cro}`:'');
       const patientName=escapeHTML(contact?.name||entry?.name||'Paciente');
-      const phone=escapeHTML(contact?.phone||entry?.phone||'—');
+      const phone=escapeHTML(formatPhoneFichaPrint(contact?.phone||entry?.phone||'')||'—');
       const cpf=escapeHTML(formatCPF(contact?.cpf||'')||'—');
       const birth=escapeHTML(birthWithAgeLabel(contact?.birthDate||'')||'—');
+      const profession=escapeHTML(contact?.profession||'—');
+      const district=escapeHTML(contact?.district||'—');
       const treatment=escapeHTML((typeof cronosDisplayManualField==='function'?cronosDisplayManualField(entry?.treatment,entry?.treatmentOther):entry?.treatment)||'—');
       const blankRows=Array.from({length:30},(_,i)=>`<tr><td>${i+1}</td><td></td><td></td><td></td><td></td></tr>`).join('');
       const neutralEntry={...entry};
       const cronosFooterLogo = new URL('../assets/brand/cronos-symbol.png', window.location.href).href;
       const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha de Avaliação - ${patientName}</title><style>
-        @page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;width:210mm;height:297mm;overflow:hidden}body{font-family:Arial,sans-serif;color:#111}.sheet{width:210mm;height:297mm;padding:8mm 9mm 7mm;display:flex;flex-direction:column;position:relative;isolation:isolate;overflow:hidden;background:#fff}.sheet:before,.sheet:after{content:"";position:absolute;left:0;right:0;height:34mm;z-index:0;pointer-events:none;background:linear-gradient(105deg,rgba(20,126,219,.70) 0%,rgba(62,181,190,.46) 52%,rgba(119,204,107,.65) 100%);-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet:before{top:0;-webkit-mask-image:linear-gradient(to bottom,#000 0%,rgba(0,0,0,.94) 28%,rgba(0,0,0,.42) 68%,transparent 100%);mask-image:linear-gradient(to bottom,#000 0%,rgba(0,0,0,.94) 28%,rgba(0,0,0,.42) 68%,transparent 100%)}.sheet:after{bottom:0;-webkit-mask-image:linear-gradient(to top,#000 0%,rgba(0,0,0,.94) 28%,rgba(0,0,0,.42) 68%,transparent 100%);mask-image:linear-gradient(to top,#000 0%,rgba(0,0,0,.94) 28%,rgba(0,0,0,.42) 68%,transparent 100%)}.sheet>*{position:relative;z-index:1}.head{display:grid;grid-template-columns:112px 1fr 235px;gap:10px;align-items:center;border-bottom:1.5px solid #777;padding-bottom:9px}.logo img{max-width:78px;max-height:60px}.logo{font-weight:800}.title h1{margin:0;font-size:23px;line-height:1.05}.title p{margin:4px 0 0;color:#555;font-weight:700;font-size:11px;line-height:1.15}.meta{text-align:right;font-size:10.5px;line-height:1.45}.patient{display:grid;grid-template-columns:1.55fr .88fr .92fr 1fr;gap:6px;margin-top:8px}.field{border:1px solid #999;padding:7px 8px;min-height:48px;display:flex;flex-direction:column;justify-content:center}.lbl{font-size:8.5px;text-transform:uppercase;font-weight:800;letter-spacing:.065em;color:#444;line-height:1}.val{margin-top:4px;font-size:12px;font-weight:800;line-height:1.15}.odontoWrap{border:1px solid #aaa;margin-top:8px;padding:6px}.odonto{position:relative;width:100%;border:1px solid #d1d5db;border-radius:8px;overflow:hidden;background:#fff}.odonto img{display:block;width:100%;height:auto;object-fit:contain}.section{font-size:15px;font-weight:800;text-align:center;margin:8px 0 4px;color:#397a9e;line-height:1.1}.planTableWrap{position:relative;width:100%;isolation:isolate}.planWatermark{position:absolute;z-index:0;left:50%;top:50%;transform:translate(-50%,-50%);width:52%;max-height:82%;object-fit:contain;opacity:.06;pointer-events:none;user-select:none}.planTableWrap table{position:relative;z-index:1;background:transparent}table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #333;height:18px;padding:1.5px 4px;line-height:1.05;background:transparent}th{height:19px;font-size:9px;font-weight:700;text-align:left;background:rgba(250,250,250,.82)}th:first-child,td:first-child{width:40px;text-align:center}th:nth-child(3){width:105px}th:nth-child(4){width:105px}th:last-child{width:90px}.cronosFooter{margin-top:6px;text-align:center;color:#6b7280;font-size:8.5px;line-height:1;white-space:nowrap}.cronosFooter b{font-weight:700;color:#4b5563}@media print{html,body{width:210mm;height:297mm;overflow:hidden}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.sheet{width:210mm;height:297mm;break-inside:avoid;page-break-inside:avoid;overflow:hidden}.planWatermark{opacity:.20 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.cronosFooter{break-inside:avoid;page-break-inside:avoid}}
-      </style></head><body><div class="sheet"><div class="head"><div class="logo">${branding?.logoDataUri?`<img src="${branding.logoDataUri}" alt="${clinicName}">`:clinicName}</div><div class="title"><h1>FICHA DE AVALIAÇÃO</h1><p>PLANO DE TRATAMENTO / ODONTOGRAMA</p></div><div class="meta"><b>Data:</b> ${fmtBR(todayISO())}<br><b>Dentista avaliador:</b> ${dentist}${cro?` • ${cro}`:''}<br><b>Tratamento:</b> ${treatment}</div></div><div class="patient"><div class="field"><div class="lbl">Paciente</div><div class="val">${patientName}</div></div><div class="field"><div class="lbl">Telefone</div><div class="val">${phone}</div></div><div class="field"><div class="lbl">CPF</div><div class="val">${cpf}</div></div><div class="field"><div class="lbl">Nascimento</div><div class="val">${birth}</div></div></div><div class="odontoWrap"><div class="odonto"><img src="../assets/img/odontograma_misto_ficha.jpg" alt="Odontograma com dentição permanente e decídua"></div></div><div class="section">Plano de tratamento</div><div class="planTableWrap"><img class="planWatermark" src="${cronosFooterLogo}" alt="" aria-hidden="true"><table><thead><tr><th>Nº</th><th>PROCEDIMENTO</th><th>DENTE</th><th>FACE</th><th>Valor</th></tr></thead><tbody>${blankRows}</tbody></table></div><div class="cronosFooter"><span>Documento emitido por <b>Cronos Odonto</b> • cronosodonto.com</span></div></div><script>window.onload=()=>setTimeout(()=>window.print(),350);<\/script></body></html>`;
+        @page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;width:210mm;height:297mm;overflow:hidden}body{font-family:Arial,sans-serif;color:#111}.sheet{width:210mm;height:297mm;padding:8mm 9mm 7mm;display:flex;flex-direction:column;position:relative;isolation:isolate;overflow:hidden;background:#fff}.sheet:before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:linear-gradient(to bottom,rgba(20,126,219,.58) 0%,rgba(62,181,190,.32) 5.5%,rgba(119,204,107,.16) 9.5%,rgba(255,255,255,0) 16%),linear-gradient(to top,rgba(119,204,107,.52) 0%,rgba(62,181,190,.28) 5.5%,rgba(20,126,219,.14) 9.5%,rgba(255,255,255,0) 16%);-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet>*{position:relative;z-index:1}.head{display:grid;grid-template-columns:112px minmax(0,1fr) 270px;gap:10px;align-items:center;border-bottom:1.5px solid #777;padding-bottom:9px}.logo img{max-width:78px;max-height:60px}.logo{font-weight:800}.title h1{margin:0;font-size:23px;line-height:1.05}.title p{margin:4px 0 0;color:#555;font-weight:700;font-size:11px;line-height:1.15}.meta{text-align:right;font-size:10.5px;line-height:1.4}.meta .dentistLine{white-space:nowrap;font-size:10px}.patientHighlight{margin-top:6px;padding:0 2px;font-size:18px;font-weight:800;line-height:1.2;color:#397a9e}.patient{display:grid;grid-template-columns:1.08fr .88fr .95fr .84fr .90fr;gap:5px;margin-top:8px}.field{border:1px solid #999;padding:7px 8px;min-height:48px;display:flex;flex-direction:column;justify-content:center}.lbl{font-size:8.5px;text-transform:uppercase;font-weight:800;letter-spacing:.065em;color:#444;line-height:1}.val{margin-top:4px;font-size:12px;font-weight:800;line-height:1.15}.field.phoneField .val{white-space:nowrap;font-size:11.5px;letter-spacing:.01em}.odontoWrap{border:1px solid #aaa;margin-top:8px;padding:6px}.odonto{position:relative;width:100%;border:1px solid #d1d5db;border-radius:8px;overflow:hidden;background:#fff}.odonto img{display:block;width:100%;height:auto;object-fit:contain}.section{font-size:15px;font-weight:800;text-align:center;margin:8px 0 4px;color:#397a9e;line-height:1.1}.planTableWrap{position:relative;width:100%;isolation:isolate}.planWatermark{position:absolute;z-index:0;left:50%;top:50%;transform:translate(-50%,-50%);width:52%;max-height:82%;object-fit:contain;opacity:.06;pointer-events:none;user-select:none}.planTableWrap table{position:relative;z-index:1;background:transparent}table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #333;height:18px;padding:1.5px 4px;line-height:1.05;background:transparent}th{height:19px;font-size:9px;font-weight:700;text-align:left;background:rgba(250,250,250,.82)}th:first-child,td:first-child{width:40px;text-align:center}th:nth-child(3){width:105px}th:nth-child(4){width:105px}th:last-child{width:90px}.cronosFooter{margin-top:5px;text-align:center;color:#374151;font-size:10.5px;line-height:1.2;font-weight:600;letter-spacing:.01em;white-space:nowrap;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}.cronosFooter b{font-weight:800;color:#1f2937}.cronosFooter .auditLine{margin-top:1px;font-size:9.5px;color:#4b5563;font-weight:500}.cronosFooter .auditLine b{font-weight:800;color:#1f2937}@media print{html,body{width:210mm;height:297mm;overflow:hidden}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.sheet{width:210mm;height:297mm;break-inside:avoid;page-break-inside:avoid;overflow:hidden}.planWatermark{opacity:.20 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.cronosFooter{break-inside:avoid;page-break-inside:avoid}}
+      </style></head><body><div class="sheet"><div class="head"><div class="logo">${branding?.logoDataUri?`<img src="${branding.logoDataUri}" alt="${clinicName}">`:clinicName}</div><div class="title"><h1>FICHA DE AVALIAÇÃO</h1><p>PLANO DE TRATAMENTO / ODONTOGRAMA</p></div><div class="meta"><b>Data:</b> ${fmtBR(todayISO())}<br><span class="dentistLine"><b>Dentista avaliador:</b> ${dentist}</span>${cro?`<br><b>${cro}</b>`:''}<br><b>Tratamento:</b> ${treatment}</div></div><div class="patientHighlight">${patientName}</div><div class="patient"><div class="field phoneField"><div class="lbl">Telefone</div><div class="val">${phone}</div></div><div class="field"><div class="lbl">CPF</div><div class="val">${cpf}</div></div><div class="field"><div class="lbl">Nascimento</div><div class="val">${birth}</div></div><div class="field"><div class="lbl">Profissão</div><div class="val">${profession}</div></div><div class="field"><div class="lbl">Bairro</div><div class="val">${district}</div></div></div><div class="odontoWrap"><div class="odonto"><img src="../assets/img/odontograma_misto_ficha.jpg" alt="Odontograma com dentição permanente e decídua"></div></div><div class="section">Plano de tratamento</div><div class="planTableWrap"><img class="planWatermark" src="${cronosFooterLogo}" alt="" aria-hidden="true"><table><thead><tr><th>Nº</th><th>PROCEDIMENTO</th><th>DENTE</th><th>FACE</th><th>Valor</th></tr></thead><tbody>${blankRows}</tbody></table></div><div class="cronosFooter"><div>Documento emitido por <b>Cronos Odonto</b> • cronosodonto.com</div><div class="auditLine">Impresso por <b>${printActorName}</b> • ${printTimestamp}</div></div></div><script>window.onload=()=>setTimeout(()=>window.print(),350);<\/script></body></html>`;
       const w=window.open('','_blank'); if(!w) return toast('Popup bloqueado','Permita popups para imprimir a ficha.'); w.document.open(); w.document.write(html); w.document.close();
     };
 
@@ -24308,4 +24776,28 @@ window.CRONOS_PROC_UI = {
       timer = setTimeout(function(){ body.classList.remove('cronos-newfin-scrolling'); }, 140);
     }catch(_){ }
   }, true);
+})();
+
+
+/* CRONOS PERF V1 — alivia pintura apenas no componente que está rolando. */
+(function(){
+  if(window.__CRONOS_LOCAL_SCROLL_PERF_V1__) return;
+  window.__CRONOS_LOCAL_SCROLL_PERF_V1__ = true;
+  const timers = new WeakMap();
+  document.addEventListener('scroll', function(ev){
+    try{
+      const target = ev && ev.target;
+      if(!target || target === document || target === window) return;
+      const host = target.closest?.('.modal, .cronosCreditAnticipationCard, .intraoralLightbox, .intraoralGallery, .intraoralTrashList, .tableWrap');
+      if(!host) return;
+      if(!host.classList.contains('cronos-local-scrolling')) host.classList.add('cronos-local-scrolling');
+      const old = timers.get(host);
+      if(old) clearTimeout(old);
+      const timer = setTimeout(()=>{
+        try{ host.classList.remove('cronos-local-scrolling'); }catch(_){ }
+        timers.delete(host);
+      }, 150);
+      timers.set(host, timer);
+    }catch(_){ }
+  }, {capture:true, passive:true});
 })();
