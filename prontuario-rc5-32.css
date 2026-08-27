@@ -1,0 +1,1293 @@
+
+
+
+.cronosFichaView{
+  width:100%;
+  min-width:0;
+}
+.cronosFichaViewHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:14px;
+  padding:2px 2px 0;
+}
+.cronosFichaViewHeadLeft{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  min-width:0;
+}
+.cronosFichaBackBtn{
+  flex:0 0 auto;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+}
+.cronosFichaViewTitle{
+  min-width:0;
+}
+.cronosFichaViewTitle h2{
+  margin:0;
+}
+.cronosFichaViewTitle p{
+  margin:4px 0 0;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.cronosFichaViewActions{
+  flex:0 0 auto;
+}
+.cronosFichaViewBody{
+  width:100%;
+  min-width:0;
+}
+.cronosFichaViewBody #fichaApp{
+  width:100%;
+  min-width:0;
+}
+/* Remove as limitações visuais herdadas do contexto de modal. */
+.cronosFichaViewBody .fichaShell,
+.cronosFichaViewBody .fichaAppShell,
+.cronosFichaViewBody .fichaWrap{
+  max-width:none!important;
+  width:100%!important;
+}
+/* Espaço extra no fim da página, já que não existe mais rodapé fixo do modal. */
+.cronosFichaViewBody{
+  padding-bottom:28px;
+}
+
+@media(max-width:860px){
+  .cronosFichaViewHead{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+  .cronosFichaViewHeadLeft{
+    width:100%;
+    align-items:flex-start;
+  }
+  .cronosFichaViewActions{
+    width:100%;
+  }
+  .cronosFichaViewActions .btn{
+    width:100%;
+  }
+}
+
+
+
+
+/* Cabeçalho da view sempre acessível durante a rolagem */
+#view-ficha .cronosFichaViewHead{
+  position:sticky;
+  top:0;
+  z-index:25;
+  margin:0 0 10px!important;
+  padding:10px 4px!important;
+  background:linear-gradient(180deg,rgba(7,14,31,.98) 0%,rgba(7,14,31,.94) 75%,rgba(7,14,31,.82) 100%);
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(112,166,255,.13);
+}
+
+/* O componente antigo recebia quase todo o layout via .modalFichaWide.
+   Agora essas proporções são aplicadas à view de verdade. */
+#view-ficha #fichaApp{
+  display:flex!important;
+  flex-direction:column!important;
+  gap:10px!important;
+}
+
+/* Identificação: quatro cartões em UMA faixa, sem os enormes vazios verticais */
+#view-ficha .fichaHead.fichaHeroV55{
+  display:grid!important;
+  grid-template-columns:minmax(330px,1.18fr) minmax(185px,.66fr) minmax(225px,.78fr) minmax(205px,.72fr)!important;
+  gap:8px!important;
+  align-items:stretch!important;
+  margin:0!important;
+}
+#view-ficha .fichaPatientHeroV55,
+#view-ficha .fichaTopCardV55{
+  min-width:0!important;
+  min-height:76px!important;
+  height:auto!important;
+  padding:10px 12px!important;
+  border:1px solid rgba(112,166,255,.17)!important;
+  border-radius:16px!important;
+  background:linear-gradient(180deg,rgba(255,255,255,.040),rgba(255,255,255,.018))!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.035)!important;
+}
+#view-ficha .fichaPatientHeroV55{
+  display:flex!important;
+  align-items:center!important;
+  gap:10px!important;
+}
+#view-ficha .patientAvatarV55{
+  width:50px!important;
+  height:50px!important;
+  border-radius:50%!important;
+  display:grid!important;
+  place-items:center!important;
+  flex:0 0 auto!important;
+  font-size:19px!important;
+  font-weight:950!important;
+  color:#fff!important;
+  background:linear-gradient(135deg,#1d4ed8,#0891b2)!important;
+}
+#view-ficha .patientInfoV55{min-width:0!important}
+#view-ficha .patientTitleRowV55{
+  display:flex!important;
+  align-items:center!important;
+  gap:7px!important;
+  flex-wrap:wrap!important;
+}
+#view-ficha .patientTitleRowV55 h3{
+  margin:0!important;
+  font-size:18px!important;
+  line-height:1.08!important;
+  letter-spacing:-.02em!important;
+}
+#view-ficha .patientStatusV55{
+  padding:3px 7px!important;
+  font-size:10.5px!important;
+  border-radius:999px!important;
+}
+#view-ficha .patientMetaGridV55{
+  display:flex!important;
+  flex-wrap:wrap!important;
+  gap:3px 10px!important;
+  margin-top:6px!important;
+  font-size:11px!important;
+  line-height:1.25!important;
+}
+#view-ficha .patientMetaGridV55 b{margin-left:4px!important}
+#view-ficha .fichaTopCardV55{
+  display:flex!important;
+  align-items:center!important;
+  gap:9px!important;
+}
+#view-ficha .topCardIconV55{
+  width:38px!important;
+  height:38px!important;
+  border-radius:12px!important;
+  display:grid!important;
+  place-items:center!important;
+  flex:0 0 auto!important;
+  background:rgba(37,99,235,.15)!important;
+  border:1px solid rgba(96,165,250,.20)!important;
+}
+#view-ficha .topCardIconV55 img{width:31px!important;height:31px!important;object-fit:contain!important;border-radius:10px!important}
+#view-ficha .topCardIconV55 svg{width:19px!important;height:19px!important}
+#view-ficha .fichaTopCardV55 small{
+  display:block!important;
+  font-size:10px!important;
+  line-height:1.1!important;
+  margin-bottom:2px!important;
+}
+#view-ficha .fichaTopCardV55 strong{
+  display:block!important;
+  font-size:12.5px!important;
+  line-height:1.14!important;
+  overflow-wrap:anywhere!important;
+}
+#view-ficha .fichaTopCardV55 em{
+  display:block!important;
+  font-style:normal!important;
+  font-size:10px!important;
+  line-height:1.15!important;
+  margin-top:2px!important;
+  overflow-wrap:anywhere!important;
+}
+
+/* Odontograma + plano continuam lado a lado e começam logo após a identificação */
+#view-ficha .odontoFull{
+  margin:0!important;
+  padding:12px!important;
+  border-radius:18px!important;
+}
+#view-ficha .fichaSectionTitleV55,
+#view-ficha .fichaPanelTitleV55{
+  margin:0 0 8px!important;
+  font-size:18px!important;
+}
+#view-ficha .dentitionToggle{margin:0 0 8px!important}
+#view-ficha .dentitionToggle button{padding:7px 12px!important;font-size:12px!important}
+#view-ficha .odontoGrid{
+  display:grid!important;
+  grid-template-columns:minmax(520px,1.08fr) minmax(390px,.92fr)!important;
+  gap:10px!important;
+  align-items:start!important;
+}
+#view-ficha .odontoRefStage{
+  aspect-ratio:1536/690!important;
+  border-radius:17px!important;
+}
+#view-ficha .odontoPanel{
+  padding:12px!important;
+  border-radius:17px!important;
+}
+#view-ficha .panelMiniGrid{
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:6px!important;
+}
+#view-ficha .panelMiniGrid>div{
+  min-height:48px!important;
+  padding:8px 9px!important;
+}
+#view-ficha .sideFormGrid{gap:7px!important}
+#view-ficha .odontoPanel input,
+#view-ficha .odontoPanel select,
+#view-ficha .procPickerWrap input{
+  min-height:36px!important;
+  padding:7px 9px!important;
+}
+#view-ficha .fichaQuickActions{
+  gap:6px!important;
+  margin-top:8px!important;
+}
+
+/* Financeiro deixa de alongar a página */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto{
+  display:grid!important;
+  grid-template-columns:repeat(6,minmax(0,1fr))!important;
+  gap:6px!important;
+  margin-top:8px!important;
+}
+#view-ficha .totalBox{
+  min-height:62px!important;
+  padding:9px 10px!important;
+  border-radius:13px!important;
+}
+#view-ficha .totalBox .label{
+  font-size:10px!important;
+  line-height:1.1!important;
+  margin-bottom:4px!important;
+}
+#view-ficha .totalBox .value{
+  font-size:15.5px!important;
+  line-height:1.1!important;
+}
+
+/* Barra do plano mais enxuta */
+#view-ficha .fichaPlanToolbarV55{
+  padding:10px 12px!important;
+  border-radius:16px!important;
+  margin:0 0 7px!important;
+  gap:8px!important;
+}
+#view-ficha .fichaPlanToolbarV55 [style*="font-weight:900"]{
+  font-size:16px!important;
+}
+
+/* TABELA: usa a largura disponível, sem min-width de 1260px. */
+#view-ficha .fichaTableWrap{
+  overflow-x:hidden!important;
+  overflow-y:visible!important;
+  width:100%!important;
+  border-radius:16px!important;
+}
+#view-ficha .fichaTable{
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  table-layout:fixed!important;
+  border-collapse:separate!important;
+  border-spacing:0!important;
+}
+#view-ficha .fichaTable th,
+#view-ficha .fichaTable td{
+  padding:8px 6px!important;
+  font-size:11.5px!important;
+  line-height:1.2!important;
+  overflow-wrap:anywhere!important;
+  min-width:0!important;
+}
+#view-ficha .fichaTable th{
+  font-size:10px!important;
+  letter-spacing:.035em!important;
+}
+
+/* Proporções feitas para o conteúdo REAL de cada coluna */
+#view-ficha .fichaTable th:nth-child(1), #view-ficha .fichaTable td:nth-child(1){width:3%}
+#view-ficha .fichaTable th:nth-child(2), #view-ficha .fichaTable td:nth-child(2){width:3%}
+#view-ficha .fichaTable th:nth-child(3), #view-ficha .fichaTable td:nth-child(3){width:8%}
+#view-ficha .fichaTable th:nth-child(4), #view-ficha .fichaTable td:nth-child(4){width:23%;white-space:normal!important}
+#view-ficha .fichaTable th:nth-child(5), #view-ficha .fichaTable td:nth-child(5){width:5%;text-align:center}
+#view-ficha .fichaTable th:nth-child(6), #view-ficha .fichaTable td:nth-child(6){width:7%}    /* Face */
+#view-ficha .fichaTable th:nth-child(7), #view-ficha .fichaTable td:nth-child(7){width:8%}    /* Valor base */
+#view-ficha .fichaTable th:nth-child(8), #view-ficha .fichaTable td:nth-child(8){width:9%}    /* Valor fechado */
+#view-ficha .fichaTable th:nth-child(9), #view-ficha .fichaTable td:nth-child(9){width:8%}
+#view-ficha .fichaTable th:nth-child(10),#view-ficha .fichaTable td:nth-child(10){width:8%}
+#view-ficha .fichaTable th:nth-child(11),#view-ficha .fichaTable td:nth-child(11){width:11%}
+#view-ficha .fichaTable th:nth-child(12),#view-ficha .fichaTable td:nth-child(12){width:7%}
+
+/* Inputs não obrigam a coluna a crescer */
+#view-ficha .fichaTable input[type="text"],
+#view-ficha .fichaTable input[type="number"],
+#view-ficha .fichaTable select,
+#view-ficha .fichaTable textarea{
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+  padding:6px 7px!important;
+  border-radius:10px!important;
+  font-size:11.5px!important;
+}
+#view-ficha .fichaTable td:nth-child(6) input{padding-left:6px!important;padding-right:6px!important}
+#view-ficha .fichaTable .miniBtn,
+#view-ficha .fichaTable .btn.small{
+  padding:6px 7px!important;
+  font-size:10.5px!important;
+  white-space:nowrap!important;
+}
+
+/* Observação compacta e sem grandes áreas vazias */
+#view-ficha .fichaAddWrap{
+  margin-top:9px!important;
+  margin-bottom:8px!important;
+  padding:10px!important;
+  border-radius:14px!important;
+}
+#view-ficha .fichaAddWrap textarea{
+  min-height:76px!important;
+  height:76px!important;
+  resize:vertical!important;
+}
+
+/* Desktop menor: ainda prioriza não gerar scroll horizontal. */
+@media(max-width:1280px){
+  #view-ficha .fichaHead.fichaHeroV55{
+    grid-template-columns:minmax(300px,1.2fr) repeat(3,minmax(150px,.7fr))!important;
+  }
+  #view-ficha .odontoGrid{
+    grid-template-columns:minmax(470px,1.05fr) minmax(350px,.95fr)!important;
+  }
+  #view-ficha .fichaTable th,
+  #view-ficha .fichaTable td{
+    padding:7px 4px!important;
+    font-size:10.8px!important;
+  }
+  #view-ficha .fichaTable th{font-size:9.5px!important}
+  #view-ficha .fichaTable .miniBtn,
+  #view-ficha .fichaTable .btn.small{padding:5px 5px!important;font-size:10px!important}
+}
+
+/* Tablet/mobile pode rolar horizontalmente; desktop não precisa sacrificar legibilidade. */
+@media(max-width:980px){
+  #view-ficha .fichaHead.fichaHeroV55{grid-template-columns:1fr 1fr!important}
+  #view-ficha .odontoGrid{grid-template-columns:1fr!important}
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  #view-ficha .fichaTableWrap{overflow-x:auto!important}
+  #view-ficha .fichaTable{min-width:980px!important}
+}
+@media(max-width:680px){
+  #view-ficha .fichaHead.fichaHeroV55{grid-template-columns:1fr!important}
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  #view-ficha .cronosFichaViewHeadLeft{flex-direction:column!important}
+}
+
+
+
+
+/* Título do odontograma e seletor de dentição na mesma linha */
+#view-ficha .odontoTitleRowV521{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  gap:12px!important;
+  margin:0 0 8px!important;
+}
+#view-ficha .odontoTitleRowV521 .fichaSectionTitleV55{
+  margin:0!important;
+  flex:0 0 auto!important;
+}
+#view-ficha .odontoTitleRowV521 .dentitionToggle{
+  margin:0!important;
+  flex:0 0 auto!important;
+}
+#view-ficha .odontoTitleRowV521 .dentitionToggle button{
+  padding:6px 11px!important;
+  font-size:11.5px!important;
+}
+
+/* Resumo financeiro volta para 3 colunas x 2 linhas */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto{
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:7px!important;
+  margin-top:8px!important;
+}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto .totalBox{
+  min-height:58px!important;
+  padding:9px 11px!important;
+}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto .totalBox .label{
+  font-size:10.5px!important;
+}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto .totalBox .value{
+  font-size:16px!important;
+}
+
+/* Em telas estreitas, o título continua limpo sem espremer os botões */
+@media(max-width:760px){
+  #view-ficha .odontoTitleRowV521{
+    align-items:flex-start!important;
+    flex-direction:column!important;
+  }
+  #view-ficha .odontoTitleRowV521 .dentitionToggle{
+    width:100%!important;
+  }
+  #view-ficha .odontoTitleRowV521 .dentitionToggle button{
+    flex:1 1 0!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  }
+}
+
+
+
+
+#view-ficha .odontoPanel .panelMiniGrid{
+  grid-template-columns:minmax(0,1.45fr) minmax(0,1fr) minmax(0,.72fr)!important;
+  gap:6px!important;
+}
+
+#view-ficha .odontoPanel .panelMiniGrid > div{
+  min-height:46px!important;
+  padding:7px 9px!important;
+}
+
+#view-ficha .odontoPanel .panelMiniGrid > div:first-child b{
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+
+#view-ficha .odontoPanel .panelMiniGrid span{
+  font-size:10.5px!important;
+  line-height:1.1!important;
+}
+
+#view-ficha .odontoPanel .panelMiniGrid b{
+  font-size:12.5px!important;
+  line-height:1.15!important;
+}
+
+/* Em telas menores, ainda mantém Dente(s) como o maior campo enquanto couber. */
+@media(max-width:1100px) and (min-width:761px){
+  #view-ficha .odontoPanel .panelMiniGrid{
+    grid-template-columns:minmax(0,1.5fr) minmax(0,.95fr) minmax(0,.65fr)!important;
+  }
+}
+
+/* Mobile: volta para empilhamento limpo. */
+@media(max-width:760px){
+  #view-ficha .odontoPanel .panelMiniGrid{
+    grid-template-columns:1fr!important;
+  }
+  #view-ficha .odontoPanel .panelMiniGrid > div:first-child b{
+    white-space:normal!important;
+  }
+}
+
+
+
+
+#view-ficha .fichaEvaluationBoxV523{
+  margin-top:10px!important;
+  border:1px solid var(--line)!important;
+  border-radius:12px!important;
+  padding:10px!important;
+  background:rgba(255,255,255,.025)!important;
+}
+
+#view-ficha .fichaEvaluationTitleV523{
+  margin-bottom:7px!important;
+}
+
+#view-ficha .fichaEvaluationRowV523{
+  display:grid!important;
+  grid-template-columns:minmax(0,1.35fr) minmax(150px,.92fr) auto!important;
+  gap:8px!important;
+  align-items:end!important;
+  width:100%!important;
+}
+
+#view-ficha .fichaEvaluationFieldV523{
+  display:flex!important;
+  flex-direction:column!important;
+  gap:4px!important;
+  min-width:0!important;
+}
+
+#view-ficha .fichaEvaluationFieldV523 select,
+#view-ficha .fichaEvaluationFieldV523 input{
+  width:100%!important;
+  max-width:none!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+}
+
+#view-ficha .fichaNewEvaluationBtnV523{
+  align-self:end!important;
+  white-space:nowrap!important;
+  min-height:36px!important;
+  padding-left:11px!important;
+  padding-right:11px!important;
+}
+
+@media(max-width:760px){
+  #view-ficha .fichaEvaluationRowV523{
+    grid-template-columns:1fr!important;
+  }
+  #view-ficha .fichaNewEvaluationBtnV523{
+    width:100%!important;
+  }
+}
+
+
+
+
+#view-ficha .fichaProcCompactV524{
+  margin-top:6px!important;
+}
+#view-ficha .fichaProcCompactV524 label,
+#view-ficha .fichaValuesCompactV524 label{
+  margin:0 0 4px!important;
+  font-size:11px!important;
+  line-height:1.1!important;
+}
+
+#view-ficha .fichaProcCompactV524 .procPickerWrap{
+  min-height:34px!important;
+}
+#view-ficha .fichaProcCompactV524 .procPickerWrap input{
+  min-height:34px!important;
+  height:34px!important;
+  padding:6px 36px 6px 9px!important;
+  font-size:12px!important;
+}
+#view-ficha .fichaProcCompactV524 .procDropBtn{
+  width:34px!important;
+  min-width:34px!important;
+}
+
+#view-ficha .fichaValuesCompactV524{
+  display:grid!important;
+  grid-template-columns:1fr 1fr!important;
+  gap:7px!important;
+  margin-top:7px!important;
+}
+#view-ficha .fichaValuesCompactV524 > div:not(.full){
+  min-width:0!important;
+}
+#view-ficha .fichaValuesCompactV524 input{
+  min-height:34px!important;
+  height:34px!important;
+  padding:6px 9px!important;
+  font-size:12px!important;
+}
+#view-ficha .fichaValuesCompactV524 .full{
+  grid-column:1 / -1!important;
+  margin-top:1px!important;
+}
+
+/* Todas as faces na mesma linha no desktop */
+#view-ficha .faceChipWrap{
+  display:flex!important;
+  flex-wrap:nowrap!important;
+  gap:5px!important;
+  width:100%!important;
+  align-items:center!important;
+  overflow:visible!important;
+}
+#view-ficha .faceChip{
+  flex:1 1 auto!important;
+  min-width:0!important;
+  padding:6px 8px!important;
+  min-height:32px!important;
+  border-radius:10px!important;
+  font-size:10.5px!important;
+  line-height:1.05!important;
+  white-space:nowrap!important;
+}
+
+/* Se "Sem face" for o estado aplicável, ele sozinho já comunica isso. */
+#view-ficha .faceSelectedText{
+  display:none!important;
+}
+
+/* Aproxima ações do formulário agora que os avisos foram removidos */
+#view-ficha .fichaQuickActions{
+  margin-top:7px!important;
+}
+
+/* Só em telas realmente estreitas permitimos quebra das faces. */
+@media(max-width:900px){
+  #view-ficha .faceChipWrap{
+    flex-wrap:wrap!important;
+  }
+  #view-ficha .faceChip{
+    flex:0 1 auto!important;
+  }
+}
+
+
+@media(min-width:761px){
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto{
+    grid-template-columns:repeat(4,minmax(0,1fr))!important;
+    grid-auto-rows:minmax(58px,auto)!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(1),
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(2),
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(4),
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(5){
+    grid-column:span 1!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3),
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(6){
+    grid-column:span 2!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3){
+    display:grid!important;
+    grid-template-columns:auto auto!important;
+    grid-template-rows:auto 1fr!important;
+    column-gap:8px!important;
+    align-items:center!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3) .label{
+    grid-column:1/-1!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3) .value,
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3) .small{
+    white-space:nowrap!important;
+    margin:0!important;
+    align-self:center!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .cronosExamCard{
+    grid-column:1/-1!important;
+  }
+}
+
+
+
+
+/* Proporção mais sutil: os cards especiais ganham só o necessário */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto{
+  display:grid!important;
+  grid-template-columns:1fr 1fr 1.35fr!important;
+  gap:8px!important;
+}
+
+/* Todos os cards voltam à mesma altura visual */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto .totalBox{
+  min-height:64px!important;
+  height:64px!important;
+  padding:9px 12px!important;
+  box-sizing:border-box!important;
+  display:flex!important;
+  flex-direction:column!important;
+  justify-content:center!important;
+}
+
+/* Desconto em uma única linha: valor + porcentagem */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto .totalBox:nth-child(3) .value{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  gap:12px!important;
+  white-space:nowrap!important;
+}
+#view-ficha #fichaTotalDesconto,
+#view-ficha #fichaTotalDescontoPct{
+  white-space:nowrap!important;
+  display:inline-block!important;
+}
+#view-ficha #fichaTotalDescontoPct{
+  margin-left:auto!important;
+}
+
+/* Em aberto recebe a mesma largura do desconto para manter simetria */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto .totalBox:nth-child(6){
+  grid-column:3!important;
+}
+
+/* Botões azuis/ciano: menos saturação, menos glow */
+#view-ficha .btn.primary,
+#view-ficha .fichaAddPlanBtn,
+#view-ficha #fichaGenerateReceivingBtn,
+#view-ficha .galleryOpenBtn,
+#view-ficha .examGalleryOpenBtn{
+  background:linear-gradient(135deg, rgba(37,99,235,.78), rgba(14,116,144,.72))!important;
+  border-color:rgba(96,165,250,.42)!important;
+  box-shadow:0 3px 10px rgba(37,99,235,.14), inset 0 1px 0 rgba(255,255,255,.08)!important;
+  color:#eef7ff!important;
+  text-shadow:none!important;
+  filter:none!important;
+}
+
+/* Hover discreto, sem virar pista de dança */
+#view-ficha .btn.primary:hover,
+#view-ficha .fichaAddPlanBtn:hover,
+#view-ficha #fichaGenerateReceivingBtn:hover,
+#view-ficha .galleryOpenBtn:hover,
+#view-ficha .examGalleryOpenBtn:hover{
+  background:linear-gradient(135deg, rgba(37,99,235,.88), rgba(14,116,144,.82))!important;
+  box-shadow:0 4px 12px rgba(37,99,235,.18)!important;
+  transform:none!important;
+}
+
+/* Botões de ação do painel com contraste mais elegante */
+#view-ficha .fichaQuickActions .btn{
+  box-shadow:none!important;
+  filter:none!important;
+}
+#view-ficha .fichaPaidAction{
+  border-color:rgba(245,158,11,.48)!important;
+  background:rgba(120,74,13,.12)!important;
+  color:#f7d28a!important;
+}
+#view-ficha .fichaDoneAction{
+  border-color:rgba(34,197,94,.40)!important;
+  background:rgba(22,101,52,.10)!important;
+  color:#a7e7bb!important;
+}
+#view-ficha .fichaAbsentAction{
+  border-color:rgba(244,63,94,.40)!important;
+  background:rgba(127,29,29,.10)!important;
+  color:#f3a7b3!important;
+}
+#view-ficha .fichaNeutralAction{
+  background:rgba(255,255,255,.025)!important;
+  border-color:rgba(148,163,184,.22)!important;
+  color:#d4d9e2!important;
+}
+
+/* Botão de galeria especificamente menos luminoso */
+#view-ficha button[onclick*="gallery"],
+#view-ficha button[onclick*="Gallery"]{
+  box-shadow:0 3px 10px rgba(37,99,235,.12)!important;
+}
+
+/* Responsivo */
+@media(max-width:900px){
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto{
+    grid-template-columns:1fr 1fr!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto .totalBox:nth-child(6){
+    grid-column:auto!important;
+  }
+}
+
+
+
+
+/* Zera qualquer posicionamento herdado das versões anteriores */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox{
+  grid-column:auto!important;
+  grid-row:auto!important;
+  width:auto!important;
+  max-width:none!important;
+  min-width:0!important;
+}
+
+/* Grade limpa: duas linhas com a mesma distribuição */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.28fr)!important;
+  grid-auto-flow:row!important;
+  gap:8px!important;
+  align-items:stretch!important;
+}
+
+/* Força a ordem visual exata */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(1){grid-column:1!important;grid-row:1!important}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(2){grid-column:2!important;grid-row:1!important}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3){grid-column:3!important;grid-row:1!important}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(4){grid-column:1!important;grid-row:2!important}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(5){grid-column:2!important;grid-row:2!important}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(6){grid-column:3!important;grid-row:2!important}
+
+/* Mesma altura em todos */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox{
+  min-height:64px!important;
+  height:64px!important;
+  padding:9px 12px!important;
+  box-sizing:border-box!important;
+}
+
+/* Desconto: valor + percentual lado a lado sem quebrar */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3) .value{
+  display:flex!important;
+  align-items:center!important;
+  gap:10px!important;
+  white-space:nowrap!important;
+}
+#view-ficha #fichaTotalDescontoPct{
+  margin-left:auto!important;
+  white-space:nowrap!important;
+}
+
+/* Galeria fica logo abaixo, sem herdar nada da grade */
+#view-ficha .fichaGalleryCard,
+#view-ficha .examGalleryCard,
+#view-ficha [class*="galleryCard"]{
+  grid-column:auto!important;
+  grid-row:auto!important;
+  width:100%!important;
+}
+
+/* Tablet/mobile */
+@media(max-width:900px){
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  }
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox{
+    grid-column:auto!important;
+    grid-row:auto!important;
+  }
+}
+
+
+
+
+/* Desconto total segue o mesmo alinhamento visual dos demais cards */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3){
+  align-items:flex-start!important;
+  text-align:left!important;
+}
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3) .value{
+  width:100%!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  gap:14px!important;
+  text-align:left!important;
+}
+#view-ficha #fichaTotalDesconto{
+  margin:0!important;
+}
+#view-ficha #fichaTotalDescontoPct{
+  margin-left:0!important;
+  text-align:left!important;
+}
+
+/* Galeria ocupa toda a largura disponível, como antes */
+#view-ficha .fichaGalleryCard,
+#view-ficha .examGalleryCard,
+#view-ficha [class*="galleryCard"],
+#view-ficha [class*="GalleryCard"]{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto!important;
+  align-items:center!important;
+  width:100%!important;
+  max-width:none!important;
+  min-width:0!important;
+  grid-column:1 / -1!important;
+  box-sizing:border-box!important;
+}
+
+/* Garante que o contêiner da galeria também não fique preso a uma coluna antiga */
+#view-ficha .odontoPanel > .fichaGalleryCard,
+#view-ficha .odontoPanel > .examGalleryCard,
+#view-ficha .odontoFull > .fichaGalleryCard,
+#view-ficha .odontoFull > .examGalleryCard{
+  width:100%!important;
+  grid-column:1 / -1!important;
+}
+
+/* Botão à direita, sem centralizar o card inteiro */
+#view-ficha .fichaGalleryCard button,
+#view-ficha .examGalleryCard button,
+#view-ficha [class*="galleryCard"] button,
+#view-ficha [class*="GalleryCard"] button{
+  justify-self:end!important;
+  margin:0!important;
+}
+
+
+
+
+/* DESCONTO TOTAL
+   Estrutura real:
+   .totalBox
+     .label
+     #fichaTotalDesconto
+     #fichaTotalDescontoPct
+*/
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3){
+  display:grid!important;
+  grid-template-columns:auto auto!important;
+  grid-template-rows:auto 1fr!important;
+  align-items:center!important;
+  justify-content:start!important;
+  column-gap:14px!important;
+  row-gap:2px!important;
+  text-align:left!important;
+}
+
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3) > .label{
+  grid-column:1 / -1!important;
+  grid-row:1!important;
+  margin:0!important;
+  text-align:left!important;
+  justify-self:start!important;
+}
+
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3) > #fichaTotalDesconto{
+  grid-column:1!important;
+  grid-row:2!important;
+  margin:0!important;
+  width:auto!important;
+  display:block!important;
+  text-align:left!important;
+  justify-self:start!important;
+  white-space:nowrap!important;
+}
+
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .totalBox:nth-child(3) > #fichaTotalDescontoPct{
+  grid-column:2!important;
+  grid-row:2!important;
+  margin:0!important;
+  align-self:center!important;
+  justify-self:start!important;
+  text-align:left!important;
+  white-space:nowrap!important;
+  font-size:15px!important;
+  line-height:1!important;
+}
+
+/* GALERIA REAL: é o 7º totalBox e usa .cronosExamCard */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .cronosExamCard{
+  grid-column:1 / -1!important;
+  grid-row:3!important;
+  width:100%!important;
+  max-width:none!important;
+  min-width:0!important;
+
+  /* desfaz os 64px aplicados aos outros totalBox */
+  height:auto!important;
+  min-height:86px!important;
+
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto!important;
+  grid-template-rows:auto!important;
+  align-items:center!important;
+  gap:18px!important;
+
+  padding:12px 14px!important;
+  box-sizing:border-box!important;
+  text-align:left!important;
+}
+
+/* O texto volta para a esquerda em bloco normal */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .cronosExamCard .cronosExamText{
+  min-width:0!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:flex-start!important;
+  justify-content:center!important;
+  text-align:left!important;
+}
+
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .cronosExamCard .cronosExamText .label,
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .cronosExamCard .cronosExamText .value,
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .cronosExamCard .cronosExamText small{
+  text-align:left!important;
+  margin-left:0!important;
+  margin-right:0!important;
+}
+
+/* Botão da galeria no extremo direito */
+#view-ficha .totalsGrid.fichaTotalsUnderOdonto > .cronosExamCard .cronosExamOpenBtn{
+  justify-self:end!important;
+  align-self:center!important;
+  margin:0!important;
+  width:auto!important;
+  min-width:170px!important;
+  max-width:none!important;
+}
+
+/* Responsivo: mantém a galeria inteira abaixo dos cards */
+@media(max-width:900px){
+  #view-ficha .totalsGrid.fichaTotalsUnderOdonto > .cronosExamCard{
+    grid-column:1 / -1!important;
+    grid-row:auto!important;
+  }
+}
+
+
+#view-ficha .cronosFichaViewHead{
+  position:relative!important;
+  top:auto!important;
+  z-index:auto!important;
+  margin:0 0 14px!important;
+  padding:0 2px 10px!important;
+  background:transparent!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+  border:0!important;
+  box-shadow:none!important;
+}
+#view-ficha .cronosFichaViewHeadLeft{
+  gap:16px!important;
+}
+#view-ficha .cronosFichaBackBtn{
+  min-height:38px!important;
+  padding:8px 12px!important;
+  background:rgba(255,255,255,.025)!important;
+  border:1px solid rgba(132,164,220,.14)!important;
+  border-radius:10px!important;
+}
+#view-ficha .cronosFichaViewTitle h2{
+  font-size:20px!important;
+  line-height:1.15!important;
+}
+#view-ficha .cronosFichaViewTitle p{
+  margin-top:3px!important;
+  font-size:12px!important;
+  opacity:.78!important;
+}
+#view-ficha .cronosFichaViewActions .fichaPrintBtn{
+  min-height:38px!important;
+  padding:8px 12px!important;
+  background:rgba(255,255,255,.025)!important;
+  border:1px solid rgba(132,164,220,.14)!important;
+  border-radius:10px!important;
+}
+
+
+html.light #view-ficha, body.light #view-ficha, :root.light #view-ficha{
+  color:#172033!important;
+}
+html.light #view-ficha #fichaApp, body.light #view-ficha #fichaApp, :root.light #view-ficha #fichaApp{
+  background:transparent!important;
+}
+html.light #view-ficha .fichaPatientHeroV55,
+html.light #view-ficha .fichaTopCardV55,
+body.light #view-ficha .fichaPatientHeroV55,
+body.light #view-ficha .fichaTopCardV55,
+:root.light #view-ficha .fichaPatientHeroV55,
+:root.light #view-ficha .fichaTopCardV55{
+  background:linear-gradient(180deg,rgba(255,255,255,.88),rgba(241,247,255,.82))!important;
+  border-color:rgba(59,130,246,.16)!important;
+  box-shadow:0 5px 16px rgba(30,64,175,.055),inset 0 1px 0 rgba(255,255,255,.9)!important;
+}
+html.light #view-ficha .odontoFull, body.light #view-ficha .odontoFull, :root.light #view-ficha .odontoFull{
+  background:linear-gradient(145deg,rgba(239,246,255,.82),rgba(248,250,252,.90))!important;
+  border:1px solid rgba(59,130,246,.15)!important;
+  box-shadow:0 10px 28px rgba(30,64,175,.055)!important;
+}
+html.light #view-ficha .odontoRefStage, body.light #view-ficha .odontoRefStage, :root.light #view-ficha .odontoRefStage{
+  background:rgba(255,255,255,.58)!important;
+  border:1px solid rgba(100,116,139,.13)!important;
+}
+html.light #view-ficha .odontoPanel, body.light #view-ficha .odontoPanel, :root.light #view-ficha .odontoPanel{
+  background:linear-gradient(180deg,rgba(255,255,255,.76),rgba(241,245,249,.72))!important;
+  border:1px solid rgba(59,130,246,.14)!important;
+  box-shadow:0 6px 20px rgba(15,23,42,.045)!important;
+}
+html.light #view-ficha .panelMiniGrid>div,
+body.light #view-ficha .panelMiniGrid>div,
+:root.light #view-ficha .panelMiniGrid>div,
+html.light #view-ficha .totalBox,
+body.light #view-ficha .totalBox,
+:root.light #view-ficha .totalBox{
+  background:rgba(255,255,255,.68)!important;
+  border:1px solid rgba(59,130,246,.13)!important;
+  box-shadow:0 3px 12px rgba(30,64,175,.035)!important;
+}
+html.light #view-ficha .cronosExamCard, body.light #view-ficha .cronosExamCard, :root.light #view-ficha .cronosExamCard{
+  background:linear-gradient(100deg,rgba(219,234,254,.64),rgba(239,246,255,.82))!important;
+  border:1px solid rgba(37,99,235,.16)!important;
+  box-shadow:0 5px 16px rgba(37,99,235,.045)!important;
+}
+html.light #view-ficha .fichaEvaluationBoxV523,
+body.light #view-ficha .fichaEvaluationBoxV523,
+:root.light #view-ficha .fichaEvaluationBoxV523,
+html.light #view-ficha .fichaPlanToolbarV55,
+body.light #view-ficha .fichaPlanToolbarV55,
+:root.light #view-ficha .fichaPlanToolbarV55,
+html.light #view-ficha .fichaTableWrap,
+body.light #view-ficha .fichaTableWrap,
+:root.light #view-ficha .fichaTableWrap,
+html.light #view-ficha .fichaAddWrap,
+body.light #view-ficha .fichaAddWrap,
+:root.light #view-ficha .fichaAddWrap{
+  background:rgba(248,250,252,.76)!important;
+  border:1px solid rgba(100,116,139,.13)!important;
+  box-shadow:0 4px 16px rgba(15,23,42,.035)!important;
+}
+html.light #view-ficha input,
+html.light #view-ficha select,
+html.light #view-ficha textarea,
+body.light #view-ficha input,
+body.light #view-ficha select,
+body.light #view-ficha textarea,
+:root.light #view-ficha input,
+:root.light #view-ficha select,
+:root.light #view-ficha textarea{
+  background:rgba(255,255,255,.78)!important;
+  border-color:rgba(100,116,139,.18)!important;
+  color:#172033!important;
+}
+html.light #view-ficha .fichaTable th, body.light #view-ficha .fichaTable th, :root.light #view-ficha .fichaTable th{
+  background:rgba(226,232,240,.52)!important;
+  color:#475569!important;
+}
+html.light #view-ficha .fichaTable td, body.light #view-ficha .fichaTable td, :root.light #view-ficha .fichaTable td{
+  border-color:rgba(100,116,139,.10)!important;
+}
+
+
+html.light #view-ficha .cronosFichaBackBtn,
+body.light #view-ficha .cronosFichaBackBtn,
+:root.light #view-ficha .cronosFichaBackBtn,
+html.light #view-ficha .cronosFichaViewActions .fichaPrintBtn,
+body.light #view-ficha .cronosFichaViewActions .fichaPrintBtn,
+:root.light #view-ficha .cronosFichaViewActions .fichaPrintBtn{
+  background:linear-gradient(180deg,#ffffff 0%,#edf5ff 100%)!important;
+  border:1px solid #8db8f5!important;
+  color:#1458c8!important;
+  box-shadow:0 5px 14px rgba(37,99,235,.10),inset 0 1px 0 rgba(255,255,255,.95)!important;
+  font-weight:800!important;
+}
+html.light #view-ficha .cronosFichaBackBtn:hover,
+body.light #view-ficha .cronosFichaBackBtn:hover,
+:root.light #view-ficha .cronosFichaBackBtn:hover,
+html.light #view-ficha .cronosFichaViewActions .fichaPrintBtn:hover,
+body.light #view-ficha .cronosFichaViewActions .fichaPrintBtn:hover,
+:root.light #view-ficha .cronosFichaViewActions .fichaPrintBtn:hover{
+  background:#e5f1ff!important;
+  border-color:#5d9bea!important;
+}
+html.light #view-ficha .fichaQuickActions .btn,
+body.light #view-ficha .fichaQuickActions .btn,
+:root.light #view-ficha .fichaQuickActions .btn{
+  opacity:1!important;
+  font-weight:800!important;
+  box-shadow:0 5px 13px rgba(15,23,42,.07)!important;
+}
+html.light #view-ficha .fichaQuickActions .fichaPaidAction,
+body.light #view-ficha .fichaQuickActions .fichaPaidAction,
+:root.light #view-ficha .fichaQuickActions .fichaPaidAction{
+  background:#fff7e6!important;border:1px solid #e8ad45!important;color:#9a5a00!important;
+}
+html.light #view-ficha .fichaQuickActions .fichaDoneAction,
+body.light #view-ficha .fichaQuickActions .fichaDoneAction,
+:root.light #view-ficha .fichaQuickActions .fichaDoneAction{
+  background:#eaf8ef!important;border:1px solid #72c58e!important;color:#18753a!important;
+}
+html.light #view-ficha .fichaQuickActions .fichaAbsentAction,
+body.light #view-ficha .fichaQuickActions .fichaAbsentAction,
+:root.light #view-ficha .fichaQuickActions .fichaAbsentAction{
+  background:#fff0f2!important;border:1px solid #ed8e9a!important;color:#b42335!important;
+}
+html.light #view-ficha .fichaQuickActions .fichaNeutralAction,
+body.light #view-ficha .fichaQuickActions .fichaNeutralAction,
+:root.light #view-ficha .fichaQuickActions .fichaNeutralAction{
+  background:#f1f5fa!important;border:1px solid #bdcad9!important;color:#42566f!important;
+}
+html.light #view-ficha .fichaQuickActions .btn:disabled,
+body.light #view-ficha .fichaQuickActions .btn:disabled,
+:root.light #view-ficha .fichaQuickActions .btn:disabled{
+  opacity:.62!important;
+  filter:saturate(.72)!important;
+  box-shadow:none!important;
+}
+
+
+/* === CRONOS 2026-08-25 — ações do odontograma alinhadas ===
+   Linha 1: Adicionar ao plano (7/12) + Pago/em pagamento (5/12).
+   Linha 2: quatro ações iguais, sem deixar “Limpar marcação” órfão. */
+#view-ficha .fichaQuickActions{
+  display:grid !important;
+  grid-template-columns:repeat(12,minmax(0,1fr)) !important;
+  gap:8px !important;
+  align-items:stretch !important;
+}
+#view-ficha .fichaQuickActions .btn{
+  width:100% !important;
+  max-width:none !important;
+  min-width:0 !important;
+  margin:0 !important;
+  justify-content:center !important;
+}
+#view-ficha .fichaQuickActions .fichaAddPlanBtn{grid-column:1 / span 7 !important;}
+#view-ficha .fichaQuickActions .fichaPaidAction{grid-column:8 / span 5 !important;}
+#view-ficha .fichaQuickActions .fichaDoneAction{grid-column:1 / span 3 !important;}
+#view-ficha .fichaQuickActions .fichaAbsentAction{grid-column:4 / span 3 !important;}
+#view-ficha .fichaQuickActions .fichaNeutralAction:nth-of-type(5){grid-column:7 / span 3 !important;}
+#view-ficha .fichaQuickActions .fichaNeutralAction:nth-of-type(6){grid-column:10 / span 3 !important;}
+
+@media(max-width:900px){
+  #view-ficha .fichaQuickActions{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}
+  #view-ficha .fichaQuickActions .fichaAddPlanBtn,
+  #view-ficha .fichaQuickActions .fichaPaidAction,
+  #view-ficha .fichaQuickActions .fichaDoneAction,
+  #view-ficha .fichaQuickActions .fichaAbsentAction,
+  #view-ficha .fichaQuickActions .fichaNeutralAction{grid-column:auto !important;}
+}
+@media(max-width:560px){
+  #view-ficha .fichaQuickActions{grid-template-columns:1fr !important;}
+}
+
+
+/* === CRONOS 2026-08-25 — ações do prontuário mais compactas ===
+   Objetivo: manter os rótulos em uma linha sempre que houver espaço,
+   com menos peso visual e sem estourar a largura do painel. */
+#view-ficha .fichaQuickActions .btn{
+  white-space:nowrap !important;
+  line-height:1.1 !important;
+  font-size:13px !important;
+  font-weight:600 !important;
+  padding:11px 12px !important;
+  letter-spacing:0 !important;
+}
+#view-ficha .fichaQuickActions .fichaAddPlanBtn{
+  font-size:14px !important;
+  font-weight:700 !important;
+}
+#view-ficha .fichaQuickActions .fichaPaidAction{
+  font-size:12px !important;
+}
+#view-ficha .fichaQuickActions .fichaDoneAction,
+#view-ficha .fichaQuickActions .fichaAbsentAction,
+#view-ficha .fichaQuickActions .fichaNeutralAction{
+  font-size:12px !important;
+  font-weight:600 !important;
+}
+@media(max-width:1100px){
+  #view-ficha .fichaQuickActions .btn{
+    font-size:12px !important;
+    padding:10px 11px !important;
+  }
+  #view-ficha .fichaQuickActions .fichaAddPlanBtn{
+    font-size:13px !important;
+  }
+  #view-ficha .fichaQuickActions .fichaPaidAction,
+  #view-ficha .fichaQuickActions .fichaDoneAction,
+  #view-ficha .fichaQuickActions .fichaAbsentAction,
+  #view-ficha .fichaQuickActions .fichaNeutralAction{
+    font-size:11.5px !important;
+  }
+}
+
+
+/* === CRONOS 2026-08-25 — resumo de dentes sem invadir o quadro vizinho === */
+#view-ficha .odontoPanel .panelMiniGrid > div{
+  min-width:0 !important;
+  overflow:hidden !important;
+}
+#view-ficha .odontoPanel .panelMiniGrid > div b{
+  display:block !important;
+  max-width:100% !important;
+}
+#view-ficha .odontoPanel .panelMiniGrid > div:first-child b{
+  white-space:nowrap !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+}
