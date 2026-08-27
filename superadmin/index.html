@@ -1865,15 +1865,37 @@
       return new Date(d.getFullYear(), d.getMonth(), d.getDate());
     }
 
+    function billingSnapshotForClinic(clinic) {
+      const id = String(clinic?.clinic_id || clinic?.id || '').trim();
+      return id ? (window.__CRONOS_BILLING_CLINIC_SNAPSHOTS__?.[id] || null) : null;
+    }
+
+    function effectiveClinicPeriod(clinic) {
+      const snap = billingSnapshotForClinic(clinic);
+      const sub = snap?.subscription || snap || null;
+      if (sub?.current_period_end) {
+        return {
+          start: sub.current_period_start || clinic?.access_starts_at || null,
+          end: sub.current_period_end,
+          billing: true,
+          status: sub.status || clinic?.status || 'active',
+          source: sub.source || 'billing'
+        };
+      }
+      return { start: clinic?.access_starts_at || null, end: clinic?.access_ends_at || null, billing:false, status:clinic?.status || 'active', source:'legacy' };
+    }
+
     function getComputedStatus(clinic) {
-      const start = parseDateOnly(clinic.access_starts_at);
-      const end = parseDateOnly(clinic.access_ends_at);
+      const period = effectiveClinicPeriod(clinic);
+      const start = parseDateOnly(period.start);
+      const end = parseDateOnly(period.end);
       const today = todayDateOnly();
-      if (clinic.status === "blocked") return "blocked";
-      if (clinic.status === "inactive") return "inactive";
+      const rawStatus = String(period.status || clinic.status || '').toLowerCase();
+      if (rawStatus === "suspended" || clinic.status === "blocked") return "blocked";
+      if (rawStatus === "inactive" || clinic.status === "inactive") return "inactive";
       if (start && start > today) return "scheduled";
       if (end && end < today) return "expired";
-      if (clinic.status === "trial") return "trial";
+      if (rawStatus === "trial" || clinic.status === "trial") return "trial";
       return "active";
     }
 
@@ -1900,7 +1922,7 @@
       return '';
     }
 
-    function periodLabel(clinic) { return `${formatDate(clinic.access_starts_at)} até ${formatDate(clinic.access_ends_at)}`; }
+    function periodLabel(clinic) { const p = effectiveClinicPeriod(clinic); return `${formatDate(p.start)} até ${formatDate(p.end)}`; }
 
     function notificationTypeLabel(item){
       if(String(item.kind || "") === "extra_user_request") return "Usuário extra";
@@ -2533,6 +2555,8 @@
       const priv = payload.private || {};
       const users = payload.users || [];
       const status = getComputedStatus(clinic);
+      const effectivePeriod = effectiveClinicPeriod(clinic);
+      const billingManaged = effectivePeriod.billing === true;
       const used = countInternalUsers(clinic);
       const included = includedUsers(clinic);
       const extra = overageUsers(clinic);
@@ -2587,15 +2611,16 @@
               </div>
               <div class="field">
                 <label for="detail_access_starts_at">Início do acesso</label>
-                <input class="input" id="detail_access_starts_at" type="date" value="${escapeHtml(toInputDate(clinic.access_starts_at))}">
+                <input class="input" id="detail_access_starts_at" type="date" value="${escapeHtml(toInputDate(effectivePeriod.start))}" ${billingManaged ? 'disabled' : ''}>
               </div>
               <div class="field">
                 <label for="detail_access_ends_at">Fim do acesso</label>
-                <input class="input" id="detail_access_ends_at" type="date" value="${escapeHtml(toInputDate(clinic.access_ends_at))}">
+                <input class="input" id="detail_access_ends_at" type="date" value="${escapeHtml(toInputDate(effectivePeriod.end))}" ${billingManaged ? 'disabled' : ''}>
               </div>
             </div>
             <div class="kv"><strong>Período atual</strong><span>${escapeHtml(periodLabel(clinic))}</span></div>
             <div class="kv"><strong>Leitura do sistema</strong><span>${escapeHtml(periodHint(clinic))}</span></div>
+            ${billingManaged ? '<div class="helper" style="margin-top:8px">Validade gerenciada automaticamente pelo Billing. Para alterar plano ou período, use a seção “Plano, assinatura e cobrança”.</div>' : ''}
           </div>
         </details>
 
@@ -2897,6 +2922,7 @@
       CONFIG.endpoints.restoreClinicBackup = CONFIG.endpoints.restoreClinicBackup || 'restore-clinic-backup';
       CONFIG.endpoints.clearClinicData = CONFIG.endpoints.clearClinicData || 'clear-clinic-data';
       CONFIG.endpoints.exportClinicData = CONFIG.endpoints.exportClinicData || 'export-clinic-data';
+    CONFIG.endpoints.billingAdmin = CONFIG.endpoints.billingAdmin || 'billing-admin';
     }
 
     function backupTypeLabel(type){
@@ -3850,6 +3876,7 @@
     CONFIG.endpoints.listFeatureAccess = CONFIG.endpoints.listFeatureAccess || 'list-feature-access';
     CONFIG.endpoints.saveFeatureAccess = CONFIG.endpoints.saveFeatureAccess || 'save-feature-access';
     CONFIG.endpoints.exportClinicData = CONFIG.endpoints.exportClinicData || 'export-clinic-data';
+    CONFIG.endpoints.billingAdmin = CONFIG.endpoints.billingAdmin || 'billing-admin';
   }
 
   function featureModeLabel(mode){
@@ -3912,6 +3939,9 @@
 
   function clinicFeatureCard(row){
     const clinicMode = row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode;
+    const billingManaged = row.billing_managed === true;
+    const baseLabel = billingManaged ? 'Plano' : 'Global';
+    const inheritLabel = billingManaged ? 'Usar regra do plano' : 'Usar padrão global';
     return `
       <div class="feature-box">
         <div class="feature-box-top">
@@ -3922,12 +3952,12 @@
           <span class="feature-chip ${featureModeClass(row.effective.visibility_mode)}">${featureModeLabel(row.effective.visibility_mode)}</span>
         </div>
         <div class="feature-inline-meta">
-          <span class="feature-chip">Global: ${featureModeLabel(row.global.visibility_mode)}</span>
+          <span class="feature-chip">${baseLabel}: ${featureModeLabel(row.global.visibility_mode)}</span>
           <span class="feature-chip ${featureModeClass(row.effective.visibility_mode)}">Efetivo: ${featureModeLabel(row.effective.visibility_mode)}</span>
         </div>
         <label for="clinic_feature_${row.key}">Regra da clínica</label>
         <select class="select" id="clinic_feature_${row.key}" data-feature-key="${row.key}" data-feature-scope="clinic">
-          <option value="inherit" ${clinicMode === 'inherit' ? 'selected' : ''}>Usar padrão global</option>
+          <option value="inherit" ${clinicMode === 'inherit' ? 'selected' : ''}>${inheritLabel}</option>
           <option value="enabled" ${clinicMode === 'enabled' ? 'selected' : ''}>Liberado</option>
           <option value="locked" ${clinicMode === 'locked' ? 'selected' : ''}>Bloqueado</option>
           <option value="hidden" ${clinicMode === 'hidden' ? 'selected' : ''}>Oculto</option>
@@ -4027,35 +4057,6 @@
     }
   }
 
-  const COMMERCIAL_PLAN_PRESETS = {
-    pro: {
-      label:'Plano Pro', price:300,
-      features:{dashboard:'enabled',todayCronos:'enabled',performance:'locked',leads:'enabled',kanban:'enabled',tasks:'enabled',installments:'enabled',creditSimulator:'locked',riskAnalysis:'locked',users:'enabled',settings:'enabled'}
-    },
-    elite: {
-      label:'Plano Elite', price:600,
-      features:{dashboard:'enabled',todayCronos:'enabled',performance:'enabled',leads:'enabled',kanban:'enabled',tasks:'enabled',installments:'enabled',creditSimulator:'enabled',riskAnalysis:'enabled',users:'enabled',settings:'enabled'}
-    }
-  };
-
-  async function applyCommercialPlanPreset(planKey, button){
-    const clinicId = state.selectedClinicId;
-    const plan = COMMERCIAL_PLAN_PRESETS[planKey];
-    if(!clinicId || !plan) return;
-    if(!confirm(`Aplicar ${plan.label} (R$ ${plan.price}/mês) nesta clínica?`)) return;
-    await withButtonLoading(button, 'Aplicando...', async () => {
-      for(const [featureKey, mode] of Object.entries(plan.features)){
-        await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, {
-          scope:'clinic', clinic_id:clinicId, feature_key:featureKey, mode, enabled:mode === 'enabled'
-        });
-      }
-      await loadClinicFeatureAccess(clinicId);
-      const hint = document.getElementById('commercialPlanPresetHint');
-      if(hint) hint.textContent = `${plan.label} aplicado • R$ ${plan.price}/mês. Ajustes manuais posteriores deixam a configuração personalizada.`;
-      toast(`${plan.label} aplicado.`, 'success', 3000);
-    });
-  }
-
   function ensureClinicFeatureSection(){
     const detailRoot = document.getElementById('detailContent');
     if(!detailRoot || !state.selectedClinicId) return null;
@@ -4069,14 +4070,9 @@
       <summary>Módulos laterais da clínica</summary>
       <div class="section-body">
         <div class="helper">Use “Usar padrão global” para herdar o que foi definido no topo do superadmin.</div>
-        <div style="margin:0 0 16px;padding:14px;border:1px solid rgba(59,130,246,.28);background:rgba(59,130,246,.08);border-radius:16px">
-          <div style="font-weight:900;font-size:16px">Plano comercial da clínica</div>
-          <div class="helper" style="margin-top:6px">Aplique a matriz padrão e, se necessário, ajuste módulos individualmente logo abaixo.</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-            <button class="btn btn-primary" id="btnApplyCommercialPlanPro" type="button">Aplicar Pro • R$ 300</button>
-            <button class="btn btn-primary" id="btnApplyCommercialPlanElite" type="button">Aplicar Elite • R$ 600</button>
-          </div>
-          <div id="commercialPlanPresetHint" class="helper" style="margin-top:10px">No Pro, Performance e Simulador ficam bloqueados com opção de upgrade. No Elite, ambos são liberados.</div>
+        <div id="billingFeatureAuthorityHint" style="margin:0 0 16px;padding:14px;border:1px solid rgba(59,130,246,.28);background:rgba(59,130,246,.08);border-radius:16px">
+          <div style="font-weight:900;font-size:16px">Exceções de módulos</div>
+          <div class="helper" style="margin-top:6px">O plano selecionado em “Plano, assinatura e cobrança” define a matriz padrão. Use os controles abaixo somente para exceções específicas desta clínica.</div>
         </div>
         <div id="detailFeatureAccessBody" class="feature-access-grid"></div>
         <div class="feature-save-actions">
@@ -4096,13 +4092,6 @@
       detailRoot.appendChild(section);
     }
 
-    document.getElementById('btnApplyCommercialPlanPro')?.addEventListener('click', async (e) => {
-      await applyCommercialPlanPreset('pro', e.currentTarget);
-    });
-    document.getElementById('btnApplyCommercialPlanElite')?.addEventListener('click', async (e) => {
-      await applyCommercialPlanPreset('elite', e.currentTarget);
-    });
-
     document.getElementById('btnRefreshClinicFeatures')?.addEventListener('click', async (e) => {
       const button = e.currentTarget;
       await withButtonLoading(button, 'Atualizando...', async () => {
@@ -4120,15 +4109,17 @@
         return;
       }
       await withButtonLoading(button, 'Salvando...', async () => {
-        for(const [featureKey, mode] of entries){
-          const payload = {
-            scope: 'clinic',
-            clinic_id: clinicId,
-            feature_key: featureKey,
-            mode,
-          };
-          if(mode !== 'inherit') payload.enabled = mode === 'enabled';
-          await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, payload);
+        const target = document.getElementById('detailFeatureAccessBody');
+        if(target?.dataset.billingManaged === 'true'){
+          const overrides = {};
+          for(const [featureKey, mode] of entries){ if(mode !== 'inherit') overrides[featureKey] = mode; }
+          await callEdgeFunction(CONFIG.endpoints.billingAdmin, { action:'update_feature_overrides', clinic_id:clinicId, feature_overrides:overrides });
+        }else{
+          for(const [featureKey, mode] of entries){
+            const payload = { scope:'clinic', clinic_id:clinicId, feature_key:featureKey, mode };
+            if(mode !== 'inherit') payload.enabled = mode === 'enabled';
+            await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, payload);
+          }
         }
         await loadClinicFeatureAccess(clinicId);
         toast('Módulos da clínica salvos.', 'success', 2600);
@@ -4137,6 +4128,29 @@
 
     return section;
   }
+
+  window.setCronosBillingClinicSnapshots = function(map){
+    window.__CRONOS_BILLING_CLINIC_SNAPSHOTS__ = map || {};
+    try{ renderStats(); renderTable(); }catch(_){}
+    try{
+      const clinic = state.selectedClinicDetails?.clinic;
+      if(clinic && !state.selectedClinicDetails?.__loading){
+        const period = effectiveClinicPeriod(clinic);
+        const startInput=document.getElementById('detail_access_starts_at');
+        const endInput=document.getElementById('detail_access_ends_at');
+        if(startInput){ startInput.value=toInputDate(period.start); startInput.disabled=period.billing===true; }
+        if(endInput){ endInput.value=toInputDate(period.end); endInput.disabled=period.billing===true; }
+        const accessSection=Array.from(document.querySelectorAll('#detailContent details.section')).find(node=>node.querySelector('summary')?.textContent?.trim()==='Validade e acesso');
+        if(accessSection){
+          accessSection.querySelectorAll('.kv').forEach(kv=>{
+            const key=kv.querySelector('strong')?.textContent?.trim(); const val=kv.querySelector('span');
+            if(key==='Período atual'&&val) val.textContent=periodLabel(clinic);
+            if(key==='Leitura do sistema'&&val) val.textContent=periodHint(clinic);
+          });
+        }
+      }
+    }catch(_){}
+  };
 
   window.loadGlobalFeatures = loadGlobalFeatures;
 
@@ -4147,10 +4161,41 @@
     if(!section || !target || !clinicId) return;
     target.innerHTML = `<div class="feature-message">Carregando módulos da clínica...</div>`;
     try{
-      const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, { clinic_id: clinicId });
-      const rows = mergeFeatureRows(data?.features);
-      clinicFeatureDraft = Object.fromEntries(rows.map((row) => [row.key, row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode]));
-      target.innerHTML = rows.map(clinicFeatureCard).join('');
+      let billingData = null;
+      try{
+        billingData = await callEdgeFunction(CONFIG.endpoints.billingAdmin, { action:'clinic', clinic_id:clinicId });
+      }catch(_billingError){ billingData = null; }
+
+      const billingManaged = !!billingData?.subscription;
+      if(billingManaged){
+        const planFeatures = billingData?.plan?.features && typeof billingData.plan.features === 'object' ? billingData.plan.features : {};
+        const overrides = billingData?.subscription?.feature_overrides && typeof billingData.subscription.feature_overrides === 'object' ? billingData.subscription.feature_overrides : {};
+        const rows = FEATURE_META.map((meta)=>{
+          const baseMode = String(planFeatures[meta.key] || 'enabled').toLowerCase();
+          const overrideMode = overrides[meta.key] == null ? null : String(overrides[meta.key]).toLowerCase();
+          const effectiveMode = overrideMode || baseMode;
+          return {
+            ...meta,
+            billing_managed:true,
+            global:{enabled:baseMode==='enabled',visibility_mode:baseMode},
+            clinic:{enabled:overrideMode==null?null:overrideMode==='enabled',visibility_mode:overrideMode},
+            effective:{enabled:effectiveMode==='enabled',visibility_mode:effectiveMode}
+          };
+        });
+        clinicFeatureDraft = Object.fromEntries(rows.map((row)=>[row.key,row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode]));
+        const hint=document.getElementById('billingFeatureAuthorityHint');
+        if(hint) hint.querySelector('.helper').textContent=`${billingData?.plan?.name || 'O plano atual'} define a matriz padrão. Os controles abaixo salvam somente exceções para esta clínica.`;
+        target.innerHTML = rows.map(clinicFeatureCard).join('');
+        target.dataset.billingManaged='true';
+      }else{
+        const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, { clinic_id: clinicId });
+        const rows = mergeFeatureRows(data?.features);
+        clinicFeatureDraft = Object.fromEntries(rows.map((row) => [row.key, row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode]));
+        const hint=document.getElementById('billingFeatureAuthorityHint');
+        if(hint) hint.querySelector('.helper').textContent='Esta clínica ainda usa controle legado. “Usar padrão global” herda a configuração definida no topo do Superadmin.';
+        target.innerHTML = rows.map(clinicFeatureCard).join('');
+        target.dataset.billingManaged='false';
+      }
       target.querySelectorAll('select[data-feature-scope="clinic"]').forEach((select) => {
         select.addEventListener('change', (event) => {
           const node = event.currentTarget;
@@ -4162,6 +4207,8 @@
       target.innerHTML = `<div class="feature-message">Não foi possível carregar os módulos da clínica agora. O restante do detalhe continua funcionando.</div>`;
     }
   }
+
+  window.loadClinicFeatureAccess = loadClinicFeatureAccess;
 
   function base64ToUint8Array(base64){
     const binary = atob(base64);
@@ -4983,7 +5030,7 @@
   window.__CRONOS_SUPERADMIN_SHARED__ = { CONFIG, state, supabaseClient, toast, escapeHtml, withButtonLoading, callEdgeFunction, loadSupportSettingsCloud, loadSupportSettings };
 })();
 </script>
-<script src="../assets/js/cronos-billing-superadmin.js?build=billing-admin-v1-20260827"></script>
+<script src="../assets/js/cronos-billing-superadmin.js?build=billing-admin-v1-5-20260827"></script>
 <script src="../assets/js/superadmin-permissions.js?build=v462-2-20260807"></script>
 <script src="../assets/js/superadmin-site-chat.js?build=v463-2-4-security-20260812"></script>
 <script src="../assets/js/superadmin-today-config.js?build=v463-2-4-security-20260812"></script>
