@@ -465,6 +465,7 @@
     if(low.includes('segurança')) return 'senha e acesso do usuário';
     if(low.includes('profissionais')) return 'dentistas e profissionais clínicos da clínica';
     if(low.includes('procedimentos')) return 'catálogo usado na ficha do paciente';
+    if(low.includes('plano e assinatura')) return 'plano atual, validade e pagamentos do Cronos';
     return '';
   }
   function closeOtherSettingsCards(except){
@@ -581,6 +582,7 @@
   }
   const SETTINGS_MODULES = [
     {key:'identity',title:'Identidade da clínica',subtitle:'Nome, e-mail, logo e identidade da ficha',find:()=>primaryClinicIdentityCard(),icon:`<svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/><path d="M9 9h.01M15 9h.01M9 12h.01M15 12h.01"/></svg>`},
+    {key:'billing',title:'Plano e assinatura',subtitle:'Plano atual, validade e pagamentos do Cronos',find:()=>$('cronosBillingSettingsCard'),icon:`<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M7 15h4"/><path d="M16.5 13.5v3"/><path d="M15 15h3"/></svg>`},
     {key:'messages',title:'Preferências de mensagens',subtitle:'WhatsApp, cobrança e aniversariantes',find:()=>findSettingsCardByTextarea('waTemplate'),icon:`<svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M7.5 9h9M7.5 13h6"/></svg>`},
     {key:'flows',title:'Fluxos assistidos',subtitle:'Sequências manuais para o Hoje no Cronos',find:()=>$(CARD_ID),icon:`<svg viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="2"/><rect x="15" y="15" width="6" height="6" rx="2"/><path d="M9 6h4a4 4 0 0 1 4 4v5"/><path d="m14 12 3 3 3-3"/></svg>`},
     {key:'security',title:'Segurança do acesso',subtitle:'Senha e acesso do usuário',find:()=>topLevelSettingsCards().find(card=>inferCardTitle(card).toLowerCase().includes('segurança'))||null,icon:`<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><rect x="9" y="10" width="6" height="5" rx="1"/><path d="M10.5 10V8.5a1.5 1.5 0 0 1 3 0V10"/></svg>`},
@@ -723,6 +725,15 @@
         const note=Array.from(actionRow.children).find(node=>node.classList?.contains('muted'));
         if(note) note.classList.add('settingsActionNote');
       }
+    }
+
+    const billingCard=$('cronosBillingSettingsCard');
+    const billingBody=qs(':scope > .settingsAccBody', billingCard) || billingCard;
+    if(billingBody && !$('settingsBillingPanel')){
+      const panel=wrapElements(directChildren(billingBody),'settingsSurface settingsActionSurface','settingsBillingPanel');
+      if(panel && !qs('.settingsPaneTitle', panel)) panel.prepend(buildPaneTitle('Plano e assinatura','Plano atual, validade e pagamentos do Cronos.'));
+      const actionRow=Array.from(panel?.children || []).find(node=>node.querySelector?.('#btnBillingOpen, #btnBillingRefresh'));
+      if(actionRow) actionRow.classList.add('settingsActionRow');
     }
 
     [['settingsProfessionalsCard','Gerenciar profissionais','Controle clínico separado dos usuários de acesso.'],['settingsProceduresCard','Catálogo de procedimentos','Base mestre usada no prontuário do paciente.']].forEach(([id,title,subtitle])=>{

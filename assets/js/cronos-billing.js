@@ -1,6 +1,6 @@
 (function(){
   'use strict';
-  const BUILD='billing-v1-20260827';
+  const BUILD='billing-v1-1-20260827';
   const SUPABASE_URL='https://nsqpslierpulanxvsxaw.supabase.co';
   const ANON_KEY='sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ';
   const ENDPOINT=`${SUPABASE_URL}/functions/v1/billing-client`;
@@ -85,7 +85,7 @@
   function renderCheckoutResult(checkout,host){
     const pix=checkout?.pix,url=checkout?.invoiceUrl;host.innerHTML=`${pix?.encodedImage?`<div class="billingPix"><strong>Pix pronto para pagamento</strong><img alt="QR Code Pix" src="data:image/png;base64,${pix.encodedImage}"><textarea class="billingCopy" readonly>${esc(pix.payload||'')}</textarea><button class="btn" id="billingCopyPix" type="button">Copiar Pix</button></div>`:''}${url?`<div style="margin-top:12px"><a class="btn ok" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Abrir pagamento seguro</a></div>`:''}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" id="billingVerify" type="button">Verificar pagamento</button></div><div class="muted" id="billingVerifyText" style="margin-top:8px">A liberação ocorre automaticamente após a confirmação do pagamento.</div>`;
     host.querySelector('#billingCopyPix')?.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(pix.payload||'');notify('Pix copiado.');}catch(_){notify('Não foi possível copiar o Pix.','error');}});
-    host.querySelector('#billingVerify')?.addEventListener('click',async e=>{const b=e.currentTarget,t=host.querySelector('#billingVerifyText');b.disabled=true;b.textContent='Verificando...';try{const st=await getStatus({force:true});if(st?.billing?.mode==='allow'){t.textContent='Pagamento confirmado. Acesso liberado.';t.style.color='#34d399';try{window.__resetFeatureAccess?.({clearCache:true});}catch(_){ }setTimeout(()=>location.reload(),900);}else t.textContent='Ainda aguardando confirmação do pagamento.';}catch(err){t.textContent=err.message||String(err);}finally{b.disabled=false;b.textContent='Verificar pagamento';}});
+    host.querySelector('#billingVerify')?.addEventListener('click',async e=>{const b=e.currentTarget,t=host.querySelector('#billingVerifyText');b.disabled=true;b.textContent='Verificando...';try{const st=await getStatus({force:true});if(st?.billing?.mode==='allow'){t.textContent='Pagamento confirmado. Acesso liberado.';t.style.color='#34d399';setTimeout(()=>location.reload(),650);}else t.textContent='Ainda aguardando confirmação do pagamento.';}catch(err){t.textContent=err.message||String(err);}finally{b.disabled=false;b.textContent='Verificar pagamento';}});
   }
 
   function wireAccessButtons(){

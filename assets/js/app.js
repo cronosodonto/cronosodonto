@@ -18275,15 +18275,9 @@ function bindNav(){
   window.__navBound = true;
 
   qsa(".nav button").forEach(b=>{
-    b.addEventListener("pointerdown", ()=>{
-      const view = b.dataset.view;
-      if(!view || !APP_VIEWS.includes(view)) return;
-      try{
-        if(typeof isFeatureHidden === "function" && isFeatureHidden(view)) return;
-        if(typeof isFeatureLocked === "function" && isFeatureLocked(view)) return;
-      }catch(_){ }
-      applyActiveViewShell(view);
-    }, {capture:true});
+    // A troca visual acontecia no pointerdown, antes do clique passar pelo
+    // gate de plano/módulo. Em revalidações isso podia ocultar a view atual e
+    // deixar o centro vazio. A navegação agora é commitada atomicamente no click.
     b.addEventListener("click", (ev)=>{
       const view = String(b.dataset.view || "").trim();
       // Somente as rotas nativas pertencem a este binder. Botões auxiliares,
@@ -19895,6 +19889,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const FEATURE_ACCESS_CONTRACT_VERSION = 'clinic-feature-access-v2';
 
   const featureStateMap = new Map();
+  const committedFeatureStateMap = new Map();
+  let committedFeatureContextKey = null;
   let lastResolvedContextKey = null;
   let overlayMounted = false;
   let featureAccessValidated = false;
@@ -20046,10 +20042,50 @@ document.addEventListener("DOMContentLoaded", () => {
     try{ console.info('Cronos Feature Access RC5', lastFeatureAccessDiagnostic); }catch(_){ }
   }
 
+  function getBillingFeatureStateByKey(featureKey){
+    const key = normalizeFeatureKey(featureKeyFor(featureKey));
+    if(!key) return null;
+    try{
+      const billing = window.__CRONOS_BILLING_STATUS__ || null;
+      const planFeatures = billing?.billing?.enforced ? billing?.billing?.features : null;
+      if(!planFeatures || typeof planFeatures !== 'object') return null;
+      for(const [rawKey, rawMode] of Object.entries(planFeatures)){
+        const canonical = canonicalFeatureKey(rawKey);
+        if(!canonical || normalizeFeatureKey(canonical) !== key) continue;
+        const mode = normalizeFeatureKey(rawMode);
+        if(!VALID_FEATURE_VISIBILITY.has(mode)) return null;
+        return { enabled:mode === 'enabled', visibility_mode:mode, source:'billing-plan' };
+      }
+    }catch(_){ }
+    return null;
+  }
+
   function getFeatureStateByKey(featureKey){
     const key = normalizeFeatureKey(featureKeyFor(featureKey));
-    if(!key || !featureAccessValidated) return { visibility_mode:'locked', enabled:false, validation_unavailable:true };
-    return featureStateMap.get(key) || { visibility_mode:'locked', enabled:false, unresolved:true };
+    if(!key) return { visibility_mode:'locked', enabled:false, unresolved:true };
+
+    // Durante uma revalidação da MESMA clínica, mantém o último estado já
+    // confirmado até o novo request terminar. Se o request falhar, o fluxo
+    // volta a fail-closed no commit de falha; isso evita o menu piscar/variar
+    // enquanto a política ainda está em voo.
+    let sourceMap = featureStateMap;
+    if(!featureAccessValidated){
+      const canUseCommittedWhilePending = !!featureFetchPromise &&
+        !!activeFeatureContextKey &&
+        committedFeatureContextKey === activeFeatureContextKey &&
+        committedFeatureStateMap.size > 0;
+      if(!canUseCommittedWhilePending){
+        return { visibility_mode:'locked', enabled:false, validation_unavailable:true };
+      }
+      sourceMap = committedFeatureStateMap;
+    }
+
+    // A matriz comercial do plano é aplicada na leitura também. Assim, se o
+    // Billing atualizar um instante antes/depois do Feature Access, o menu não
+    // passa por um estado intermediário incoerente.
+    const billingState = getBillingFeatureStateByKey(key);
+    if(billingState) return billingState;
+    return sourceMap.get(key) || { visibility_mode:'locked', enabled:false, unresolved:true };
   }
 
   function getFeatureState(view){
@@ -20197,10 +20233,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    hideAllNativeViews();
-    const sticky = document.getElementById('stickyFilters');
-    if(sticky) sticky.classList.add('hidden');
-
+    // Não desmonta nem esconde a view que já estava renderizada. O overlay
+    // cobre a área operacional de forma opaca e o estado anterior permanece
+    // intacto para ser retomado quando a política confirmar acesso. Isso evita
+    // a tela vazia observada em mudanças/revalidações de plano.
     const main = document.querySelector('.main');
     if(main) main.style.overflow = 'hidden';
     document.documentElement.classList.add('feature-lock-active');
@@ -20304,26 +20340,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showBlockedOverlay(activeView);
       return;
     }
-    const overlay = document.getElementById('featureBlockedOverlay');
-    const overlayWasShown = overlay?.classList.contains('show') === true;
     hideBlockedOverlay();
-
-    // showBlockedOverlay esconde todas as views nativas. Se uma validação
-    // posterior confirmar o módulo, remover apenas o overlay deixaria o centro
-    // da aplicação vazio até outro clique no menu. Restauramos a aba que já
-    // estava ativa somente quando foi este overlay que a ocultou.
-    if(overlayWasShown && activeView && getAppViewsList().includes(activeView) && canOpenModule(activeView)){
-      const activeNode = document.getElementById(`view-${activeView}`);
-      if(activeNode?.classList.contains('hidden')){
-        try{
-          if(typeof closeAuxiliaryViews === 'function') closeAuxiliaryViews();
-          if(typeof applyActiveViewShell === 'function') applyActiveViewShell(activeView);
-          if(typeof renderActiveViewOnly === 'function') renderActiveViewOnly(activeView);
-        }catch(error){
-          console.error('Cronos: falha ao restaurar o módulo após validar o acesso.', error);
-        }
-      }
-    }
   }
 
   function reapplyFeatureAccessUI(reason='manual'){
@@ -20702,6 +20719,9 @@ async function fetchFeatureAccess(force, actorOverride){
         writeFeatureCache(resolvedContext, data.features);
         lastResolvedContextKey = resolvedContextKey;
         featureAccessValidated = true;
+        committedFeatureStateMap.clear();
+        featureStateMap.forEach((value, key)=>committedFeatureStateMap.set(key, { ...value }));
+        committedFeatureContextKey = resolvedContextKey;
         recordFeatureAccessDiagnostic({
           ...diagnostic,
           phase:'validated',
@@ -20968,6 +20988,8 @@ async function fetchFeatureAccess(force, actorOverride){
     lastResolvedContextKey = null;
     lastForegroundRefreshAt = 0;
     featureStateMap.clear();
+    committedFeatureStateMap.clear();
+    committedFeatureContextKey = null;
     if(options.clearCache === true){
       try{
         for(let i=localStorage.length-1;i>=0;i--){
@@ -20976,8 +20998,10 @@ async function fetchFeatureAccess(force, actorOverride){
         }
       }catch(_){ }
     }
-    publishFeatureAccessState('reset');
-    hideBlockedOverlay();
+    if(options.silent !== true){
+      publishFeatureAccessState('reset');
+      hideBlockedOverlay();
+    }
   }
 
   window.__refreshFeatureAccess = refreshFeatureAccess;
