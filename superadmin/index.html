@@ -3959,7 +3959,6 @@
       </div>`;
 
     if(mount){
-      mount.innerHTML = '';
       mount.appendChild(card);
     }else{
       statsGrid.parentNode.insertBefore(card, statsGrid.nextSibling);
@@ -4984,6 +4983,7 @@
   window.__CRONOS_SUPERADMIN_SHARED__ = { CONFIG, state, supabaseClient, toast, escapeHtml, withButtonLoading, callEdgeFunction, loadSupportSettingsCloud, loadSupportSettings };
 })();
 </script>
+<script src="../assets/js/cronos-billing-superadmin.js?build=billing-admin-v1-20260827"></script>
 <script src="../assets/js/superadmin-permissions.js?build=v462-2-20260807"></script>
 <script src="../assets/js/superadmin-site-chat.js?build=v463-2-4-security-20260812"></script>
 <script src="../assets/js/superadmin-today-config.js?build=v463-2-4-security-20260812"></script>
