@@ -7008,6 +7008,38 @@ async function fetchClinicAccessState(force=false){
     return clinicAccessValidationFailure(error?.name === "AbortError" ? "ACCESS_VALIDATION_TIMEOUT" : "ACCESS_VALIDATION_UNAVAILABLE");
   }
 }
+
+async function fetchEffectiveClinicAccessState(force=true){
+  const access = await fetchClinicAccessState(force);
+  try{
+    if(!window.CronosBilling || typeof window.CronosBilling.getStatus !== 'function') return access;
+    const billing = await window.CronosBilling.getStatus({ force:!!force });
+    window.__CRONOS_BILLING_STATUS__ = billing || null;
+    const rule = billing?.billing || null;
+    if(!rule?.enforced) return access;
+
+    const legacyStatus = normalizeAccessStatus(access?.status);
+    // Bloqueios administrativos explícitos continuam acima da cobrança.
+    if(['blocked','inactive','blocked_user'].includes(legacyStatus)) return access;
+
+    const sub = billing?.subscription || {};
+    const next = { ...(access || {}) };
+    next.billing_enforced = true;
+    next.billing_plan = billing?.plan?.code || billing?.plan?.name || null;
+    if(sub?.current_period_start) next.access_starts_at = sub.current_period_start;
+    if(sub?.current_period_end) next.access_ends_at = sub.current_period_end;
+
+    if(rule.mode === 'allow') next.status = sub?.status === 'trial' ? 'trial' : 'active';
+    else if(rule.mode === 'blocked') next.status = 'blocked';
+    else if(rule.mode === 'expired') next.status = 'expired';
+    else if(rule.mode === 'pending') next.status = 'expired';
+    return next;
+  }catch(error){
+    console.warn('Cronos Billing: não foi possível compor a assinatura automática; mantendo regra de acesso existente.', error);
+    return access;
+  }
+}
+
 function evaluateClinicAccessState(access){
   if(!access || access.__cronos_validation_error === true){
     return { mode:"unavailable", warn:false, daysLeft:null, access:null, errorCode:access?.error_code || "ACCESS_VALIDATION_UNAVAILABLE" };
@@ -7226,7 +7258,7 @@ async function applyClinicAccessRules(){
     clearClinicAccessState();
     return { mode:"allow", warn:false, support:true };
   }
-  const access = await fetchClinicAccessState(true);
+  const access = await fetchEffectiveClinicAccessState(true);
   return applyClinicAccessDecision(access);
 }
 
@@ -7245,7 +7277,7 @@ function cronosStartPolicyPrefetch(){
   __cronosPolicyBootstrapContext = contextKey;
 
   if(!__cronosAccessBootstrapPromise){
-    __cronosAccessBootstrapPromise = Promise.resolve(fetchClinicAccessState(true))
+    __cronosAccessBootstrapPromise = Promise.resolve(fetchEffectiveClinicAccessState(true))
       .catch(error=>{
         console.warn("Cronos V451: pré-validação de acesso indisponível.", error);
         return clinicAccessValidationFailure("ACCESS_VALIDATION_UNAVAILABLE");
@@ -20419,6 +20451,28 @@ document.addEventListener("DOMContentLoaded", () => {
       featureStateMap.clear();
       throw new Error('Resposta de módulos sem nenhuma feature reconhecida e válida.');
     }
+
+    // Quando uma assinatura automática está ativa, a matriz do plano é a
+    // autoridade comercial final. O motor de módulos existente continua
+    // responsável pela validação online e a assinatura apenas compõe o plano.
+    try{
+      const billing = window.__CRONOS_BILLING_STATUS__ || null;
+      const planFeatures = billing?.billing?.enforced ? billing?.billing?.features : null;
+      if(planFeatures && typeof planFeatures === 'object'){
+        Object.entries(planFeatures).forEach(([rawKey, rawMode])=>{
+          const key = canonicalFeatureKey(rawKey);
+          const mode = normalizeFeatureKey(rawMode);
+          if(!key || !VALID_FEATURE_VISIBILITY.has(mode)) return;
+          acceptedKeys.add(key);
+          featureStateMap.set(normalizeFeatureKey(key), {
+            enabled: mode === 'enabled',
+            visibility_mode: mode
+          });
+        });
+      }
+    }catch(error){
+      console.warn('Cronos Billing: falha ao aplicar matriz do plano; mantendo módulos validados.', error);
+    }
     return { accepted_keys:Array.from(acceptedKeys), normalized_rows:normalizedRows };
   }
 
@@ -20686,6 +20740,13 @@ async function fetchFeatureAccess(force, actorOverride){
 
   async function refreshFeatureAccess(force, actorOverride){
     wrapSetActiveView();
+    try{
+      if(window.CronosBilling && typeof window.CronosBilling.getStatus === 'function'){
+        await window.CronosBilling.getStatus({ force:!!force });
+      }
+    }catch(error){
+      console.warn('Cronos Billing: status do plano não pôde ser carregado antes dos módulos.', error);
+    }
     // Stale-while-revalidate: se já existe estado autoritativo válido para a
     // mesma clínica, mantém a UI estável enquanto consulta novamente.
     if(featureAccessValidated !== true){
