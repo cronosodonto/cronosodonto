@@ -376,11 +376,19 @@
     console.log("[Hoje no Cronos]", title, msg);
   }
 
+  function canSeeToday(){
+    try{
+      if(typeof window.CRONOS_CAN_SEE_MODULE === "function") return window.CRONOS_CAN_SEE_MODULE("todayCronos") === true;
+      if(typeof window.CRONOS_CAN_ACCESS_MODULE === "function") return window.CRONOS_CAN_ACCESS_MODULE("todayCronos") === true;
+      return false;
+    }catch(_){
+      return false;
+    }
+  }
   function canOpenToday(){
     try{
       if(typeof window.CRONOS_CAN_OPEN_MODULE === "function") return window.CRONOS_CAN_OPEN_MODULE("todayCronos") === true;
-      if(typeof window.CRONOS_CAN_ACCESS_MODULE === "function") return window.CRONOS_CAN_ACCESS_MODULE("todayCronos") === true;
-      return false;
+      return canSeeToday();
     }catch(_){
       return false;
     }
@@ -896,7 +904,7 @@
     if(window.__CRONOS_ACCESS_UI_SUSPENDED__===true) return $(NAV_ID) || null;
     const existing = $(NAV_ID);
     if(existing){
-      existing.classList.toggle("hidden", !canOpenToday());
+      existing.classList.toggle("hidden", !canSeeToday());
       return;
     }
 
@@ -908,7 +916,7 @@
     btn.type = "button";
     btn.dataset.todayCronos = "1";
     btn.innerHTML = `<span>Hoje no Cronos</span><span id="todayNavBadge" class="todayNavBadge empty">0</span>`;
-    btn.classList.toggle("hidden", !canOpenToday());
+    btn.classList.toggle("hidden", !canSeeToday());
     const openToday = (ev)=>{
       try{
         ev?.preventDefault?.();

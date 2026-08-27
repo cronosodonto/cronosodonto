@@ -30,11 +30,17 @@
   function esc(v){try{if(typeof window.escapeHTML==='function')return window.escapeHTML(v)}catch(_){} return String(v??'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))}
   function money(v){try{if(typeof window.moneyBR==='function')return window.moneyBR(v)}catch(_){} return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
   function toast(t,m=''){try{if(typeof window.toast==='function')return window.toast(t,m)}catch(_){} console.log('[Performance]',t,m)}
+  function canSeePerformance(){
+    try{
+      if(typeof window.CRONOS_CAN_SEE_MODULE==='function') return window.CRONOS_CAN_SEE_MODULE('performance')===true
+      if(typeof window.CRONOS_CAN_ACCESS_MODULE==='function') return window.CRONOS_CAN_ACCESS_MODULE('performance')===true
+      return false
+    }catch(_){return false}
+  }
   function canOpenPerformance(){
     try{
       if(typeof window.CRONOS_CAN_OPEN_MODULE==='function') return window.CRONOS_CAN_OPEN_MODULE('performance')===true
-      if(typeof window.CRONOS_CAN_ACCESS_MODULE==='function') return window.CRONOS_CAN_ACCESS_MODULE('performance')===true
-      return false
+      return canSeePerformance();
     }catch(_){return false}
   }
   function denyPerformanceAccess(){toast('Acesso restrito','Seu nível de acesso não permite abrir Performance.')}
@@ -210,7 +216,7 @@
     const nav=qs('.nav'); if(!nav) return;
     let btn=$(NAV_ID);
     if(btn){
-      btn.classList.toggle('hidden',!canOpenPerformance());
+      btn.classList.toggle('hidden',!canSeePerformance());
     }
     if(!btn){
       btn=document.createElement('button');
@@ -218,7 +224,7 @@
       btn.type='button';
       btn.dataset.performance='1';
       btn.innerHTML='<span>↗ Performance</span><span class="pill">meta</span>';
-      btn.classList.toggle('hidden',!canOpenPerformance());
+      btn.classList.toggle('hidden',!canSeePerformance());
       const open=(ev)=>{try{ev?.preventDefault?.();ev?.stopPropagation?.();ev?.stopImmediatePropagation?.()}catch(_){} if(!canOpenPerformance()){denyPerformanceAccess(); return false;} show(); return false;};
       btn.addEventListener('pointerdown',open,true);
       btn.addEventListener('click',open,true);

@@ -1,6 +1,6 @@
 (function(){
   'use strict';
-  const BUILD='billing-v1-2-20260827';
+  const BUILD='billing-v1-3-20260827';
   const SUPABASE_URL='https://nsqpslierpulanxvsxaw.supabase.co';
   const ANON_KEY='sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ';
   const ENDPOINT=`${SUPABASE_URL}/functions/v1/billing-client`;

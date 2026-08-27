@@ -43,11 +43,17 @@
   function load(){try{return window.loadDB()}catch(_){return null}}
   function actor(){try{return window.currentActor()}catch(_){return null}}
   function toast(t,m=''){try{if(typeof window.toast==='function')return window.toast(t,m)}catch(_){} console.log('[Simulador]',t,m)}
+  function canSeeCredit(){
+    try{
+      if(typeof window.CRONOS_CAN_SEE_MODULE==='function') return window.CRONOS_CAN_SEE_MODULE('creditSimulator')===true
+      if(typeof window.CRONOS_CAN_ACCESS_MODULE==='function') return window.CRONOS_CAN_ACCESS_MODULE('creditSimulator')===true
+      return false
+    }catch(_){return false}
+  }
   function canOpenCredit(){
     try{
       if(typeof window.CRONOS_CAN_OPEN_MODULE==='function') return window.CRONOS_CAN_OPEN_MODULE('creditSimulator')===true
-      if(typeof window.CRONOS_CAN_ACCESS_MODULE==='function') return window.CRONOS_CAN_ACCESS_MODULE('creditSimulator')===true
-      return false
+      return canSeeCredit();
     }catch(_){return false}
   }
   function canSeeRiskAnalysis(){
@@ -582,7 +588,7 @@
     if(window.__CRONOS_ACCESS_UI_SUSPENDED__===true) return $(NAV_ID) || null;
     const existing=$(NAV_ID);
     if(existing){
-      existing.classList.toggle('hidden',!canOpenCredit());
+      existing.classList.toggle('hidden',!canSeeCredit());
       return;
     }
     const nav=qs('.nav');
@@ -592,7 +598,7 @@
     b.type='button';
     b.dataset.creditoSimulator='1';
     b.innerHTML='<span><span class="credNavIcon">$</span>Simulador</span><span class="pill">crédito</span>';
-    b.classList.toggle('hidden',!canOpenCredit());
+    b.classList.toggle('hidden',!canSeeCredit());
     const openCredit=e=>{
       try{
         e?.preventDefault?.();
