@@ -19919,6 +19919,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let committedFeatureContextKey = null;
   let lastResolvedContextKey = null;
   let overlayMounted = false;
+  let featureDialogPinned = false;
   let featureAccessValidated = false;
   let featureFetchPromise = null;
   let featureFetchContextKey = null;
@@ -20162,26 +20163,53 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function ensureOverlay(){
-    if(overlayMounted && document.getElementById('featureBlockedOverlay')) return document.getElementById('featureBlockedOverlay');
-    const main = document.querySelector('.main');
-    if(!main) return null;
-    let overlay = document.getElementById('featureBlockedOverlay');
-    if(!overlay){
-      overlay = document.createElement('section');
-      overlay.id = 'featureBlockedOverlay';
-      overlay.innerHTML = `
-        <div class="featureBlockedCard">
-          <div class="featureBlockedEyebrow">Bloqueado no momento</div>
-          <h2 class="featureBlockedTitle">Módulo indisponível</h2>
-          <p class="featureBlockedText">Este módulo não está disponível para esta clínica.</p>
-          <p class="featureBlockedText">Para liberar este recurso, entre em contato com o suporte.</p>
-          <a class="btn ok hidden" id="btnFeatureBlockedWhatsapp" href="#" target="_blank" rel="noopener noreferrer" style="margin-top:14px">Falar com suporte no WhatsApp</a>
+    if(overlayMounted && document.getElementById('featureBlockedDialog')) return document.getElementById('featureBlockedDialog');
+    let dialog = document.getElementById('featureBlockedDialog');
+    if(!dialog){
+      dialog = document.createElement('div');
+      dialog.id = 'featureBlockedDialog';
+      dialog.className = 'modalBg';
+      dialog.setAttribute('role','dialog');
+      dialog.setAttribute('aria-modal','true');
+      dialog.setAttribute('aria-labelledby','featureBlockedDialogTitle');
+      dialog.innerHTML = `
+        <div class="accessNotice featurePlanNotice">
+          <div class="accessNoticeHead">
+            <div>
+              <div class="accessNoticeDays" id="featureBlockedDialogBadge">🔒 Recurso do plano</div>
+              <h3 id="featureBlockedDialogTitle">Módulo indisponível</h3>
+            </div>
+            <button class="x" id="btnFeatureBlockedClose" type="button" aria-label="Fechar">×</button>
+          </div>
+          <p class="accessNoticeText" id="featureBlockedDialogText">Este módulo não está incluído no plano atual.</p>
+          <div class="accessNoticeActions">
+            <a class="btn hidden" id="btnFeatureBlockedWhatsapp" href="#" target="_blank" rel="noopener noreferrer">Falar com suporte</a>
+            <button class="btn ok" id="btnFeatureBlockedUpgrade" type="button">Ver planos / Fazer upgrade</button>
+            <button class="btn" id="btnFeatureBlockedDismiss" type="button">Agora não</button>
+          </div>
         </div>
       `;
-      main.appendChild(overlay);
+      document.body.appendChild(dialog);
+      const dismiss = ()=>dismissFeatureBlockedDialog();
+      dialog.querySelector('#btnFeatureBlockedClose')?.addEventListener('click', dismiss);
+      dialog.querySelector('#btnFeatureBlockedDismiss')?.addEventListener('click', dismiss);
+      dialog.addEventListener('click', ev=>{ if(ev.target === dialog) dismiss(); });
+      dialog.querySelector('#btnFeatureBlockedUpgrade')?.addEventListener('click', ()=>{
+        dismissFeatureBlockedDialog();
+        try{
+          if(window.CronosBilling && typeof window.CronosBilling.openCheckout === 'function'){
+            window.CronosBilling.openCheckout();
+            return;
+          }
+        }catch(_err){}
+        try{
+          if(typeof setActiveView === 'function') setActiveView('settings');
+          setTimeout(()=>document.getElementById('btnBillingOpen')?.click(), 180);
+        }catch(_err){}
+      });
     }
     overlayMounted = true;
-    return overlay;
+    return dialog;
   }
 
   function getAppViewsList(){
@@ -20238,16 +20266,28 @@ document.addEventListener("DOMContentLoaded", () => {
     overlay.style.inset = 'auto';
   }
 
+  function dismissFeatureBlockedDialog(){
+    featureDialogPinned = false;
+    const dialog = document.getElementById('featureBlockedDialog');
+    if(dialog) dialog.classList.remove('show');
+  }
+
   function showBlockedOverlay(view){
-    const overlay = ensureOverlay();
-    if(!overlay) return;
+    const dialog = ensureOverlay();
+    if(!dialog) return;
     const label = MODULE_LABELS[view] || VIEW_LABELS[view] || 'Módulo';
-    const title = overlay.querySelector('.featureBlockedTitle');
-    const texts = overlay.querySelectorAll('.featureBlockedText');
-    if(title) title.textContent = `${label} indisponível`;
-    if(texts[0]) texts[0].textContent = `O módulo ${label} não está disponível para esta clínica.`;
-    if(texts[1]) texts[1].textContent = 'Para liberar este recurso, entre em contato com o suporte.';
-    const featureWhats = overlay.querySelector('#btnFeatureBlockedWhatsapp');
+    const title = dialog.querySelector('#featureBlockedDialogTitle');
+    const text = dialog.querySelector('#featureBlockedDialogText');
+    const badge = dialog.querySelector('#featureBlockedDialogBadge');
+    const billingPlan = window.__CRONOS_BILLING_STATUS__?.plan?.name || '';
+    if(badge) badge.textContent = '🔒 Recurso do plano';
+    if(title) title.textContent = `${label} não está incluído no seu plano`;
+    if(text){
+      text.textContent = billingPlan
+        ? `O módulo ${label} está bloqueado no ${billingPlan}. Para liberar, faça upgrade para um plano que inclua este recurso ou fale com o suporte.`
+        : `O módulo ${label} está bloqueado no seu plano atual. Para liberar, faça upgrade para um plano que inclua este recurso ou fale com o suporte.`;
+    }
+    const featureWhats = dialog.querySelector('#btnFeatureBlockedWhatsapp');
     if(featureWhats){
       const whatsappUrl = buildRenewalWhatsappUrl(CLINIC_ACCESS_STATE || {}, 'feature', label);
       if(whatsappUrl){
@@ -20259,32 +20299,27 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    // Não desmonta nem esconde a view que já estava renderizada. O overlay
-    // cobre a área operacional de forma opaca e o estado anterior permanece
-    // intacto para ser retomado quando a política confirmar acesso. Isso evita
-    // a tela vazia observada em mudanças/revalidações de plano.
-    const main = document.querySelector('.main');
-    if(main) main.style.overflow = 'hidden';
-    document.documentElement.classList.add('feature-lock-active');
-    document.body.classList.add('feature-lock-active');
-
-    document.querySelectorAll('.nav button').forEach(btn => {
-      const btnView = btn.dataset ? btn.dataset.view : '';
-      const btnModule = auxModuleFromButton(btn);
-      btn.classList.toggle('active', btnView === view || btnModule === view);
-    });
-
-    overlay.classList.add('show');
-    positionBlockedOverlay();
+    // O módulo bloqueado NÃO vira a rota ativa. Mantemos Dashboard/Leads/etc.
+    // exatamente onde estavam e abrimos apenas um diálogo de upgrade/suporte.
+    // Isso elimina o efeito de "tela congelada/reflexo" causado por marcar um
+    // item bloqueado como ativo sem realmente trocar a view.
+    featureDialogPinned = true;
+    dialog.classList.add('show');
   }
 
   function hideBlockedOverlay(){
-    const overlay = document.getElementById('featureBlockedOverlay');
-    if(overlay) overlay.classList.remove('show');
+    const legacyOverlay = document.getElementById('featureBlockedOverlay');
+    if(legacyOverlay) legacyOverlay.classList.remove('show');
     const main = document.querySelector('.main');
     if(main) main.style.overflow = '';
     document.documentElement.classList.remove('feature-lock-active');
     document.body.classList.remove('feature-lock-active');
+    // Reaplicações automáticas da política não fecham um diálogo aberto pelo
+    // usuário. Ele fecha em Agora não/X ou ao escolher upgrade.
+    if(!featureDialogPinned){
+      const dialog = document.getElementById('featureBlockedDialog');
+      if(dialog) dialog.classList.remove('show');
+    }
   }
 
   function getFirstVisibleAndEnabledView(){
@@ -20419,7 +20454,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if(isFeatureLocked(view)){
-        showPlanToast();
         showBlockedOverlay(view);
         return;
       }
@@ -20862,7 +20896,6 @@ async function fetchFeatureAccess(force, actorOverride){
 
     if(isFeatureLocked(moduleKey)){
       try{ ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation?.(); }catch(_err){}
-      showPlanToast();
       showBlockedOverlay(moduleKey);
       return false;
     }

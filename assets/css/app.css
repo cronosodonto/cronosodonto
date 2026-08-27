@@ -1596,6 +1596,15 @@ body:not(.light) .taskActionsCell .taskOpenLead{
   gap:10px;
   justify-content:flex-end;
 }
+#featureBlockedDialog{
+  z-index:10020;
+}
+#featureBlockedDialog .featurePlanNotice{
+  width:min(620px, 100%);
+}
+#featureBlockedDialog .accessNoticeActions .btn{
+  justify-content:center;
+}
 .accessNoticeDays{
   display:inline-flex;
   align-items:center;
