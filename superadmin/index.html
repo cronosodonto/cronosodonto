@@ -4698,32 +4698,62 @@
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth();
+
+    // Billing V1.6: quando o resumo oficial do Billing já foi carregado, ele é a
+    // única fonte de verdade também para os KPIs e gráfico antigos deste painel.
+    // Isso evita a corrida em que a rotina legada recalculava zero e sobrescrevia
+    // os R$ recebidos que o webhook/Billing acabara de renderizar.
+    const billing = window.__CRONOS_BILLING_FINANCE__ || null;
+    if(billing && Array.isArray(billing.invoices)) {
+      const clinics = Array.isArray(state?.clinics) ? state.clinics : [];
+      const clinicMap = new Map(clinics.map(c=>[String(c?.clinic_id || c?.id || ''), c]));
+      const payments = billing.invoices.map(item=>{
+        const status = String(item?.status || '').toLowerCase();
+        const date = parsePaymentDate(item?.paid_at || item?.created_at);
+        const gross = toNumber(item?.gross_amount ?? item?.amount);
+        const fee = toNumber(item?.fee_amount);
+        const net = toNumber(item?.net_amount ?? (gross - fee));
+        return {
+          clinic: clinicMap.get(String(item?.clinic_id || '')) || { name:String(item?.clinic_id || 'Clínica') },
+          gross, fee, net, date, status,
+          method:item?.payment_method || item?.provider || '—'
+        };
+      }).filter(p=>p.date && p.gross && ['paid','confirmed'].includes(p.status));
+
+      const monthPayments = payments.filter(p=>p.date.getFullYear()===year && p.date.getMonth()===month);
+      const yearPayments = payments.filter(p=>p.date.getFullYear()===year);
+      const monthly = Array.from({length:12},(_,idx)=>({label:MONTH_LABELS[idx],gross:0,fee:0,net:0,count:0}));
+      for(const p of yearPayments){
+        const idx=p.date.getMonth();
+        monthly[idx].gross+=p.gross; monthly[idx].fee+=p.fee; monthly[idx].net+=p.net; monthly[idx].count+=1;
+      }
+      return {
+        year, month, payments, monthPayments, yearPayments, monthly,
+        grossMonth:toNumber(billing.month_gross),
+        grossYear:toNumber(billing.year_gross),
+        feeYear:toNumber(billing.year_fees),
+        netYear:toNumber(billing.year_net),
+        mrr:toNumber(billing.mrr)
+      };
+    }
+
+    // Compatibilidade apenas para instalações antigas ainda sem Billing carregado.
     const payments = extractFinancePayments();
     const monthPayments = payments.filter(p=>p.date.getFullYear()===year && p.date.getMonth()===month);
     const yearPayments = payments.filter(p=>p.date.getFullYear()===year);
-    const monthly = Array.from({length:12},(_,idx)=>({
-      label:MONTH_LABELS[idx],
-      gross:0,
-      fee:0,
-      net:0,
-      count:0
-    }));
-
+    const monthly = Array.from({length:12},(_,idx)=>({ label:MONTH_LABELS[idx], gross:0, fee:0, net:0, count:0 }));
     for(const p of yearPayments){
       const idx = p.date.getMonth();
-      monthly[idx].gross += p.gross;
-      monthly[idx].fee += p.fee;
-      monthly[idx].net += p.net;
-      monthly[idx].count += 1;
+      monthly[idx].gross += p.gross; monthly[idx].fee += p.fee; monthly[idx].net += p.net; monthly[idx].count += 1;
     }
-
-    const grossMonth = monthPayments.reduce((s,p)=>s+p.gross,0);
-    const grossYear = yearPayments.reduce((s,p)=>s+p.gross,0);
-    const feeYear = yearPayments.reduce((s,p)=>s+p.fee,0);
-    const netYear = yearPayments.reduce((s,p)=>s+p.net,0);
-    const mrr = estimateMrr();
-
-    return { year, month, payments, monthPayments, yearPayments, monthly, grossMonth, grossYear, feeYear, netYear, mrr };
+    return {
+      year, month, payments, monthPayments, yearPayments, monthly,
+      grossMonth:monthPayments.reduce((s,p)=>s+p.gross,0),
+      grossYear:yearPayments.reduce((s,p)=>s+p.gross,0),
+      feeYear:yearPayments.reduce((s,p)=>s+p.fee,0),
+      netYear:yearPayments.reduce((s,p)=>s+p.net,0),
+      mrr:estimateMrr()
+    };
   }
 
   function financeKpiMeta(summary){
@@ -4855,6 +4885,13 @@
       </div>`;
   }
 
+
+  window.renderCronosFinanceFromBilling = function(){
+    try{ renderFinanceDashboard(state.financeKpi || 'month'); }catch(_){ }
+  };
+  window.addEventListener('cronos:billing-finance-updated', ()=>{
+    try{ renderFinanceDashboard(state.financeKpi || 'month'); }catch(_){ }
+  });
 
   function bindSuperadminShell(){
     if(window.__SUPERADMIN_V34_BOUND__) return;
@@ -5030,7 +5067,7 @@
   window.__CRONOS_SUPERADMIN_SHARED__ = { CONFIG, state, supabaseClient, toast, escapeHtml, withButtonLoading, callEdgeFunction, loadSupportSettingsCloud, loadSupportSettings };
 })();
 </script>
-<script src="../assets/js/cronos-billing-superadmin.js?build=billing-admin-v1-5-20260827"></script>
+<script src="../assets/js/cronos-billing-superadmin.js?build=billing-admin-v1-6-20260827"></script>
 <script src="../assets/js/superadmin-permissions.js?build=v462-2-20260807"></script>
 <script src="../assets/js/superadmin-site-chat.js?build=v463-2-4-security-20260812"></script>
 <script src="../assets/js/superadmin-today-config.js?build=v463-2-4-security-20260812"></script>
