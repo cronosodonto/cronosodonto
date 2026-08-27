@@ -5451,7 +5451,20 @@ function applyRoleVisibility(actor=currentActor()){
     { id:"navPerformance", module:"performance" }
   ].forEach(item=>{
     const btn = el(item.id);
-    if(btn) btn.classList.toggle("hidden", !canAccessModule(item.module, actor));
+    if(!btn) return;
+
+    // Os módulos auxiliares têm duas autoridades: ACL do papel e Feature/Billing.
+    // Antes a camada de papel removia `hidden` em toda troca de rota e a camada
+    // de Feature Access recolocava logo depois. Resultado: Performance/Simulador
+    // piscavam, apareciam e sumiam ao navegar. Quando o gate de Feature Access já
+    // está instalado, ele é a única autoridade visual para esses três botões.
+    let visible = canAccessModule(item.module, actor);
+    try{
+      if(typeof window.CRONOS_CAN_SEE_MODULE === "function"){
+        visible = window.CRONOS_CAN_SEE_MODULE(item.module, actor) === true;
+      }
+    }catch(_){ }
+    btn.classList.toggle("hidden", !visible);
   });
 
   applyExamNavVisibility(actor);
@@ -13697,6 +13710,19 @@ function setActiveView(view){
 
   applyRoleVisibility(actor);
   applyActiveViewShell(targetView);
+
+  // Commit atômico da sidebar: applyRoleVisibility cuida da ACL e, no mesmo
+  // ciclo de navegação, Feature/Billing reaplica a matriz comercial. Isso evita
+  // qualquer frame intermediário em que Pro pareça liberar Performance/Simulador
+  // para depois marcá-los como bloqueados (ou ocultá-los).
+  try{
+    if(typeof window.CRONOS_REAPPLY_FEATURE_ACCESS_UI === "function"){
+      window.CRONOS_REAPPLY_FEATURE_ACCESS_UI("route-commit");
+    }
+  }catch(error){
+    console.error("Cronos: falha ao consolidar módulos após navegação.", error);
+  }
+
   scheduleActiveViewRender(targetView);
 }
 
