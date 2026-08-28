@@ -1,6 +1,6 @@
 (function(){
   'use strict';
-  const ACL_BUILD='v462.2';
+  const ACL_BUILD='v120-intraoral';
 
   const SHARED=window.__CRONOS_SUPERADMIN_SHARED__||{};
   const CONFIG=SHARED.CONFIG||{};
@@ -34,6 +34,12 @@
     `;document.head.appendChild(style);
   }
 
+  function ensureIntraoralPermission(data){
+    if(!data||typeof data!=='object')return data;
+    if(!Array.isArray(data.catalog))data.catalog=[];
+    if(!data.catalog.some(p=>p?.permission_key==='exam.capture')) data.catalog.push({permission_key:'exam.capture',label:'Exame Digital / Câmera intraoral',description:'Permite abrir o exame digital, ativar a câmera e capturar imagens intraorais.'});
+    return data;
+  }
   function defaultMap(data,role){const map={};(data?.defaults||[]).filter(r=>r.role===role).forEach(r=>map[r.permission_key]=r.allowed===true);return map;}
   function overrideMap(data,role){const map={};(data?.clinic_role||[]).filter(r=>r.role===role).forEach(r=>map[r.permission_key]=r.allowed===true);return map;}
   function userOverrideMap(data,authUid){const map={};(data?.users||[]).filter(r=>String(r.auth_uid)===String(authUid)).forEach(r=>map[r.permission_key]=r.allowed===true);return map;}
@@ -55,7 +61,7 @@
   }
   async function loadGlobal(showToast=false){
     ensureGlobalPanel();const body=document.getElementById('aclGlobalBody');if(body)body.innerHTML='<div class="helper">Carregando permissões...</div>';
-    try{globalData=await call({action:'list_global'});renderGlobalRole(selectedRole);if(showToast)note('Permissões globais atualizadas.','success');}
+    try{globalData=ensureIntraoralPermission(await call({action:'list_global'}));renderGlobalRole(selectedRole);if(showToast)note('Permissões globais atualizadas.','success');}
     catch(e){console.error(e);if(body)body.innerHTML=`<div class="helper">${esc(e.message||'Não foi possível carregar as permissões.')}</div>`;}
   }
   async function saveGlobal(){
@@ -126,7 +132,7 @@
   async function loadClinic(clinicId,force=false){
     if(!clinicId||state.selectedClinicDetails?.__loading)return;if(!force&&clinicData&&String(clinicId)===String(lastClinicId)){renderClinic();return;}lastClinicId=String(clinicId);
     const section=ensureClinicSection();if(section){const body=section.querySelector('#aclClinicRoleBody');if(body)body.innerHTML='<div class="helper">Carregando permissões...</div>';}
-    try{clinicData=await call(currentClinicPayload('list_clinic'));renderClinic();}catch(e){console.error(e);const body=document.querySelector('#detailAclSection #aclClinicRoleBody');if(body)body.innerHTML=`<div class="helper">${esc(e.message||'Não foi possível carregar as permissões.')}</div>`;}
+    try{clinicData=ensureIntraoralPermission(await call(currentClinicPayload('list_clinic')));renderClinic();}catch(e){console.error(e);const body=document.querySelector('#detailAclSection #aclClinicRoleBody');if(body)body.innerHTML=`<div class="helper">${esc(e.message||'Não foi possível carregar as permissões.')}</div>`;}
   }
   function watchDetail(){
     const root=document.getElementById('detailContent');if(!root)return;const observer=new MutationObserver(()=>{clearTimeout(clinicLoadTimer);clinicLoadTimer=setTimeout(()=>{if(state.selectedClinicId&&!state.selectedClinicDetails?.__loading)loadClinic(state.selectedClinicId,true);},80);});observer.observe(root,{childList:true,subtree:false});
