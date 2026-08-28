@@ -1,6 +1,6 @@
 (function(){
   'use strict';
-  const BUILD='billing-v1-14-planos-comparativos-20260828';
+  const BUILD='billing-v1-21-ciclo-anual-disponibilidade-20260828';
   const SUPABASE_URL='https://nsqpslierpulanxvsxaw.supabase.co';
   const ANON_KEY='sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ';
   const ENDPOINT=`${SUPABASE_URL}/functions/v1/billing-client`;
@@ -86,7 +86,20 @@
     const featureList=p=>{const f=p?.features||{};return FEATURE_LABELS.filter(([key])=>key==='intraoral'?(f[key]??'enabled')==='enabled':f[key]==='enabled').map(([,label])=>label);};
     const modal=body.closest('.billingModal');if(modal){const visibleCount=Math.min(Math.max(plans.length,1),5);modal.style.width=`min(${Math.max(620,visibleCount*250+36)}px, 96vw)`;}
     const prefill=data?.checkout_profile||{};body.innerHTML=`<div class="billingPlans" style="--billing-plan-count:${plans.length}">${plans.map(p=>`<div class="billingPlan ${p.id===selected?'selected':''}" data-plan-id="${esc(p.id)}"><div class="billingPlanTop"><span class="billingPlanIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="M3 9h18"></path><path d="M7 15h4"></path><path d="M16.5 13.5v3"></path><path d="M15 15h3"></path></svg></span><strong>${esc(p.name)}</strong></div><div class="billingPlanPrice">${brl(p.price_monthly)}/mês</div>${p.price_yearly?`<div class="muted" style="margin-top:4px">${brl(p.price_yearly)}/ano</div>`:''}<div class="billingPlanDescription muted">${esc(p.description||'')}</div><div class="billingPlanIncludes"><div class="billingPlanIncludesTitle">Inclui</div><ul class="billingPlanFeatures">${featureList(p).map(label=>`<li>${esc(label)}</li>`).join('')}</ul></div></div>`).join('')}</div><div class="billingFormGrid"><div><label>Ciclo</label><select id="billingCycle"><option value="monthly">Mensal</option><option value="yearly">Anual</option></select></div><details class="billingDetails"><summary>Dados de cobrança</summary><div class="billingDetailsBody"><div class="billingFormGrid"><div><label>CPF/CNPJ do responsável</label><input id="billingDocument" inputmode="numeric" placeholder="Somente números" value="${esc(prefill.document_number||'')}"></div><div><label>Nome / razão social</label><input id="billingLegalName" value="${esc(prefill.legal_name||data?.clinic?.name||'')}"></div><div><label>E-mail</label><input id="billingEmail" type="email" value="${esc(prefill.email||data?.user?.email||'')}"></div><div><label>WhatsApp</label><input id="billingPhone" inputmode="tel" placeholder="DDD + número" value="${esc(prefill.phone||'')}"></div></div></div></details><div class="full"><label>Forma de pagamento</label><div class="billingMethods"><button type="button" class="billingMethod selected" data-method="pix">Pix</button><button type="button" class="billingMethod" data-method="boleto">Boleto</button><button type="button" class="billingMethod" data-method="card">Cartão</button></div><div class="muted" style="font-size:12px;margin-top:6px">Cartão é concluído no checkout seguro do provedor; o Cronos não recebe nem armazena os dados do cartão.</div></div></div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn ok" id="billingCreateCheckout" type="button">Gerar pagamento</button></div><div id="billingCheckoutResult"></div>`;
-    let planId=selected,method='pix';body.querySelectorAll('.billingPlan').forEach(n=>n.onclick=()=>{planId=n.dataset.planId;body.querySelectorAll('.billingPlan').forEach(x=>x.classList.toggle('selected',x===n));});body.querySelectorAll('.billingMethod').forEach(n=>n.onclick=()=>{method=n.dataset.method;body.querySelectorAll('.billingMethod').forEach(x=>x.classList.toggle('selected',x===n));});
+    let planId=selected,method='pix';
+    const cycleSelect=body.querySelector('#billingCycle');
+    const updateCycleAvailability=()=>{
+      const currentPlan=plans.find(p=>String(p.id)===String(planId));
+      const yearlyOption=cycleSelect?.querySelector('option[value="yearly"]');
+      const hasYearly=Number(currentPlan?.price_yearly||0)>0;
+      if(yearlyOption){
+        yearlyOption.disabled=!hasYearly;
+        yearlyOption.textContent=hasYearly?'Anual':'Anual (indisponível)';
+      }
+      if(!hasYearly&&cycleSelect?.value==='yearly')cycleSelect.value='monthly';
+    };
+    body.querySelectorAll('.billingPlan').forEach(n=>n.onclick=()=>{planId=n.dataset.planId;body.querySelectorAll('.billingPlan').forEach(x=>x.classList.toggle('selected',x===n));updateCycleAvailability();});body.querySelectorAll('.billingMethod').forEach(n=>n.onclick=()=>{method=n.dataset.method;body.querySelectorAll('.billingMethod').forEach(x=>x.classList.toggle('selected',x===n));});
+    updateCycleAvailability();
     body.querySelector('#billingCreateCheckout').onclick=async e=>{const btn=e.currentTarget,res=body.querySelector('#billingCheckoutResult');btn.disabled=true;btn.textContent='Gerando...';res.innerHTML='';try{const out=await call('create_checkout',{plan_id:planId,billing_cycle:body.querySelector('#billingCycle').value,payment_method:method,document_number:body.querySelector('#billingDocument').value,legal_name:body.querySelector('#billingLegalName').value,email:body.querySelector('#billingEmail').value,phone:body.querySelector('#billingPhone').value});renderCheckoutResult(out.checkout,res);}catch(err){res.innerHTML=`<div class="muted" style="margin-top:12px">${esc(err.message||err)}</div>`;}finally{btn.disabled=false;btn.textContent='Gerar pagamento';}};
   }
   function renderCheckoutResult(checkout,host){
