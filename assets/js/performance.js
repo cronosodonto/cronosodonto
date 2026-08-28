@@ -547,8 +547,23 @@
     return `<div class="perfMini" title="${esc(label||`${pct.toFixed(1).replace('.',',')}% do mês anterior`)}"><div class="perfMiniFill" style="width:${pct}%;background-size:${bg}"></div></div><span class="perfMiniText">${pct.toFixed(1).replace('.',',')}%</span>`;
   }
 
-  function render(){
+  let lastRenderFingerprint='';
+  function performanceFingerprint(data){
+    try{
+      const series=(data?.series||[]).map(x=>[x.monthKey,Number(x.value||0),Number(x.diff||0),Number(x.pct||0),!!x.isFuture,!!x.isSelected]);
+      return JSON.stringify([data?.selectedYear||'',data?.selectedMonthKey||'',series]);
+    }catch(_){return ''}
+  }
+
+  function render(options={}){
     css(); const v=ensureView(); const data=buildPerformanceData(); const series=data.series||[];
+    const fingerprint=performanceFingerprint(data);
+    const force=options===true||options?.force===true;
+    if(!force && fingerprint && fingerprint===lastRenderFingerprint && v.querySelector('.perfWrap')){
+      requestAnimationFrame(()=>drawChart($('perfHistoryChart'),series));
+      return;
+    }
+    lastRenderFingerprint=fingerprint;
     const selectedYear=data.selectedYear||currentYear();
     const years=Array.isArray(data.years)&&data.years.length?data.years:[currentYear()];
     const historicalSeries=series.filter(x=>!x.isFuture);
@@ -713,7 +728,11 @@
     css();ensureView();ensureNav();bindRecovery();restore();hide();
     setInterval(()=>{try{ensureNav(); if($(VIEW_ID)&&!$(VIEW_ID).classList.contains('hidden')) render();}catch(_){}},9000);
     try{
-      const obs=new MutationObserver(()=>setTimeout(redrawIfOpen,60));
+      let themeTimer=null;
+      const obs=new MutationObserver(()=>{
+        clearTimeout(themeTimer);
+        themeTimer=setTimeout(redrawIfOpen,120);
+      });
       obs.observe(document.documentElement,{attributes:true,attributeFilter:['class']});
     }catch(_){}
   }
