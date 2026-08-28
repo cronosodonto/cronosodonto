@@ -3,7 +3,7 @@
   const BUILD='billing-admin-v1-6-20260827';
   const ENDPOINT='billing-admin';
   const FEATURES=[
-    ['dashboard','Dashboard'],['todayCronos','Hoje no Cronos'],['performance','Performance'],['leads','Leads'],['kanban','Funil'],['tasks','Tarefas'],['installments','Recebimentos'],['creditSimulator','Simulador de Crédito'],['riskAnalysis','Análise de Risco'],['flows','Fluxos Assistidos'],['users','Usuários'],['settings','Configurações']
+    ['dashboard','Dashboard'],['todayCronos','Hoje no Cronos'],['performance','Performance'],['leads','Leads'],['kanban','Funil'],['tasks','Tarefas'],['installments','Recebimentos'],['creditSimulator','Simulador de Crédito'],['riskAnalysis','Análise de Risco'],['flows','Fluxos Assistidos'],['intraoral','Exame Digital / Câmera intraoral'],['users','Usuários'],['settings','Configurações']
   ];
   let shared=null,overview=null,detailTimer=null;
   function publishBillingSnapshots(extra){

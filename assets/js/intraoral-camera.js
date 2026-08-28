@@ -1435,7 +1435,10 @@ function syncExamNav(actorOverride){
   if(window.__CRONOS_BOOTING__===true || window.__CRONOS_INITIAL_UI_COMMITTED__!==true){
     return false;
   }
-  const allowed=window.CronosPermissions?.isValidated?.()===true&&can('exam.capture',actorOverride);
+  const roleAllowed=window.CronosPermissions?.isValidated?.()===true&&can('exam.capture',actorOverride);
+  let planVisible=true;
+  try{if(typeof window.CRONOS_CAN_SEE_MODULE==='function')planVisible=window.CRONOS_CAN_SEE_MODULE('intraoral',actorOverride)===true}catch(_){planVisible=false}
+  const allowed=roleAllowed&&planVisible;
   try{n.style.removeProperty('display')}catch(_){n.style.display=''}
   n.classList.toggle('hidden',!allowed);
   n.setAttribute('aria-hidden',allowed?'false':'true');

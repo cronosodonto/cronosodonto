@@ -5414,7 +5414,10 @@ function applyExamNavVisibility(actor=currentActor()){
   const btn = el("navIntraoralCamera");
   if(!btn) return false;
   const aclValidated = window.CronosPermissions?.isValidated?.() === true;
-  const allowed = !!actor && aclValidated && hasPermission("exam.capture", actor);
+  const roleAllowed = !!actor && aclValidated && hasPermission("exam.capture", actor);
+  let planVisible = true;
+  try{ if(typeof window.CRONOS_CAN_SEE_MODULE === "function") planVisible = window.CRONOS_CAN_SEE_MODULE("intraoral", actor) === true; }catch(_){ planVisible = false; }
+  const allowed = roleAllowed && planVisible;
   // A RC2 usava display:none inline. Removê-lo aqui permite que a classe
   // centralizada reflita imediatamente cada novo estado validado da ACL.
   try{ btn.style.removeProperty("display"); }catch(_){ btn.style.display = ""; }
@@ -19971,6 +19974,7 @@ document.addEventListener("DOMContentLoaded", () => {
     creditSimulator: 'Simulador de Crédito',
     riskAnalysis: 'Análise de Risco',
     flows: 'Fluxos Assistidos',
+    intraoral: 'Exame Digital / Câmera intraoral',
     users: 'Usuários',
     settings: 'Configurações'
   };
@@ -19982,7 +19986,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const AUX_MODULE_BUTTONS = [
     { module:'todayCronos', selector:'#navHojeCronos' },
     { module:'creditSimulator', selector:'#navCreditoSimulator' },
-    { module:'performance', selector:'#navPerformance' }
+    { module:'performance', selector:'#navPerformance' },
+    { module:'intraoral', selector:'#navIntraoralCamera' }
   ];
 
   const SUB_FEATURES_WITHOUT_ROLE_GATE = new Set(['riskAnalysis','flows']);
@@ -20127,6 +20132,16 @@ document.addEventListener("DOMContentLoaded", () => {
     // passa por um estado intermediário incoerente.
     const billingState = getBillingFeatureStateByKey(key);
     if(billingState) return billingState;
+    // Planos criados antes da V1.19 não tinham a chave intraoral: preserva o acesso até serem editados/salvos.
+    if(key === 'intraoral'){
+      try{
+        const billing = window.__CRONOS_BILLING_STATUS__ || null;
+        const planFeatures = billing?.billing?.enforced ? billing?.billing?.features : null;
+        if(planFeatures && typeof planFeatures === 'object' && !Object.prototype.hasOwnProperty.call(planFeatures,'intraoral')){
+          return { enabled:true, visibility_mode:'enabled', source:'billing-plan-legacy-default' };
+        }
+      }catch(_){ }
+    }
     return sourceMap.get(key) || { visibility_mode:'locked', enabled:false, unresolved:true };
   }
 
@@ -20150,6 +20165,9 @@ document.addEventListener("DOMContentLoaded", () => {
   function roleAllowsModule(moduleKey, actorOverride){
     const key = String(moduleKey || '').trim();
     if(!key) return false;
+    if(key === 'intraoral'){
+      try{ return window.CronosPermissions?.isValidated?.() === true && hasPermission('exam.capture', actorOverride || (typeof currentActor === 'function' ? currentActor() : null)); }catch(_err){ return false; }
+    }
     if(SUB_FEATURES_WITHOUT_ROLE_GATE.has(key)) return true;
     try{
       if(typeof window.__CRONOS_ROLE_CAN_ACCESS_MODULE === 'function') return window.__CRONOS_ROLE_CAN_ACCESS_MODULE(key, actorOverride);
@@ -20355,6 +20373,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if(btn.id === 'navHojeCronos') return 'todayCronos';
     if(btn.id === 'navCreditoSimulator') return 'creditSimulator';
     if(btn.id === 'navPerformance') return 'performance';
+    if(btn.id === 'navIntraoralCamera') return 'intraoral';
     return btn.getAttribute && btn.getAttribute('data-cronos-feature-module') || '';
   }
 
@@ -20898,7 +20917,7 @@ async function fetchFeatureAccess(force, actorOverride){
   }
 
   function handleAuxFeatureGateEvent(ev){
-    const btn = ev.target && ev.target.closest ? ev.target.closest('#navHojeCronos,#navCreditoSimulator,#navPerformance') : null;
+    const btn = ev.target && ev.target.closest ? ev.target.closest('#navHojeCronos,#navCreditoSimulator,#navPerformance,#navIntraoralCamera') : null;
     if(!btn) return;
     const moduleKey = auxModuleFromButton(btn);
     if(!moduleKey) return;
