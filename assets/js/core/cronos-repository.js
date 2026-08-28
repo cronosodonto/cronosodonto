@@ -954,11 +954,12 @@
     if(state.processing || state.blocked || !state.enabled || !state.queue.length) return;
     state.processing = true;
     emit("cronos:persistence-saving", { count:state.queue.length });
-    updateIndicator("saving", "Salvando...");
 
     try{
       while(state.queue.length && !state.blocked){
         const mutation = state.queue[0];
+        const suppressVisualFeedback = mutation?.suppressVisualFeedback === true;
+        if(!suppressVisualFeedback) updateIndicator("saving", "Salvando...");
         try{
           if(state.activeOperationId){
             throw new CronosPersistenceError("Já existe um commit ativo nesta aba.", {
@@ -986,7 +987,7 @@
           persistQueue();
           resolveWaiter(mutation.operationId, true);
           emit("cronos:persistence-saved", { operationId:mutation.operationId, result });
-          updateIndicator("saved", "Salvo");
+          if(!suppressVisualFeedback) updateIndicator("saved", "Salvo");
         }catch(error){
           state.lastError = error;
           const conflict = isConflictError(error);
@@ -1057,32 +1058,34 @@
           );
           state.lastError = wrapped;
           emit(conflict ? "cronos:persistence-conflict" : "cronos:persistence-error", { error:wrapped, mutation });
-          updateIndicator(
-            conflict || infrastructureBusy || commitBusy ? "error" : "pending",
-            conflict
-              ? "Conflito: recarregue a página"
-              : commitBusy
-                ? "Outra aba está salvando"
-                : infrastructureBusy
-                  ? "Tempo excedido: recarregue"
-                  : "Não foi possível salvar"
-          );
-          notify(
-            conflict
-              ? "Alteração concorrente detectada"
-              : commitBusy
-                ? "Outra aba está salvando"
-                : infrastructureBusy
-                  ? "Salvamento não confirmado"
-                  : "Alteração ainda não confirmada",
-            conflict
-              ? "Outro computador atualizou o mesmo registro. Recarregue a página para evitar sobrescrever dados."
-              : commitBusy
-                ? "A ação desta aba foi cancelada antes do envio. Aguarde a outra aba terminar e recarregue os dados."
-                : infrastructureBusy
-                  ? "O Cronos interrompeu a espera e não repetirá a operação sozinho. Recarregue para conferir o estado oficial antes de tentar novamente."
-                  : "O Cronos preservou a tentativa neste computador. Confira sua conexão antes de sair."
-          );
+          if(!suppressVisualFeedback){
+            updateIndicator(
+              conflict || infrastructureBusy || commitBusy ? "error" : "pending",
+              conflict
+                ? "Conflito: recarregue a página"
+                : commitBusy
+                  ? "Outra aba está salvando"
+                  : infrastructureBusy
+                    ? "Tempo excedido: recarregue"
+                    : "Não foi possível salvar"
+            );
+            notify(
+              conflict
+                ? "Alteração concorrente detectada"
+                : commitBusy
+                  ? "Outra aba está salvando"
+                  : infrastructureBusy
+                    ? "Salvamento não confirmado"
+                    : "Alteração ainda não confirmada",
+              conflict
+                ? "Outro computador atualizou o mesmo registro. Recarregue a página para evitar sobrescrever dados."
+                : commitBusy
+                  ? "A ação desta aba foi cancelada antes do envio. Aguarde a outra aba terminar e recarregue os dados."
+                  : infrastructureBusy
+                    ? "O Cronos interrompeu a espera e não repetirá a operação sozinho. Recarregue para conferir o estado oficial antes de tentar novamente."
+                    : "O Cronos preservou a tentativa neste computador. Confira sua conexão antes de sair."
+            );
+          }
           break;
         }
       }
@@ -1127,6 +1130,7 @@
       changes,
       keepPendingOnFailure:options.keepPendingOnFailure !== false,
       source:String(options.source || options.reason || "frontend_action"),
+      suppressVisualFeedback:options.suppressVisualFeedback === true,
       createdAt:new Date().toISOString()
     };
 

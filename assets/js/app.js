@@ -9435,7 +9435,8 @@ function saveDB(db, options={}){
     // skipCloud também passam pela camada central; se não houver diferença,
     // o repositório retorna imediatamente sem gerar operação.
     return window.CronosRepository.saveOperationalState(DB, {
-      keepPendingOnFailure:options.keepPendingOnFailure !== false
+      keepPendingOnFailure:options.keepPendingOnFailure !== false,
+      suppressVisualFeedback:options.suppressVisualFeedback === true
     }).then(ok=>{
       if(!ok && !options.silent){
         toast("Alteração não confirmada", "Não foi possível salvar. Não atualize a página antes de resolver o aviso.");
@@ -9667,7 +9668,8 @@ async function cronosPersistAutomaticTaskRepair(db, beforeTasks, options={}){
         else batch.tasks.deletes.push(operation.id);
       });
       const ok = await window.CronosRepository.commitTargetedBatch(batch, {
-        keepPendingOnFailure:false
+        keepPendingOnFailure:false,
+        suppressVisualFeedback:options.silent === true
       });
       if(!ok){
         if(!options.silent) toast("Tarefas não sincronizadas", "O reparo automático será tentado novamente no próximo acesso.");
@@ -9683,7 +9685,7 @@ async function cronosPersistAutomaticTaskRepair(db, beforeTasks, options={}){
     return true;
   }
 
-  return saveDB(DB, { immediate:true, silent:options.silent === true });
+  return saveDB(DB, { immediate:true, silent:options.silent === true, suppressVisualFeedback:options.silent === true });
 }
 
 window.cronosPersistAutomaticTaskRepair = cronosPersistAutomaticTaskRepair;
