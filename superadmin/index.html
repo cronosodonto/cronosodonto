@@ -3872,6 +3872,7 @@
 
   let globalFeatureDraft = {};
   let clinicFeatureDraft = {};
+  let clinicFeatureOriginalDraft = {};
 
   function ensureFeatureEndpoints(){
     CONFIG.endpoints.listFeatureAccess = CONFIG.endpoints.listFeatureAccess || 'list-feature-access';
@@ -4112,9 +4113,17 @@
       await withButtonLoading(button, 'Salvando...', async () => {
         const target = document.getElementById('detailFeatureAccessBody');
         if(target?.dataset.billingManaged === 'true'){
+          // Envia somente o que mudou. "inherit" vira null para remover apenas
+          // aquela exceção, sem substituir silenciosamente as demais.
           const overrides = {};
-          for(const [featureKey, mode] of entries){ if(mode !== 'inherit') overrides[featureKey] = mode; }
-          await callEdgeFunction(CONFIG.endpoints.billingAdmin, { action:'update_feature_overrides', clinic_id:clinicId, feature_overrides:overrides });
+          for(const [featureKey, mode] of entries){
+            const before = clinicFeatureOriginalDraft?.[featureKey] ?? 'inherit';
+            if(mode === before) continue;
+            overrides[featureKey] = mode === 'inherit' ? null : mode;
+          }
+          if(Object.keys(overrides).length){
+            await callEdgeFunction(CONFIG.endpoints.billingAdmin, { action:'update_feature_overrides', clinic_id:clinicId, feature_overrides:overrides });
+          }
         }else{
           for(const [featureKey, mode] of entries){
             const payload = { scope:'clinic', clinic_id:clinicId, feature_key:featureKey, mode };
@@ -4184,6 +4193,7 @@
           };
         });
         clinicFeatureDraft = Object.fromEntries(rows.map((row)=>[row.key,row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode]));
+        clinicFeatureOriginalDraft = { ...clinicFeatureDraft };
         const hint=document.getElementById('billingFeatureAuthorityHint');
         if(hint) hint.querySelector('.helper').textContent=`${billingData?.plan?.name || 'O plano atual'} define a matriz padrão. Os controles abaixo salvam somente exceções para esta clínica.`;
         target.innerHTML = rows.map(clinicFeatureCard).join('');
@@ -4192,6 +4202,7 @@
         const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, { clinic_id: clinicId });
         const rows = mergeFeatureRows(data?.features);
         clinicFeatureDraft = Object.fromEntries(rows.map((row) => [row.key, row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode]));
+        clinicFeatureOriginalDraft = { ...clinicFeatureDraft };
         const hint=document.getElementById('billingFeatureAuthorityHint');
         if(hint) hint.querySelector('.helper').textContent='Esta clínica ainda usa controle legado. “Usar padrão global” herda a configuração definida no topo do Superadmin.';
         target.innerHTML = rows.map(clinicFeatureCard).join('');
