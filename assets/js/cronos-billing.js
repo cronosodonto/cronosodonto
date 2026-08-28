@@ -27,7 +27,7 @@
     const force=options===true||options?.force===true;
     if(!force&&statusCache&&Date.now()-statusAt<10000)return statusCache;
     if(statusPromise&&!force)return statusPromise;
-    const p=call('status').then(data=>{statusCache=data;statusAt=Date.now();window.__CRONOS_BILLING_STATUS__=data;renderSettings(data);return data;}).finally(()=>{if(statusPromise===p)statusPromise=null;});
+    const p=call('status').then(data=>{statusCache=data;statusAt=Date.now();window.__CRONOS_BILLING_STATUS__=data;renderSettings(data);try{document.dispatchEvent(new CustomEvent('cronos:billing-status-updated',{detail:{status:data}}));}catch(_){ }return data;}).finally(()=>{if(statusPromise===p)statusPromise=null;});
     statusPromise=p; return p;
   }
   function reset(){statusCache=null;statusAt=0;statusPromise=null;window.__CRONOS_BILLING_STATUS__=null;}

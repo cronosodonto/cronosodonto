@@ -42,10 +42,25 @@
     try{ if(typeof window.toast === "function") return window.toast(title, msg); }catch(_){}
     console.log("[Fluxos]", title, msg);
   }
+  function billingFlowsState(){
+    try{
+      const status = window.__CRONOS_BILLING_STATUS__ || null;
+      if(status?.billing?.enforced !== true) return null;
+      const features = status?.billing?.features;
+      if(!features || typeof features !== 'object' || !Object.prototype.hasOwnProperty.call(features,'flows')) return null;
+      const mode = String(features.flows || '').trim().toLowerCase();
+      if(!['enabled','locked','hidden'].includes(mode)) return null;
+      return mode;
+    }catch(_){ return null; }
+  }
   function canSeeFlows(){
+    const billingMode = billingFlowsState();
+    if(billingMode) return billingMode !== 'hidden';
     try{ return !window.CRONOS_CAN_SEE_MODULE || window.CRONOS_CAN_SEE_MODULE('flows'); }catch(_){ return true; }
   }
   function canOpenFlows(){
+    const billingMode = billingFlowsState();
+    if(billingMode) return billingMode === 'enabled';
     try{ return !window.CRONOS_CAN_OPEN_MODULE || window.CRONOS_CAN_OPEN_MODULE('flows'); }catch(_){ return true; }
   }
   function denyFlowsAccess(){
@@ -1367,6 +1382,13 @@
     try{ window.CRONOS_TODAY?.render?.(); }catch(_){}
     try{ window.CRONOS_TODAY?.updateNavCount?.(); }catch(_){}
   }
+
+  document.addEventListener('cronos:billing-status-updated', ()=>{
+    try{ ensureSettingsCard(true); enhanceSettingsUI(); }catch(_){ }
+  });
+  document.addEventListener('cronos:feature-access-updated', ()=>{
+    try{ ensureSettingsCard(true); enhanceSettingsUI(); }catch(_){ }
+  });
 
   function bootObserver(){
     const root = $("app") || document.body;
