@@ -20111,10 +20111,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const key = normalizeFeatureKey(featureKeyFor(featureKey));
     if(!key) return { visibility_mode:'locked', enabled:false, unresolved:true };
 
+    // Billing é a autoridade comercial quando a assinatura está ativa.
+    // IMPORTANTE: esta consulta precisa acontecer ANTES do fail-closed da Edge
+    // legada de Feature Access. Caso contrário, uma validação legada pendente ou
+    // indisponível bloqueia Fluxos mesmo quando plano + exceção da clínica já
+    // resultam em "enabled" no Billing.
+    const billingState = getBillingFeatureStateByKey(key);
+    if(billingState) return billingState;
+
+    // Fora do Billing, mantém o contrato fail-closed do Feature Access legado.
     // Durante uma revalidação da MESMA clínica, mantém o último estado já
-    // confirmado até o novo request terminar. Se o request falhar, o fluxo
-    // volta a fail-closed no commit de falha; isso evita o menu piscar/variar
-    // enquanto a política ainda está em voo.
+    // confirmado até o novo request terminar.
     let sourceMap = featureStateMap;
     if(!featureAccessValidated){
       const canUseCommittedWhilePending = !!featureFetchPromise &&
@@ -20127,11 +20134,8 @@ document.addEventListener("DOMContentLoaded", () => {
       sourceMap = committedFeatureStateMap;
     }
 
-    // A matriz comercial do plano é aplicada na leitura também. Assim, se o
-    // Billing atualizar um instante antes/depois do Feature Access, o menu não
-    // passa por um estado intermediário incoerente.
-    const billingState = getBillingFeatureStateByKey(key);
-    if(billingState) return billingState;
+    const effectiveState = sourceMap.get(key) || null;
+    if(effectiveState) return effectiveState;
     // Planos criados antes da V1.19 não tinham a chave intraoral: preserva o acesso até serem editados/salvos.
     if(key === 'intraoral'){
       try{
@@ -20563,27 +20567,13 @@ document.addEventListener("DOMContentLoaded", () => {
       throw new Error('Resposta de módulos sem nenhuma feature reconhecida e válida.');
     }
 
-    // Quando uma assinatura automática está ativa, a matriz do plano é a
-    // autoridade comercial final. O motor de módulos existente continua
-    // responsável pela validação online e a assinatura apenas compõe o plano.
-    try{
-      const billing = window.__CRONOS_BILLING_STATUS__ || null;
-      const planFeatures = billing?.billing?.enforced ? billing?.billing?.features : null;
-      if(planFeatures && typeof planFeatures === 'object'){
-        Object.entries(planFeatures).forEach(([rawKey, rawMode])=>{
-          const key = canonicalFeatureKey(rawKey);
-          const mode = normalizeFeatureKey(rawMode);
-          if(!key || !VALID_FEATURE_VISIBILITY.has(mode)) return;
-          acceptedKeys.add(key);
-          featureStateMap.set(normalizeFeatureKey(key), {
-            enabled: mode === 'enabled',
-            visibility_mode: mode
-          });
-        });
-      }
-    }catch(error){
-      console.warn('Cronos Billing: falha ao aplicar matriz do plano; mantendo módulos validados.', error);
-    }
+    // IMPORTANTE: a Edge get-clinic-feature-access já devolve o estado EFETIVO
+    // da clínica (plano + padrão global + exceções personalizadas). Não devemos
+    // reaplicar a matriz bruta do Billing aqui, pois isso sobrescreve overrides
+    // válidos do Superadmin — por exemplo, Fluxos Assistidos = Liberado em uma
+    // clínica cujo plano base mantém flows bloqueado. O Billing continua sendo
+    // usado apenas como fallback em getFeatureStateByKey quando a resposta
+    // efetiva não contém uma chave reconhecida.
     return { accepted_keys:Array.from(acceptedKeys), normalized_rows:normalizedRows };
   }
 
