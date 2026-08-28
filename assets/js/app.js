@@ -10399,6 +10399,11 @@ function showApp(actor, options={}){
   // A rotina continua existindo, mas roda em segundo plano depois do app aparecer.
   const deferTaskRepair = async ()=>{
     try{
+      // Perfis sem acesso a Tarefas (ex.: Dentista) não devem executar
+      // manutenção automática desse módulo no login. Além de ser inútil para
+      // esses perfis, a tentativa de persistência pode ser corretamente negada
+      // pelo backend e deixar o indicador global preso em "Não foi possível salvar".
+      if(!canAccessView("tasks", actor)) return;
       const db = loadDB();
       const beforeTasks = (Array.isArray(db.tasks) ? db.tasks : []).map(cronosCloneTaskRepairValue);
       const before = beforeTasks.length;
@@ -19449,6 +19454,14 @@ function cronosUpdateTasksSidebarPill({ repair=false } = {}){
     const db = loadDB();
     const actor = currentActor();
     if(!db || !actor) return;
+
+    // Não executa reparo/persistência invisível de tarefas para perfis que nem
+    // possuem acesso ao módulo. O contador também não precisa ser atualizado.
+    if(!canAccessView("tasks", actor)){
+      const pill = document.getElementById("pillTasks");
+      if(pill) pill.textContent = "";
+      return;
+    }
 
     if(repair && typeof syncInstallmentTasks === "function"){
       const beforeTasks = (Array.isArray(db.tasks) ? db.tasks : []).map(cronosCloneTaskRepairValue);
