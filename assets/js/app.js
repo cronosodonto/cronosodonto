@@ -23224,6 +23224,22 @@ window.CRONOS_PROC_UI = {
         const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
         const visiblePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
         const totals = calcFichaTotals(visiblePlan || [], entry);
+      const discountPct = Number(totals.descontoPct || 0);
+      const discountAudit = activeEvaluation && activeEvaluation.discountAudit && typeof activeEvaluation.discountAudit === 'object' ? activeEvaluation.discountAudit : null;
+      const discountNeedsReason = discountPct > 30;
+      const discountExceptional = discountPct > 50;
+      const discountAuditCurrent = !!(discountAudit && String(discountAudit.reason || '').trim() && Math.abs(Number(discountAudit.discountPct || 0) - discountPct) < 0.01);
+      const discountAuditHTML = discountNeedsReason ? `
+        <div class="fichaDiscountAudit" style="grid-column:1/-1;margin-top:2px;padding:12px 14px;border-radius:14px;border:1px solid ${discountExceptional ? 'rgba(239,68,68,.35)' : 'rgba(245,158,11,.35)'};background:${discountExceptional ? 'rgba(239,68,68,.08)' : 'rgba(245,158,11,.08)'}">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div>
+              <b>${discountExceptional ? 'Desconto excepcional' : 'Desconto elevado'} • ${discountPct.toFixed(2)}%</b>
+              <div class="small muted" style="margin-top:4px">${discountAuditCurrent ? `Justificativa interna registrada: ${escapeHTML(String(discountAudit.reason || ''))}` : 'Registre uma justificativa administrativa para este desconto.'}</div>
+              ${discountAuditCurrent ? `<div class="small muted" style="margin-top:3px">Por ${escapeHTML(String(discountAudit.actorName || 'usuário'))} • ${escapeHTML(String(discountAudit.recordedAtLabel || ''))}</div>` : ''}
+            </div>
+            ${fichaReadOnly ? '' : `<button type="button" class="btn ${discountExceptional ? 'danger' : ''}" onclick="CRONOS_FICHA_UI.registerDiscountJustification()">${discountAuditCurrent ? 'Alterar justificativa' : 'Registrar justificativa'}</button>`}
+          </div>
+        </div>` : (discountPct > 20 ? `<div style="grid-column:1/-1" class="small muted">Atenção: desconto de ${discountPct.toFixed(2)}%.</div>` : '');
         __setFichaText('fichaTotalBase', moneyBR(totals.totalBase));
         __setFichaText('fichaTotalFechado', moneyBR(totals.totalFechado));
         __setFichaText('fichaTotalDesconto', moneyBR(totals.totalDesconto));
@@ -23602,6 +23618,7 @@ window.CRONOS_PROC_UI = {
                 <div class="totalBox"><span class="label">Total realizado</span><div class="value" id="fichaTotalFeito">${moneyBR(totals.totalFeito)}</div></div>
                 <div class="totalBox"><span class="label">Total pago</span><div class="value" id="fichaTotalPago">${moneyBR(totals.totalPago)}</div></div>
                 <div class="totalBox"><span class="label">Em aberto</span><div class="value" id="fichaTotalAberto">${moneyBR(totals.emAberto)}</div></div>
+                ${discountAuditHTML}
                 ${window.CronosPermissions?.can?.('exam.view', currentActor()) ? `<div class="totalBox cronosExamCard"><div class="cronosExamText"><span class="label">Exames digitais</span><div class="value">Galeria de imagens</div><small>Visualizar fotos vinculadas ao paciente</small></div><button type="button" class="btn primary cronosExamOpenBtn" data-cronos-exam-entry="${escapeHTML(String(entry.id || entry._id || ''))}" onclick="event.preventDefault();event.stopPropagation();window.CRONOS_EXAM_DIGITAL?.openForPatient('${escapeHTML(String(entry.id || entry._id || ''))}')">Abrir galeria</button></div>` : ''}
               </div>
             </div>
@@ -23910,6 +23927,39 @@ window.CRONOS_PROC_UI = {
       },
       setPrice(v){ const s = getFichaState(); if(!s) return; s.price = v; },
       setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; const ficha = ensureFicha(entry); const active = getActiveFichaEvaluation(ficha, entry); setFichaEvaluationObservation(ficha, active.id, v); saveFichaMutation(db, entry); },
+      registerDiscountJustification(){
+        const s = getFichaState(); if(!s) return;
+        const db = loadDB();
+        const entry = getEntryById(s.entryId); if(!entry) return;
+        const ficha = ensureFicha(entry);
+        const active = getActiveFichaEvaluation(ficha, entry);
+        const items = getFichaEvaluationItems(ficha, active.id);
+        const totals = calcFichaTotals(items || [], entry);
+        const pct = Number(totals.descontoPct || 0);
+        if(pct <= 30) return toast('Desconto', 'Este desconto não exige justificativa.');
+        const previous = String(active?.discountAudit?.reason || '');
+        const reason = window.prompt(`${pct > 50 ? 'Desconto excepcional' : 'Desconto elevado'} de ${pct.toFixed(2)}%.\n\nInforme a justificativa administrativa interna:`, previous);
+        if(reason === null) return;
+        const clean = String(reason || '').trim();
+        if(!clean) return toast('Justificativa obrigatória', 'Informe o motivo do desconto para registrar.');
+        const actor = currentActor() || {};
+        const now = new Date();
+        active.discountAudit = {
+          reason: clean,
+          discountPct: pct,
+          discountAmount: Number(totals.totalDesconto || 0),
+          budgetAmount: Number(totals.totalFechado || 0),
+          tableAmount: Number(totals.totalBase || 0),
+          actorId: String(actor.id || actor.user_id || ''),
+          actorName: String(actor.name || actor.email || actor.role || 'Usuário'),
+          actorRole: String(actor.role || actor.kind || ''),
+          recordedAt: now.toISOString(),
+          recordedAtLabel: now.toLocaleString('pt-BR')
+        };
+        saveFichaMutation(db, entry);
+        renderFichaApp();
+        toast('Justificativa registrada ✅', `${pct.toFixed(2)}% de desconto • uso administrativo interno.`);
+      },
       async addToPlan(){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
