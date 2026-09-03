@@ -23224,22 +23224,6 @@ window.CRONOS_PROC_UI = {
         const activeEvaluation = getActiveFichaEvaluation(ficha, entry);
         const visiblePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
         const totals = calcFichaTotals(visiblePlan || [], entry);
-      const discountPct = Number(totals.descontoPct || 0);
-      const discountAudit = activeEvaluation && activeEvaluation.discountAudit && typeof activeEvaluation.discountAudit === 'object' ? activeEvaluation.discountAudit : null;
-      const discountNeedsReason = discountPct > 30;
-      const discountExceptional = discountPct > 50;
-      const discountAuditCurrent = !!(discountAudit && String(discountAudit.reason || '').trim() && Math.abs(Number(discountAudit.discountPct || 0) - discountPct) < 0.01);
-      const discountAuditHTML = discountNeedsReason ? `
-        <div class="fichaDiscountAudit" style="grid-column:1/-1;margin-top:2px;padding:12px 14px;border-radius:14px;border:1px solid ${discountExceptional ? 'rgba(239,68,68,.35)' : 'rgba(245,158,11,.35)'};background:${discountExceptional ? 'rgba(239,68,68,.08)' : 'rgba(245,158,11,.08)'}">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-            <div>
-              <b>${discountExceptional ? 'Desconto excepcional' : 'Desconto elevado'} • ${discountPct.toFixed(2)}%</b>
-              <div class="small muted" style="margin-top:4px">${discountAuditCurrent ? `Justificativa interna registrada: ${escapeHTML(String(discountAudit.reason || ''))}` : 'Registre uma justificativa administrativa para este desconto.'}</div>
-              ${discountAuditCurrent ? `<div class="small muted" style="margin-top:3px">Por ${escapeHTML(String(discountAudit.actorName || 'usuário'))} • ${escapeHTML(String(discountAudit.recordedAtLabel || ''))}</div>` : ''}
-            </div>
-            ${fichaReadOnly ? '' : `<button type="button" class="btn ${discountExceptional ? 'danger' : ''}" onclick="CRONOS_FICHA_UI.registerDiscountJustification()">${discountAuditCurrent ? 'Alterar justificativa' : 'Registrar justificativa'}</button>`}
-          </div>
-        </div>` : (discountPct > 20 ? `<div style="grid-column:1/-1" class="small muted">Atenção: desconto de ${discountPct.toFixed(2)}%.</div>` : '');
         __setFichaText('fichaTotalBase', moneyBR(totals.totalBase));
         __setFichaText('fichaTotalFechado', moneyBR(totals.totalFechado));
         __setFichaText('fichaTotalDesconto', moneyBR(totals.totalDesconto));
@@ -23548,6 +23532,22 @@ window.CRONOS_PROC_UI = {
       const visiblePlan = getFichaEvaluationItems(ficha, activeEvaluation.id);
       const visiblePlanIds = new Set(visiblePlan.map(item=>String(item.id)));
       const totals = calcFichaTotals(visiblePlan || [], entry);
+      const discountPct = Number(totals.descontoPct || 0);
+      const discountAudit = activeEvaluation && activeEvaluation.discountAudit && typeof activeEvaluation.discountAudit === 'object' ? activeEvaluation.discountAudit : null;
+      const discountNeedsReason = discountPct > 30;
+      const discountExceptional = discountPct > 50;
+      const discountAuditCurrent = !!(discountAudit && String(discountAudit.reason || '').trim() && Math.abs(Number(discountAudit.discountPct || 0) - discountPct) < 0.01);
+      const discountAuditHTML = discountNeedsReason ? `
+        <div class="fichaDiscountAudit" style="grid-column:1/-1;margin-top:2px;padding:12px 14px;border-radius:14px;border:1px solid ${discountExceptional ? 'rgba(239,68,68,.35)' : 'rgba(245,158,11,.35)'};background:${discountExceptional ? 'rgba(239,68,68,.08)' : 'rgba(245,158,11,.08)'}">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div>
+              <b>${discountExceptional ? 'Desconto excepcional' : 'Desconto elevado'} • ${discountPct.toFixed(2)}%</b>
+              <div class="small muted" style="margin-top:4px">${discountAuditCurrent ? `Justificativa interna registrada: ${escapeHTML(String(discountAudit.reason || ''))}` : 'Registre uma justificativa administrativa para este desconto.'}</div>
+              ${discountAuditCurrent ? `<div class="small muted" style="margin-top:3px">Por ${escapeHTML(String(discountAudit.actorName || 'usuário'))} • ${escapeHTML(String(discountAudit.recordedAtLabel || ''))}</div>` : ''}
+            </div>
+            ${fichaReadOnly ? '' : `<button type="button" class="btn ${discountExceptional ? 'danger' : ''}" onclick="CRONOS_FICHA_UI.registerDiscountJustification()">${discountAuditCurrent ? 'Alterar justificativa' : 'Registrar justificativa'}</button>`}
+          </div>
+        </div>` : (discountPct > 20 ? `<div style="grid-column:1/-1" class="small muted">Atenção: desconto de ${discountPct.toFixed(2)}%.</div>` : '');
       const selectedFichaItemIds = new Set((Array.isArray(state.selectedItemIds) ? state.selectedItemIds.map(String) : []).filter(id=>visiblePlanIds.has(id)));
       state.selectedItemIds = Array.from(selectedFichaItemIds);
       const selectedFichaItems = visiblePlan.filter(item=>selectedFichaItemIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
