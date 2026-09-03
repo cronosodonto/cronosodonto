@@ -10999,8 +10999,10 @@ function cronosFichaItemBudgetValue(item){
   ];
   for(const key of closedKeys){
     if(Object.prototype.hasOwnProperty.call(item, key)){
-      const n = parseMoney(item?.[key]);
-      if(n > 0) return n;
+      const raw = item?.[key];
+      // Um valor de orçamento explicitamente zerado é válido (ex.: item 100% descontado).
+      // Não pode cair no fallback de valor de tabela, senão Leads/Financeiro somam o item novamente.
+      if(raw !== null && raw !== undefined && String(raw).trim() !== "") return Math.max(0, parseMoney(raw));
     }
   }
   const genericKeys = ["value", "amount", "total"];
