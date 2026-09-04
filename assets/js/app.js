@@ -10370,7 +10370,48 @@ function refreshAuthMasters(){
   sel.disabled = (el("authMode").value === "master");
 }
 
+const CRONOS_LOGOUT_CLEAR_LOGIN_KEY = "cronos_logout_clear_login_v1323";
+
+function cronosShouldForceEmptyLoginForm(){
+  if(window.__CRONOS_FORCE_EMPTY_LOGIN_FORM__ === true) return true;
+  try{ return sessionStorage.getItem(CRONOS_LOGOUT_CLEAR_LOGIN_KEY) === "1"; }catch(_){ return false; }
+}
+
+function cronosClearLoginFormCredentials({ repeat=false } = {}){
+  const clear = ()=>{
+    try{
+      const form = el("authForm");
+      if(form && typeof form.reset === "function") form.reset();
+      const login = el("authLogin");
+      const pass = el("authPass");
+      if(login){
+        login.value = "";
+        login.removeAttribute("value");
+      }
+      if(pass){
+        pass.value = "";
+        pass.removeAttribute("value");
+        pass.type = "password";
+      }
+      const toggle = el("authPassToggle");
+      if(toggle){
+        toggle.setAttribute("aria-label", "Mostrar senha");
+        toggle.setAttribute("title", "Mostrar senha");
+      }
+    }catch(_){ }
+  };
+
+  clear();
+  if(repeat){
+    // Protege contra restaurações tardias do próprio DOM/estado da sessão antiga.
+    [0, 40, 120, 300, 700].forEach(ms=>setTimeout(clear, ms));
+  }
+}
+
 function showAuth(){
+  if(cronosShouldForceEmptyLoginForm()){
+    cronosClearLoginFormCredentials({ repeat:true });
+  }
   cronosSetInitialUiShield(false);
   window.__CRONOS_ACCESS_UI_SUSPENDED__ = false;
   try{ window.CRONOS_CLEAR_FICHA_VIEW?.(); }catch(_){ }
@@ -19639,6 +19680,12 @@ function cronosClearSensitiveBrowserData(){
 }
 
 function cronosInstantLogout({ supportRedirect=false }={}){
+  // V1.32.3 — logout seguro: nenhuma credencial digitada pode sobreviver
+  // à transição para a tela de login, mesmo que o DOM antigo seja reutilizado.
+  window.__CRONOS_FORCE_EMPTY_LOGIN_FORM__ = true;
+  try{ sessionStorage.setItem(CRONOS_LOGOUT_CLEAR_LOGIN_KEY, "1"); }catch(_){ }
+  cronosClearLoginFormCredentials({ repeat:true });
+
   // Marca o logout ANTES de cancelar rede/cache. Qualquer Promise antiga que
   // concluir daqui em diante pertence à sessão anterior e deve ser ignorada.
   window.__CRONOS_LOGOUT_IN_PROGRESS__ = true;
@@ -19847,6 +19894,11 @@ function chooseClinicForInternalLoginV454(candidates=[]){
 async function cronosHandleLoginSubmit(event){
   if(event && typeof event.preventDefault === "function") event.preventDefault();
   if(window.__CRONOS_LOGIN_BUSY__) return;
+
+  // O usuário voltou a digitar/enviar credenciais conscientemente. A partir daqui
+  // a trava de formulário vazio do logout anterior pode ser removida.
+  window.__CRONOS_FORCE_EMPTY_LOGIN_FORM__ = false;
+  try{ sessionStorage.removeItem(CRONOS_LOGOUT_CLEAR_LOGIN_KEY); }catch(_){ }
 
   // Novo login = nova geração de sessão. Isso invalida definitivamente qualquer
   // callback que tenha sobrevivido ao logout anterior.
