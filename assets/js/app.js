@@ -7156,7 +7156,26 @@ function showAccessNotice(decision){
 
   el("accessNoticeModal").classList.add("show");
 }
+function cronosSessionEpoch(){
+  const n = Number(window.__CRONOS_SESSION_EPOCH__ || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+function cronosBumpSessionEpoch(){
+  const next = cronosSessionEpoch() + 1;
+  window.__CRONOS_SESSION_EPOCH__ = next;
+  return next;
+}
+function cronosLogoutInProgress(){
+  return window.__CRONOS_LOGOUT_IN_PROGRESS__ === true;
+}
+function cronosEpochStillCurrent(epoch){
+  return !cronosLogoutInProgress() && Number(epoch) === cronosSessionEpoch();
+}
+
 function showAccessGate(decision){
+  // V1.32.2 — respostas assíncronas de ACL/Billing que terminarem depois do
+  // logout nunca podem substituir a tela de login por um bloqueio de acesso.
+  if(cronosLogoutInProgress()) return false;
   if(window.__CRONOS_ACCESS_UI_SUSPENDED__ === true){
     window.__CRONOS_ACCESS_UI_SUSPENDED__ = false;
     cronosSetInitialUiShield(false);
@@ -10381,6 +10400,8 @@ function showAuth(){
 }
 
 function showApp(actor, options={}){
+  // V1.32.2 — uma inicialização antiga não pode reabrir o app depois de Sair.
+  if(cronosLogoutInProgress()) return false;
   const keepSplash = !!options?.keepSplash;
   if(!keepSplash) hideBootSplash();
   if(!keepSplash){
@@ -18770,6 +18791,8 @@ async function cronosCommitInitialAccessUI(actor){
 }
 
 async function boot(options={}){
+  const __cronosBootEpoch = cronosSessionEpoch();
+  if(cronosLogoutInProgress()) return false;
   window.__CRONOS_ACCESS_UI_COMMITTED_AT__ = 0;
   window.__CRONOS_INITIAL_UI_COMMITTED__ = false;
   window.__CRONOS_ACCESS_UI_SUSPENDED__ = true;
@@ -18817,9 +18840,11 @@ async function boot(options={}){
   }
 
   await ensureCloudDBLoaded();
+  if(!cronosEpochStillCurrent(__cronosBootEpoch)) return false;
   if(options.actorAlreadySynced !== true){
     await syncCurrentCloudActor();
   }
+  if(!cronosEpochStillCurrent(__cronosBootEpoch)) return false;
 
   // Prioridade: usuário > clínica/cargo > padrão global.
   let aclValidated = false;
@@ -18892,6 +18917,7 @@ async function boot(options={}){
     featureAccessPromise
   ]);
   cronosReleasePolicyPrefetch();
+  if(!cronosEpochStillCurrent(__cronosBootEpoch)) return false;
   if(accessDecision?.mode && accessDecision.mode !== "allow"){
     return;
   }
@@ -19613,6 +19639,10 @@ function cronosClearSensitiveBrowserData(){
 }
 
 function cronosInstantLogout({ supportRedirect=false }={}){
+  // Marca o logout ANTES de cancelar rede/cache. Qualquer Promise antiga que
+  // concluir daqui em diante pertence à sessão anterior e deve ser ignorada.
+  window.__CRONOS_LOGOUT_IN_PROGRESS__ = true;
+  cronosBumpSessionEpoch();
   try{ cancelPendingCloudSync(); }catch(_){ }
   try{ suppressCloudFailureToasts(6000); }catch(_){ }
   try{ document.dispatchEvent(new CustomEvent("cronos:before-logout")); }catch(_){ }
@@ -19817,6 +19847,11 @@ function chooseClinicForInternalLoginV454(candidates=[]){
 async function cronosHandleLoginSubmit(event){
   if(event && typeof event.preventDefault === "function") event.preventDefault();
   if(window.__CRONOS_LOGIN_BUSY__) return;
+
+  // Novo login = nova geração de sessão. Isso invalida definitivamente qualquer
+  // callback que tenha sobrevivido ao logout anterior.
+  window.__CRONOS_LOGOUT_IN_PROGRESS__ = false;
+  cronosBumpSessionEpoch();
 
   cancelPendingCloudSync();
   suppressCloudFailureToasts(12000);
@@ -21086,6 +21121,8 @@ async function fetchFeatureAccess(force, actorOverride){
     };
 
     const refreshWhenContextExists = async (force=false, reason='foreground') => {
+      const validationEpoch = cronosSessionEpoch();
+      if(cronosLogoutInProgress()) return false;
       if(window.__CRONOS_INITIAL_UI_COMMITTED__ !== true) return false;
       if(window.__CRONOS_ACCESS_UI_SUSPENDED__ === true && !foregroundValidationPromise) return false;
 
@@ -21126,6 +21163,8 @@ async function fetchFeatureAccess(force, actorOverride){
           console.error("Cronos: revalidação de módulos ao retomar a aba falhou.", error);
           ok = false;
         }
+
+        if(!cronosEpochStillCurrent(validationEpoch)) return false;
 
         if(ok === true){
           finishForegroundValidation();
