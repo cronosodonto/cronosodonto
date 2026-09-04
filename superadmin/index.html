@@ -973,7 +973,7 @@
           <div class="super-section-head">
             <div>
               <h2>Planos e Módulos</h2>
-              <p>Atualize o padrão global de módulos e configure recursos liberados, bloqueados ou ocultos por clínica.</p>
+              <p>Defina os módulos de cada plano e configure exceções específicas por clínica.</p>
             </div>
           </div>
           <div id="superPlansMount"></div>
@@ -3870,7 +3870,6 @@
     { key: 'settings', label: 'Configurações', description: 'Parâmetros e preferências da clínica.' }
   ];
 
-  let globalFeatureDraft = {};
   let clinicFeatureDraft = {};
   let clinicFeatureOriginalDraft = {};
 
@@ -3885,7 +3884,7 @@
     if(mode === 'enabled') return 'Liberado';
     if(mode === 'locked') return 'Bloqueado';
     if(mode === 'hidden') return 'Oculto';
-    return 'Padrão global';
+    return 'Herdar do plano';
   }
 
   function featureModeClass(mode){
@@ -3920,30 +3919,10 @@
     });
   }
 
-  function globalFeatureCard(row){
-    return `
-      <div class="feature-box">
-        <div class="feature-box-top">
-          <div>
-            <h4>${escapeHtml(row.label)}</h4>
-            <div class="helper">${escapeHtml(row.description)}</div>
-          </div>
-          <span class="feature-chip ${featureModeClass(row.global.visibility_mode)}">${featureModeLabel(row.global.visibility_mode)}</span>
-        </div>
-        <label for="global_feature_${row.key}">Padrão global</label>
-        <select class="select" id="global_feature_${row.key}" data-feature-key="${row.key}" data-feature-scope="global">
-          <option value="enabled" ${row.global.visibility_mode === 'enabled' ? 'selected' : ''}>Liberado</option>
-          <option value="locked" ${row.global.visibility_mode === 'locked' ? 'selected' : ''}>Bloqueado</option>
-          <option value="hidden" ${row.global.visibility_mode === 'hidden' ? 'selected' : ''}>Oculto</option>
-        </select>
-      </div>`;
-  }
-
   function clinicFeatureCard(row){
     const clinicMode = row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode;
-    const billingManaged = row.billing_managed === true;
-    const baseLabel = billingManaged ? 'Plano' : 'Global';
-    const inheritLabel = billingManaged ? 'Usar regra do plano' : 'Usar padrão global';
+    const baseLabel = 'Plano';
+    const inheritLabel = 'Usar regra do plano';
     return `
       <div class="feature-box">
         <div class="feature-box-top">
@@ -3954,7 +3933,7 @@
           <span class="feature-chip ${featureModeClass(row.effective.visibility_mode)}">${featureModeLabel(row.effective.visibility_mode)}</span>
         </div>
         <div class="feature-inline-meta">
-          <span class="feature-chip">${baseLabel}: ${featureModeLabel(row.global.visibility_mode)}</span>
+          <span class="feature-chip">${baseLabel}: ${featureModeLabel(row.plan.visibility_mode)}</span>
           <span class="feature-chip ${featureModeClass(row.effective.visibility_mode)}">Efetivo: ${featureModeLabel(row.effective.visibility_mode)}</span>
         </div>
         <label for="clinic_feature_${row.key}">Regra da clínica</label>
@@ -3968,96 +3947,17 @@
   }
 
   function ensureGlobalFeaturePanel(){
-    if(document.getElementById('globalFeatureCard')) return;
-    const mount = document.getElementById('superPlansMount');
-    const statsGrid = document.getElementById('statsGrid');
-    const host = mount || (statsGrid && statsGrid.parentNode);
-    if(!host) return;
-
-    const card = document.createElement('div');
-    card.className = 'card section-gap';
-    card.id = 'globalFeatureCard';
-    card.innerHTML = `
-      <div class="feature-access-card">
-        <div class="section-intro">
-          <strong>Padrão global dos módulos</strong>
-          <div class="helper">Essas regras valem para todas as clínicas que estiverem usando o padrão global.</div>
-        </div>
-        <div id="globalFeatureBody" class="feature-access-grid" style="margin-top:14px"></div>
-        <div class="feature-save-actions">
-          <button class="btn btn-ghost" id="btnRefreshGlobalFeatures" type="button">Atualizar módulos</button>
-          <button class="btn btn-primary" id="btnSaveGlobalFeatures" type="button">Salvar padrão global</button>
-        </div>
-      </div>`;
-
-    if(mount){
-      mount.appendChild(card);
-    }else{
-      statsGrid.parentNode.insertBefore(card, statsGrid.nextSibling);
-    }
-
-    document.getElementById('btnRefreshGlobalFeatures')?.addEventListener('click', async (e) => {
-      const button = e.currentTarget;
-      await withButtonLoading(button, 'Atualizando...', async () => {
-        await loadGlobalFeatures();
-        toast('Padrão global atualizado.', 'success', 2200);
-      });
-    });
-
-    document.getElementById('btnSaveGlobalFeatures')?.addEventListener('click', async (e) => {
-      const button = e.currentTarget;
-      const entries = Object.entries(globalFeatureDraft);
-      if(!entries.length){
-        toast('Nada para salvar.', 'info', 2200);
-        return;
-      }
-      await withButtonLoading(button, 'Salvando...', async () => {
-        for(const [featureKey, mode] of entries){
-          await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, {
-            scope: 'global',
-            feature_key: featureKey,
-            mode,
-            enabled: mode === 'enabled'
-          });
-        }
-        await loadGlobalFeatures();
-        if(state.selectedClinicId) await loadClinicFeatureAccess(state.selectedClinicId);
-        toast('Padrão global salvo.', 'success', 2600);
-      });
-    });
+    // V1.32 — removido. O plano é a única matriz comercial padrão.
+    document.getElementById('globalFeatureCard')?.remove();
   }
+
 
   async function loadGlobalFeatures(){
-    ensureFeatureEndpoints();
-    ensureGlobalFeaturePanel();
-    const target = document.getElementById('globalFeatureBody');
-    if(!target) return;
-    target.innerHTML = `<div class="feature-message">Carregando módulos globais...</div>`;
-    try{
-      const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, {});
-      const rows = mergeFeatureRows(data?.features);
-      globalFeatureDraft = Object.fromEntries(rows.map((row) => [row.key, row.global.visibility_mode]));
-      target.dataset.retryAttempts = '0';
-      target.innerHTML = rows.map(globalFeatureCard).join('');
-      target.querySelectorAll('select[data-feature-scope="global"]').forEach((select) => {
-        select.addEventListener('change', (event) => {
-          const node = event.currentTarget;
-          globalFeatureDraft[node.dataset.featureKey] = node.value;
-        });
-      });
-    }catch(error){
-      console.error(error);
-      const attempts = Number(target.dataset.retryAttempts || '0');
-      if(attempts < 2){
-        target.dataset.retryAttempts = String(attempts + 1);
-        target.innerHTML = `<div class="feature-message loading">Carregando módulos globais... tentativa automática ${attempts + 2}/3.</div>`;
-        setTimeout(() => loadGlobalFeatures(), 750 + attempts * 550);
-        return;
-      }
-      target.dataset.retryAttempts = '0';
-      target.innerHTML = `<div class="feature-message">Não foi possível carregar os módulos globais agora. Tente novamente no botão “Atualizar módulos”.</div>`;
-    }
+    // Compatibilidade com hooks antigos: não consulta nem renderiza padrão global.
+    document.getElementById('globalFeatureCard')?.remove();
+    return [];
   }
+
 
   function ensureClinicFeatureSection(){
     const detailRoot = document.getElementById('detailContent');
@@ -4071,7 +3971,7 @@
     section.innerHTML = `
       <summary>Módulos laterais da clínica</summary>
       <div class="section-body">
-        <div class="helper">Use “Usar padrão global” para herdar o que foi definido no topo do superadmin.</div>
+        <div class="helper">O plano contratado define a matriz padrão. Use esta área somente para exceções específicas da clínica.</div>
         <div id="billingFeatureAuthorityHint" style="margin:0 0 16px;padding:14px;border:1px solid rgba(59,130,246,.28);background:rgba(59,130,246,.08);border-radius:16px">
           <div style="font-weight:900;font-size:16px">Exceções de módulos</div>
           <div class="helper" style="margin-top:6px">O plano selecionado em “Plano, assinatura e cobrança” define a matriz padrão. Use os controles abaixo somente para exceções específicas desta clínica.</div>
@@ -4125,11 +4025,7 @@
             await callEdgeFunction(CONFIG.endpoints.billingAdmin, { action:'update_feature_overrides', clinic_id:clinicId, feature_overrides:overrides });
           }
         }else{
-          for(const [featureKey, mode] of entries){
-            const payload = { scope:'clinic', clinic_id:clinicId, feature_key:featureKey, mode };
-            if(mode !== 'inherit') payload.enabled = mode === 'enabled';
-            await callEdgeFunction(CONFIG.endpoints.saveFeatureAccess, payload);
-          }
+          throw new Error('Selecione um plano para esta clínica antes de configurar exceções de módulos.');
         }
         await loadClinicFeatureAccess(clinicId);
         toast('Módulos da clínica salvos.', 'success', 2600);
@@ -4187,7 +4083,7 @@
           return {
             ...meta,
             billing_managed:true,
-            global:{enabled:baseMode==='enabled',visibility_mode:baseMode},
+            plan:{enabled:baseMode==='enabled',visibility_mode:baseMode},
             clinic:{enabled:overrideMode==null?null:overrideMode==='enabled',visibility_mode:overrideMode},
             effective:{enabled:effectiveMode==='enabled',visibility_mode:effectiveMode}
           };
@@ -4199,13 +4095,11 @@
         target.innerHTML = rows.map(clinicFeatureCard).join('');
         target.dataset.billingManaged='true';
       }else{
-        const data = await callEdgeFunction(CONFIG.endpoints.listFeatureAccess, { clinic_id: clinicId });
-        const rows = mergeFeatureRows(data?.features);
-        clinicFeatureDraft = Object.fromEntries(rows.map((row) => [row.key, row.clinic.visibility_mode == null ? 'inherit' : row.clinic.visibility_mode]));
-        clinicFeatureOriginalDraft = { ...clinicFeatureDraft };
+        clinicFeatureDraft = {};
+        clinicFeatureOriginalDraft = {};
         const hint=document.getElementById('billingFeatureAuthorityHint');
-        if(hint) hint.querySelector('.helper').textContent='Esta clínica ainda usa controle legado. “Usar padrão global” herda a configuração definida no topo do Superadmin.';
-        target.innerHTML = rows.map(clinicFeatureCard).join('');
+        if(hint) hint.querySelector('.helper').textContent='Esta clínica ainda não possui um plano ativo. Selecione um plano em “Plano, assinatura e cobrança” antes de criar exceções de módulos.';
+        target.innerHTML = `<div class="feature-message">Nenhum plano ativo para esta clínica. O Cronos não usa mais “Padrão global” como matriz comercial.</div>`;
         target.dataset.billingManaged='false';
       }
       target.querySelectorAll('select[data-feature-scope="clinic"]').forEach((select) => {
@@ -4354,11 +4248,6 @@
       panel.classList.toggle('hidden', panel.dataset.superPanel !== view);
     });
     try{
-      if(view === 'plans' && typeof window.loadGlobalFeatures === 'function'){
-        const body = document.getElementById('globalFeatureBody');
-        if(body && !body.querySelector('select')) body.innerHTML = '<div class="feature-message loading">Carregando módulos globais...</div>';
-        setTimeout(()=>window.loadGlobalFeatures(), 120);
-      }
     if(view === 'finance') setTimeout(()=>renderFinanceDashboard(state.financeKpi || 'month'), 0);
     if(view === 'settings') setTimeout(refreshConfigClinicSelect, 0);
     if(view === 'support') setTimeout(()=>loadSupportSettingsCloud(true), 0);

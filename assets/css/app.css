@@ -1598,6 +1598,15 @@ body:not(.light) .taskActionsCell .taskOpenLead{
 }
 #featureBlockedDialog{
   z-index:10020;
+  background:rgba(3,7,18,.56);
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+}
+html.feature-plan-dialog-open .main,
+body.feature-plan-dialog-open .main{
+  filter:blur(5px);
+  pointer-events:none;
+  user-select:none;
 }
 #featureBlockedDialog .featurePlanNotice{
   width:min(620px, 100%);

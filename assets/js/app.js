@@ -20145,6 +20145,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const key = normalizeFeatureKey(featureKeyFor(featureKey));
     if(!key) return { visibility_mode:'locked', enabled:false, unresolved:true };
 
+    // V1.32 — durante o boot, nunca deixamos o Feature Access legado/global
+    // liberar um módulo antes de o Billing informar o plano efetivo. Esse era o
+    // intervalo em que Dashboard/Recebimentos podiam abrir e só depois receber
+    // o aviso de bloqueio.
+    const billingSnapshot = window.__CRONOS_BILLING_STATUS__ || null;
+    if(!billingSnapshot && window.CronosBilling){
+      return { visibility_mode:'locked', enabled:false, billing_pending:true };
+    }
+
     // Billing é a autoridade comercial quando a assinatura está ativa.
     // IMPORTANTE: esta consulta precisa acontecer ANTES do fail-closed da Edge
     // legada de Feature Access. Caso contrário, uma validação legada pendente ou
@@ -20341,6 +20350,28 @@ document.addEventListener("DOMContentLoaded", () => {
     featureDialogPinned = false;
     const dialog = document.getElementById('featureBlockedDialog');
     if(dialog) dialog.classList.remove('show');
+    document.documentElement.classList.remove('feature-plan-dialog-open');
+    document.body.classList.remove('feature-plan-dialog-open');
+  }
+
+  function activeNavigationModule(){
+    const activeBtn = document.querySelector('.nav button.active');
+    if(!activeBtn) return '';
+    return (activeBtn.dataset && activeBtn.dataset.view) || auxModuleFromButton(activeBtn) || '';
+  }
+
+  function ensureSafeViewBehindBlockedDialog(blockedView){
+    const current = activeNavigationModule();
+    if(current && current !== blockedView && canOpenModule(current)) return current;
+    const fallback = getFirstVisibleAndEnabledView();
+    if(!fallback || fallback === blockedView) return '';
+    try{
+      // Chama a rota nativa apenas para uma view já validada como liberada.
+      // Assim o modal nunca fica sobre conteúdo bloqueado que tenha sido
+      // montado antes da resposta do Billing.
+      setActiveView(fallback);
+      return fallback;
+    }catch(_){ return ''; }
   }
 
   function showBlockedOverlay(view){
@@ -20370,11 +20401,13 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    // O módulo bloqueado NÃO vira a rota ativa. Mantemos Dashboard/Leads/etc.
-    // exatamente onde estavam e abrimos apenas um diálogo de upgrade/suporte.
-    // Isso elimina o efeito de "tela congelada/reflexo" causado por marcar um
-    // item bloqueado como ativo sem realmente trocar a view.
+    // Se o módulo bloqueado já ficou ativo durante o boot/revalidação, troca
+    // primeiro para uma view realmente liberada. Ao clicar em um item bloqueado
+    // partindo de uma view válida, a view atual permanece no fundo.
+    ensureSafeViewBehindBlockedDialog(view);
     featureDialogPinned = true;
+    document.documentElement.classList.add('feature-plan-dialog-open');
+    document.body.classList.add('feature-plan-dialog-open');
     dialog.classList.add('show');
   }
 
@@ -20469,7 +20502,17 @@ document.addEventListener("DOMContentLoaded", () => {
   function syncCurrentViewState(){
     const activeBtn = document.querySelector('.nav button.active');
     const activeView = activeBtn ? (activeBtn.dataset && activeBtn.dataset.view || auxModuleFromButton(activeBtn)) : null;
-    if(activeView && !activeBtn.classList.contains('hidden') && canSeeModule(activeView) && isFeatureLocked(activeView)){
+    if(activeView && (isFeatureHidden(activeView) || isFeatureLocked(activeView))){
+      if(isFeatureHidden(activeView)){
+        const fallback = getFirstVisibleAndEnabledView();
+        if(fallback && fallback !== activeView){
+          try{ setActiveView(fallback); }catch(_){ }
+        }else{
+          hideAllNativeViews();
+        }
+        hideBlockedOverlay();
+        return;
+      }
       showBlockedOverlay(activeView);
       return;
     }
@@ -21002,6 +21045,16 @@ async function fetchFeatureAccess(force, actorOverride){
     wrapBoot();
     wrapSetActiveView();
     reapplyFeatureAccessUI('install');
+
+    // V1.32 — o Billing é a fonte comercial autoritativa. Sempre que plano ou
+    // exceções forem resolvidos/atualizados, reaplica imediatamente menu e view
+    // ativa; não espera uma chamada à API do módulo para corrigir a tela.
+    if(!window.__cronosBillingFeatureAuthorityListenerInstalled){
+      window.__cronosBillingFeatureAuthorityListenerInstalled = true;
+      document.addEventListener('cronos:billing-status-updated', ()=>{
+        try{ reapplyFeatureAccessUI('billing-status-updated'); }catch(_){ }
+      });
+    }
 
     let foregroundHiddenAt = 0;
     let foregroundValidationPromise = null;
