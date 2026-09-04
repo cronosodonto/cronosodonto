@@ -5383,6 +5383,13 @@ function denyCRCFichaEdit(){
 }
 function canOperateRecebimentos(actor=currentActor()){
   if(!actor || actor.isSupport === true) return false;
+  // Plano/Billing também é autoridade para ações financeiras fora da tela de Recebimentos.
+  // Assim, ocultar/bloquear o módulo impede criar ou alterar recebimentos pelo prontuário.
+  try{
+    if(typeof window.CRONOS_CAN_OPEN_MODULE === "function" && window.CRONOS_CAN_OPEN_MODULE("installments", actor) !== true){
+      return false;
+    }
+  }catch(_){ return false; }
   return canAccessView("installments", actor) && hasPermission("installments.manage", actor);
  }
 function blockedRecebimentosAction(){
@@ -13707,9 +13714,34 @@ function setActiveView(view){
     return;
   }
 
+  const actor = currentActor();
+
+  // Gate comercial direto na rota nativa. O wrapper em window.setActiveView não
+  // intercepta chamadas léxicas feitas pelo binder interno, então o plano precisa
+  // ser validado aqui também. Isso impede que um módulo marcado como bloqueado
+  // abra completo ao clicar na sidebar.
+  try{
+    if(typeof window.CRONOS_IS_FEATURE_HIDDEN === "function" && window.CRONOS_IS_FEATURE_HIDDEN(view) === true){
+      const fallback = (typeof cronosFirstRenderableView === "function") ? cronosFirstRenderableView(actor) : firstAllowedView(actor);
+      if(fallback && fallback !== view){
+        closeAuxiliaryViews();
+        applyRoleVisibility(actor);
+        applyActiveViewShell(fallback);
+        try{ window.CRONOS_REAPPLY_FEATURE_ACCESS_UI?.("hidden-route-blocked"); }catch(_){ }
+        scheduleActiveViewRender(fallback);
+      }
+      return;
+    }
+    if(typeof window.CRONOS_CAN_OPEN_MODULE === "function" && window.CRONOS_CAN_OPEN_MODULE(view, actor) !== true){
+      if(typeof window.CRONOS_SHOW_FEATURE_BLOCKED === "function") window.CRONOS_SHOW_FEATURE_BLOCKED(view);
+      return;
+    }
+  }catch(error){
+    console.warn("Cronos: falha ao validar módulo do plano antes da navegação.", error);
+  }
+
   closeAuxiliaryViews();
 
-  const actor = currentActor();
   let targetView = view;
 
   if(actor && !canAccessView(targetView, actor)){
@@ -20423,7 +20455,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const hiddenByFeature = isFeatureHidden(view);
         const lockedByFeature = isFeatureLocked(view);
 
-        btn.classList.toggle('feature-hidden', !hiddenByRole && hiddenByFeature);
+        btn.classList.toggle('feature-hidden', hiddenByFeature);
         btn.classList.toggle('feature-locked', !hiddenByRole && !hiddenByFeature && lockedByFeature);
 
         applyLockTag(btn, !hiddenByRole && !hiddenByFeature && lockedByFeature);
@@ -23241,12 +23273,17 @@ window.CRONOS_PROC_UI = {
 
         const visiblePlanIds = new Set(visiblePlan.map(item=>String(item.id)));
         const selectedIds = new Set((Array.isArray(state.selectedItemIds) ? state.selectedItemIds.map(String) : []).filter(id=>visiblePlanIds.has(id)));
-        const selectedItems = visiblePlan.filter(item=>selectedIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
+        const recebimentosAllowed = canOperateRecebimentos(currentActor());
+        const selectedItems = recebimentosAllowed ? visiblePlan.filter(item=>selectedIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item)) : [];
         const selectedTotal = selectedItems.reduce((sum,item)=>sum + Number(item.valorFechado || 0), 0);
         const btn = el('fichaGenerateReceivingBtn');
         if(btn){
-          btn.textContent = `Gerar recebimento (${selectedItems.length}) • ${moneyBR(selectedTotal)}`;
-          btn.disabled = !selectedItems.length;
+          btn.textContent = recebimentosAllowed
+            ? `Gerar recebimento (${selectedItems.length}) • ${moneyBR(selectedTotal)}`
+            : 'Recebimentos indisponíveis no plano';
+          btn.disabled = !recebimentosAllowed || !selectedItems.length;
+          btn.style.opacity = recebimentosAllowed ? '' : '.45';
+          btn.title = recebimentosAllowed ? '' : 'O módulo Recebimentos não está disponível para esta clínica.';
         }
       }catch(err){
         console.warn('Falha ao atualizar resumo financeiro do prontuário:', err);
@@ -23550,7 +23587,9 @@ window.CRONOS_PROC_UI = {
         </div>` : (discountPct > 20 ? `<div style="grid-column:1/-1" class="small muted">Atenção: desconto de ${discountPct.toFixed(2)}%.</div>` : '');
       const selectedFichaItemIds = new Set((Array.isArray(state.selectedItemIds) ? state.selectedItemIds.map(String) : []).filter(id=>visiblePlanIds.has(id)));
       state.selectedItemIds = Array.from(selectedFichaItemIds);
-      const selectedFichaItems = visiblePlan.filter(item=>selectedFichaItemIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item));
+      const fichaCanOperateRecebimentos = canOperateRecebimentos(currentActor());
+      const fichaRecebimentosHidden = (()=>{ try{ return typeof window.CRONOS_IS_FEATURE_HIDDEN === 'function' && window.CRONOS_IS_FEATURE_HIDDEN('installments') === true; }catch(_){ return false; } })();
+      const selectedFichaItems = fichaCanOperateRecebimentos ? visiblePlan.filter(item=>selectedFichaItemIds.has(String(item.id)) && isFichaItemAvailableForReceiving(entry, item)) : [];
       const selectedFichaTotal = selectedFichaItems.reduce((s,item)=>s + Number(item.valorFechado || 0), 0);
       const selectedToothMeta = state.selectedTooth ? (ficha.odontograma?.[state.selectedTooth] || {}) : {};
       const selectedToothPlan = state.selectedTooth ? visiblePlan.filter(x=>String(x.dente||'').split(',').map(s=>s.trim()).includes(String(state.selectedTooth))) : [];
@@ -23697,7 +23736,9 @@ window.CRONOS_PROC_UI = {
               <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${fichaEvaluationSummaryHTML(ficha)}</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-              <button id="fichaGenerateReceivingBtn" class="btn primary small" type="button" onclick="CRONOS_FICHA_UI.openReceivingForSelected()" ${selectedFichaItems.length ? '' : 'disabled'}>Gerar recebimento (${selectedFichaItems.length}) • ${moneyBR(selectedFichaTotal)}</button>
+              ${fichaRecebimentosHidden ? '' : (fichaCanOperateRecebimentos
+                ? `<button id="fichaGenerateReceivingBtn" class="btn primary small" type="button" onclick="CRONOS_FICHA_UI.openReceivingForSelected()" ${selectedFichaItems.length ? '' : 'disabled'}>Gerar recebimento (${selectedFichaItems.length}) • ${moneyBR(selectedFichaTotal)}</button>`
+                : `<button id="fichaGenerateReceivingBtn" class="btn small" type="button" disabled title="O módulo Recebimentos não está disponível para esta clínica." style="opacity:.45;cursor:not-allowed">Recebimentos indisponíveis no plano</button>`)}
               <button class="btn small" type="button" onclick="CRONOS_FICHA_UI.refreshPlanBaseValues()">Atualizar valores de tabela</button>
             </div>
           </div>
@@ -23722,7 +23763,7 @@ window.CRONOS_PROC_UI = {
               <tbody>
                 ${visiblePlan.length ? visiblePlan.map((item, idx)=>{
                   const finance = getFichaItemFinancialStatus(entry, item);
-                  const available = isFichaItemAvailableForReceiving(entry, item);
+                  const available = fichaCanOperateRecebimentos && isFichaItemAvailableForReceiving(entry, item);
                   const checked = selectedFichaItemIds.has(String(item.id));
                   return `
                   <tr class="${(()=>{ const _st = getItemVisualState(entry, item); return _st==='done' ? 'fichaDone' : (_st==='paid' ? 'fichaPaid' : (_st==='absent' ? 'fichaAbsent' : '')); })()}">
@@ -23738,7 +23779,9 @@ window.CRONOS_PROC_UI = {
                     <td><button class="btn small ${item.feito ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.toggleDone('${escapeHTML(item.id)}')">${item.feito ? 'Feito' : 'Pendente'}</button></td>
                     <td>
                       ${fichaFinanceBadge(entry, item)}
-                      ${finance.plan ? `<div style="margin-top:6px"><button type="button" class="miniBtn" onclick="openNewFinancialInstallment('${escapeHTML(entry.id)}','${escapeHTML(finance.plan.id)}')">Abrir</button></div>` : `<div style="margin-top:6px"><button type="button" class="miniBtn" onclick="CRONOS_FICHA_UI.openReceivingForItems(['${escapeHTML(item.id)}'])">Receber</button></div>`}
+                      ${fichaRecebimentosHidden ? '' : (fichaCanOperateRecebimentos
+                        ? (finance.plan ? `<div style="margin-top:6px"><button type="button" class="miniBtn" onclick="openNewFinancialInstallment('${escapeHTML(entry.id)}','${escapeHTML(finance.plan.id)}')">Abrir</button></div>` : `<div style="margin-top:6px"><button type="button" class="miniBtn" onclick="CRONOS_FICHA_UI.openReceivingForItems(['${escapeHTML(item.id)}'])">Receber</button></div>`)
+                        : `<div style="margin-top:6px"><button type="button" class="miniBtn" disabled title="Recebimentos não incluídos no plano" style="opacity:.45;cursor:not-allowed">Receber</button></div>`)}
                     </td>
                     <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="miniBtn danger" onclick="CRONOS_FICHA_UI.removeItem('${escapeHTML(item.id)}')">Excluir</button></div></td>
                   </tr>
@@ -24198,6 +24241,16 @@ window.CRONOS_PROC_UI = {
         __cronosRenderFichaPreservingScroll({focusId:`fichaSel_${itemId}`});
       },
       openReceivingForItems(itemIds){
+        if(!canOperateRecebimentos(currentActor())){
+          try{
+            if(typeof window.CRONOS_SHOW_FEATURE_BLOCKED === 'function' && typeof window.CRONOS_IS_FEATURE_LOCKED === 'function' && window.CRONOS_IS_FEATURE_LOCKED('installments')){
+              window.CRONOS_SHOW_FEATURE_BLOCKED('installments');
+            }else{
+              blockedRecebimentosAction();
+            }
+          }catch(_){ blockedRecebimentosAction(); }
+          return false;
+        }
         const s = getFichaState(); if(!s) return;
         const entry = getEntryById(s.entryId);
         if(!entry) return;
