@@ -20375,6 +20375,20 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function showBlockedOverlay(view){
+    // V1.32.1 — durante o boot/login, estado ainda não resolvido deve bloquear
+    // a navegação silenciosamente, sem exibir um falso aviso de plano.
+    // O modal só pode aparecer quando há sessão/app efetivamente carregado e
+    // a feature está autoritativamente em locked.
+    const state = getFeatureState(view);
+    const unresolved = !!(state?.billing_pending || state?.validation_unavailable || state?.unresolved);
+    const appView = document.getElementById('appView');
+    const authView = document.getElementById('authView');
+    const appVisible = !!appView && !appView.classList.contains('hidden');
+    const authVisible = !!authView && !authView.classList.contains('hidden');
+    if(unresolved || !appVisible || authVisible || window.__CRONOS_BOOTING__ === true){
+      return;
+    }
+
     const dialog = ensureOverlay();
     if(!dialog) return;
     const label = MODULE_LABELS[view] || VIEW_LABELS[view] || 'Módulo';
@@ -20411,18 +20425,22 @@ document.addEventListener("DOMContentLoaded", () => {
     dialog.classList.add('show');
   }
 
-  function hideBlockedOverlay(){
+  function hideBlockedOverlay(force=false){
     const legacyOverlay = document.getElementById('featureBlockedOverlay');
     if(legacyOverlay) legacyOverlay.classList.remove('show');
     const main = document.querySelector('.main');
     if(main) main.style.overflow = '';
     document.documentElement.classList.remove('feature-lock-active');
     document.body.classList.remove('feature-lock-active');
-    // Reaplicações automáticas da política não fecham um diálogo aberto pelo
-    // usuário. Ele fecha em Agora não/X ou ao escolher upgrade.
-    if(!featureDialogPinned){
+    // Se a política autoritativa mudou e o módulo deixou de estar bloqueado,
+    // o diálogo antigo precisa desaparecer automaticamente. O pin só vale
+    // enquanto o recurso continua realmente locked.
+    if(force || !featureDialogPinned){
+      featureDialogPinned = false;
       const dialog = document.getElementById('featureBlockedDialog');
       if(dialog) dialog.classList.remove('show');
+      document.documentElement.classList.remove('feature-plan-dialog-open');
+      document.body.classList.remove('feature-plan-dialog-open');
     }
   }
 
@@ -20516,7 +20534,9 @@ document.addEventListener("DOMContentLoaded", () => {
       showBlockedOverlay(activeView);
       return;
     }
-    hideBlockedOverlay();
+    // Estado atual está liberado. Fecha inclusive um modal pinado que tenha
+    // sido aberto durante uma política anterior/pending.
+    hideBlockedOverlay(true);
   }
 
   function reapplyFeatureAccessUI(reason='manual'){
