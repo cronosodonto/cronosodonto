@@ -2809,6 +2809,10 @@ async function saveFichaMutation(db, entry, options={}){
 
 async function confirmFichaMutation(db, entry, before, successTitle="", successMessage=""){
   const revision = ++__cronosFichaMutationRevision;
+  try{
+    const previousEntry = cronosFindSnapshotEntry(before, entry?.id);
+    if(previousEntry) cronosRecordFichaDiff(entry, previousEntry, successTitle, successMessage);
+  }catch(err){ console.warn("Auditoria da alteração clínica não foi gerada:", err); }
   toast("Salvando...", "Aguarde a conclusão antes de atualizar a página.");
   const ok = await saveFichaMutation(db, entry, { silent:true });
   if(!ok){
@@ -5661,12 +5665,9 @@ function cronosActorLabel(actor=currentActor()){
 }
 function cronosFormatDateTime(value){
   if(!value) return "—";
-  try{
-    if(typeof fmtDateTimeLocal === "function") return fmtDateTimeLocal(value);
-  }catch(_){ }
   const d = new Date(value);
-  if(Number.isNaN(d.getTime())) return String(value).slice(0,16);
-  return d.toLocaleString("pt-BR", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"});
+  if(Number.isNaN(d.getTime())) return String(value).slice(0,19);
+  return d.toLocaleString("pt-BR", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit"});
 }
 function cronosActionLabel(action){
   const map = {
@@ -5727,6 +5728,147 @@ function cronosAuditAction(db, payload={}){
     return null;
   }
 }
+
+function cronosEnsureEntryAuditTrail(entry){
+  if(!entry || typeof entry !== "object") return [];
+  if(!Array.isArray(entry.auditTrail)) entry.auditTrail = [];
+  return entry.auditTrail;
+}
+function cronosAppendEntryAudit(entry, payload={}){
+  try{
+    if(!entry || typeof entry !== "object") return null;
+    const actor = currentActor() || {};
+    const rec = {
+      id: uid("eaudit"),
+      at: payload.at || new Date().toISOString(),
+      actorId: String(actor.id || actor.authUid || actor.user_id || actor.email || actor.username || ""),
+      actorName: payload.actorName || cronosActorLabel(actor),
+      actorRole: String(actor.role || actor.kind || ""),
+      action: payload.action || "entry_updated",
+      label: payload.label || "Registro atualizado",
+      category: payload.category || "Prontuário",
+      details: payload.details || "",
+      before: payload.before ?? null,
+      after: payload.after ?? null,
+      source: payload.source || "entry_audit"
+    };
+    const trail = cronosEnsureEntryAuditTrail(entry);
+    trail.push(rec);
+    if(trail.length > 800) entry.auditTrail = trail.slice(-700);
+    return rec;
+  }catch(err){
+    console.warn("Falha ao registrar auditoria do paciente:", err);
+    return null;
+  }
+}
+function cronosAuditMoney(value){
+  try{ return moneyBR(Number(value || 0)); }catch(_){ return `R$ ${Number(value||0).toFixed(2)}`; }
+}
+function cronosPlainClone(value){
+  try{ return JSON.parse(JSON.stringify(value)); }catch(_){ return value && typeof value === "object" ? {...value} : value; }
+}
+function cronosFindSnapshotEntry(snapshot, entryId){
+  return (Array.isArray(snapshot?.entries) ? snapshot.entries : []).find(item=>String(item?.id || "") === String(entryId || "")) || null;
+}
+function cronosFichaPlanItems(entry){
+  return Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
+}
+function cronosFichaEvaluations(entry){
+  return Array.isArray(entry?.ficha?.avaliacoes) ? entry.ficha.avaliacoes : [];
+}
+function cronosFichaItemDetails(item){
+  const parts = [];
+  if(item?.procedimento) parts.push(String(item.procedimento));
+  if(item?.dente) parts.push(`dente(s) ${item.dente}`);
+  if(item?.face) parts.push(`face ${item.face}`);
+  if(item?.avaliacaoLabel) parts.push(String(item.avaliacaoLabel));
+  if(item?.valorFechado !== undefined && item?.valorFechado !== null) parts.push(cronosAuditMoney(item.valorFechado));
+  return parts.join(" • ");
+}
+function cronosFichaPlanAuditSignature(entry){
+  const items = cronosFichaPlanItems(entry).filter(Boolean).map(item=>({
+    id:String(item.id || ""),
+    procedimentoId:String(item.procedimentoId || ""),
+    procedimento:String(item.procedimento || ""),
+    dente:String(item.dente || ""),
+    face:String(item.face || ""),
+    valorBase:Number(item.valorBase || 0),
+    valorFechado:Number(item.valorFechado || 0),
+    feito:Boolean(item.feito),
+    observacao:String(item.observacao || ""),
+    avaliacaoId:String(item.avaliacaoId || ""),
+    avaliacaoLabel:String(item.avaliacaoLabel || ""),
+    avaliacaoData:String(item.avaliacaoData || ""),
+    dentitionType:String(item.dentitionType || "")
+  }));
+  try{ return JSON.stringify(items); }catch(_){ return String(items.length); }
+}
+function cronosRecordFichaDiff(entry, previousEntry, fallbackLabel="", fallbackDetails=""){
+  try{
+    if(!entry || !previousEntry) return 0;
+    const events = [];
+
+    // V1.32.7: qualquer alteração clínica no plano gera UM evento simples.
+    // Evita poluir o histórico com um registro por dente/procedimento e deixa
+    // inequívoco quem alterou o plano de tratamento e em qual horário.
+    if(cronosFichaPlanAuditSignature(previousEntry) !== cronosFichaPlanAuditSignature(entry)){
+      events.push({
+        action:"treatment_plan_updated",
+        label:"Plano de tratamento atualizado",
+        category:"Prontuário",
+        details:""
+      });
+    }
+
+    const beforeEvals = new Map(cronosFichaEvaluations(previousEntry).filter(Boolean).map(av=>[String(av.id || ""), av]));
+    const afterEvals = new Map(cronosFichaEvaluations(entry).filter(Boolean).map(av=>[String(av.id || ""), av]));
+    afterEvals.forEach((av,id)=>{
+      const old = beforeEvals.get(id);
+      if(!old){
+        if(av.provisional === false || av.createdAt || av.dateConfirmedAt){
+          events.push({action:"evaluation_created", label:"Nova avaliação criada", category:"Prontuário", details:`${av.label || "Avaliação"}${av.date ? ` • ${fmtBR(av.date)}` : ""}`, after:cronosPlainClone(av)});
+        }
+        return;
+      }
+      if(String(old.date || "") !== String(av.date || "")){
+        events.push({action:"evaluation_date_changed", label:"Data da avaliação alterada", category:"Prontuário", details:`${av.label || "Avaliação"} • ${old.date ? fmtBR(old.date) : "—"} → ${av.date ? fmtBR(av.date) : "—"}`, before:{date:old.date||""}, after:{date:av.date||""}});
+      }
+      if(String(old.dentitionType || "") !== String(av.dentitionType || "")){
+        events.push({action:"dentition_changed", label:"Dentição alterada", category:"Odontograma", details:`${av.label || "Avaliação"} • ${old.dentitionType || "—"} → ${av.dentitionType || "—"}`});
+      }
+      if(String(old.observacoes || "") !== String(av.observacoes || "")){
+        events.push({action:"clinical_note_changed", label:"Observação clínica alterada", category:"Prontuário", details:`${av.label || "Avaliação"} • observação atualizada`, before:{observacoes:String(old.observacoes||"")}, after:{observacoes:String(av.observacoes||"")}});
+      }
+      const oldReason = String(old?.discountAudit?.reason || "");
+      const newReason = String(av?.discountAudit?.reason || "");
+      if(oldReason !== newReason && newReason){
+        events.push({action:"discount_justification_changed", label:oldReason?"Justificativa de desconto alterada":"Justificativa de desconto registrada", category:"Prontuário", details:`${av.label || "Avaliação"} • ${newReason}`, before:{reason:oldReason}, after:{reason:newReason}});
+      }
+      const oldOd = old?.odontograma && typeof old.odontograma === "object" ? old.odontograma : {};
+      const newOd = av?.odontograma && typeof av.odontograma === "object" ? av.odontograma : {};
+      const teeth = new Set([...Object.keys(oldOd), ...Object.keys(newOd)]);
+      const changedTeeth = [];
+      teeth.forEach(tooth=>{
+        let a="", b="";
+        try{ a=JSON.stringify(oldOd[tooth] || {}); b=JSON.stringify(newOd[tooth] || {}); }catch(_){ a=String(oldOd[tooth]); b=String(newOd[tooth]); }
+        if(a!==b) changedTeeth.push(String(tooth));
+      });
+      if(changedTeeth.length){
+        events.push({action:"odontogram_changed", label:"Odontograma atualizado", category:"Odontograma", details:`${av.label || "Avaliação"} • dente(s): ${changedTeeth.join(", ")}`, before:{teeth:changedTeeth.reduce((o,k)=>(o[k]=cronosPlainClone(oldOd[k]||null),o),{})}, after:{teeth:changedTeeth.reduce((o,k)=>(o[k]=cronosPlainClone(newOd[k]||null),o),{})}});
+      }
+    });
+
+    if(!events.length && fallbackLabel){
+      const ignore = /salvando|salvo|atualizado/i.test(String(fallbackLabel||"")) && !fallbackDetails;
+      if(!ignore) events.push({action:"ficha_updated", label:String(fallbackLabel).replace(/\s*✅\s*/g," ").trim() || "Prontuário atualizado", category:"Prontuário", details:fallbackDetails || "Alteração registrada"});
+    }
+    events.forEach(ev=>cronosAppendEntryAudit(entry, ev));
+    return events.length;
+  }catch(err){
+    console.warn("Falha ao gerar auditoria do prontuário:", err);
+    return 0;
+  }
+}
 function cronosEntryAuditRecords(db, entry){
   const e = entry || {};
   const eid = String(e.id || "");
@@ -5741,16 +5883,29 @@ function cronosEntryAuditRecords(db, entry){
       actorName:x.actorName || x.by || "—",
       label:x.label || cronosActionLabel(x.action),
       details:x.details || "",
+      category: x.entityType === "finance" ? "Financeiro" : (String(x.action||"").startsWith("payment_") || String(x.action||"") === "credit_anticipated" ? "Financeiro" : "Comercial"),
+      actorRole:x.actorRole || "",
       source:"activity"
     }));
+  const entryLogs = (Array.isArray(e.auditTrail) ? e.auditTrail : []).map(x=>({
+    at:x.at,
+    actorName:x.actorName || "—",
+    actorRole:x.actorRole || "",
+    label:x.label || "Ação registrada",
+    details:x.details || "",
+    category:x.category || "Prontuário",
+    source:"entry_audit"
+  }));
   const statusLogs = (Array.isArray(e.statusLog) ? e.statusLog : []).map(x=>({
     at:x.at,
     actorName:x.by || "—",
     label:"Status alterado",
     details:`${x.from || "—"} → ${x.to || "—"}`,
+    category:"Comercial",
+    actorRole:"",
     source:"status"
   })).filter(x=>!logs.some(l=>String(l.at||"").slice(0,19)===String(x.at||"").slice(0,19) && String(l.label||"").includes("Status")));
-  const merged = logs.concat(statusLogs)
+  const merged = logs.concat(entryLogs, statusLogs)
     .filter(x=>x.at || x.label)
     .sort((a,b)=>String(b.at||"").localeCompare(String(a.at||"")));
   return merged;
@@ -5899,7 +6054,7 @@ window.CRONOS_SHOW_AUDIT = function(entityType, entityId){
     const entry = (db.entries || []).find(e=>String(e.id)===eid);
     if(!entry) return toast("Histórico", "Registro não encontrado.");
     const contact = (db.contacts || []).find(c=>String(c.id)===String(entry.contactId)) || null;
-    const recs = cronosEntryAuditRecords(db, entry).slice(0,60);
+    const recs = cronosEntryAuditRecords(db, entry);
     const fallback = !recs.length;
     const rows = fallback
       ? [{at: entry.createdAt || entry.firstContactAt || "", label:"Registro antigo", details:"Sem auditoria detalhada salva", actorName: entry.createdBy || contact?.createdBy || "—"}]
@@ -5910,8 +6065,8 @@ window.CRONOS_SHOW_AUDIT = function(entityType, entityId){
       bodyHTML:`<div class="auditTimeline">${rows.map(r=>`
         <div class="auditItem">
           <div class="auditWhen">${escapeHTML(cronosFormatDateTime(r.at))}</div>
-          <div class="auditMain"><b>${escapeHTML(r.label || "Ação")}</b>${r.details ? `<span>${escapeHTML(r.details)}</span>` : ""}</div>
-          <div class="auditBy">Por: <b>${escapeHTML(r.actorName || "—")}</b></div>
+          <div class="auditMain"><b>${escapeHTML(r.label || "Ação")}</b>${r.category ? `<span style="display:inline-flex;width:max-content;margin-top:5px;padding:2px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px">${escapeHTML(r.category)}</span>` : ""}${r.details ? `<span>${escapeHTML(r.details)}</span>` : ""}</div>
+          <div class="auditBy">Por: <b>${escapeHTML(r.actorName || "—")}</b>${r.actorRole ? ` • ${escapeHTML(r.actorRole)}` : ""}</div>
         </div>`).join("")}</div>`,
       footHTML:`<button type="button" class="btn" onclick="closeModal()">Fechar</button>`,
       maxWidth:"760px",
@@ -9896,7 +10051,8 @@ function cronosPersistMergeBatch(db, batch, options={}){
   if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.mergeContactsCascade === "function"){
     return window.CronosRepository.mergeContactsCascade(batch || {}, options).catch(error=>{
       console.error("Cronos V4: falha na mesclagem transacional:", error);
-      if(!options.silent) toast("Falha ao mesclar", String(error?.message || "Não foi possível confirmar a mesclagem."));
+      if(options.silent) throw error;
+      toast("Falha ao mesclar", String(error?.message || "Não foi possível confirmar a mesclagem."));
       return null;
     });
   }
@@ -14981,7 +15137,11 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
     window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
     safeSetLocalDB(DB);
     try{ renderAll(); }catch(_){ }
-    toast("Falha ao mesclar", "A operação foi cancelada sem alterar os cadastros.");
+    const mergeErrorMessage = String(error?.message || "").trim();
+    toast(
+      "Falha ao mesclar",
+      mergeErrorMessage || "A operação não foi confirmada pelo servidor. Recarregue a página antes de tentar novamente."
+    );
     return null;
   }finally{
     window.__CRONOS_MERGE_IN_PROGRESS__ = false;
@@ -22160,7 +22320,9 @@ async function fetchFeatureAccess(force, actorOverride){
         if(!item.avaliacaoId) item.avaliacaoId = firstEval.id;
         if(!item.avaliacaoLabel) item.avaliacaoLabel = firstEval.label || 'Avaliação 1';
         if(!item.avaliacaoData) item.avaliacaoData = firstEval.date || '';
-        if(!item.createdAt) item.createdAt = new Date().toISOString();
+        // Auditoria: nunca inventar uma data de criação para procedimentos antigos.
+        // Itens novos recebem createdAt no momento real do lançamento; os legados
+        // sem timestamp permanecem sem data, em vez de parecerem cadastrados hoje.
         if(item.recebimentoId && !item.financialPlanId) item.financialPlanId = item.recebimentoId;
         if(item.financialPlanId && !item.recebimentoId) item.recebimentoId = item.financialPlanId;
       });
@@ -23936,9 +24098,9 @@ window.CRONOS_PROC_UI = {
                     <td><div><b>${escapeHTML(item.avaliacaoLabel || 'Avaliação')}</b></div><div class="small muted">${fmtBR(item.avaliacaoData || '')}</div></td>
                     <td>${escapeHTML(item.procedimento || '—')}</td>
                     <td>${escapeHTML(item.dente || '—')}</td>
-                    <td><input id="fichaFace_${escapeHTML(item.id)}" type="text" value="${escapeHTML(item.face || '')}" placeholder="Ex: M, O/I" oninput="CRONOS_FICHA_UI.updateFace('${escapeHTML(item.id)}', this.value)"></td>
+                    <td><input id="fichaFace_${escapeHTML(item.id)}" type="text" value="${escapeHTML(item.face || '')}" placeholder="Ex: M, O/I" onfocus="CRONOS_FICHA_UI.beginFaceAudit('${escapeHTML(item.id)}', this)" oninput="CRONOS_FICHA_UI.updateFace('${escapeHTML(item.id)}', this.value)" onblur="CRONOS_FICHA_UI.finishFaceAudit('${escapeHTML(item.id)}', this)"></td>
                     <td>${moneyBR(item.valorBase || 0)}</td>
-                    <td><input id="fichaValue_${escapeHTML(item.id)}" class="fichaMoneyInput" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(Number(item.valorFechado||0)).replace('.', ','))}" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value, this)" onblur="CRONOS_FICHA_UI.formatValue('${escapeHTML(item.id)}', this)"></td>
+                    <td><input id="fichaValue_${escapeHTML(item.id)}" class="fichaMoneyInput" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(Number(item.valorFechado||0)).replace('.', ','))}" onfocus="CRONOS_FICHA_UI.beginValueAudit('${escapeHTML(item.id)}', this)" oninput="CRONOS_FICHA_UI.updateValue('${escapeHTML(item.id)}', this.value, this)" onblur="CRONOS_FICHA_UI.formatValue('${escapeHTML(item.id)}', this)"></td>
                     <td id="fichaDiscount_${escapeHTML(item.id)}">${moneyBR(lineDiscount(item))}<br><span class="small">${lineDiscountPct(item).toFixed(2)}%</span></td>
                     <td><button class="btn small ${item.feito ? 'ok' : ''}" onclick="CRONOS_FICHA_UI.toggleDone('${escapeHTML(item.id)}')">${item.feito ? 'Feito' : 'Pendente'}</button></td>
                     <td>
@@ -23956,7 +24118,7 @@ window.CRONOS_PROC_UI = {
 
           <div class="fichaAddWrap" style="margin-top:14px">
             <label>Observações do prontuário</label>
-            <textarea id="fichaObsTxt" placeholder="Escreve aqui a observação desta avaliação..." oninput="CRONOS_FICHA_UI.setObs(this.value)">${escapeHTML(String(getFichaEvaluationObservation(ficha, activeEvaluation.id) || ''))}</textarea>
+            <textarea id="fichaObsTxt" placeholder="Escreve aqui a observação desta avaliação..." onfocus="CRONOS_FICHA_UI.beginObservationAudit(this)" oninput="CRONOS_FICHA_UI.setObs(this.value)" onblur="CRONOS_FICHA_UI.finishObservationAudit(this)">${escapeHTML(String(getFichaEvaluationObservation(ficha, activeEvaluation.id) || ''))}</textarea>
             <div class="small" style="margin-top:8px">Fica salvo apenas nesta avaliação e reaparece na impressão dela.</div>
           </div>
         </div>
@@ -24133,10 +24295,46 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
       },
       setPrice(v){ const s = getFichaState(); if(!s) return; s.price = v; },
-      setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; const ficha = ensureFicha(entry); const active = getActiveFichaEvaluation(ficha, entry); setFichaEvaluationObservation(ficha, active.id, v); saveFichaMutation(db, entry); },
-      registerDiscountJustification(){
+      beginObservationAudit(node){
+        const s = getFichaState(); if(!s || !node) return;
+        const entry = getEntryById(s.entryId); if(!entry) return;
+        const ficha = ensureFicha(entry); const active = getActiveFichaEvaluation(ficha, entry);
+        node.dataset.cronosAuditBefore = getFichaEvaluationObservation(ficha, active.id) || '';
+      },
+      setObs(v){ const s = getFichaState(); if(!s) return; const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return; const ficha = ensureFicha(entry); const active = getActiveFichaEvaluation(ficha, entry); setFichaEvaluationObservation(ficha, active.id, v); saveFichaMutation(db, entry, {silent:true}); },
+      async finishObservationAudit(node){
+        const s = getFichaState(); if(!s || !node) return;
+        const db = loadDB(); const entry = getEntryById(s.entryId); if(!entry) return;
+        const ficha = ensureFicha(entry); const active = getActiveFichaEvaluation(ficha, entry);
+        const beforeText = String(node.dataset.cronosAuditBefore ?? '');
+        const afterText = String(getFichaEvaluationObservation(ficha, active.id) || '');
+        delete node.dataset.cronosAuditBefore;
+        if(beforeText === afterText) return;
+        cronosAppendEntryAudit(entry, {action:'clinical_note_changed', label:'Observação clínica alterada', category:'Prontuário', details:`${active.label || 'Avaliação'} • observação atualizada`, before:{observacoes:beforeText}, after:{observacoes:afterText}});
+        await saveFichaMutation(db, entry, {silent:true});
+      },
+      beginValueAudit(itemId, node){
+        const s=getFichaState(); if(!s || !node) return; const entry=getEntryById(s.entryId); if(!entry) return;
+        const item=ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId)); if(!item) return;
+        node.dataset.cronosAuditBeforeValue=String(Number(item.valorFechado||0));
+      },
+      beginFaceAudit(itemId, node){
+        const s=getFichaState(); if(!s || !node) return; const entry=getEntryById(s.entryId); if(!entry) return;
+        const item=ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId)); if(!item) return;
+        node.dataset.cronosAuditBeforeFace=String(item.face||'');
+      },
+      async finishFaceAudit(itemId, node){
+        const s=getFichaState(); if(!s || !node) return; const db=loadDB(); const entry=getEntryById(s.entryId); if(!entry) return;
+        const item=ensureFicha(entry).plano.find(x=>String(x.id)===String(itemId)); if(!item) return;
+        const beforeFace=String(node.dataset.cronosAuditBeforeFace ?? item.face ?? ''); const afterFace=String(item.face||''); delete node.dataset.cronosAuditBeforeFace;
+        if(beforeFace===afterFace) return;
+        cronosAppendEntryAudit(entry,{action:'procedure_face_changed',label:'Face do procedimento alterada',category:'Prontuário',details:`${item.procedimento||'Procedimento'} • ${beforeFace||'—'} → ${afterFace||'—'}`,before:{face:beforeFace},after:{face:afterFace}});
+        await saveFichaMutation(db,entry,{silent:true});
+      },
+      async registerDiscountJustification(){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId); if(!entry) return;
         const ficha = ensureFicha(entry);
         const active = getActiveFichaEvaluation(ficha, entry);
@@ -24163,9 +24361,8 @@ window.CRONOS_PROC_UI = {
           recordedAt: now.toISOString(),
           recordedAtLabel: now.toLocaleString('pt-BR')
         };
-        saveFichaMutation(db, entry);
+        await confirmFichaMutation(db, entry, before, 'Justificativa registrada ✅', `${pct.toFixed(2)}% de desconto • uso administrativo interno.`);
         renderFichaApp();
-        toast('Justificativa registrada ✅', `${pct.toFixed(2)}% de desconto • uso administrativo interno.`);
       },
       async addToPlan(){
         const s = getFichaState(); if(!s) return;
@@ -24266,9 +24463,10 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
         try{ renderLeadsTable(filteredEntries()); }catch(_){ }
       },
-      refreshPlanBaseValues(){
+      async refreshPlanBaseValues(){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return toast('Prontuário', 'Lead não encontrado.');
         const ficha = ensureFicha(entry);
@@ -24311,12 +24509,10 @@ window.CRONOS_PROC_UI = {
           }
         });
 
-        saveFichaMutation(db, entry);
+        const msg = `${updated} atualizado(s) • ${unchanged} sem mudança${notFound ? ` • ${notFound} não encontrado(s)` : ''}`;
+        await confirmFichaMutation(db, entry, before, 'Valores de tabela atualizados ✅', msg);
         renderFichaApp();
         try{ renderLeadsTable(filteredEntries()); }catch(_){}
-
-        const msg = `${updated} atualizado(s) • ${unchanged} sem mudança${notFound ? ` • ${notFound} não encontrado(s)` : ''}`;
-        toast('Valores de tabela atualizados ✅', msg);
       },
       updateValue(itemId, v, node=null){
         const s = getFichaState(); if(!s) return;
@@ -24359,7 +24555,16 @@ window.CRONOS_PROC_UI = {
           saveFichaMutation(db, entry, { silent:true });
           __scheduleFichaLeadsFinancialRefresh();
         }
-        if(node) node.value = String(Number(item.valorFechado || 0)).replace('.', ',');
+        if(node){
+          node.value = String(Number(item.valorFechado || 0)).replace('.', ',');
+          const beforeValue = Number(node.dataset.cronosAuditBeforeValue ?? item.valorFechado ?? 0);
+          const afterValue = Number(item.valorFechado || 0);
+          delete node.dataset.cronosAuditBeforeValue;
+          if(beforeValue !== afterValue){
+            cronosAppendEntryAudit(entry,{action:'procedure_value_changed',label:'Valor do procedimento alterado',category:'Prontuário',details:`${item.procedimento||'Procedimento'} • ${cronosAuditMoney(beforeValue)} → ${cronosAuditMoney(afterValue)}`,before:{valorFechado:beforeValue},after:{valorFechado:afterValue}});
+            saveFichaMutation(db, entry, {silent:true});
+          }
+        }
         refreshFichaLiveFinancialSummary(entry, itemId);
       },
       updateFace(itemId, v){
@@ -24649,9 +24854,10 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
         await confirmFichaMutation(db, entry, before, 'Odontograma salvo ✅', 'Cor salva.');
       },
-      toggleAbsent(tooth){
+      async toggleAbsent(tooth){
         const s = getFichaState(); if(!s) return;
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
@@ -24670,8 +24876,8 @@ window.CRONOS_PROC_UI = {
         if(!meta.status && !meta.absent && !meta.note && !meta.condition) delete odonto[key];
         else odonto[key] = meta;
         s.selectedTooth = key;
-        saveFichaMutation(db, entry);
         renderFichaApp();
+        await confirmFichaMutation(db, entry, before, willMarkAbsent ? 'Dente ausente salvo ✅' : 'Ausência removida', `Dente ${key}.`);
       },
       useSelectedToothForPlan(){
         const s = getFichaState(); if(!s || !s.selectedTooth) return;
@@ -24756,9 +24962,10 @@ window.CRONOS_PROC_UI = {
         renderFichaApp();
         await confirmFichaMutation(db, entry, before, allAbsent ? 'Ausência removida' : 'Dente ausente salvo ✅', 'Alteração salva.');
       },
-      saveToothMeta(){
+      async saveToothMeta(){
         const s = getFichaState(); if(!s || !s.selectedTooth) return;
         const db = loadDB();
+        const before = cloneCronosCriticalSnapshot(db);
         const entry = getEntryById(s.entryId);
         if(!entry) return;
         const ficha = ensureFicha(entry);
@@ -24780,9 +24987,8 @@ window.CRONOS_PROC_UI = {
         if(!odonto[s.selectedTooth].status && !odonto[s.selectedTooth].note && !odonto[s.selectedTooth].absent && !odonto[s.selectedTooth].condition){
           delete odonto[s.selectedTooth];
         }
-        saveFichaMutation(db, entry, { silent:true });
         renderFichaApp();
-        toast('Odontograma salvo.');
+        await confirmFichaMutation(db, entry, before, 'Odontograma salvo ✅', `Dente ${s.selectedTooth}.`);
       },
       async clearToothMeta(){
         const s = getFichaState(); if(!s) return;

@@ -1356,14 +1356,72 @@
         state.activeOperationId = "";
       }
 
-      // A RPC já executa exatamente o pacote validado e devolve as versões
-      // confirmadas. Recarregar a clínica inteira aqui duplicava o trabalho,
-      // pressionava o Supabase e podia transformar uma mesclagem concluída em
-      // falso erro apenas porque o snapshot posterior demorou demais.
-      state.baseline = applyChanges(state.baseline, changes);
-      state.versions = result?.versions
-        ? mergeServerVersions(state.versions, result.versions)
-        : predictVersions(state.versions, changes);
+      if(result?.ok === false){
+        throw new CronosPersistenceError(
+          String(result?.message || "O servidor recusou a mesclagem."),
+          {
+            code:String(result?.code || "MERGE_SERVER_REJECTED"),
+            operationId,
+            details:result?.detail || result?.details || null,
+            conflict:result?.conflict === true
+          }
+        );
+      }
+
+      // Mesclagem é uma ação destrutiva e rara. Não aceitamos mais apenas o
+      // retorno da RPC como prova: antes de exibir sucesso, recarregamos o
+      // estado oficial e confirmamos que o cadastro duplicado realmente saiu.
+      // Isso elimina o falso positivo em que a UI dizia "Mesclado" e, ao
+      // reabrir o Lead, o duplicado reaparecia.
+      let official;
+      try{
+        official = await fetchOfficialSnapshot();
+      }catch(verifyError){
+        const wrappedVerify = new CronosPersistenceError(
+          "A mesclagem foi enviada, mas o Cronos não conseguiu confirmar o resultado no servidor. Recarregue a página antes de tentar novamente.",
+          {
+            code:"MERGE_VERIFICATION_UNAVAILABLE",
+            cause:verifyError,
+            operationId
+          }
+        );
+        throw wrappedVerify;
+      }
+
+      if(!official){
+        throw new CronosPersistenceError(
+          "O servidor não devolveu o estado oficial após a mesclagem.",
+          { code:"MERGE_VERIFICATION_EMPTY", operationId }
+        );
+      }
+
+      const officialState = normalizeState(official.state || freshState());
+      const primaryExists = officialState.contacts.some(c=>String(c?.id || "") === primaryContactId);
+      const secondaryExists = officialState.contacts.some(c=>String(c?.id || "") === secondaryContactId);
+      const danglingEntries = officialState.entries
+        .filter(e=>String(e?.contactId || "") === secondaryContactId)
+        .map(e=>String(e?.id || ""))
+        .filter(Boolean);
+
+      if(!primaryExists || secondaryExists || danglingEntries.length){
+        throw new CronosPersistenceError(
+          secondaryExists
+            ? "O servidor respondeu à mesclagem, mas o cadastro duplicado ainda existe. O Cronos não vai marcar a operação como concluída."
+            : (!primaryExists
+              ? "O servidor não confirmou o cadastro principal após a mesclagem."
+              : "Ainda existem Leads vinculados ao cadastro duplicado após a mesclagem."),
+          {
+            code:"MERGE_NOT_PERSISTED",
+            operationId,
+            details:{ primaryContactId, secondaryContactId, primaryExists, secondaryExists, danglingEntries }
+          }
+        );
+      }
+
+      // A partir daqui, a tela passa a usar exatamente o snapshot que o banco
+      // devolveu, em vez de uma projeção local da operação.
+      state.baseline = officialState;
+      state.versions = normalizeVersions(official.versions || {});
       rebuildWorking();
 
       state.lastError = null;
