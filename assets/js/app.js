@@ -5676,6 +5676,7 @@ function cronosActionLabel(action){
     status_changed:"Status alterado",
     contact_created:"Contato criado",
     contact_updated:"Contato atualizado",
+    contacts_merged:"Cadastros unificados",
     payment_created:"Recebimento criado",
     payment_paid:"Baixa realizada",
     payment_undo:"Baixa desfeita",
@@ -5885,7 +5886,9 @@ function cronosEntryAuditRecords(db, entry){
       details:x.details || "",
       category: x.entityType === "finance" ? "Financeiro" : (String(x.action||"").startsWith("payment_") || String(x.action||"") === "credit_anticipated" ? "Financeiro" : "Comercial"),
       actorRole:x.actorRole || "",
-      source:"activity"
+      source:"activity",
+      entryId:eid,
+      monthKey:String(e.monthKey || "")
     }));
   const entryLogs = (Array.isArray(e.auditTrail) ? e.auditTrail : []).map(x=>({
     at:x.at,
@@ -5894,7 +5897,9 @@ function cronosEntryAuditRecords(db, entry){
     label:x.label || "Ação registrada",
     details:x.details || "",
     category:x.category || "Prontuário",
-    source:"entry_audit"
+    source:"entry_audit",
+    entryId:eid,
+    monthKey:String(e.monthKey || "")
   }));
   const statusLogs = (Array.isArray(e.statusLog) ? e.statusLog : []).map(x=>({
     at:x.at,
@@ -5903,17 +5908,120 @@ function cronosEntryAuditRecords(db, entry){
     details:`${x.from || "—"} → ${x.to || "—"}`,
     category:"Comercial",
     actorRole:"",
-    source:"status"
+    source:"status",
+    entryId:eid,
+    monthKey:String(e.monthKey || "")
   })).filter(x=>!logs.some(l=>String(l.at||"").slice(0,19)===String(x.at||"").slice(0,19) && String(l.label||"").includes("Status")));
   const merged = logs.concat(entryLogs, statusLogs)
     .filter(x=>x.at || x.label)
     .sort((a,b)=>String(b.at||"").localeCompare(String(a.at||"")));
   return merged;
 }
+
+function cronosContactEntries(db, contactId){
+  const cid = String(contactId || "").trim();
+  if(!cid) return [];
+  return (Array.isArray(db?.entries) ? db.entries : [])
+    .filter(e=>String(e?.contactId || "") === cid)
+    .slice()
+    .sort((a,b)=>{
+      const ak = `${String(a?.monthKey || "").slice(0,7)}|${String(a?.firstContactAt || a?.createdAt || "")}|${String(a?.lastUpdateAt || a?.updatedAt || "")}`;
+      const bk = `${String(b?.monthKey || "").slice(0,7)}|${String(b?.firstContactAt || b?.createdAt || "")}|${String(b?.lastUpdateAt || b?.updatedAt || "")}`;
+      return bk.localeCompare(ak);
+    });
+}
+
+function cronosContactAuditRecords(db, entry){
+  const e = entry || {};
+  const cid = String(e.contactId || "").trim();
+  if(!cid) return cronosEntryAuditRecords(db, e);
+
+  const siblings = cronosContactEntries(db, cid);
+  const rows = [];
+  const seen = new Set();
+  const pushUnique = (row)=>{
+    if(!row) return;
+    const key = [
+      String(row.at || "").slice(0,23),
+      String(row.label || ""),
+      String(row.details || ""),
+      String(row.actorName || ""),
+      String(row.entryId || ""),
+      String(row.source || "")
+    ].join("|");
+    if(seen.has(key)) return;
+    seen.add(key);
+    rows.push(row);
+  };
+
+  // Histórico próprio de cada Lead/mês agora é exibido na mesma trajetória do paciente.
+  siblings.forEach(sib=>{
+    cronosEntryAuditRecords(db, sib).forEach(row=>pushUnique({
+      ...row,
+      entryId:String(sib.id || ""),
+      monthKey:String(sib.monthKey || ""),
+      recordLabel:sib.monthKey ? monthLabel(String(sib.monthKey)) : "Registro"
+    }));
+
+    // Para cadastros antigos sem auditoria detalhada, pelo menos preserva o marco do Lead.
+    const createdAt = sib.createdAt || sib.firstContactAt || "";
+    if(createdAt){
+      const alreadyHasCreation = rows.some(r=>
+        String(r.entryId || "") === String(sib.id || "") &&
+        String(r.label || "").toLowerCase().includes("lead criado")
+      );
+      if(!alreadyHasCreation){
+        pushUnique({
+          at:createdAt,
+          actorName:sib.createdBy || "registro antigo",
+          actorRole:"",
+          label:"Registro de atendimento",
+          details:[
+            sib.monthKey ? monthLabel(String(sib.monthKey)) : "",
+            sib.origin ? `Origem: ${cronosDisplayManualField(sib.origin, sib.originOther) || sib.origin}` : "",
+            sib.status ? `Status: ${sib.status}` : ""
+          ].filter(Boolean).join(" • "),
+          category:"Comercial",
+          source:"lead_marker",
+          entryId:String(sib.id || ""),
+          monthKey:String(sib.monthKey || ""),
+          recordLabel:sib.monthKey ? monthLabel(String(sib.monthKey)) : "Registro"
+        });
+      }
+    }
+  });
+
+  // Eventos do próprio paciente (inclusive a mesclagem) entram uma única vez.
+  ensureActivityLog(db || loadDB())
+    .filter(x=>{
+      if(!x) return false;
+      const sameContact = String(x.contactId || "") === cid || (String(x.entityType || "") === "contact" && String(x.entityId || "") === cid);
+      if(!sameContact) return false;
+      const linkedEntry = String(x.entryId || x.leadId || "");
+      return !linkedEntry || !siblings.some(s=>String(s.id || "") === linkedEntry);
+    })
+    .forEach(x=>pushUnique({
+      at:x.at,
+      actorName:x.actorName || x.by || "—",
+      actorRole:x.actorRole || "",
+      label:x.label || cronosActionLabel(x.action),
+      details:x.details || "",
+      category:"Paciente",
+      source:"contact_activity",
+      entryId:"",
+      monthKey:"",
+      recordLabel:"Paciente"
+    }));
+
+  return rows
+    .filter(x=>x.at || x.label)
+    .sort((a,b)=>String(b.at||"").localeCompare(String(a.at||"")));
+}
+
 function cronosAuditSummaryText(db, entry, contact=null){
-  const recs = cronosEntryAuditRecords(db, entry).slice(0,5);
+  const recs = cronosContactAuditRecords(db, entry).slice(0,5);
   if(recs.length){
-    return recs.map(r=>`${cronosFormatDateTime(r.at)}\n${r.label}${r.details ? ` • ${r.details}` : ""}\nPor: ${r.actorName || "—"}`).join("\n\n");
+    return recs.map(r=>`${cronosFormatDateTime(r.at)}\n${r.label}${r.recordLabel ? ` • ${r.recordLabel}` : ""}${r.details ? ` • ${r.details}` : ""}\nPor: ${r.actorName || "—"}`).join("\n\n");
   }
   const created = entry?.createdAt || contact?.createdAt || entry?.firstContactAt || "";
   const updated = entry?.lastUpdateAt || entry?.updatedAt || contact?.lastUpdateAt || contact?.updatedAt || "";
@@ -6054,22 +6162,31 @@ window.CRONOS_SHOW_AUDIT = function(entityType, entityId){
     const entry = (db.entries || []).find(e=>String(e.id)===eid);
     if(!entry) return toast("Histórico", "Registro não encontrado.");
     const contact = (db.contacts || []).find(c=>String(c.id)===String(entry.contactId)) || null;
-    const recs = cronosEntryAuditRecords(db, entry);
+    const siblingEntries = cronosContactEntries(db, entry.contactId);
+    const recs = cronosContactAuditRecords(db, entry);
     const fallback = !recs.length;
     const rows = fallback
-      ? [{at: entry.createdAt || entry.firstContactAt || "", label:"Registro antigo", details:"Sem auditoria detalhada salva", actorName: entry.createdBy || contact?.createdBy || "—"}]
+      ? [{at: entry.createdAt || entry.firstContactAt || "", label:"Registro antigo", details:"Sem auditoria detalhada salva", actorName: entry.createdBy || contact?.createdBy || "—", recordLabel:entry.monthKey ? monthLabel(entry.monthKey) : "Registro"}]
       : recs;
+    const trajectoryHeader = siblingEntries.length > 1
+      ? `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px">${siblingEntries.map((sib,idx)=>`
+          <button type="button" class="tagPill" style="cursor:pointer;border:1px solid var(--line);background:${String(sib.id)===eid ? "rgba(25,198,255,.12)" : "transparent"}" onclick="openLeadEntry('${escapeHTML(String(sib.id||""))}')">
+            ${escapeHTML(sib.monthKey ? monthLabel(String(sib.monthKey)) : `Registro ${idx+1}`)}${sib.status ? ` • ${escapeHTML(String(sib.status))}` : ""}
+          </button>`).join("")}</div>`
+      : "";
     openModal({
-      title:"Histórico de ações",
-      sub: contact?.name ? `${contact.name} • rastreabilidade do lead` : "Rastreabilidade do lead",
-      bodyHTML:`<div class="auditTimeline">${rows.map(r=>`
+      title:"Histórico do paciente",
+      sub: contact?.name
+        ? `${contact.name} • ${siblingEntries.length} ${siblingEntries.length===1 ? "registro de atendimento" : "registros de atendimento"} reunidos`
+        : "Trajetória completa do paciente",
+      bodyHTML:`${trajectoryHeader}<div class="auditTimeline">${rows.map(r=>`
         <div class="auditItem">
-          <div class="auditWhen">${escapeHTML(cronosFormatDateTime(r.at))}</div>
+          <div class="auditWhen">${escapeHTML(cronosFormatDateTime(r.at))}${r.recordLabel ? `<div style="margin-top:4px;font-size:10px;opacity:.78">${escapeHTML(r.recordLabel)}</div>` : ""}</div>
           <div class="auditMain"><b>${escapeHTML(r.label || "Ação")}</b>${r.category ? `<span style="display:inline-flex;width:max-content;margin-top:5px;padding:2px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px">${escapeHTML(r.category)}</span>` : ""}${r.details ? `<span>${escapeHTML(r.details)}</span>` : ""}</div>
           <div class="auditBy">Por: <b>${escapeHTML(r.actorName || "—")}</b>${r.actorRole ? ` • ${escapeHTML(r.actorRole)}` : ""}</div>
         </div>`).join("")}</div>`,
       footHTML:`<button type="button" class="btn" onclick="closeModal()">Fechar</button>`,
-      maxWidth:"760px",
+      maxWidth:"820px",
       modalClass:"cronosModalAudit"
     });
   }catch(err){
@@ -12071,11 +12188,13 @@ const sortedRows = rowsForDashboardDetail
   .slice()
   .sort((a,b)=>(b.lastUpdateAt||"").localeCompare(a.lastUpdateAt||""));
 
-const previewSource = dashStatusActivePreview
+const previewSourceRaw = dashStatusActivePreview
   ? sortedRows.filter(e=>String(e.status||"")===dashStatusActivePreview)
   : sortedRows;
+const previewSource = cronosCollapseLeadCardsByContact(previewSourceRaw, db);
 
 const totalPrev = previewSource.length;
+const totalPrevLeads = previewSourceRaw.length;
 const previewLimit = window.DASH_PREVIEW_LIMIT || 10;
 const prev = previewSource.slice(0, previewLimit);
 
@@ -12101,6 +12220,7 @@ if(!prev.length){
               <div class="muted" style="font-size:12px; margin-top:2px">
                 ${escapeHTML((()=>{ const phone = c?.phone || "—"; const st = String(e.status || "").trim(); return st ? `${phone} • ${st}` : phone; })())}
               </div>
+              ${Number(e.__cronosPatientRecordCount || 1) > 1 ? `<div class="muted" style="font-size:11px;margin-top:3px">${escapeHTML(monthLabel(String(e.monthKey||"")))} • ${Number(e.__cronosPatientRecordCount)} registros reunidos</div>` : ""}
             </div>
             <div class="leadActionsRow" style="gap:6px; align-items:flex-start; justify-content:flex-end">
               ${tagRes}
@@ -12116,7 +12236,7 @@ if(!prev.length){
     `
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px">
         <div class="muted" style="font-size:12px">
-          Mostrando ${prev.length} de ${totalPrev} leads${dashStatusActivePreview ? ` • Status: ${escapeHTML(dashStatusLabel(dashStatusActivePreview))}` : ""}
+          Mostrando ${prev.length} de ${totalPrev} pacientes${totalPrevLeads !== totalPrev ? ` • ${totalPrevLeads} registros de Lead` : ""}${dashStatusActivePreview ? ` • Status: ${escapeHTML(dashStatusLabel(dashStatusActivePreview))}` : ""}
         </div>
         ${
           totalPrev > previewLimit
@@ -12772,16 +12892,16 @@ let currentPage = 1;
 const leadsPerPage = 50;
 
 
-function renderLeadsPagination(totalLeads, totalPages){
+function renderLeadsPagination(totalPatients, totalPages, totalLeads=totalPatients){
   const wrap = document.getElementById('leadsPagination');
   if(!wrap) return;
-  if(!totalLeads){
-    wrap.innerHTML = `<span class="muted">Mostrando 0 de 0 leads</span>`;
+  if(!totalPatients){
+    wrap.innerHTML = `<span class="muted">Mostrando 0 de 0 pacientes</span>`;
     return;
   }
 
   const startItem = ((currentPage - 1) * leadsPerPage) + 1;
-  const endItem = Math.min(totalLeads, currentPage * leadsPerPage);
+  const endItem = Math.min(totalPatients, currentPage * leadsPerPage);
 
   const pages = [];
   const addPage = (p) => {
@@ -12808,7 +12928,7 @@ function renderLeadsPagination(totalLeads, totalPages){
   }
 
   wrap.innerHTML = `
-    <div class="leadsPaginationInfo">Mostrando ${startItem}-${endItem} de ${totalLeads} leads</div>
+    <div class="leadsPaginationInfo">Mostrando ${startItem}-${endItem} de ${totalPatients} pacientes${totalLeads !== totalPatients ? ` • ${totalLeads} registros de Lead preservados` : ""}</div>
     <div class="leadsPaginationControls">
       <span class="leadsPageSize">Itens por página: <b>${leadsPerPage}</b></span>
       <button class="btn ghost" type="button" data-page="prev" ${currentPage <= 1 ? 'disabled' : ''}>‹</button>
@@ -12844,6 +12964,36 @@ function cronosDisplayManualField(primary, manual){
   return p || m || "";
 }
 
+
+function cronosLeadDisplaySortKey(entry){
+  const e = entry || {};
+  return `${String(e.monthKey || "").slice(0,7)}|${String(e.firstContactAt || e.createdAt || "")}|${String(e.lastUpdateAt || e.updatedAt || "")}`;
+}
+
+function cronosCollapseLeadCardsByContact(list, db=loadDB()){
+  const source = Array.isArray(list) ? list : [];
+  const groups = new Map();
+
+  source.forEach(entry=>{
+    if(!entry) return;
+    const cid = String(entry.contactId || "").trim();
+    const key = cid ? `contact:${cid}` : `entry:${String(entry.id || uid("lead_view"))}`;
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  });
+
+  return Array.from(groups.values()).map(group=>{
+    const sorted = group.slice().sort((a,b)=>cronosLeadDisplaySortKey(b).localeCompare(cronosLeadDisplaySortKey(a)));
+    const representative = sorted[0] || {};
+    const allForPatient = representative.contactId ? cronosContactEntries(db, representative.contactId) : sorted;
+    return {
+      ...representative,
+      __cronosVisibleRecordCount:sorted.length,
+      __cronosPatientRecordCount:allForPatient.length,
+      __cronosPatientRecordIds:allForPatient.map(x=>String(x?.id || "")).filter(Boolean)
+    };
+  }).sort((a,b)=>cronosLeadDisplaySortKey(b).localeCompare(cronosLeadDisplaySortKey(a)));
+}
 function renderLeadsTable(list){
   const cardsWrap = document.getElementById('leadsCards');
   const tbody = document.getElementById('leadsTbody'); // fallback antigo (se existir)
@@ -12855,9 +13005,12 @@ function renderLeadsTable(list){
   if(!target) return;
 
   const fullList = Array.isArray(list) ? list : [];
+  // Métricas continuam trabalhando com Leads reais; a lista visual mostra uma pessoa uma vez.
+  const displayList = cronosCollapseLeadCardsByContact(fullList, db);
 
   const totalLeads = fullList.length;
-  const totalPages = Math.max(1, Math.ceil(totalLeads / leadsPerPage));
+  const totalPatients = displayList.length;
+  const totalPages = Math.max(1, Math.ceil(totalPatients / leadsPerPage));
 
   if (currentPage > totalPages) currentPage = 1;
   if (currentPage < 1) currentPage = 1;
@@ -12865,7 +13018,7 @@ function renderLeadsTable(list){
   const start = (currentPage - 1) * leadsPerPage;
   const end = start + leadsPerPage;
 
-  list = fullList.slice(start, end);
+  list = displayList.slice(start, end);
 
   const leadIconSvg = {
     person:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"></path><circle cx="12" cy="8" r="4"></circle></svg>`,
@@ -12918,7 +13071,7 @@ function renderLeadsTable(list){
     summaryWrap.innerHTML = `
       <div class="leadsMetricCard">
         <div class="leadsMetricIcon blue">${leadIconSvg.person}</div>
-        <div><b>${fullMetrics.total}</b><span>Leads filtrados</span><small>Total de leads</small></div>
+        <div><b>${fullMetrics.total}</b><span>Leads filtrados</span><small>${totalPatients} ${totalPatients===1 ? "paciente" : "pacientes"} na lista</small></div>
       </div>
       <div class="leadsMetricCard">
         <div class="leadsMetricIcon hot">${leadIconSvg.flame}</div>
@@ -12994,6 +13147,13 @@ function renderLeadsTable(list){
 
     const statusRaw = String(e.status || "").trim();
     const statusPill = statusRaw ? `<span class="leadChip status ${statusDotClass(statusRaw)||""}">${escapeHTML(statusRaw)}</span>` : "";
+    const patientRecordCount = Number(e.__cronosPatientRecordCount || 1);
+    const recordsBadge = patientRecordCount > 1
+      ? `<span class="leadChip" title="Este paciente possui ${patientRecordCount} registros de atendimento reunidos">${leadIconSvg.history}${patientRecordCount} registros</span>`
+      : "";
+    const recordContext = e.monthKey
+      ? `${monthLabel(String(e.monthKey))}${patientRecordCount > 1 ? ` • ${patientRecordCount - 1} ${patientRecordCount - 1 === 1 ? "registro anterior" : "registros anteriores"}` : ""}`
+      : (patientRecordCount > 1 ? `${patientRecordCount} registros de atendimento` : "");
 
     const id = e.id ?? e._id ?? '';
     const idAttr = escapeHTML(String(id));
@@ -13025,7 +13185,8 @@ function renderLeadsTable(list){
           <div class="leadIdentity">
             <div class="name">${name}</div>
             <div class="leadPhone">${leadIconSvg.phone}<span>${escapeHTML(phonePretty)}</span></div>
-            <div class="leadChipRow">${statusPill}${priBadge}${campaignBadge}</div>
+            ${recordContext ? `<div class="muted" style="font-size:11px;margin-top:3px">${escapeHTML(recordContext)}</div>` : ""}
+            <div class="leadChipRow">${statusPill}${priBadge}${campaignBadge}${recordsBadge}</div>
           </div>
         </div>
 
@@ -13072,7 +13233,7 @@ function renderLeadsTable(list){
     tbody.innerHTML = cardsHtml || `<tr><td colspan="6" class="emptyCell">Nenhum lead encontrado.</td></tr>`;
   }
 
-  renderLeadsPagination(totalLeads, totalPages);
+  renderLeadsPagination(totalPatients, totalPages, totalLeads);
 }
 
 
@@ -14953,6 +15114,20 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
     return null;
   }
 
+  // Não falha só porque o autosave anterior ainda está terminando: espera a fila
+  // confirmar e só então monta o pacote de mesclagem com o estado mais recente.
+  if(window.CronosRepository?.isEnabled?.() && window.CronosRepository?.hasPending?.()){
+    try{
+      toast("Finalizando alteração anterior", "O Cronos vai mesclar automaticamente assim que o salvamento atual terminar.");
+      if(typeof window.CronosRepository.waitUntilIdle === "function"){
+        await window.CronosRepository.waitUntilIdle({ timeoutMs:12000 });
+      }
+    }catch(error){
+      toast("Mesclagem aguardando", String(error?.message || "Ainda existe uma alteração pendente. Aguarde alguns segundos e tente novamente."));
+      return null;
+    }
+  }
+
   const db = loadDB();
   const a = (db.contacts || []).find(c=>String(c.id || "") === String(currentContactId || ""));
   const b = (db.contacts || []).find(c=>String(c.id || "") === String(duplicateContactId || ""));
@@ -14980,8 +15155,9 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
 
   const ok = options.skipConfirm === true || confirm(
     "Mesclar estes dois cadastros?\n\n" +
-    "O Cronos vai manter o cadastro mais completo, preservar fichas, recebimentos, parcelas e histórico.\n" +
-    "Nada será apagado do prontuário: se um cadastro tiver ficha e o outro não, a ficha será preservada.\n\n" +
+    "O Cronos vai manter o cadastro mais completo, preservar fichas, recebimentos, parcelas e todo o histórico.\n" +
+    "Leads de meses diferentes continuam guardados para métricas, mas passam a aparecer reunidos em um único paciente.\n" +
+    "Nada será apagado do prontuário: avaliações e registros anteriores entram na trajetória completa.\n\n" +
     "Cadastro principal sugerido: " + (primary.name || "Sem nome") + "\n" +
     "Cadastro que será unido: " + (secondary.name || "Sem nome") + "\n\n" +
     "OK = Mesclar agora\nCancelar = voltar sem alterar"
@@ -15124,10 +15300,9 @@ async function cronosMergeDuplicateContactsInternal(currentContactId, duplicateC
     try{ captureTaskSnapshots(DB); }catch(_){ }
     try{ closeModal({ force:true }); }catch(_){ }
     try{ renderAll(); }catch(_){ }
-    toast("Cadastros mesclados ✅", `${primary.name || "Paciente"} manteve ficha, recebimentos e histórico.`);
-    const latest = (DB.entries || [])
-      .filter(e=>String(e.contactId || "") === primaryId)
-      .sort((x,y)=>String(y.lastUpdateAt || y.monthKey || "").localeCompare(String(x.lastUpdateAt || x.monthKey || "")))[0];
+    const mergedRecordCount = (DB.entries || []).filter(e=>String(e.contactId || "") === primaryId).length;
+    toast("Cadastros unificados ✅", `${primary.name || "Paciente"} agora reúne ${mergedRecordCount} ${mergedRecordCount===1 ? "registro de atendimento" : "registros de atendimento"} em uma única trajetória.`);
+    const latest = cronosContactEntries(DB, primaryId)[0];
     if(latest?.id){ setTimeout(()=>{ try{ openLeadEntry(latest.id); }catch(_){ } }, 150); }
     return { primaryId, removedContactId: secondaryId };
   }catch(error){
@@ -15279,7 +15454,7 @@ function openLeadEntry(entryId){
     `,
     onMount: ()=>{
       wireLeadModal(actor, entryId, false);
-      fillHistory(contact.id);
+      fillHistory(contact.id, entryId);
     }
   });
 }
@@ -15473,15 +15648,27 @@ function printLeadEntry(entryId){
   w.document.close();
 }
 
-function fillHistory(contactId){
+function fillHistory(contactId, currentEntryId=""){
   const db = loadDB();
-  const entries = db.entries.filter(e=>e.contactId===contactId).sort((a,b)=>b.monthKey.localeCompare(a.monthKey));
+  const entries = cronosContactEntries(db, contactId);
   const box = qs("#lf_history");
   if(!box) return;
-  box.innerHTML = entries.map(e=>{
-    const s = `${monthLabel(e.monthKey)} • ${e.status} • 1º ${fmtBR(e.firstContactAt)}`;
-    return `<span class="tagPill">${escapeHTML(s)}</span>`;
-  }).join(" ");
+  if(!entries.length){
+    box.innerHTML = `<span class="muted">Nenhum registro anterior.</span>`;
+    return;
+  }
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <span class="muted" style="font-size:12px">${entries.length} ${entries.length===1 ? "registro de atendimento" : "registros de atendimento"} deste paciente</span>
+      ${entries.length>1 ? `<button type="button" class="miniBtn" onclick="CRONOS_SHOW_AUDIT('entry','${escapeHTML(String(currentEntryId || entries[0]?.id || ""))}')">Ver trajetória completa</button>` : ""}
+    </div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap">
+      ${entries.map(e=>{
+        const isCurrent = String(e.id || "") === String(currentEntryId || "");
+        const s = `${e.monthKey ? monthLabel(e.monthKey) : "Registro"}${e.status ? ` • ${e.status}` : ""}${e.firstContactAt ? ` • 1º ${fmtBR(e.firstContactAt)}` : ""}`;
+        return `<button type="button" class="tagPill" style="cursor:pointer;${isCurrent ? "border-color:rgba(25,198,255,.65);background:rgba(25,198,255,.12)" : ""}" onclick="openLeadEntry('${escapeHTML(String(e.id||""))}')">${escapeHTML(s)}${isCurrent ? " • atual" : ""}</button>`;
+      }).join("")}
+    </div>`;
 }
 
 function wireLeadModal(actor, editingEntryId, isNew){

@@ -1305,11 +1305,14 @@
     if(!state.enabled || !state.loaded || !state.working){
       throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
     }
-    if(state.processing || state.queue.length || state.blocked || state.activeOperationId){
+    if(state.blocked){
       throw new CronosPersistenceError(
-        "Existe outra alteração sendo salva. Aguarde antes de mesclar.",
-        { code:"PENDING_MUTATION" }
+        "Existe uma alteração com conflito. Recarregue a página antes de mesclar.",
+        { code:"PERSISTENCE_BLOCKED" }
       );
+    }
+    if(state.processing || state.queue.length || state.activeOperationId){
+      await waitUntilIdle({ timeoutMs:Number(options.waitTimeoutMs || 12000) });
     }
 
     const changes = buildTargetedBatchChanges(batch);
@@ -1626,6 +1629,34 @@
   function isEnabled(){ return state.enabled === true; }
   function hasPending(){ return state.queue.length > 0 || state.processing || Boolean(state.activeOperationId); }
 
+  async function waitUntilIdle(options={}){
+    const timeoutMs = Math.max(500, Number(options.timeoutMs || 12000));
+    const startedAt = Date.now();
+    if(state.blocked){
+      throw new CronosPersistenceError(
+        "Existe uma alteração com conflito. Recarregue a página antes de continuar.",
+        { code:"PERSISTENCE_BLOCKED" }
+      );
+    }
+    while(state.processing || state.queue.length || state.activeOperationId){
+      if(state.blocked){
+        throw new CronosPersistenceError(
+          "Existe uma alteração com conflito. Recarregue a página antes de continuar.",
+          { code:"PERSISTENCE_BLOCKED" }
+        );
+      }
+      if(Date.now() - startedAt >= timeoutMs){
+        throw new CronosPersistenceError(
+          "O salvamento anterior ainda não terminou. Aguarde alguns segundos e tente novamente.",
+          { code:"PENDING_MUTATION_TIMEOUT" }
+        );
+      }
+      try{ updateIndicator("saving", "Finalizando alteração anterior..."); }catch(_){ }
+      await sleep(120);
+    }
+    return { ok:true };
+  }
+
   function discardPending(){
     state.queue = [];
     state.blocked = false;
@@ -1654,7 +1685,7 @@
 
   function diagnostics(){
     return {
-      version:"4.9.0",
+      version:"4.9.1",
       tabId:TAB_ID,
       clinicId:state.clinicId,
       enabled:state.enabled,
@@ -1679,7 +1710,7 @@
   }catch(_){ }
 
   global.CronosRepository = Object.freeze({
-    __cronosRepositoryVersion:"4.9.0",
+    __cronosRepositoryVersion:"4.9.1",
     __tabId:TAB_ID,
     CronosPersistenceError,
     setClient,
@@ -1698,6 +1729,7 @@
     deleteLeadCascade,
     isEnabled,
     hasPending,
+    waitUntilIdle,
     retryPending,
     discardPending,
     getConflictArchive,
