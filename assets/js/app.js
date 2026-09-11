@@ -7305,10 +7305,18 @@ async function fetchClinicAccessState(force=false){
 }
 
 async function fetchEffectiveClinicAccessState(force=true){
-  const access = await fetchClinicAccessState(force);
+  // V1.33.1 PERFORMANCE: Access State e Billing são fontes independentes.
+  // Antes o Billing só era aguardado DEPOIS do Access State; no boot isso podia
+  // serializar ~6s + ~8s. Iniciamos ambos juntos e preservamos exatamente a
+  // mesma composição/autoridade depois que os dois terminarem.
+  const accessPromise = fetchClinicAccessState(force);
+  const billingPromise = (window.CronosBilling && typeof window.CronosBilling.getStatus === 'function')
+    ? window.CronosBilling.getStatus({ force:!!force })
+    : Promise.resolve(null);
+  const access = await accessPromise;
   try{
     if(!window.CronosBilling || typeof window.CronosBilling.getStatus !== 'function') return access;
-    const billing = await window.CronosBilling.getStatus({ force:!!force });
+    const billing = await billingPromise;
     window.__CRONOS_BILLING_STATUS__ = billing || null;
     const rule = billing?.billing || null;
     if(!rule?.enforced) return access;
@@ -21375,19 +21383,23 @@ async function fetchFeatureAccess(force, actorOverride){
 
   async function refreshFeatureAccess(force, actorOverride){
     wrapSetActiveView();
-    try{
-      if(window.CronosBilling && typeof window.CronosBilling.getStatus === 'function'){
-        await window.CronosBilling.getStatus({ force:!!force });
-      }
-    }catch(error){
-      console.warn('Cronos Billing: status do plano não pôde ser carregado antes dos módulos.', error);
-    }
+    // V1.33.1 PERFORMANCE: Billing e Feature Access são independentes na rede.
+    // O código anterior esperava o billing-client terminar para só então chamar
+    // get-clinic-feature-access. Isso criava uma cascata no F5/login. As duas
+    // validações agora começam juntas; a UI só é consolidada depois de ambas.
+    const billingPromise = (window.CronosBilling && typeof window.CronosBilling.getStatus === 'function')
+      ? window.CronosBilling.getStatus({ force:!!force }).catch(error=>{
+          console.warn('Cronos Billing: status do plano não pôde ser carregado antes dos módulos.', error);
+          return null;
+        })
+      : Promise.resolve(null);
     // Stale-while-revalidate: se já existe estado autoritativo válido para a
     // mesma clínica, mantém a UI estável enquanto consulta novamente.
     if(featureAccessValidated !== true){
       reapplyFeatureAccessUI('refresh-start');
     }
-    const ok = await fetchFeatureAccess(!!force, actorOverride);
+    const featurePromise = fetchFeatureAccess(!!force, actorOverride);
+    const [ok] = await Promise.all([featurePromise, billingPromise]);
     reapplyFeatureAccessUI(ok ? 'refresh-complete' : 'refresh-failed');
     return ok;
   }

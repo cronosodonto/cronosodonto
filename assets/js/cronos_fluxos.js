@@ -12,8 +12,9 @@
   let settingsReadyRetryTimer = null;
   let settingsReadyRetryCount = 0;
   const $ = (id)=>document.getElementById(id);
-  const qs = (sel, root=document)=>root.querySelector(sel);
-  const qsa = (sel, root=document)=>Array.from(root.querySelectorAll(sel));
+  // Console fix: Fluxos pode rodar antes de cards opcionais existirem no DOM.
+  const qs = (sel, root=document)=>root?.querySelector?.(sel) || null;
+  const qsa = (sel, root=document)=>root?.querySelectorAll ? Array.from(root.querySelectorAll(sel)) : [];
 
   function hasCronos(){
     return typeof window.loadDB === "function" && typeof window.currentActor === "function" && typeof window.saveDB === "function";

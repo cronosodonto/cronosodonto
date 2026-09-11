@@ -191,28 +191,73 @@
     return `${CONFLICT_PREFIX}:${String(state.clinicId || "unknown")}`;
   }
 
+  function compactConflictChanges(changes){
+    const summary = {};
+    COLLECTIONS.forEach(name=>{
+      const part = changes?.[name];
+      if(!part) return;
+      const upserts = Array.isArray(part.upserts) ? part.upserts : [];
+      const deletes = Array.isArray(part.deletes) ? part.deletes : [];
+      if(!upserts.length && !deletes.length) return;
+      summary[name] = {
+        upserts:upserts.length,
+        deletes:deletes.length,
+        ids:[
+          ...upserts.map(item=>String(item?.payload?.id || item?.id || "")).filter(Boolean),
+          ...deletes.map(item=>String(item?.id || item || "")).filter(Boolean)
+        ].slice(0, 12)
+      };
+    });
+    if(changes?.meta) summary.meta = true;
+    return summary;
+  }
+
+  function compactConflictDetails(details){
+    if(!details || typeof details !== "object") return null;
+    return {
+      code:String(details?.code || ""),
+      conflict:details?.conflict === true,
+      terminal:details?.terminal === true,
+      operation_id:String(details?.operation_id || details?.operationId || ""),
+      message:String(details?.message || "").slice(0, 500),
+      received_at:String(details?.received_at || "")
+    };
+  }
+
   function archiveConflict(mutation, error){
     if(!state.clinicId) return false;
+    // O arquivo local de conflito é apenas diagnóstico: não duplica mais o payload inteiro.
+    const record = {
+      archivedAt:new Date().toISOString(),
+      clinicId:state.clinicId,
+      operationId:String(mutation?.operationId || ""),
+      source:String(mutation?.source || "frontend_action"),
+      entityCount:countChangedEntities(mutation?.changes),
+      changes:compactConflictChanges(mutation?.changes || {}),
+      error:{
+        code:String(error?.code || "VERSION_CONFLICT"),
+        message:String(error?.message || error || "Conflito de versão.").slice(0, 700),
+        details:compactConflictDetails(error?.details)
+      }
+    };
     try{
       const existingRaw = localStorage.getItem(conflictStorageKey());
       const existing = existingRaw ? JSON.parse(existingRaw) : null;
       const records = Array.isArray(existing?.records) ? existing.records : [];
-      records.push({
-        archivedAt:new Date().toISOString(),
-        clinicId:state.clinicId,
-        operationId:String(mutation?.operationId || ""),
-        changes:clone(mutation?.changes || {}),
-        error:{
-          code:String(error?.code || "VERSION_CONFLICT"),
-          message:String(error?.message || error || "Conflito de versão."),
-          details:error?.details || null
-        }
-      });
-      localStorage.setItem(conflictStorageKey(), JSON.stringify({ version:4, records:records.slice(-20) }));
+      records.push(record);
+      localStorage.setItem(conflictStorageKey(), JSON.stringify({ version:5, records:records.slice(-5) }));
       return true;
     }catch(archiveError){
-      console.error("Cronos V4: não foi possível arquivar o conflito localmente.", archiveError);
-      return false;
+      // Se um arquivo diagnóstico antigo já ocupou a cota, remove somente ele e tenta de novo.
+      try{
+        localStorage.removeItem(conflictStorageKey());
+        localStorage.setItem(conflictStorageKey(), JSON.stringify({ version:5, records:[record] }));
+        console.warn("Cronos V4: arquivo antigo de conflito foi substituído por registro compacto.");
+        return true;
+      }catch(finalError){
+        console.warn("Cronos V4: conflito não pôde ser arquivado no cache local; proteção de versão continua ativa.", finalError);
+        return false;
+      }
     }
   }
 

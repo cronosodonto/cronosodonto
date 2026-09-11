@@ -1,6 +1,6 @@
 (function(){
   'use strict';
-  const BUILD='billing-v1-21-ciclo-anual-disponibilidade-20260828';
+  const BUILD='billing-v1-33-boot-dedupe-20260911';
   const SUPABASE_URL='https://nsqpslierpulanxvsxaw.supabase.co';
   const ANON_KEY='sb_publishable_gFddoL8aMpTWJE979hRgvg_dJVackKZ';
   const ENDPOINT=`${SUPABASE_URL}/functions/v1/billing-client`;
@@ -25,9 +25,24 @@
   }
   async function getStatus(options={}){
     const force=options===true||options?.force===true;
+    // V1.33 — deduplicação do boot: `force` invalida apenas o cache já concluído.
+    // Se uma consulta de status já está em voo, todos os consumidores aguardam
+    // a mesma Promise. Antes, cada chamada com force=true abria um novo
+    // billing-client; no F5/login Access State + Feature Access + boot do Billing
+    // podiam disparar três Edge requests idênticos em paralelo.
+    if(statusPromise) return statusPromise;
     if(!force&&statusCache&&Date.now()-statusAt<10000)return statusCache;
-    if(statusPromise&&!force)return statusPromise;
-    const p=call('status').then(data=>{statusCache=data;statusAt=Date.now();window.__CRONOS_BILLING_STATUS__=data;renderSettings(data);try{document.dispatchEvent(new CustomEvent('cronos:billing-status-updated',{detail:{status:data}}));}catch(_){ }return data;}).finally(()=>{if(statusPromise===p)statusPromise=null;});
+    const startedAt=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
+    const p=call('status').then(data=>{
+      statusCache=data;statusAt=Date.now();window.__CRONOS_BILLING_STATUS__=data;
+      renderSettings(data);
+      try{document.dispatchEvent(new CustomEvent('cronos:billing-status-updated',{detail:{status:data}}));}catch(_){ }
+      try{
+        const ended=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
+        window.__CRONOS_BILLING_LAST_STATUS_MS__=Math.round(ended-startedAt);
+      }catch(_){ }
+      return data;
+    }).finally(()=>{if(statusPromise===p)statusPromise=null;});
     statusPromise=p; return p;
   }
   function reset(){statusCache=null;statusAt=0;statusPromise=null;window.__CRONOS_BILLING_STATUS__=null;}
