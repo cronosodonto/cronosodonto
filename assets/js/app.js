@@ -9860,7 +9860,8 @@ function cronosPersistTaskUpsert(db, task, options={}){
   try{ updateSidebarPills(); }catch(_){ }
   if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.upsertTask === "function"){
     return window.CronosRepository.upsertTask(task, {
-      keepPendingOnFailure:options.keepPendingOnFailure !== false
+      keepPendingOnFailure:options.keepPendingOnFailure !== false,
+      source:String(options.source || "task_upsert")
     }).then(ok=>{
       if(!ok){
         restorePreviousLocalState();
@@ -9893,7 +9894,8 @@ function cronosPersistTaskDelete(db, taskId, options={}){
   try{ updateSidebarPills(); }catch(_){ }
   if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.deleteTask === "function"){
     return window.CronosRepository.deleteTask(taskId, {
-      keepPendingOnFailure:options.keepPendingOnFailure !== false
+      keepPendingOnFailure:options.keepPendingOnFailure !== false,
+      source:String(options.source || "task_delete")
     }).then(ok=>{
       if(!ok && !options.silent) toast("Exclusão não confirmada", "Não foi possível excluir a tarefa.");
       return !!ok;
@@ -9976,8 +9978,13 @@ async function cronosPersistAutomaticTaskRepair(db, beforeTasks, options={}){
         if(operation.type === "upsert") batch.tasks.upserts.push(operation.payload);
         else batch.tasks.deletes.push(operation.id);
       });
-      const ok = await window.CronosRepository.commitTargetedBatch(batch, {
+      const commitRepair = typeof window.CronosRepository.commitMaintenanceTaskBatch === "function"
+        ? window.CronosRepository.commitMaintenanceTaskBatch.bind(window.CronosRepository)
+        : window.CronosRepository.commitTargetedBatch.bind(window.CronosRepository);
+      const ok = await commitRepair(batch, {
         keepPendingOnFailure:false,
+        nonBlockingFailure:true,
+        source:"automatic_task_repair",
         suppressVisualFeedback:options.silent === true
       });
       if(!ok){
@@ -10075,7 +10082,10 @@ function cronosPersistTargetedBatch(db, batch, options={}){
 
   if(window.CronosRepository?.isEnabled?.() && typeof window.CronosRepository.commitTargetedBatch === "function"){
     return window.CronosRepository.commitTargetedBatch(batch || {}, {
-      keepPendingOnFailure:options.keepPendingOnFailure !== false
+      keepPendingOnFailure:options.keepPendingOnFailure !== false,
+      nonBlockingFailure:options.nonBlockingFailure === true,
+      source:String(options.source || options.reason || "frontend_action"),
+      suppressVisualFeedback:options.suppressVisualFeedback === true
     }).then(ok=>!!ok).catch(error=>{
       console.error("Cronos V4: falha no comando transacional direcionado:", error);
       if(!options.silent) toast("Falha ao salvar", "Não foi possível confirmar esta operação.");
@@ -10097,6 +10107,22 @@ function cronosCloneTargetedCollections(db){
   });
   return snapshot;
 }
+
+function cronosRestoreTargetedCollections(snapshot, options={}){
+  const target = normalizeDBShape(options.db || DB || freshDB());
+  ["contacts", "entries", "tasks", "payments", "activityLog"].forEach(name=>{
+    const source = Array.isArray(snapshot?.[name]) ? snapshot[name] : [];
+    try{ target[name] = JSON.parse(JSON.stringify(source)); }
+    catch(_){ target[name] = source.slice(); }
+  });
+  DB = target;
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  try{ safeSetLocalDB(DB); }catch(_){ }
+  try{ updateSidebarPills(); }catch(_){ }
+  return DB;
+}
+window.cronosRestoreTargetedCollections = cronosRestoreTargetedCollections;
 
 function cronosTargetedEntityFingerprint(value){
   try{ return JSON.stringify(value || null); }
@@ -16155,9 +16181,15 @@ function wireLeadModal(actor, editingEntryId, isNew){
 
     if(isNew && existingThisMonth){
       const existingLeadBatch = cronosBuildTargetedBatchFromSnapshot(leadSaveSnapshot, db);
-      const existingLeadSaved = await cronosPersistTargetedBatch(db, existingLeadBatch, { silent:true });
+      const existingLeadSaved = await cronosPersistTargetedBatch(db, existingLeadBatch, {
+        silent:true,
+        keepPendingOnFailure:false,
+        source:"lead_existing_contact_update"
+      });
       if(existingLeadSaved === false){
-        return toast("Alteração não confirmada", "Não foi possível atualizar o paciente antes de abrir o Lead existente.");
+        cronosRestoreTargetedCollections(leadSaveSnapshot);
+        try{ renderAll(); }catch(_){ }
+        return toast("Alteração não confirmada", "Não foi possível atualizar o paciente antes de abrir o Lead existente. Nenhuma alteração local foi mantida.");
       }
       toast("Esse lead já existe neste mês", "Abrindo pra editar.");
       closeModal({ force:true });
@@ -16383,24 +16415,45 @@ function wireLeadModal(actor, editingEntryId, isNew){
     }
 
     const leadTargetedBatch = cronosBuildTargetedBatchFromSnapshot(leadSaveSnapshot, db);
-    const cloudPromise = cronosPersistTargetedBatch(db, leadTargetedBatch, { immediate:true });
+    const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
+
+    // Não existe mais "Salvo" otimista. A tela só confirma o cadastro depois
+    // que a transação V4 retorna sucesso. Se a nuvem recusar, restauramos exatamente
+    // as coleções anteriores para não deixar um paciente fantasma imprimível até o F5.
+    const wasDisabled = !!btn?.disabled;
+    if(btn){
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+    }
+    let cloudOk = false;
+    try{
+      cloudOk = await cronosPersistTargetedBatch(db, leadTargetedBatch, {
+        immediate:true,
+        silent:true,
+        keepPendingOnFailure:false,
+        source:"lead_save"
+      });
+    }catch(err){
+      console.error("Falha ao confirmar lead na nuvem:", err);
+      cloudOk = false;
+    }finally{
+      if(btn){
+        btn.disabled = wasDisabled;
+        btn.removeAttribute("aria-busy");
+      }
+    }
+
+    if(!cloudOk){
+      cronosRestoreTargetedCollections(leadSaveSnapshot);
+      try{ renderAll(); }catch(_){ }
+      toast("Não foi salvo", `${name} • o servidor não confirmou o cadastro. Os dados locais foram revertidos.`);
+      return;
+    }
+
     closeModal({ force:true });
     ensureMonthOptions(); // in case new month
-    const savedMonthLabel = (typeof rescueMonthKey !== "undefined" && shouldRegisterRescue) ? `${monthLabel(rescueMonthKey)} • Resgatado` : monthLabel(monthKey);
     toast("Salvo", `${name} • ${savedMonthLabel}`);
-    renderAll();
-
-    Promise.resolve(cloudPromise).then((cloudOk)=>{
-      if(cloudOk){
-        toast("Salvo", `${name} • ${savedMonthLabel}`);
-        try{ renderAll(); }catch(_){}
-      }else{
-        toast("Alteração pendente", `${name} • ${savedMonthLabel} • não foi possível concluir o salvamento`);
-      }
-    }).catch((err)=>{
-      console.error("Falha ao confirmar lead na nuvem:", err);
-      toast("Alteração pendente", `${name} • ${savedMonthLabel} • não foi possível concluir o salvamento`);
-    });
+    try{ renderAll(); }catch(_){ }
   });
 }
 
@@ -18010,6 +18063,69 @@ function renderKanban(){
 
 
 /* -------- Tasks -------- */
+function cronosCloneTasksRollbackSnapshot(db){
+  try{ return JSON.parse(JSON.stringify(Array.isArray(db?.tasks) ? db.tasks : [])); }
+  catch(_){ return Array.isArray(db?.tasks) ? db.tasks.slice() : []; }
+}
+
+function cronosRestoreTasksRollbackSnapshot(db, snapshot){
+  const target = normalizeDBShape(db || DB || freshDB());
+  try{ target.tasks = JSON.parse(JSON.stringify(Array.isArray(snapshot) ? snapshot : [])); }
+  catch(_){ target.tasks = Array.isArray(snapshot) ? snapshot.slice() : []; }
+  DB = target;
+  window.__CRONOS_DATA_VERSION__ = (window.__CRONOS_DATA_VERSION__ || 0) + 1;
+  window.__CRONOS_FILTERED_ENTRIES_CACHE__ = null;
+  try{ safeSetLocalDB(DB); }catch(_){ }
+  try{ cronosRefreshTaskViews(); }catch(_){ }
+  return DB;
+}
+
+async function cronosConfirmTaskUpsert(db, task, beforeTasks, options={}){
+  let ok = false;
+  try{
+    ok = await cronosPersistTaskUpsert(db, task, {
+      immediate:true,
+      silent:true,
+      keepPendingOnFailure:false,
+      source:String(options.source || "task_user_save")
+    });
+  }catch(error){
+    console.error("Cronos: falha ao confirmar tarefa:", error);
+    ok = false;
+  }
+  if(!ok){
+    cronosRestoreTasksRollbackSnapshot(db, beforeTasks);
+    toast(options.failureTitle || "Tarefa não salva", options.failureMessage || "O servidor não confirmou a alteração. O estado anterior foi restaurado.");
+    return false;
+  }
+  if(options.successTitle) toast(options.successTitle, options.successMessage || "");
+  try{ cronosRefreshTaskViews(); }catch(_){ }
+  return true;
+}
+
+async function cronosConfirmTaskDelete(db, taskId, beforeTasks, options={}){
+  let ok = false;
+  try{
+    ok = await cronosPersistTaskDelete(db, taskId, {
+      immediate:true,
+      silent:true,
+      keepPendingOnFailure:false,
+      source:String(options.source || "task_user_delete")
+    });
+  }catch(error){
+    console.error("Cronos: falha ao confirmar exclusão de tarefa:", error);
+    ok = false;
+  }
+  if(!ok){
+    cronosRestoreTasksRollbackSnapshot(db, beforeTasks);
+    toast(options.failureTitle || "Tarefa não excluída", options.failureMessage || "O servidor não confirmou a exclusão. A tarefa foi restaurada.");
+    return false;
+  }
+  if(options.successTitle) toast(options.successTitle, options.successMessage || "");
+  try{ cronosRefreshTaskViews(); }catch(_){ }
+  return true;
+}
+
 const TASK_ACTIONS = ["Ligar","WhatsApp","Enviar orçamento","Confirmar agendamento","Follow-up","Outros"];
 
 function taskStatusLabel(t){
@@ -18295,10 +18411,11 @@ function renderTasks(){
   };
 }
 
-function postponeTask(taskId, days=1){
+async function postponeTask(taskId, days=1){
   const actor = currentActor();
   if(!canEditRecords(actor)) return toast("Sem permissão para editar");
   const db = loadDB();
+  const beforeTasks = cronosCloneTasksRollbackSnapshot(db);
   const t = (db.tasks || []).find(x => x.id === taskId);
   if(!t) return;
   const base = t.dueDate ? new Date(t.dueDate+"T00:00:00") : new Date(todayISO()+"T00:00:00");
@@ -18307,9 +18424,11 @@ function postponeTask(taskId, days=1){
   t.updatedAt = new Date().toISOString();
   t.updatedBy = cronosActorLabel(actor);
   try{ recordTaskPatch(t); }catch(_){}
-  cronosPersistTaskUpsert(db, t, { immediate:true });
-  try{ toast("Tarefa adiada", "Vencimento movido para " + fmtBR(t.dueDate)); }catch(_){}
-  cronosRefreshTaskViews();
+  return await cronosConfirmTaskUpsert(db, t, beforeTasks, {
+    source:"task_postpone",
+    successTitle:"Tarefa adiada",
+    successMessage:"Vencimento movido para " + fmtBR(t.dueDate)
+  });
 }
 
 
@@ -18399,7 +18518,7 @@ function openLeadTaskShortcut(evOrEntryId, maybeEntryId){
         syncOtherAction();
 
         const btn = el("btnSaveTask");
-        btn.addEventListener("click", ()=>{
+        btn.addEventListener("click", async ()=>{
           const dueDate = val("tf_due");
           const title = val("tf_title").trim();
           let action = val("tf_action");
@@ -18430,13 +18549,17 @@ function openLeadTaskShortcut(evOrEntryId, maybeEntryId){
             updatedBy:cronosActorLabel(actor)
           };
 
+          const beforeTasks = cronosCloneTasksRollbackSnapshot(db);
           db.tasks = db.tasks || [];
           db.tasks.push(t);
           try{ recordTaskPatch(t); }catch(_){}
-          cronosPersistTaskUpsert(db, t, { immediate:true });
+          const ok = await cronosConfirmTaskUpsert(db, t, beforeTasks, {
+            source:"task_create_from_lead",
+            successTitle:"Tarefa criada",
+            successMessage:"Ela já aparece no módulo Tarefas."
+          });
+          if(!ok) return;
           closeModal({ force:true, source:"lead-task-shortcut" });
-          toast("Tarefa criada", "Ela já aparece no módulo Tarefas.");
-          cronosRefreshTaskViews();
         });
       }
     });
@@ -18573,7 +18696,7 @@ function openNewTask(){
       searchEl?.addEventListener("blur", ()=>setTimeout(hideSuggestions, 180));
 
       const btn = el("btnSaveTask");
-      btn.addEventListener("click", ()=>{
+      btn.addEventListener("click", async ()=>{
         let entryId = val("tf_entry");
         const typed = String(val("tf_entry_search") || "").trim();
         if(!entryId && typed){
@@ -18595,13 +18718,16 @@ function openNewTask(){
         }
 
         const t = {id: uid("task"), masterId: actor.masterId, entryId, dueDate, title, action, notes, done:false, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), updatedBy:cronosActorLabel(actor)};
+        const beforeTasks = cronosCloneTasksRollbackSnapshot(db);
         db.tasks = db.tasks || [];
         db.tasks.push(t);
         try{ recordTaskPatch(t); }catch(_){}
-        cronosPersistTaskUpsert(db, t, { immediate:true });
+        const ok = await cronosConfirmTaskUpsert(db, t, beforeTasks, {
+          source:"task_create",
+          successTitle:"Tarefa criada"
+        });
+        if(!ok) return;
         closeModal({ force:true, source:"save-task" });
-        toast("Tarefa criada");
-        cronosRefreshTaskViews();
       });
     }
   });
@@ -18670,7 +18796,7 @@ function openTaskEdit(taskId){
       actionEl?.addEventListener("change", syncOtherAction);
       syncOtherAction();
 
-      el("btnSaveTask").addEventListener("click", ()=>{
+      el("btnSaveTask").addEventListener("click", async ()=>{
         const dueDate = val("tf_due");
         const title = val("tf_title").trim();
         let action = val("tf_action");
@@ -18682,6 +18808,7 @@ function openTaskEdit(taskId){
           if(!customAction) return toast("Informe a ação", "Digite qual ação será feita em 'Outros'.");
           action = customAction;
         }
+        const beforeTasks = cronosCloneTasksRollbackSnapshot(db);
         t.dueDate = dueDate;
         t.done = el("tf_done").value ==="1";
         t.title = title;
@@ -18690,17 +18817,20 @@ function openTaskEdit(taskId){
         t.updatedAt = new Date().toISOString();
         t.updatedBy = cronosActorLabel(actor);
         try{ recordTaskPatch(t); }catch(_){}
-        cronosPersistTaskUpsert(db, t, { immediate:true });
+        const ok = await cronosConfirmTaskUpsert(db, t, beforeTasks, {
+          source:"task_edit",
+          successTitle:"Tarefa atualizada"
+        });
+        if(!ok) return;
         closeModal({ force:true, source:"save-task" });
-        toast("Tarefa atualizada");
-        cronosRefreshTaskViews();
       });
     }
   });
 }
 
-function toggleTaskDone(taskId){
+async function toggleTaskDone(taskId){
   const db = loadDB();
+  const beforeTasks = cronosCloneTasksRollbackSnapshot(db);
   const t = (db.tasks||[]).find(x=>x.id===taskId);
   if(!t) return;
 
@@ -18711,16 +18841,17 @@ function toggleTaskDone(taskId){
   t.updatedAt = new Date().toISOString();
   t.updatedBy = cronosActorLabel(currentActor());
   try{ recordTaskPatch(t); }catch(_){}
-  cronosPersistTaskUpsert(db, t, { immediate:true });
-  toast(t.done ? "Tarefa marcada como feita" : "Tarefa reaberta");
-  cronosRefreshTaskViews();
+  return await cronosConfirmTaskUpsert(db, t, beforeTasks, {
+    source:"task_toggle_done",
+    successTitle:t.done ? "Tarefa marcada como feita" : "Tarefa reaberta"
+  });
 }
 function markTaskDone(taskId){ return toggleTaskDone(taskId); }
 function CRONOS_CAN_DELETE_TASKS(actor){
   return !!actor && hasPermission("tasks.delete", actor);
 }
 
-function deleteTask(taskId){
+async function deleteTask(taskId){
   const actor = currentActor();
   if(!CRONOS_CAN_DELETE_TASKS(actor)){
     return toast("Sem permissão", "Seu acesso não permite apagar tarefas.");
@@ -18736,11 +18867,14 @@ function deleteTask(taskId){
   const label = String(t.title || "esta tarefa").trim();
   if(!confirm(`Apagar a tarefa "${label}"?\n\nEssa ação remove apenas a tarefa, não apaga o lead.${isAutoTask ? "\nSe for tarefa automática de recebimento, ela também será ignorada nas próximas atualizações." : ""}`)) return;
 
+  const beforeTasks = cronosCloneTasksRollbackSnapshot(db);
   try{ recordTaskDeletion(t); }catch(_){}
   db.tasks.splice(idx, 1);
-  cronosPersistTaskDelete(db, taskId, { immediate:true });
-  try{ toast("Tarefa apagada", "A lista foi atualizada."); }catch(_){}
-  cronosRefreshTaskViews();
+  return await cronosConfirmTaskDelete(db, taskId, beforeTasks, {
+    source:"task_delete",
+    successTitle:"Tarefa apagada",
+    successMessage:"A lista foi atualizada."
+  });
 }
 
 function renderAll(){

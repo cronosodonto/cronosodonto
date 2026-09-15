@@ -1,4 +1,4 @@
-// Cronos Repository v4.9.0 — conflito terminal com recibo e zero reenvio manual
+// Cronos Repository v4.9.2 — reparo automático isolado + proteção contra versão ausente
 /*
  * CronosRepository V4 — persistência central, transacional e concorrente.
  *
@@ -1040,8 +1040,24 @@
 
           const infrastructureBusy = isInfrastructureBusyError(error);
           const commitBusy = isCommitBusyError(error);
-          traceCommit("failed", mutation, { code:String(error?.code || ""), infrastructureBusy, conflict, commitBusy });
-          if(conflict){
+          const nonBlockingFailure = mutation?.nonBlockingFailure === true;
+          traceCommit("failed", mutation, { code:String(error?.code || ""), infrastructureBusy, conflict, commitBusy, nonBlockingFailure });
+          let continueAfterFailure = false;
+
+          if(nonBlockingFailure){
+            // Reparos automáticos não são ações do usuário e jamais podem derrubar
+            // a persistência inteira. Arquivamos o diagnóstico, descartamos só o
+            // reparo atual e deixamos contatos/leads/financeiro continuarem salvando.
+            if(conflict) archiveConflict(mutation, error);
+            if(infrastructureBusy) archiveUncertainMutations([mutation], error, "MAINTENANCE_INFRASTRUCTURE_TIMEOUT");
+            if(state.queue[0]?.operationId === mutation.operationId) state.queue.shift();
+            else state.queue = state.queue.filter(item=>item.operationId !== mutation.operationId);
+            persistQueue();
+            state.blocked = false;
+            rebuildWorking();
+            resolveWaiter(mutation.operationId, false);
+            continueAfterFailure = true;
+          }else if(conflict){
             // Um pacote com versão antiga nunca é repetido. Quando o wrapper do
             // banco devolve o snapshot oficial, ele substitui a base local antes
             // de limpar a fila, evitando que um cliente antigo finja que salvou.
@@ -1131,6 +1147,16 @@
                     : "O Cronos preservou a tentativa neste computador. Confira sua conexão antes de sair."
             );
           }
+          if(continueAfterFailure){
+            console.warn("Cronos V492: falha de manutenção isolada; persistência operacional permanece disponível.", {
+              operationId:mutation.operationId,
+              source:mutation.source,
+              conflict,
+              infrastructureBusy,
+              commitBusy
+            });
+            continue;
+          }
           break;
         }
       }
@@ -1174,6 +1200,10 @@
       operationId,
       changes,
       keepPendingOnFailure:options.keepPendingOnFailure !== false,
+      // Rotinas de manutenção em segundo plano não podem paralisar toda a clínica.
+      // Quando ativado, qualquer falha descarta somente ESTA mutação e mantém o
+      // restante da persistência operacional disponível.
+      nonBlockingFailure:options.nonBlockingFailure === true,
       source:String(options.source || options.reason || "frontend_action"),
       suppressVisualFeedback:options.suppressVisualFeedback === true,
       createdAt:new Date().toISOString()
@@ -1311,13 +1341,32 @@
         }
       });
 
+      const versionMap = state.workingVersions?.[name] || {};
+      const workingItems = Array.isArray(state.working?.[name]) ? state.working[name] : [];
+      const workingIds = new Set(workingItems.map(item=>String(item?.id || "")).filter(Boolean));
+      const expectedVersionFor = id=>{
+        if(Object.prototype.hasOwnProperty.call(versionMap, id)){
+          return Number(versionMap[id] || 0);
+        }
+        // Um ID já presente no estado hidratado não pode ser tratado como entidade
+        // nova só porque o mapa de versões veio incompleto. Mandar expected_version=0
+        // nesse caso gera conflito artificial (e antes bloqueava a clínica inteira).
+        if(workingIds.has(id)){
+          throw new CronosPersistenceError(
+            `A versão de ${name}/${id} não foi carregada. Atualize os dados antes de salvar.`,
+            { code:"ENTITY_VERSION_MISSING", details:{ collection:name, id } }
+          );
+        }
+        return 0;
+      };
+
       const upserts = Array.from(upsertMap.entries()).map(([id, payload])=>({
         payload,
-        expected_version:Number(state.workingVersions?.[name]?.[id] || 0)
+        expected_version:expectedVersionFor(id)
       }));
       const deletes = Array.from(deleteSet).map(id=>({
         id,
-        expected_version:Number(state.workingVersions?.[name]?.[id] || 0)
+        expected_version:expectedVersionFor(id)
       }));
 
       if(upserts.length || deletes.length) changes[name] = { upserts, deletes };
@@ -1344,6 +1393,70 @@
     }
     const changes = buildTargetedBatchChanges(batch);
     return enqueueChanges(changes, options);
+  }
+
+  async function commitMaintenanceTaskBatch(batch, options={}){
+    if(!state.enabled || !state.loaded || !state.working){
+      throw new CronosPersistenceError("Persistência V4 ainda não foi carregada.", { code:"V4_NOT_LOADED" });
+    }
+    const keys = Object.keys(batch || {}).filter(key=>key !== "tasks");
+    if(keys.length || !batch?.tasks){
+      throw new CronosPersistenceError(
+        "A manutenção isolada aceita somente alterações em tarefas.",
+        { code:"INVALID_MAINTENANCE_BATCH" }
+      );
+    }
+
+    // Manutenção automática é oportunista: se o usuário já estiver salvando algo,
+    // ela simplesmente fica para o próximo acesso. Nunca disputa a fila humana.
+    if(state.processing || state.queue.length || state.activeOperationId || state.blocked){
+      return false;
+    }
+
+    const ids = new Set();
+    (Array.isArray(batch.tasks.upserts) ? batch.tasks.upserts : []).forEach(item=>{
+      const payload = item?.payload && typeof item.payload === "object" ? item.payload : item;
+      const id = String(payload?.id || "").trim();
+      if(id) ids.add(id);
+    });
+    (Array.isArray(batch.tasks.deletes) ? batch.tasks.deletes : []).forEach(item=>{
+      const id = String(typeof item === "string" ? item : (item?.id || "")).trim();
+      if(id) ids.add(id);
+    });
+    if(!ids.size) return true;
+
+    // O bug de 15/09/2026 acontecia aqui: a tarefa FININST existia no banco em
+    // versão 2, mas o cliente não tinha sua versão e enviava 0. Para manutenção
+    // automática, consultamos o snapshot oficial e atualizamos SOMENTE as versões
+    // dos IDs de tarefa que serão tocados. Não rebaseamos contatos/leads nem a UI,
+    // preservando a proteção contra sobrescrita de alterações feitas em outro PC.
+    let official;
+    try{
+      official = await fetchOfficialSnapshot();
+    }catch(error){
+      console.warn("Cronos V492: manutenção de tarefas adiada; não foi possível conferir versões oficiais.", error);
+      return false;
+    }
+    if(!official) return false;
+
+    ids.forEach(id=>{
+      const officialMap = official.versions?.tasks || {};
+      const version = Object.prototype.hasOwnProperty.call(officialMap, id)
+        ? Number(officialMap[id] || 0)
+        : 0;
+      // Propriedade explícita com zero significa "confirmadamente ausente" no
+      // snapshot oficial e permite criar a tarefa sem cair na proteção de versão.
+      state.versions.tasks[id] = version;
+      state.workingVersions.tasks[id] = version;
+    });
+
+    return commitTargetedBatch(batch, {
+      ...options,
+      keepPendingOnFailure:false,
+      nonBlockingFailure:true,
+      source:String(options.source || "automatic_task_repair"),
+      suppressVisualFeedback:options.suppressVisualFeedback !== false
+    });
   }
 
   async function mergeContactsCascade(batch, options={}){
@@ -1730,7 +1843,7 @@
 
   function diagnostics(){
     return {
-      version:"4.9.1",
+      version:"4.9.2",
       tabId:TAB_ID,
       clinicId:state.clinicId,
       enabled:state.enabled,
@@ -1755,7 +1868,7 @@
   }catch(_){ }
 
   global.CronosRepository = Object.freeze({
-    __cronosRepositoryVersion:"4.9.1",
+    __cronosRepositoryVersion:"4.9.2",
     __tabId:TAB_ID,
     CronosPersistenceError,
     setClient,
@@ -1769,6 +1882,7 @@
     upsertTask,
     deleteTask,
     commitTargetedBatch,
+    commitMaintenanceTaskBatch,
     mergeContactsCascade,
     adoptHydratedState,
     deleteLeadCascade,
