@@ -1,6 +1,6 @@
 (function(){
   'use strict';
-  const BUILD='billing-admin-v1-45-3-render-provider-hotfix-20260917';
+  const BUILD='billing-admin-v1-45-4-delete-ux-20260917';
   const ENDPOINT='billing-admin';
   const DELETE_PLAN_ENDPOINT='billing-plan-delete';
   const FEATURES=[
@@ -41,13 +41,18 @@
     grid.querySelectorAll('[data-billing-toggle]').forEach(b=>b.onclick=()=>loading(b,'Salvando...',async()=>{await call({action:'toggle_plan',id:b.dataset.billingToggle,active:b.dataset.active==='true'});await loadOverview();notify('Plano atualizado.','success');}));
     grid.querySelectorAll('[data-billing-delete]').forEach(b=>b.onclick=async()=>{
       const id=b.dataset.billingDelete,code=String(b.dataset.planCode||''),name=String(b.dataset.planName||'este plano');
+      if(!id||b.dataset.deleteBusy==='1')return;
+      const originalText=b.textContent||'Excluir';
+      b.dataset.deleteBusy='1';b.disabled=true;b.textContent='Verificando...';
       try{
-        const info=await loading(b,'Verificando...',()=>callDeletePlan({mode:'inspect',id,confirm_code:code}));
+        const info=await callDeletePlan({mode:'inspect',id,confirm_code:code});
         const refs=info?.refs||{};
         const subscriptions=Number(refs.subscriptions||0),invoices=Number(refs.invoices||0),paidInvoices=Number(refs.paid_invoices||0);
         if(subscriptions===0&&invoices===0){
+          b.textContent='Aguardando confirmação...';
           if(!confirm(`Excluir definitivamente o plano "${name}"?\n\nEssa ação não pode ser desfeita.`))return;
-          await loading(b,'Excluindo...',()=>callDeletePlan({mode:'delete',id,confirm_code:code}));
+          b.textContent='Excluindo...';
+          await callDeletePlan({mode:'delete',id,confirm_code:code});
           await loadOverview();notify('Plano excluído definitivamente.','success');return;
         }
         if(info?.can_purge_test_data===true){
@@ -60,10 +65,12 @@
             'Para excluir o plano, o Cronos também precisará apagar esses vínculos de TESTE.',
             'Isso não pode ser desfeito.'
           ].filter(v=>v!==null).join('\n');
+          b.textContent='Aguardando confirmação...';
           if(!confirm(warning))return;
           const typed=prompt(`Confirmação final: digite exatamente o código do plano para apagar o plano e os dados de teste vinculados:\n\n${code}`,'');
           if(String(typed||'').trim()!==code){notify('Exclusão cancelada: código de confirmação diferente.','warning');return;}
-          await loading(b,'Excluindo...',()=>callDeletePlan({mode:'delete',id,confirm_code:code,purge_test_data:true,confirmation_phrase:typed}));
+          b.textContent='Excluindo...';
+          await callDeletePlan({mode:'delete',id,confirm_code:code,purge_test_data:true,confirmation_phrase:typed});
           await loadOverview();notify('Plano de teste e vínculos de teste excluídos.','success');return;
         }
         alert(info?.message||`O plano "${name}" ainda possui vínculos e não pode ser excluído. Desative-o ou remova/reassocie os vínculos primeiro.`);
@@ -72,6 +79,8 @@
         const msg=e?.message||String(e||'Falha ao excluir plano.');
         alert(`Não foi possível excluir o plano.\n\n${msg}`);
         notify(msg,'error');
+      }finally{
+        if(b.isConnected){b.dataset.deleteBusy='';b.disabled=false;b.textContent=originalText;}
       }
     });
   }

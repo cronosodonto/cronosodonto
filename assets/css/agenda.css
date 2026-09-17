@@ -264,16 +264,18 @@ html.light .agendaSide,html.light .agendaPanel,html.light .agendaToolbar,html.li
 .agendaSelectHead,.agendaSelectCell{width:38px;min-width:38px;text-align:center!important;padding-left:7px!important;padding-right:7px!important}
 .agendaSelectHead input,.agendaSelectCell input{width:15px;height:15px;margin:0;accent-color:var(--accent);cursor:pointer;vertical-align:middle}
 .agendaSelectCell{color:var(--muted);font-size:10px}
-.agendaSlotSelectable:hover td{background:rgba(25,198,255,.035)}
-.agendaSlotSelectable:has(.agendaSlotCheck:checked) td{background:rgba(25,198,255,.075)}
+.agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]) td{background:rgba(25,198,255,.024)}
+.agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]):hover td{background:rgba(25,198,255,.05)}
+.agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]:checked) td{background:rgba(25,198,255,.09)}
 .agendaBulkActions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px 10px;border-top:1px solid var(--line);background:rgba(148,163,184,.025)}
 .agendaBulkSummary{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:9.5px;font-weight:750;min-width:0}
 .agendaBulkIcon{display:grid;place-items:center;width:20px;height:20px;border-radius:7px;border:1px solid var(--line);background:rgba(25,198,255,.055);color:var(--accent);font-size:10px;font-weight:950;flex:0 0 auto}
 .agendaBulkButtons{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
 .agendaBulkButtons .agendaMiniBtn{padding:6px 9px}
 .agendaBulkButtons .agendaMiniBtn:disabled{opacity:.42;cursor:not-allowed;filter:none}
-:root.light .agendaSlotSelectable:hover td,html.light .agendaSlotSelectable:hover td{background:rgba(14,165,233,.035)}
-:root.light .agendaSlotSelectable:has(.agendaSlotCheck:checked) td,html.light .agendaSlotSelectable:has(.agendaSlotCheck:checked) td{background:#edfaff}
+:root.light .agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]) td,html.light .agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]) td{background:#f6fbff}
+:root.light .agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]):hover td,html.light .agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]):hover td{background:#eef9ff}
+:root.light .agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]:checked) td,html.light .agendaSlotSelectable:has(.agendaSlotCheck[data-slot-kind="free"]:checked) td{background:#e4f6ff}
 @media(max-width:700px){.agendaBulkActions{align-items:flex-start;flex-direction:column}.agendaBulkButtons{width:100%;justify-content:flex-start}.agendaBulkButtons .agendaMiniBtn{flex:1}.agendaSelectHead,.agendaSelectCell{width:32px;min-width:32px}}
 
 /* Agenda — evolução de interface */
