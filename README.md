@@ -97,7 +97,8 @@ Software proprietário. A reprodução, distribuição, modificação ou utiliza
 - Nenhuma lógica executável alterada.
 
 
-## V1.44.0 — exclusão de planos
-- Botão **Excluir** em Planos e Módulos.
-- Exclusão definitiva somente para planos sem assinaturas e sem faturas vinculadas.
-- Requer publicar também a Edge Function `billing-admin` incluída em `supabase/functions/billing-admin/index.ts`.
+## V1.45.0 — Agenda em ACL e módulos
+- `agenda.view` adicionada à matriz de permissões.
+- Agenda liberada por padrão em todos os perfis.
+- Agenda visível no global, por cargo da clínica e por usuário individual.
+- Agenda continua controlável comercialmente por plano e por exceção de clínica.

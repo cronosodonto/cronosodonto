@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'v463.2.4-rc5.19-acl-resilient';
+  const VERSION = 'v1.45.0-agenda-acl';
   const ROLES = ['MASTER','GERENTE','SECRETARIA','CRC','DENTISTA'];
 
   // Digital) só entram no catálogo quando forem promovidos da fase de teste.
@@ -11,6 +11,7 @@
     {key:'leads.view', module:'leads', label:'Leads', group:'Módulos'},
     {key:'kanban.view', module:'kanban', label:'Funil', group:'Módulos'},
     {key:'tasks.view', module:'tasks', label:'Tarefas', group:'Módulos'},
+    {key:'agenda.view', module:'agenda', label:'Agenda', group:'Módulos'},
     {key:'installments.view', module:'installments', label:'Recebimentos', group:'Módulos'},
     {key:'creditSimulator.view', module:'creditSimulator', label:'Simulador de Crédito', group:'Módulos'},
     {key:'performance.view', module:'performance', label:'Performance', group:'Módulos'},
@@ -32,31 +33,31 @@
 
   const ROLE_DEFAULTS = {
     MASTER: {
-      'dashboard.view':true,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,
+      'dashboard.view':true,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,'agenda.view':true,
       'installments.view':true,'creditSimulator.view':true,'performance.view':true,'users.view':true,'settings.view':true,
       'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':true,'tasks.delete':true,'ficha.edit':true,'leads.delete':true,'users.manage':true,'masters.manage':false,
       'exam.view':true,'exam.capture':true,'exam.delete':true
     },
     GERENTE: {
-      'dashboard.view':true,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,
+      'dashboard.view':true,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,'agenda.view':true,
       'installments.view':true,'creditSimulator.view':true,'performance.view':true,'users.view':true,'settings.view':true,
       'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':true,'tasks.delete':true,'ficha.edit':true,'leads.delete':true,'users.manage':false,'masters.manage':false,
       'exam.view':true,'exam.capture':false,'exam.delete':false
     },
     SECRETARIA: {
-      'dashboard.view':false,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,
+      'dashboard.view':false,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,'agenda.view':true,
       'installments.view':true,'creditSimulator.view':false,'performance.view':false,'users.view':false,'settings.view':false,
       'records.edit':true,'records.delete':true,'installments.manage':true,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':true,'leads.delete':true,'users.manage':false,'masters.manage':false,
       'exam.view':true,'exam.capture':false,'exam.delete':false
     },
     CRC: {
-      'dashboard.view':false,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,
+      'dashboard.view':false,'todayCronos.view':true,'leads.view':true,'kanban.view':true,'tasks.view':true,'agenda.view':true,
       'installments.view':false,'creditSimulator.view':false,'performance.view':false,'users.view':false,'settings.view':false,
       'records.edit':true,'records.delete':false,'installments.manage':false,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':false,'leads.delete':false,'users.manage':false,'masters.manage':false,
       'exam.view':true,'exam.capture':false,'exam.delete':false
     },
     DENTISTA: {
-      'dashboard.view':false,'todayCronos.view':false,'leads.view':true,'kanban.view':true,'tasks.view':false,
+      'dashboard.view':false,'todayCronos.view':false,'leads.view':true,'kanban.view':true,'tasks.view':false,'agenda.view':true,
       'installments.view':false,'creditSimulator.view':false,'performance.view':false,'users.view':false,'settings.view':false,
       'records.edit':false,'records.delete':false,'installments.manage':false,'financial.sensitive':false,'tasks.delete':false,'ficha.edit':false,'leads.delete':false,'users.manage':false,'masters.manage':false,
       'exam.view':true,'exam.capture':true,'exam.delete':true
@@ -65,7 +66,7 @@
 
   const MODULE_PERMISSION = {
     dashboard:'dashboard.view', todayCronos:'todayCronos.view', leads:'leads.view', kanban:'kanban.view', tasks:'tasks.view',
-    installments:'installments.view', creditSimulator:'creditSimulator.view', performance:'performance.view',
+    agenda:'agenda.view', installments:'installments.view', creditSimulator:'creditSimulator.view', performance:'performance.view',
     users:'users.view', settings:'settings.view'
   };
 
@@ -152,6 +153,7 @@
       const key=String(row?.permission_key||row?.key||'').trim();
       if(key) map[key]=row?.allowed===true||row?.enabled===true;
     });
+    if(!Object.prototype.hasOwnProperty.call(map,'agenda.view')) map['agenda.view']=true;
     return map;
   }
 

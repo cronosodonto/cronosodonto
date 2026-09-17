@@ -5440,7 +5440,7 @@ const TREATMENTS = [
 const POSITIVE = new Set(["Agendado","Compareceu","Fechou","Remarcou","Conversando","Concluído"]);
 const DISQUALIFIED = new Set(["Número incorreto","Achou caro","Não tem interesse","Mora longe","Mora em outra cidade","Fechou em outro lugar","Msg não entregue","Mensagem não entregue"]);
 const APP_VIEWS = ["dashboard","leads","kanban","tasks","installments","users","settings"];
-const AUX_MODULES = ["todayCronos","creditSimulator","performance"];
+const AUX_MODULES = ["todayCronos","creditSimulator","performance","agenda"];
 const ALL_ACCESS_MODULES = [...APP_VIEWS, ...AUX_MODULES];
 
 // O catálogo local abaixo é apenas fallback seguro até o banco responder.
@@ -20682,7 +20682,7 @@ document.addEventListener("DOMContentLoaded", () => {
     { module:'intraoral', selector:'#navIntraoralCamera' }
   ];
 
-  const SUB_FEATURES_WITHOUT_ROLE_GATE = new Set(['riskAnalysis','flows','agenda']);
+  const SUB_FEATURES_WITHOUT_ROLE_GATE = new Set(['riskAnalysis','flows']);
 
   function normalizeFeatureKey(value){
     return String(value || '').trim().toLowerCase();
