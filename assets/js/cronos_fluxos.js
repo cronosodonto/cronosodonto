@@ -598,6 +598,7 @@
   }
   const SETTINGS_MODULES = [
     {key:'identity',title:'Identidade da clínica',subtitle:'Nome, e-mail, logo e identidade da ficha',find:()=>primaryClinicIdentityCard(),icon:`<svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/><path d="M9 9h.01M15 9h.01M9 12h.01M15 12h.01"/></svg>`},
+    {key:'schedule',title:'Horário de funcionamento',subtitle:'Expediente, pausas e intervalos da clínica',find:()=>$('agendaClinicScheduleCard'),icon:`<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M7 3 5 5M17 3l2 2"/></svg>`},
     {key:'billing',title:'Plano e assinatura',subtitle:'Plano atual, validade e pagamentos do Cronos',find:()=>$('cronosBillingSettingsCard'),icon:`<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M7 15h4"/><path d="M16.5 13.5v3"/><path d="M15 15h3"/></svg>`},
     {key:'messages',title:'Preferências de mensagens',subtitle:'WhatsApp, cobrança e aniversariantes',find:()=>findSettingsCardByTextarea('waTemplate'),icon:`<svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M7.5 9h9M7.5 13h6"/></svg>`},
     {key:'flows',title:'Fluxos assistidos',subtitle:'Sequências manuais para o Hoje no Cronos',find:()=>$(CARD_ID),icon:`<svg viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="2"/><rect x="15" y="15" width="6" height="6" rx="2"/><path d="M9 6h4a4 4 0 0 1 4 4v5"/><path d="m14 12 3 3 3-3"/></svg>`},

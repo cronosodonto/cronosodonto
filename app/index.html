@@ -18,9 +18,10 @@
 <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-<link href="../assets/css/app.css?build=v1321-feature-plan-dialog-blur-20260904" rel="stylesheet"/>
+<link href="../assets/css/app.css?build=v1321-agenda-v04-20260915" rel="stylesheet"/>
 <link href="../assets/css/prontuario-rc5-32.css?build=20260825-actions-alinhadas" rel="stylesheet"/>
 <link href="../assets/css/intraoral-camera.css?build=20260825-lixeira-solida" rel="stylesheet"/>
+<link href="../assets/css/agenda.css?build=agenda-v1400-20260917" rel="stylesheet"/>
 
 <style id="cronos-v101-leads-footer-darkref">
 html.light #view-leads .leadsPaginationModern,
@@ -552,6 +553,9 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 <button data-view="tasks">
 <span>☑︎ Tarefas</span><span class="pill" id="pillTasks">0</span>
 </button>
+<button type="button" id="navAgenda">
+<span>▣ Agenda</span><span class="pill" id="pillAgenda">agenda</span>
+</button>
 <button data-view="installments">
 <span>⇄ Parcelamentos</span><span class="pill" id="pillInst">0</span>
 </button>
@@ -568,13 +572,9 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 <div class="sideFooter">
 <div><strong>Logado</strong></div>
 <div class="muted" id="whoami">—</div>
-<div class="row">
-<button class="btn primary cronosNewLeadBtn" id="btnNewLeadSide"><span class="cronosPlusIcon" aria-hidden="true">+</span><span>Novo lead</span></button>
+<div class="row cronosSidebarUtilityRow">
 <button class="btn" data-label="Atualizar" id="btnRefreshNow">Atualizar</button>
 <button class="btn hidden" data-label="Voltar ao superadmin" id="btnExitSupport">↩️ Voltar</button>
-</div>
-<div class="row" style="margin-top:8px">
-<button class="btn" id="btnMyPasswordSide">🔒︎ Minha senha</button>
 <button class="btn danger" id="btnLogout">Sair</button>
 </div>
 <div class="sidebarCopyright" aria-label="Copyright Cronos Odonto">
@@ -1167,6 +1167,19 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 <span class="muted" id="clinicIdentitySavedHint" style="font-size:12px"></span>
 </div>
 </div>
+<div class="card" id="agendaClinicScheduleCard">
+<h3>Horário de funcionamento</h3>
+<div class="muted" style="line-height:1.5; margin-bottom:10px">
+  Defina os períodos em que a clínica recebe pacientes. Intervalos entre os períodos não aparecem na grade normal da Agenda; um atendimento excepcional ainda pode ser criado por <b>Encaixar horário</b>.
+</div>
+<div id="agendaClinicPeriods" class="agendaPeriodsEditor"></div>
+<div style="display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap">
+  <button class="btn" id="agendaAddClinicPeriod" type="button">＋ Adicionar período</button>
+  <button class="btn ok" id="btnSaveClinicSchedule" type="button">Salvar funcionamento</button>
+  <span class="muted" id="agendaClinicScheduleSavedHint" style="font-size:12px"></span>
+</div>
+<div id="agendaClinicScheduleSummary" class="agendaScheduleSummary" style="margin-top:10px"></div>
+</div>
 <div class="card">
 <h3>Preferências de mensagens</h3>
 <div class="muted" style="line-height:1.5; margin-bottom:10px">
@@ -1200,6 +1213,39 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 <span class="muted" style="font-size:12px">Para alterar a senha de outro usuário cloud ainda é necessário um fluxo administrativo no Supabase.</span>
 </div>
 </div>
+</section>
+<section id="view-agenda" class="hidden" style="display:none">
+  <div class="agendaTop">
+    <div><h2>Agenda</h2><p>Consultas por profissional com visão diária, semanal e multi-agenda.</p></div>
+  </div>
+  <div class="agendaToolbar">
+    <div class="agendaDateBlock">
+      <label class="agendaToolbarLabel" for="agendaDate">Data</label>
+      <div class="agendaDateControls">
+        <div class="agendaDateNavigator">
+          <button class="agendaDateArrow" id="agendaPrevDay" type="button" title="Dia anterior" aria-label="Dia anterior">‹</button>
+          <input type="date" id="agendaDate" aria-label="Data da agenda">
+          <button class="agendaDateArrow" id="agendaNextDay" type="button" title="Próximo dia" aria-label="Próximo dia">›</button>
+        </div>
+        <button class="btn small agendaTodayBtn" id="agendaToday" type="button">Hoje</button>
+      </div>
+    </div>
+    <div class="agendaModeSwitch" role="tablist" aria-label="Modo da agenda">
+      <button class="agendaModeBtn active" data-mode="day" type="button">Diária</button>
+      <button class="agendaModeBtn" data-mode="week" type="button">Semanal</button>
+      <button class="agendaModeBtn" data-mode="multi" type="button">Multi-agenda</button>
+    </div>
+    <div class="agendaSpacer"></div>
+    <div class="agendaToolbarGroup">
+      <button class="btn small" id="agendaSearchBtn" type="button">⌕ Localizar consulta</button>
+      <button class="btn small" id="agendaFitBtn" type="button">＋ Encaixar horário</button>
+      <button class="btn small" id="agendaPrintBtn" type="button">Imprimir</button>
+    </div>
+  </div>
+  <div class="agendaKpis" id="agendaKpis"></div>
+  <div class="agendaShell">
+    <section class="agendaPanel" id="agendaMain"></section>
+  </div>
 </section>
 </main>
 </section>
@@ -1243,13 +1289,14 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 
 <script src="../assets/js/core/cronos-repository.js?build=persistence-v492-20260915"></script>
 <script src="../assets/js/core/cronos-permissions.js?build=v463-2-4-rc5-19-access-resilience-20260818"></script>
-<script src="../assets/js/app.js?build=v13210-persistence-hotfix-20260915"></script>
-<script src="../assets/js/cronos-billing.js?build=billing-v1-33-boot-dedupe-20260911"></script>
+<script src="../assets/js/app.js?build=v1430-code-hygiene-20260917"></script>
+<script src="../assets/js/cronos-billing.js?build=billing-v1-43-code-hygiene-20260917"></script>
 <script src="../assets/js/intraoral-camera.js?build=20260828-billing-feature-v19"></script>
-<script src="../assets/js/hoje_no_cronos.js?build=v463-2-4-aux-visibility-v14-20260827"></script>
-<script src="../assets/js/cronos_fluxos.js?build=console-fix-20260911"></script>
+<script src="../assets/js/hoje_no_cronos.js?build=v1390-nav-icon-20260917"></script>
+<script src="../assets/js/cronos_fluxos.js?build=agenda-settings-v1350-20260917"></script>
 <script src="../assets/js/simulador_credito.js?build=v463-2-4-aux-visibility-v14-20260827"></script>
 <script src="../assets/js/performance.js?build=v463-2-4-performance-stable-render-v15-20260828"></script>
+<script src="../assets/js/agenda.js?build=agenda-v1430-code-hygiene-20260917"></script>
 
 <style>
   /* Ajustes visuais do Cronos */

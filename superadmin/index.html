@@ -1784,8 +1784,7 @@
       const cronosHost = /(^|\.)cronosodonto\.com$/i.test(url.hostname);
       const sameOrigin = url.origin === window.location.origin || cronosHost;
 
-      // Depois que a raiz virou landing page, qualquer link interno de suporte
-      // precisa entrar direto no app. Mantém querystring/token e evita cair na página informativa.
+      // [SUPORTE] Links internos abrem diretamente o app.
       if (sameOrigin && (url.pathname === "/" || url.pathname === "" || token)) {
         url.pathname = appPath;
       }
@@ -3861,6 +3860,7 @@
     { key: 'leads', label: 'Leads', description: 'Cadastro e listagem de leads.' },
     { key: 'kanban', label: 'Funil', description: 'Kanban do andamento comercial.' },
     { key: 'tasks', label: 'Tarefas', description: 'Pendências e lembretes da equipe.' },
+    { key: 'agenda', label: 'Agenda', description: 'Agenda clínica, horários, bloqueios, reagendamentos e histórico.' },
     { key: 'installments', label: 'Recebimentos', description: 'Valores recebidos, em aberto, parcelas e cobrança.' },
     { key: 'creditSimulator', label: 'Simulador de Crédito', description: 'Simulação de prestação, entrada, juros e proposta.' },
     { key: 'riskAnalysis', label: 'Análise de Risco', description: 'Score interno para boleto próprio e parcelamento interno.' },
@@ -4205,8 +4205,7 @@
   }
 
   function injectClinicContingencyExtras(){
-    // v35: a exportação/backup saiu do detalhe da clínica e foi para Configurações.
-    // Mantemos a função por compatibilidade com o hook antigo, mas ela não injeta mais botão aqui.
+    // [BACKUP] Hook legado mantido sem injetar botão.
   }
 
   const __featureAccess_originalRenderDetailModal = renderDetailModal;
@@ -4600,10 +4599,7 @@
     const year = now.getFullYear();
     const month = now.getMonth();
 
-    // Billing V1.6: quando o resumo oficial do Billing já foi carregado, ele é a
-    // única fonte de verdade também para os KPIs e gráfico antigos deste painel.
-    // Isso evita a corrida em que a rotina legada recalculava zero e sobrescrevia
-    // os R$ recebidos que o webhook/Billing acabara de renderizar.
+    // [BILLING] Resumo oficial alimenta KPIs e gráficos.
     const billing = window.__CRONOS_BILLING_FINANCE__ || null;
     if(billing && Array.isArray(billing.invoices)) {
       const clinics = Array.isArray(state?.clinics) ? state.clinics : [];
@@ -4968,7 +4964,7 @@
   window.__CRONOS_SUPERADMIN_SHARED__ = { CONFIG, state, supabaseClient, toast, escapeHtml, withButtonLoading, callEdgeFunction, loadSupportSettingsCloud, loadSupportSettings };
 })();
 </script>
-<script src="../assets/js/cronos-billing-superadmin.js?build=billing-admin-v1-20-auth-intraoral-20260828"></script>
+<script src="../assets/js/cronos-billing-superadmin.js?build=billing-admin-v1-44-delete-plan-20260917"></script>
 <script src="../assets/js/superadmin-permissions.js?build=v120-intraoral-permission-20260828"></script>
 <script src="../assets/js/superadmin-site-chat.js?build=v463-2-4-security-20260812"></script>
 <script src="../assets/js/superadmin-today-config.js?build=v463-2-4-security-20260812"></script>

@@ -252,8 +252,7 @@
     TODAY_STATE.filter = f;
     TODAY_STATE.visible = { appointments: 3, tasks: 3, receipts: 3, flows: 3, birthdays: 3 };
 
-    // Primeiro muda o visual do chip e tira o conteúdo antigo da tela.
-    // Depois o Cronos renderiza a lista real.
+    // [UI] Atualiza o chip antes de renderizar a lista.
     markFilterChipInstant(f);
     setSectionsPending(f);
 
@@ -915,7 +914,7 @@
     btn.id = NAV_ID;
     btn.type = "button";
     btn.dataset.todayCronos = "1";
-    btn.innerHTML = `<span>Hoje no Cronos</span><span id="todayNavBadge" class="todayNavBadge empty">0</span>`;
+    btn.innerHTML = `<span class="todayNavLabel"><svg class="todayNavIcon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/><circle cx="12" cy="15" r="3"/><path d="M12 13.5V15l1.1.8"/></svg><span>Hoje no Cronos</span></span><span id="todayNavBadge" class="todayNavBadge empty">0</span>`;
     btn.classList.toggle("hidden", !canSeeToday());
     const openToday = (ev)=>{
       try{
@@ -3123,8 +3122,7 @@
     ensureNav();
     const view = ensureView();
     hideOtherViews();
-    // Primeiro clique não pode ficar com tela vazia.
-    // Se já existe snapshot, mostra na hora. Se não existe, mostra skeleton imediatamente.
+    // [UI] Usa snapshot existente ou skeleton imediato.
     const isBlank = !String(view.innerHTML || "").trim();
     const isSkeleton = !!view.querySelector(".todaySkeleton");
     if(TODAY_STATE.lastRenderedHTML && (isBlank || isSkeleton)){

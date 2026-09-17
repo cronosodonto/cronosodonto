@@ -25,11 +25,7 @@
   }
   async function getStatus(options={}){
     const force=options===true||options?.force===true;
-    // V1.33 — deduplicação do boot: `force` invalida apenas o cache já concluído.
-    // Se uma consulta de status já está em voo, todos os consumidores aguardam
-    // a mesma Promise. Antes, cada chamada com force=true abria um novo
-    // billing-client; no F5/login Access State + Feature Access + boot do Billing
-    // podiam disparar três Edge requests idênticos em paralelo.
+    // [BOOT] Reutiliza a mesma Promise enquanto a consulta de Billing estiver em voo.
     if(statusPromise) return statusPromise;
     if(!force&&statusCache&&Date.now()-statusAt<10000)return statusCache;
     const startedAt=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
@@ -95,7 +91,7 @@
     try{const data=await getStatus({force:true});renderCheckoutForm(data,body);}catch(e){body.innerHTML=`<div class="muted">${esc(e.message||e)}</div>`;}
   }
   function renderCheckoutForm(data,body){
-    const FEATURE_LABELS=[['dashboard','Dashboard'],['todayCronos','Hoje no Cronos'],['performance','Performance'],['leads','Leads'],['kanban','Funil'],['tasks','Tarefas'],['installments','Recebimentos'],['creditSimulator','Simulador de Crédito'],['riskAnalysis','Análise de Risco'],['flows','Fluxos Assistidos'],['intraoral','Exame Digital / Câmera intraoral'],['users','Usuários'],['settings','Configurações']];
+    const FEATURE_LABELS=[['dashboard','Dashboard'],['todayCronos','Hoje no Cronos'],['performance','Performance'],['leads','Leads'],['kanban','Funil'],['tasks','Tarefas'],['agenda','Agenda'],['installments','Recebimentos'],['creditSimulator','Simulador de Crédito'],['riskAnalysis','Análise de Risco'],['flows','Fluxos Assistidos'],['intraoral','Exame Digital / Câmera intraoral'],['users','Usuários'],['settings','Configurações']];
     const plans=(data?.plans||[]).filter(p=>p.active!==false).slice().sort((a,b)=>Number(a?.price_monthly||0)-Number(b?.price_monthly||0)||String(a?.name||'').localeCompare(String(b?.name||''),'pt-BR'));if(!plans.length){body.innerHTML='<div class="muted">Nenhum plano disponível no momento.</div>';return;}
     const selected=(data?.plan?.id&&plans.some(p=>p.id===data.plan.id))?data.plan.id:plans[0].id;
     const featureList=p=>{const f=p?.features||{};return FEATURE_LABELS.filter(([key])=>key==='intraoral'?(f[key]??'enabled')==='enabled':f[key]==='enabled').map(([,label])=>label);};

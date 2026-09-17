@@ -218,9 +218,7 @@ function scrubInstallmentTasksForMaster(db, masterId){
   if(!masterId) return {before: db.tasks.length, after: db.tasks.length, removed: 0, created: 0};
 
   const before = db.tasks.length;
-  // Preserva metadados estáveis das tarefas automáticas existentes. Sem isso,
-  // o reparo recriava createdAt em todo login e fazia tarefas idênticas parecerem
-  // alterações novas para a camada transacional.
+  // [TASKS] Preserva metadados estáveis de tarefas automáticas.
   const existingAutomaticTasksByKey = new Map(
     db.tasks
       .filter(t => (!t?.masterId || t.masterId === masterId) && isAutomaticInstallmentTask(t))
@@ -831,8 +829,7 @@ function cronosPaymentAmount(payment){
   return parseMoney(payment?.value ?? payment?.amount ?? payment?.valor ?? payment?.total ?? 0);
 }
 function cronosPaymentReceivedGrossAmount(payment){
-  // "R$ Recebido" representa quanto o paciente quitou. Em antecipação de
-  // cartão, a taxa reduz o caixa líquido, mas não reabre parte da dívida.
+  // [FINANCE] Recebido = dívida quitada; taxas afetam apenas o caixa líquido.
   const isCreditAnticipation = !!(
     payment?.creditAnticipated ||
     String(payment?.settlementType || "").toLowerCase() === "antecipacao_credito" ||
@@ -1020,10 +1017,7 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
   const seenExactKeys = new Set();
   const seenCashRecordIds = new Set();
 
-  // Fontes detalhadas são a autoridade: cada linha de parcela/pagamento marcada
-  // como paga representa uma baixa. Não deduplicamos por paciente, data, valor
-  // ou mesmo por paymentId, pois parcelas legítimas podem compartilhar esses
-  // campos (e dados antigos podem ter IDs repetidos).
+  // [FINANCE] Baixas detalhadas são a fonte autoritativa.
   const paidFinancialRefs = new Set();
   const paidLegacyRefs = new Set();
   const detailedMirrorSlots = new Map();
@@ -1116,8 +1110,7 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     return true;
   }
 
-  // 1) Regra principal: soma TODAS as baixas das parcelas dos planos ativos.
-  // O índice entra na chave para que IDs antigos repetidos não apaguem parcelas.
+  // [FINANCE] Planos ativos: soma todas as baixas.
   entries.forEach((entry, entryIdx)=>{
     const patient = cronosPatientNameForPayment({}, entry, contactById);
     const plans = (typeof cronosActiveFinancialPlans === "function")
@@ -1193,9 +1186,7 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     });
   });
 
-  // 3) Livro-caixa: entra apenas quando não é o espelho de uma parcela já
-  // contada. Registros sem vínculo são pareados um a um por paciente/data/valor;
-  // isso evita contar o mesmo pagamento duas vezes sem jamais apagar parcelas.
+  // [FINANCE] Livro-caixa ignora apenas espelhos já contabilizados.
   (db?.payments || []).forEach((payment, idx)=>{
     if(!cronosSameMasterPayment(payment, masterId, entryById, contactById, entriesByContact)) return;
     if(typeof cronosIsDeletedLike === "function" && cronosIsDeletedLike(payment)) return;
@@ -1319,9 +1310,7 @@ function buildCronosReceivedEvents(db=loadDB(), actor=currentActor(), options={}
     });
   }
 
-  // 4) Campos agregados antigos só são fallback quando não existe nenhuma baixa
-  // detalhada daquele lead/paciente no mês. Nunca substituem nem completam
-  // parcelas modernas por tentativa de adivinhação.
+  // [FINANCE] Agregados legados são fallback sem baixa detalhada.
   entries.forEach(entry=>{
     const eid = String(entry.id || "");
     const cid = String(entry.contactId || "");
@@ -1756,9 +1745,7 @@ function fichaLinkedFinancialPaidTotal(entry, plano=[]){
     if(item?.pago) total += Number(item.valorFechado || 0);
   });
 
-  // Pagamentos do paciente que ainda não foram alocados em procedimentos específicos.
-  // Ex.: entrada/recebimento avulso de R$ 4.000,00. O valor precisa aparecer
-  // no resumo do prontuário, mas sem pintar procedimentos como pagos no chute.
+  // [PRONTUÁRIO] Pagamentos não alocados entram no resumo, não nos procedimentos.
   ensureFinancialPlans(entry).forEach(plan=>{
     const pid = String(plan?.id || '');
     if(!pid || seenPlans.has(pid)) return;
@@ -1772,12 +1759,7 @@ function fichaLinkedFinancialPaidTotal(entry, plano=[]){
 
   const totalFechado = (plano || []).reduce((s,x)=>s + Number(x.valorFechado || 0), 0);
 
-  // Sincroniza o resumo da Ficha com o mesmo resumo financeiro usado nos cards.
-  // Antes, a Ficha lia só pagamentos vinculados/financeiros e o card também aceitava
-  // baixas antigas/campos legados do lead. Resultado: o mesmo paciente podia aparecer
-  // como Pago 530 na Ficha e Pago 630 no card. A Ficha agora usa o maior valor oficial
-  // quando a avaliação visível representa o orçamento completo do lead, sem pintar itens
-  // individualmente como pagos no chute.
+  // [PRONTUÁRIO] Resumo financeiro usa a mesma fonte dos cards.
   try{
     const allFichaItems = Array.isArray(entry?.ficha?.plano) ? entry.ficha.plano : [];
     const allFichaTotal = allFichaItems.reduce((s,x)=>s + Number(x?.valorFechado || 0), 0);
@@ -2095,6 +2077,7 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
           <div class="instBtns receivableActions">
             ${chargeBtn}
             ${payBtn}
+            ${Number(totals.paid || 0) > 0 ? `<button class="btn" onclick="printFinancialPlanReceipt('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}')">Recibo geral</button>` : ''}
             <button class="btn" onclick="openLeadEntry('${entry.id}')">Abrir lead</button>
             <button class="btn primary" onclick="openNewFinancialInstallment('${entry.id}','${plan.id}')">Gerenciar</button>
           </div>
@@ -2102,6 +2085,131 @@ function buildFinancialPlanCards(db, actor, mk, q, filter, today){
       </div>
     `;
   }).join("");
+}
+
+function financialReceiptContact(db, entry){
+  const contact = (db.contacts || []).find(c=>String(c?.id || '')===String(entry?.contactId || '')) || null;
+  return contact || {
+    name: entry?.contactName || entry?.patientName || entry?.nomePaciente || entry?.name || entry?.nome || entry?.lead || entry?.paciente || 'Paciente',
+    cpf: entry?.cpf || entry?.patientCpf || entry?.contactCpf || '',
+    phone: entry?.contactPhone || entry?.patientPhone || entry?.telefone || entry?.phone || ''
+  };
+}
+
+function financialReceiptClinicIdentity(db, actor){
+  // [IDENTIDADE] Fonte: Configurações → Identidade da clínica.
+  const clinicId = actor?.masterId || actor?.clinicId || null;
+  const rootBranding = db?.settings?.clinicBranding || {};
+  const branding = clinicId && rootBranding?.byClinic
+    ? (rootBranding.byClinic[String(clinicId)] || {})
+    : {};
+  const configuredName = String(branding?.clinicName || '').trim();
+  const configuredPhone = String(branding?.clinicPhone || '').trim();
+  const configuredLogo = String(branding?.logoDataUri || '').trim();
+  return {
+    name: configuredName || String(actor?.masterName || actor?.clinicName || 'Clínica').trim(),
+    phone: configuredPhone,
+    logo: configuredLogo
+  };
+}
+
+function financialReceiptDate(value){
+  const iso = cronosRecebDateISO(value || '');
+  return iso ? fmtBR(iso) : '—';
+}
+
+function financialReceiptPatientLine(contact){
+  const name = String(contact?.name || 'Paciente').trim() || 'Paciente';
+  const cpf = String(contact?.cpf || contact?.cpfCnpj || '').trim();
+  return cpf ? `${name} • CPF ${cpf}` : name;
+}
+
+function openFinancialReceiptWindow({entry, plan, payment=null, mode='payment'}={}){
+  if(!entry || !plan) return toast('Recibo', 'Não foi possível localizar o recebimento.');
+  const db = loadDB();
+  const actor = currentActor();
+  const clinic = financialReceiptClinicIdentity(db, actor);
+  const contact = financialReceiptContact(db, entry);
+  const totals = financialPlanTotals(plan);
+  const activePayments = ((typeof cronosActiveFinancialPayments === 'function') ? cronosActiveFinancialPayments(plan) : (plan.payments || []))
+    .slice()
+    .sort((a,b)=>{
+      const na=Number(a?.number||0), nb=Number(b?.number||0);
+      if(na!==nb) return na-nb;
+      return String(a?.dueDate||'').localeCompare(String(b?.dueDate||''));
+    });
+  const paidPayments = activePayments.filter(financialPaymentPaid);
+
+  let receiptTitle = 'RECIBO DE PAGAMENTO';
+  let amount = 0;
+  let body = '';
+  let detailHtml = '';
+
+  if(mode === 'payment'){
+    if(!payment || !financialPaymentPaid(payment)) return toast('Recibo', 'Só é possível emitir recibo de parcela já paga.');
+    amount = parseMoney(payment.amount ?? payment.value ?? payment.valor ?? 0);
+    const payDate = cronosPaymentCashISO(payment,false) || payment.paidAt || payment.cashDate || payment.dueDate || '';
+    const part = `${payment.number || ''}/${payment.total || ''}`;
+    body = `Recebemos de <b>${escapeHTML(financialReceiptPatientLine(contact))}</b> a importância de <b>${escapeHTML(moneyBR(amount))}</b>, referente à parcela <b>${escapeHTML(part)}</b> do tratamento <b>${escapeHTML(plan.title || 'Plano de tratamento')}</b>.`;
+    detailHtml = `
+      <div class="receiptDetails">
+        <div><span>Parcela</span><b>${escapeHTML(part)}</b></div>
+        <div><span>Data do pagamento</span><b>${escapeHTML(financialReceiptDate(payDate))}</b></div>
+        <div><span>Forma de pagamento</span><b>${escapeHTML(payment.payMethod || '—')}</b></div>
+        <div><span>Valor recebido</span><b>${escapeHTML(moneyBR(amount))}</b></div>
+      </div>`;
+  }else{
+    if(Number(totals.paid || 0) <= 0) return toast('Recibo', 'Ainda não há pagamentos baixados neste tratamento.');
+    amount = Number(totals.paid || 0);
+    const fullyPaid = financialPlanIsFullyPaid(plan);
+    receiptTitle = fullyPaid ? 'RECIBO DO TRATAMENTO' : 'RECIBO DE PAGAMENTOS DO TRATAMENTO';
+    body = fullyPaid
+      ? `Recebemos de <b>${escapeHTML(financialReceiptPatientLine(contact))}</b> a importância total de <b>${escapeHTML(moneyBR(amount))}</b>, referente aos pagamentos do tratamento <b>${escapeHTML(plan.title || 'Plano de tratamento')}</b>, cujo valor total é de <b>${escapeHTML(moneyBR(totals.total || amount))}</b>.`
+      : `Recebemos de <b>${escapeHTML(financialReceiptPatientLine(contact))}</b>, até a presente data, a importância acumulada de <b>${escapeHTML(moneyBR(amount))}</b>, referente aos pagamentos já realizados do tratamento <b>${escapeHTML(plan.title || 'Plano de tratamento')}</b>, cujo valor total é de <b>${escapeHTML(moneyBR(totals.total || 0))}</b>.`;
+    const rows = activePayments.map(p=>{
+      const paid = financialPaymentPaid(p);
+      const cashDate = cronosPaymentCashISO(p,false) || p.paidAt || p.cashDate || '';
+      const dueDate = p.dueDate || p.date || '';
+      const shownDate = paid ? cashDate : dueDate;
+      const status = paid
+        ? '<span class="receiptStatus paid">PAGA</span>'
+        : '<span class="receiptStatus open">EM ABERTO</span>';
+      const method = paid ? String(p.payMethod || '—') : '—';
+      return `<tr class="${paid?'isPaid':'isOpen'}"><td>${escapeHTML(`${p.number||''}/${p.total||''}`)}</td><td>${escapeHTML(financialReceiptDate(shownDate))}</td><td>${escapeHTML(method)}</td><td>${escapeHTML(moneyBR(parseMoney(p.amount ?? p.value ?? p.valor ?? 0)))}</td><td>${status}</td></tr>`;
+    }).join('');
+    detailHtml = `
+      <div class="receiptSummary">
+        <div><span>Valor total do tratamento</span><b>${escapeHTML(moneyBR(totals.total || 0))}</b></div>
+        <div><span>Total recebido</span><b>${escapeHTML(moneyBR(amount))}</b></div>
+        <div><span>Saldo em aberto</span><b>${escapeHTML(moneyBR(totals.openBalance || 0))}</b></div>
+      </div>
+      <table class="receiptTable"><thead><tr><th>Parcela</th><th>Data</th><th>Forma</th><th>Valor</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  const now = new Date();
+  const emittedAt = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;
+  const logo = clinic.logo ? `<img src="${clinic.logo}" alt="${escapeHTML(clinic.name)}">` : '';
+  const w = window.open('', '_blank', 'width=980,height=820');
+  if(!w) return toast('Pop-up bloqueado', 'Permita pop-ups para imprimir o recibo.');
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHTML(receiptTitle)}</title><style>
+    @page{size:A4;margin:18mm 20mm 20mm}*{box-sizing:border-box}html,body{margin:0;background:#fff;color:#111;font-family:Arial,Helvetica,sans-serif;font-size:12px}.sheet{min-height:257mm;position:relative}.clinic{text-align:center;border-bottom:1px solid #d8dde5;padding-bottom:16px;margin-bottom:38px}.clinic img{display:block;max-width:92px;max-height:74px;object-fit:contain;margin:0 auto 8px}.clinic strong{display:block;font-size:16px}.clinic small{display:block;margin-top:4px;font-size:12px;color:#555}.title{text-align:center;font-size:20px;font-weight:800;letter-spacing:.025em;margin:0 0 34px}.body{font-size:12px;line-height:1.75;text-align:justify;margin-bottom:28px}.receiptDetails,.receiptSummary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 18px;border:1px solid #d9dee7;border-radius:10px;padding:14px;margin-top:20px}.receiptDetails div,.receiptSummary div{display:grid;gap:3px}.receiptDetails span,.receiptSummary span{font-size:11px;color:#666}.receiptDetails b,.receiptSummary b{font-size:12px}.receiptTable{width:100%;border-collapse:collapse;margin-top:18px;font-size:12px}.receiptTable th,.receiptTable td{border:1px solid #d9dee7;padding:8px;text-align:left}.receiptTable th{background:#f6f8fb}.receiptTable tr.isPaid td{background:rgba(34,197,94,.035)}.receiptTable tr.isOpen td{background:rgba(239,68,68,.025)}.receiptStatus{display:inline-flex;align-items:center;justify-content:center;min-width:82px;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.025em}.receiptStatus.paid{color:#166534;background:#dcfce7;border:1px solid #86efac}.receiptStatus.open{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5}.sign{width:52%;margin-top:72px;text-align:center}.signLine{border-top:1px solid #222;margin-bottom:7px}.sign strong{display:block;font-size:12px}.sign small{display:block;margin-top:3px;font-size:11px;color:#555}.audit{position:absolute;left:0;right:0;bottom:0;padding-top:12px;border-top:1px solid #e5e7eb;text-align:center;color:#7b8494;font-size:10px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body><main class="sheet"><header class="clinic">${logo}<strong>${escapeHTML(clinic.name)}</strong>${clinic.phone?`<small>${escapeHTML(clinic.phone)}</small>`:''}</header><h1 class="title">${escapeHTML(receiptTitle)}</h1><div class="body">${body}</div>${detailHtml}<div class="sign"><div class="signLine"></div><strong>${escapeHTML(clinic.name)}</strong><small>Recebedor / clínica</small></div><div class="audit">Emitido em ${escapeHTML(emittedAt)} pelo Cronos Odonto</div></main><script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script></body></html>`;
+  w.document.write(html);w.document.close();
+}
+
+function printFinancialPaymentReceipt(entryId, planId, paymentId){
+  const db = loadDB();
+  const {entry, plan} = getFinancialPlan(db, entryId, planId);
+  if(!entry || !plan) return toast('Recibo', 'Recebimento não encontrado.');
+  const payment = ((typeof cronosActiveFinancialPayments === 'function') ? cronosActiveFinancialPayments(plan) : (plan.payments || [])).find(p=>String(p?.id || '')===String(paymentId || ''));
+  openFinancialReceiptWindow({entry, plan, payment, mode:'payment'});
+}
+
+function printFinancialPlanReceipt(entryId, planId){
+  const db = loadDB();
+  const {entry, plan} = getFinancialPlan(db, entryId, planId);
+  if(!entry || !plan) return toast('Recibo', 'Recebimento não encontrado.');
+  openFinancialReceiptWindow({entry, plan, mode:'plan'});
 }
 
 function renderFinancialPaymentTable(entry, plan, contact){
@@ -2129,6 +2237,7 @@ function renderFinancialPaymentTable(entry, plan, contact){
               ? `<button type="button" class="btn ok compactLow" title="Baixa esta parcela" onclick="payFinancialPayment('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(p.id)}'); return false;">Dar baixa</button>`
               : `<button type="button" class="btn ok compactLow" disabled title="Aprove o recebimento antes de dar baixa">Dar baixa</button>`));
     const transfer = (!mutating && paid && canSensitive) ? `<a class="miniLink" href="javascript:void(0)" onclick="transferFinancialPaymentCashDate('${entry.id}','${plan.id}','${p.id}')">Transferir data</a>` : "";
+    const receiptBtn = (!mutating && paid) ? `<button type="button" class="btn small" onclick="printFinancialPaymentReceipt('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}','${escapeJSString(p.id)}')">Recibo</button>` : "";
     const cashISO = cronosPaymentCashISO(p, false);
     const deleteBtn = (!mutating && canSensitive) ? `<button type="button" class="miniBtn danger" onclick="deleteFinancialPayment('${entry.id}','${plan.id}','${p.id}')" title="Excluir pagamento">🗑️</button>` : "";
     return `
@@ -2138,7 +2247,7 @@ function renderFinancialPaymentTable(entry, plan, contact){
         <td class="mono">${moneyBR(p.amount)}</td>
         <td>${escapeHTML(p.payMethod || "—")}</td>
         <td>${st}${(!mutating && cashISO) ? `<div class="muted" style="font-size:12px">caixa: ${fmtBR(cashISO)}</div>` : ""}${(!mutating && (p.creditAnticipated || p.settlementType === "antecipacao_credito")) ? `<div class="muted" style="font-size:12px">líq.: ${moneyBR(p.cashValue ?? p.netValue ?? p.amount)}${p.cardFeeAmount ? ` • taxa: ${moneyBR(p.cardFeeAmount)}` : ""}</div>` : ""}</td>
-        <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${transfer} ${deleteBtn}</td>
+        <td style="white-space:nowrap; display:flex; gap:10px; align-items:center; flex-wrap:wrap">${action} ${receiptBtn} ${transfer} ${deleteBtn}</td>
       </tr>
     `;
   }).join("");
@@ -2245,8 +2354,7 @@ function startFinancialMutationWait(label="uma alteração financeira"){
 }
 
 async function waitForPreviousCloudWriteBeforeFinancialChange(){
-  // A baixa não pode disputar escrita com algum saveDB anterior que ainda esteja rodando.
-  // Primeiro deixamos a escrita anterior terminar; a alteração financeira vem depois.
+  // [FINANCE] Serializa a baixa após gravações pendentes.
   try{
     if(__cloudSaveTimer){
       clearTimeout(__cloudSaveTimer);
@@ -2402,8 +2510,7 @@ function buildFinancialTargetedBatch(db, before, entry){
 }
 
 async function commitPaymentWithAutoConfirmation(db, entry, planId, paymentId, paidExpected=true, before=null){
-  // A RPC é transacional: quando retorna sucesso, a baixa já foi confirmada no banco.
-  // Sem espera artificial ou polling de minutos.
+  // [FINANCE] RPC transacional confirma a baixa no retorno.
   return await commitFinancialMutationCloud(db, entry, before);
 }
 
@@ -2413,9 +2520,7 @@ async function commitFinancialMutationCloud(db, entry, before=null){
     return false;
   }
 
-  // V4: ações financeiras são sempre direcionadas ao paciente e às entidades
-  // realmente alteradas. Nunca reenviamos a clínica inteira para aprovar, baixar,
-  // desfazer baixa, excluir ou transferir uma parcela.
+  // [V4] Persistência financeira direcionada às entidades alteradas.
   if(window.CronosRepository?.isEnabled?.()){
     try{
       if(typeof window.CronosRepository.commitTargetedBatch !== "function"){
@@ -2439,8 +2544,7 @@ async function commitFinancialMutationCloud(db, entry, before=null){
     }
   }
 
-  // Pagamentos ainda usam clinic_state, enquanto a ficha/lead já usa clinic_leads.
-  // Esta RPC grava os dois pontos numa única transação no banco.
+  // [V4] RPC sincroniza clinic_state e clinic_leads na mesma transação.
   if(typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID && entry?.id){
     const { data, error } = await supabaseClient.rpc("cronos_v2_commit_financial_mutation", {
       p_clinic_id: String(CLOUD_CLINIC_ID),
@@ -2746,8 +2850,7 @@ async function queueFichaV2LeadSave(entry){
     await upsertV2Rows(CLOUD_LEADS_V2_TABLE, [row]);
     return true;
   };
-  // Serializa as gravações da mesma ficha. Sem isso, dois cliques rápidos podiam
-  // chegar fora de ordem no Supabase e o estado anterior sobrescrever o mais novo.
+  // [PRONTUÁRIO] Serializa gravações da mesma ficha.
   const pending = __cronosFichaSaveQueue.then(run, run);
   __cronosFichaSaveQueue = pending.catch(()=>false);
   return pending;
@@ -2756,9 +2859,7 @@ async function queueFichaV2LeadSave(entry){
 async function saveFichaMutation(db, entry, options={}){
   try{ markFichaMutation(entry); }catch(_){ }
 
-  // Persistência V4 direcionada: a Ficha mora dentro de um único Lead.
-  // Nunca compare nem reenvie a clínica inteira para salvar odontograma,
-  // avaliações, observações ou itens do plano de tratamento.
+  // [V4] Ficha persiste apenas no Lead correspondente.
   if(!isSupportMode() && window.CronosRepository?.isEnabled?.()){
     try{
       const ok = await cronosPersistTargetedBatch(db, {
@@ -2783,9 +2884,7 @@ async function saveFichaMutation(db, entry, options={}){
     return false;
   }
 
-  // Em tables_v2, a Ficha mora dentro do lead em clinic_leads.
-  // Salvar a ficha não deve depender do clinic_state (tarefas/recebimentos/configurações),
-  // porque uma falha ali fazia procedimento parecer salvo e desaparecer no F5.
+  // [TABLES_V2] Ficha clínica persiste em clinic_leads.
   if(!isSupportMode() && typeof isClinicSourceV2 === "function" && isClinicSourceV2("entries") && CLOUD_CLINIC_ID){
     try{
       await queueFichaV2LeadSave(entry);
@@ -3463,8 +3562,7 @@ async function payFinancialPayment(entryId, planId, paymentId){
   setFinancialPaymentUIState(initialPayment, "pay");
   const finishMutation = startFinancialMutationWait("uma baixa");
 
-  // O usuário vê que a ação está em andamento desde o primeiro segundo,
-  // inclusive enquanto uma gravação anterior termina.
+  // [UI] Exibe estado de salvamento imediatamente.
   showFinancialMutationPreview(db);
   toast("Salvando baixa...", "Aguarde a conclusão.");
 
@@ -4194,6 +4292,7 @@ function renderNewFinancialInstallmentApp(){
                       ${canSensitive ? (financialPlanIsApproved(plan)
                         ? `<button type="button" class="btn small newFinApprovedBtn" disabled>Aprovado</button>`
                         : `<button type="button" class="btn small newFinApprovePlanBtn" onclick="CRONOS_NEW_FIN_UI.approvePlan('${escapeHTML(plan.id)}')">Aprovar</button>`) : ""}
+                      ${Number(t.paid || 0) > 0 ? `<button type="button" class="btn small" onclick="printFinancialPlanReceipt('${escapeJSString(entry.id)}','${escapeJSString(plan.id)}')">Recibo geral</button>` : `<button type="button" class="btn small" disabled title="Disponível após a primeira baixa">Recibo geral</button>`}
                       ${canSensitive ? `<button type="button" class="btn small danger" onclick="CRONOS_NEW_FIN_UI.removePlan('${escapeHTML(plan.id)}')">Excluir</button>` : ""}
                     </div>
                     ${active ? renderFinancialPlanPaymentEditor(entry, plan, contact, t.remainingToSchedule) : ""}
@@ -4527,8 +4626,7 @@ window.CRONOS_NEW_FIN_UI = {
 };
 
 if(!window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__){
-  // A busca de Recebimentos agora usa apenas o listener direto do campo.
-  // Antes havia listener global + inline + keyup/change, e uma única letra podia redesenhar o modal várias vezes.
+  // [RECEBIMENTOS] Busca usa um único listener.
   window.__CRONOS_NEW_FIN_SEARCH_GLOBAL_WIRED__ = true;
 }
 
@@ -5268,8 +5366,7 @@ window.cronosLimparTarefasParcelamentoAgora = function(){
 /* Recebimentos */
 const __renderAll = typeof renderAll === "function" ? renderAll : function(){};
 renderAll = function(){
-  // Renderização e filtros são somente leitura. Sincronizar parcelas/tarefas aqui
-  // fazia cada troca de ano ou busca tentar salvar milhares de entidades novamente.
+  // [READ ONLY] Renderização e filtros não persistem dados.
   __renderAll();
   try{ relabelInstallmentsToRecebimentos(); }catch(e){}
   try{
@@ -5387,8 +5484,7 @@ function denyCRCFichaEdit(){
 }
 function canOperateRecebimentos(actor=currentActor()){
   if(!actor || actor.isSupport === true) return false;
-  // Plano/Billing também é autoridade para ações financeiras fora da tela de Recebimentos.
-  // Assim, ocultar/bloquear o módulo impede criar ou alterar recebimentos pelo prontuário.
+  // [FEATURE GATE] Billing controla Recebimentos em qualquer tela.
   try{
     if(typeof window.CRONOS_CAN_OPEN_MODULE === "function" && window.CRONOS_CAN_OPEN_MODULE("installments", actor) !== true){
       return false;
@@ -5467,11 +5563,7 @@ function applyRoleVisibility(actor=currentActor()){
     const btn = el(item.id);
     if(!btn) return;
 
-    // Os módulos auxiliares têm duas autoridades: ACL do papel e Feature/Billing.
-    // Antes a camada de papel removia `hidden` em toda troca de rota e a camada
-    // de Feature Access recolocava logo depois. Resultado: Performance/Simulador
-    // piscavam, apareciam e sumiam ao navegar. Quando o gate de Feature Access já
-    // está instalado, ele é a única autoridade visual para esses três botões.
+    // [FEATURE GATE] Visibilidade final dos módulos auxiliares vem do Feature/Billing.
     let visible = canAccessModule(item.module, actor);
     try{
       if(typeof window.CRONOS_CAN_SEE_MODULE === "function"){
@@ -6592,8 +6684,7 @@ function cronosInfrastructureBusyError(error){
     message.includes("server overloaded") || message.includes("database is overloaded");
 }
 
-// FASE 2: fontes estruturadas para contatos/leads. A interface ainda opera com arrays
-// em memória nesta ponte inicial, mas a persistência passa a ser por tabela quando ativada.
+// [DATA SOURCE] Contatos/leads usam tabelas estruturadas quando habilitadas.
 const CLOUD_DATA_SOURCES_TABLE = "clinic_data_sources";
 const CLOUD_CONTACTS_V2_TABLE = "clinic_contacts";
 const CLOUD_LEADS_V2_TABLE = "clinic_leads";
@@ -6606,10 +6697,7 @@ let CLOUD_DATA_SOURCES = {
   patient_files_source: "legacy_json"
 };
 
-// V123 — Resgate Mundo Odonto: a fonte V2 correta foi identificada em produção.
-// Mantém a correção restrita à Mundo Odonto; clínicas novas ou outras clínicas
-// seguem o fluxo normal pelo mapa clinic_data_sources/RLS. A chave a33... fica
-// isolada como lista de dentistas/teste e não deve ser lida como MO.
+// [DATA SOURCE] Mundo Odonto → tables_v2; demais clínicas usam clinic_data_sources/RLS.
 const CRONOS_MO_V2_CLINIC_ID = "2674f63e-36ef-4bf2-a8e8-50f317471708";
 const CRONOS_DENTIST_LIST_CLINIC_ID = "a33fb656-c148-4590-bb35-3c1cbe16d95d";
 const CRONOS_MO_OWNER_EMAIL = "mundoodonto.slzma@gmail.com";
@@ -6652,8 +6740,7 @@ function cronosSelectDataSourceRow(rows){
     if(exact) return exact;
   }
 
-  // Se há mais de uma fonte e não é Mundo Odonto, não chutamos. O fallback legado
-  // é mais seguro do que apontar uma clínica nova para a gaveta errada.
+  // [DATA SOURCE] Múltiplas fontes exigem correspondência exata.
   return null;
 }
 function cronosMoV2RescueActive(){
@@ -6708,9 +6795,7 @@ function setSupportContext(ctx){
     return;
   }
 
-  // O contexto de suporte pode vir com data gigante. Guardar isso inteiro no
-  // sessionStorage estoura a cota e deixa o modo suporte instável. A memória da aba
-  // guarda o objeto completo; no sessionStorage fica só o metadado leve.
+  // [SUPORTE] sessionStorage guarda apenas metadados leves.
   try{
     const lightCtx = { ...ctx };
     delete lightCtx.data;
@@ -6893,8 +6978,7 @@ async function maybeInitSupportMode(){
   // Sem token novo nem token lembrado, não há contexto de suporte a validar.
   if(!supportToken) return getSupportContext();
 
-  // Inclusive no F5, o token e a clínica de suporte são revalidados na Edge.
-  // sessionStorage nunca libera dados operacionais por conta própria.
+  // [SUPORTE] F5 revalida token e clínica na Edge.
 
   // Link de suporte tem prioridade absoluta sobre qualquer login/cache já aberto nessa aba.
   if(tokenFromUrl){
@@ -6908,8 +6992,7 @@ async function maybeInitSupportMode(){
 
   try{ sessionStorage.setItem(SUPPORT_TOKEN_KEY, supportToken); }catch(_){}
 
-  // Só grava contexto/DB e só libera a interface depois que a Edge confirmar
-  // que a hidratação V2 veio completa. Nunca renderiza clínica zerada por carga parcial.
+  // [BOOT] Interface libera após hidratação V2 confirmada.
   const support = await fetchSupportAccessReady(supportToken, 3);
 
   setCloudDataSourcesFromRow(support.data_sources || null, support.clinic_id || "");
@@ -7305,10 +7388,7 @@ async function fetchClinicAccessState(force=false){
 }
 
 async function fetchEffectiveClinicAccessState(force=true){
-  // V1.33.1 PERFORMANCE: Access State e Billing são fontes independentes.
-  // Antes o Billing só era aguardado DEPOIS do Access State; no boot isso podia
-  // serializar ~6s + ~8s. Iniciamos ambos juntos e preservamos exatamente a
-  // mesma composição/autoridade depois que os dois terminarem.
+  // [PERFORMANCE] Access State e Billing iniciam em paralelo.
   const accessPromise = fetchClinicAccessState(force);
   const billingPromise = (window.CronosBilling && typeof window.CronosBilling.getStatus === 'function')
     ? window.CronosBilling.getStatus({ force:!!force })
@@ -7453,8 +7533,7 @@ function cronosEpochStillCurrent(epoch){
 }
 
 function showAccessGate(decision){
-  // V1.32.2 — respostas assíncronas de ACL/Billing que terminarem depois do
-  // logout nunca podem substituir a tela de login por um bloqueio de acesso.
+  // [SESSION] Respostas antigas de ACL/Billing são ignoradas após logout.
   if(cronosLogoutInProgress()) return false;
   if(window.__CRONOS_ACCESS_UI_SUSPENDED__ === true){
     window.__CRONOS_ACCESS_UI_SUSPENDED__ = false;
@@ -8344,8 +8423,7 @@ async function loadCurrentClinicDataSourcesInternal(){
     || currentUserEmail === "mundoodonto.admslz@gmail.com"
     || cronosIsMundoOdontoContext();
 
-  // A fonte oficial da Mundo Odonto já foi validada e é fixa. Consultar o mapa em
-  // toda abertura só adicionava uma chamada e um novo ponto de falha ao login.
+  // [DATA SOURCE] Mundo Odonto usa mapeamento V2 fixo.
   if(isMundoOdontoLogin){
     setCloudDataSourcesFromRow({
       clinic_id: CRONOS_MO_V2_CLINIC_ID,
@@ -15615,11 +15693,11 @@ function printLeadEntry(entryId){
 <style>
   :root{--ink:#111827;--muted:#64748b;--line:#e5e7eb;--soft:#f8fafc;--brand:#2563eb;}
   *{box-sizing:border-box}
-  body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:26px; color:var(--ink); background:#fff;}
+  body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:26px; color:var(--ink); background:#fff;font-size:12px;}
   .head{display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:16px;}
-  .brand{display:flex;align-items:center;gap:12px;min-width:0}.brand img{width:auto;height:46px;max-width:132px;object-fit:contain}.brandTitle{font-size:19px;font-weight:900;line-height:1.05}.sub{font-size:12px;color:var(--muted);margin-top:4px}.stamp{font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
-  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:12px;margin:14px 0}.card{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}.card.soft{background:var(--soft)}.label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.055em;font-weight:800}.val{font-size:14px;margin-top:5px}.muted{color:var(--muted)}.small{font-size:12px}.mono{font-variant-numeric:tabular-nums}.money{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 16px}.summary .box{border:1px solid var(--line);border-radius:14px;padding:10px;background:var(--soft)}.summary .num{font-size:18px;font-weight:900;margin-top:4px}.summary .numMark{display:inline-block;border-radius:999px;padding:4px 10px;background:#eef4ff;box-shadow:inset 0 0 0 1px #bfd4ff}.summary .numMark.discount{background:#ecfdf3;box-shadow:inset 0 0 0 1px #bbf7d0}.ok{color:#15803d}.warn{color:#b45309}.bad{color:#b91c1c}
-  h2{font-size:15px;margin:18px 0 8px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid var(--line);padding:8px 7px;font-size:11.5px;text-align:left;vertical-align:top}th{background:var(--soft);color:#334155;text-transform:uppercase;letter-spacing:.04em;font-size:10px}.empty{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px;background:var(--soft)}.planCard{border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px;break-inside:avoid}.planHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.planTotals{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 4px;color:var(--muted);font-size:12px}.miniTable{margin-top:8px}.notes{white-space:pre-wrap;line-height:1.45}.footer{margin-top:18px;border-top:1px solid var(--line);padding-top:10px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:12px}
+  .brand{display:flex;align-items:center;gap:12px;min-width:0}.brand img{width:auto;height:46px;max-width:132px;object-fit:contain}.brandTitle{font-size:19px;font-weight:900;line-height:1.05}.sub{font-size:12px;color:var(--muted);margin-top:4px}.stamp{font-size:12px;color:var(--muted);text-align:right;white-space:nowrap}
+  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:12px;margin:14px 0}.card{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}.card.soft{background:var(--soft)}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.055em;font-weight:800}.val{font-size:12px;margin-top:5px}.muted{color:var(--muted)}.small{font-size:12px}.mono{font-variant-numeric:tabular-nums}.money{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 16px}.summary .box{border:1px solid var(--line);border-radius:14px;padding:10px;background:var(--soft)}.summary .num{font-size:18px;font-weight:900;margin-top:4px}.summary .numMark{display:inline-block;border-radius:999px;padding:4px 10px;background:#eef4ff;box-shadow:inset 0 0 0 1px #bfd4ff}.summary .numMark.discount{background:#ecfdf3;box-shadow:inset 0 0 0 1px #bbf7d0}.ok{color:#15803d}.warn{color:#b45309}.bad{color:#b91c1c}
+  h2{font-size:15px;margin:18px 0 8px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid var(--line);padding:8px 7px;font-size:12px;text-align:left;vertical-align:top}th{background:var(--soft);color:#334155;text-transform:uppercase;letter-spacing:.04em;font-size:12px}.empty{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px;background:var(--soft)}.planCard{border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px;break-inside:avoid}.planHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.planTotals{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 4px;color:var(--muted);font-size:12px}.miniTable{margin-top:8px}.notes{white-space:pre-wrap;line-height:1.45}.footer{margin-top:18px;border-top:1px solid var(--line);padding-top:10px;color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:12px}
   @media print{body{margin:14mm}.card,.box,.planCard{break-inside:avoid}.noPrint{display:none!important}}
 </style>
 </head>
@@ -18951,7 +19029,8 @@ function bindActions(){
   };
   const btnRefreshNow = el("btnRefreshNow");
   if(btnRefreshNow) btnRefreshNow.onclick = ()=>runManualCloudRefresh(btnRefreshNow);
-  el("btnNewLeadSide").onclick = openNewLead;
+  const btnNewLeadSide = el("btnNewLeadSide");
+  if(btnNewLeadSide) btnNewLeadSide.onclick = openNewLead;
   el("btnNewLeadTop").onclick = openNewLead;
   el("btnNewLeadList").onclick = openNewLead;
 
@@ -20564,6 +20643,7 @@ document.addEventListener("DOMContentLoaded", () => {
     leads: 'leads',
     kanban: 'kanban',
     tasks: 'tasks',
+    agenda: 'agenda',
     installments: 'installments',
     users: 'users',
     settings: 'settings',
@@ -20580,6 +20660,7 @@ document.addEventListener("DOMContentLoaded", () => {
     leads: 'Leads',
     kanban: 'Funil',
     tasks: 'Tarefas',
+    agenda: 'Agenda',
     installments: 'Recebimentos',
     creditSimulator: 'Simulador de Crédito',
     riskAnalysis: 'Análise de Risco',
@@ -20590,17 +20671,18 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const VIEW_LABELS = { ...MODULE_LABELS };
-  const EXPECTED_AUX_FEATURE_KEYS = Object.freeze(['todayCronos','performance','creditSimulator']);
+  const EXPECTED_AUX_FEATURE_KEYS = Object.freeze(['todayCronos','performance','creditSimulator','agenda']);
   const VALID_FEATURE_VISIBILITY = new Set(['enabled','locked','hidden']);
 
   const AUX_MODULE_BUTTONS = [
     { module:'todayCronos', selector:'#navHojeCronos' },
     { module:'creditSimulator', selector:'#navCreditoSimulator' },
     { module:'performance', selector:'#navPerformance' },
+    { module:'agenda', selector:'#navAgenda' },
     { module:'intraoral', selector:'#navIntraoralCamera' }
   ];
 
-  const SUB_FEATURES_WITHOUT_ROLE_GATE = new Set(['riskAnalysis','flows']);
+  const SUB_FEATURES_WITHOUT_ROLE_GATE = new Set(['riskAnalysis','flows','agenda']);
 
   function normalizeFeatureKey(value){
     return String(value || '').trim().toLowerCase();
@@ -20738,6 +20820,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const billingState = getBillingFeatureStateByKey(key);
     if(billingState) return billingState;
 
+    // [AGENDA] Planos sem chave explícita usam compatibilidade liberada.
+    if(key === 'agenda'){
+      try{
+        const billing = window.__CRONOS_BILLING_STATUS__ || null;
+        const planFeatures = billing?.billing?.enforced ? billing?.billing?.features : null;
+        if(planFeatures && typeof planFeatures === 'object' && !Object.prototype.hasOwnProperty.call(planFeatures,'agenda')){
+          return { enabled:true, visibility_mode:'enabled', source:'billing-plan-legacy-agenda-default' };
+        }
+      }catch(_){ }
+    }
+
     // Fora do Billing, mantém o contrato fail-closed do Feature Access legado.
     // Durante uma revalidação da MESMA clínica, mantém o último estado já
     // confirmado até o novo request terminar.
@@ -20764,6 +20857,9 @@ document.addEventListener("DOMContentLoaded", () => {
           return { enabled:true, visibility_mode:'enabled', source:'billing-plan-legacy-default' };
         }
       }catch(_){ }
+    }
+    if(key === 'agenda'){
+      return { enabled:true, visibility_mode:'enabled', source:'feature-legacy-agenda-default' };
     }
     return sourceMap.get(key) || { visibility_mode:'locked', enabled:false, unresolved:true };
   }
@@ -21038,6 +21134,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if(btn.id === 'navHojeCronos') return 'todayCronos';
     if(btn.id === 'navCreditoSimulator') return 'creditSimulator';
     if(btn.id === 'navPerformance') return 'performance';
+    if(btn.id === 'navAgenda') return 'agenda';
     if(btn.id === 'navIntraoralCamera') return 'intraoral';
     return btn.getAttribute && btn.getAttribute('data-cronos-feature-module') || '';
   }
@@ -21584,7 +21681,7 @@ async function fetchFeatureAccess(force, actorOverride){
   }
 
   function handleAuxFeatureGateEvent(ev){
-    const btn = ev.target && ev.target.closest ? ev.target.closest('#navHojeCronos,#navCreditoSimulator,#navPerformance,#navIntraoralCamera') : null;
+    const btn = ev.target && ev.target.closest ? ev.target.closest('#navHojeCronos,#navCreditoSimulator,#navPerformance,#navAgenda,#navIntraoralCamera') : null;
     if(!btn) return;
     const moduleKey = auxModuleFromButton(btn);
     if(!moduleKey) return;
@@ -23346,6 +23443,7 @@ async function fetchFeatureAccess(force, actorOverride){
           <div><label>C.R.O.</label><input id="profCro" value="${escapeHTML(edit?.cro||'')}" placeholder="Número do CRO"></div>
           <div><label>UF do CRO</label><select id="profUf">${ufs.map(uf=>`<option value="${uf}" ${String(edit?.uf||'')===uf?'selected':''}>${uf||'Selecione'}</option>`).join('')}</select></div>
           <div><label>Especialidade</label><input id="profSpecialty" value="${escapeHTML(edit?.specialty||'')}" placeholder="Especialidade"></div>
+          <div><label>Duração padrão da agenda</label><input id="profAgendaDuration" type="number" min="5" max="240" step="5" value="${escapeHTML(String(Number(edit?.agendaDurationMin)||30))}" placeholder="30"><div class="muted" style="font-size:10px;margin-top:4px">Minutos por atendimento</div></div>
           <div><label>Celular</label><input id="profPhone" value="${escapeHTML(formatPhoneBR(edit?.phone||''))}" placeholder="(98) 99999-9999"></div>
           <div><label>E-mail</label><input id="profEmail" type="email" value="${escapeHTML(edit?.email||'')}" placeholder="dentista@clinica.com"></div>
           <div><label>Status</label><select id="profActive"><option value="1" ${edit?.active===false?'':'selected'}>Ativo</option><option value="0" ${edit?.active===false?'selected':''}>Inativo</option></select></div>
@@ -23356,7 +23454,7 @@ async function fetchFeatureAccess(force, actorOverride){
         </div>
         <div class="professionalsList">
           ${list.length?list.map(p=>`<div class="professionalRow ${p.active===false?'is-inactive':''}">
-            <div><strong>${escapeHTML(p.name||'Sem nome')}</strong><div class="muted" style="font-size:12px">${escapeHTML(cronosProfessionalDisplay(p))}${p.specialty?` • ${escapeHTML(p.specialty)}`:''}</div></div>
+            <div><strong>${escapeHTML(p.name||'Sem nome')}</strong><div class="muted" style="font-size:12px">${escapeHTML(cronosProfessionalDisplay(p))}${p.specialty?` • ${escapeHTML(p.specialty)}`:''} • Agenda: ${escapeHTML(String(Number(p.agendaDurationMin)||30))} min</div></div>
             <div class="professionalStatus">${p.active===false?'Inativo':'Ativo'}</div>
             <div style="display:flex;gap:7px;justify-content:flex-end;flex-wrap:wrap"><button class="btn small" type="button" onclick="CRONOS_PROF_UI.edit('${escapeHTML(String(p.id))}')">Editar</button><button class="btn small" type="button" onclick="CRONOS_PROF_UI.toggle('${escapeHTML(String(p.id))}')">${p.active===false?'Reativar':'Inativar'}</button></div>
           </div>`).join(''):`<div class="muted">Nenhum profissional cadastrado ainda.</div>`}
@@ -23365,20 +23463,38 @@ async function fetchFeatureAccess(force, actorOverride){
     window.CRONOS_PROF_UI={
       edit(id){ window.__cronosProfessionalState={editingId:String(id||'')}; renderProfessionalsApp(); },
       cancel(){ window.__cronosProfessionalState={editingId:null}; renderProfessionalsApp(); },
-      toggle(id){
+      async toggle(id){
         const db=loadDB(), actor=currentActor(); const list=cronosProfessionalStore(db);
+        const previous=JSON.parse(JSON.stringify(list));
         const p=list.find(x=>String(x.id)===String(id) && (!x.masterId || String(x.masterId)===cronosProfessionalClinicKey(actor)));
         if(!p) return; p.active = p.active===false ? true : false; p.updatedAt=new Date().toISOString();
-        cronosPersistSettingsPatch(db,{professionals:list},{silent:true}); renderProfessionalsApp(); injectProfessionalsSettingsCard();
+        try{
+          const ok=await cronosPersistSettingsPatch(db,{professionals:list},{silent:true,keepPendingOnFailure:false});
+          if(ok===false) throw new Error('A alteração do profissional não foi confirmada.');
+          renderProfessionalsApp(); injectProfessionalsSettingsCard();
+        }catch(error){
+          db.settings.professionals=previous; try{safeSetLocalDB(db)}catch(_){}
+          renderProfessionalsApp(); injectProfessionalsSettingsCard(); toast('Falha ao salvar profissional',String(error?.message||'Tente novamente.'));
+        }
       },
-      save(){
+      async save(){
         const db=loadDB(), actor=currentActor(); const list=cronosProfessionalStore(db); const state=window.__cronosProfessionalState||{};
+        const previous=JSON.parse(JSON.stringify(list));
         const name=String(val('profName')||'').trim(); if(!name) return toast('Nome obrigatório','Informe o nome do profissional.');
         let p=state.editingId?list.find(x=>String(x.id)===String(state.editingId)):null;
         const now=new Date().toISOString();
         if(!p){ p={id:(crypto.randomUUID?crypto.randomUUID():uid('prof')),masterId:cronosProfessionalClinicKey(actor),createdAt:now}; list.push(p); }
-        p.name=name; p.cpf=String(val('profCpf')||'').replace(/\D/g,''); p.cro=String(val('profCro')||'').trim(); p.uf=String(val('profUf')||'').trim().toUpperCase(); p.specialty=String(val('profSpecialty')||'').trim(); p.phone=normPhone(val('profPhone')||''); p.email=String(val('profEmail')||'').trim(); p.active=String(val('profActive')||'1')!=='0'; p.updatedAt=now;
-        cronosPersistSettingsPatch(db,{professionals:list},{silent:true}); window.__cronosProfessionalState={editingId:null}; renderProfessionalsApp(); injectProfessionalsSettingsCard(); toast('Profissional salvo ✅',cronosProfessionalDisplay(p));
+        const agendaDurationMin=Math.round(Number(val('profAgendaDuration')||30));
+        if(!Number.isFinite(agendaDurationMin)||agendaDurationMin<5||agendaDurationMin>240) return toast('Duração inválida','Informe uma duração entre 5 e 240 minutos.');
+        p.name=name; p.cpf=String(val('profCpf')||'').replace(/\D/g,''); p.cro=String(val('profCro')||'').trim(); p.uf=String(val('profUf')||'').trim().toUpperCase(); p.specialty=String(val('profSpecialty')||'').trim(); p.agendaDurationMin=agendaDurationMin; p.phone=normPhone(val('profPhone')||''); p.email=String(val('profEmail')||'').trim(); p.active=String(val('profActive')||'1')!=='0'; p.updatedAt=now;
+        try{
+          const ok=await cronosPersistSettingsPatch(db,{professionals:list},{silent:true,keepPendingOnFailure:false});
+          if(ok===false) throw new Error('O cadastro do profissional não foi confirmado.');
+          window.__cronosProfessionalState={editingId:null}; renderProfessionalsApp(); injectProfessionalsSettingsCard(); toast('Profissional salvo ✅',cronosProfessionalDisplay(p));
+        }catch(error){
+          db.settings.professionals=previous; try{safeSetLocalDB(db)}catch(_){}
+          renderProfessionalsApp(); injectProfessionalsSettingsCard(); toast('Falha ao salvar profissional',String(error?.message||'Tente novamente.'));
+        }
       }
     };
 
@@ -25548,24 +25664,24 @@ window.CRONOS_PROC_UI = {
       const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Prontuário - ${patientName}</title>
         <style>
           :root{--print-line:rgba(17,24,39,.42);--print-line-soft:rgba(17,24,39,.18)}
-          body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0}
+          body{font-family:Arial,sans-serif;padding:24px;color:#111;margin:0;font-size:12px}
           .sheet{border:1px solid var(--print-line-soft);padding:22px 24px 28px}
           .head{display:grid;grid-template-columns:120px minmax(0,1fr) 270px;gap:16px;align-items:center;border-bottom:1.5px solid var(--print-line);padding-bottom:14px}
           .logo{width:140px;height:84px;display:flex;align-items:center;justify-content:flex-start;text-align:center;font-size:12px;font-weight:700}
           .logo img{width:auto;height:76px;max-width:140px;display:block;object-fit:contain}
           .title{text-align:center}.title h2{margin:0;font-size:24px;letter-spacing:.05em}.title p{margin:6px 0 0;font-size:12px;color:#444;letter-spacing:.08em}
-          .meta{text-align:right;font-size:12px;line-height:1.55}.meta .dentistLine{white-space:nowrap;font-size:11.5px}
+          .meta{text-align:right;font-size:12px;line-height:1.55}.meta .dentistLine{white-space:nowrap;font-size:12px}
           .patientHighlight{margin-top:8px;padding:0 2px;font-size:18px;font-weight:800;line-height:1.2;color:#397a9e}
           .patient{margin-top:10px;display:grid;grid-template-columns:1.15fr .95fr 1fr;gap:10px}
-          .field{border:1px solid var(--print-line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:10px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:14px;font-weight:700}.field.phoneField .val{white-space:nowrap;font-size:13.5px}
+          .field{border:1px solid var(--print-line);min-height:45px;padding:7px 10px}.field .lbl{display:block;font-size:12px;color:#444;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}.field .val{font-size:12px;font-weight:700}.field.phoneField .val{white-space:nowrap;font-size:12px}
           .sectionTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px}
           .boxWrap{border:1.25px solid var(--print-line);padding:12px 12px 10px}
           .odonto{position:relative;width:100%;aspect-ratio:1536/560;border:1px solid #cfd7e3;border-radius:10px;overflow:hidden;background:#fff;box-sizing:border-box}.odonto .odontoStatusLayer,.odonto .odontoLabelLayer{position:absolute;inset:0;width:100%;height:100%;display:block;user-select:none}.odonto .odontoStatusLayer{z-index:2;pointer-events:none;overflow:visible}.odonto .odontoLabelLayer{z-index:4;pointer-events:none;overflow:visible}.odontoStatusLayer .toothLine{fill:#6b7280;stroke:none;shape-rendering:geometricPrecision}.odontoStatusLayer .odontogramaTooth.paid .toothLine,.odontoStatusLayer .odontogramaTooth.plan .toothLine,.odontoStatusLayer .odontogramaTooth.closed .toothLine{fill:#ca8a04}.odontoStatusLayer .odontogramaTooth.done .toothLine{fill:#16a34a}.odontoStatusLayer .odontogramaTooth.absent .toothLine{fill:#dc2626}.odontoLabelLayer .odontoNumberText{fill:#111827;font-size:38px;font-weight:900;text-anchor:middle;dominant-baseline:middle;letter-spacing:.2px}.odontoLabelLayer.deciduous .odontoNumberText{font-size:10px;font-weight:900}.odontoStatusLayer.deciduous,.odontoLabelLayer.deciduous{transform:scale(.78);transform-origin:50% 50%}.odonto.printDeciduous{width:72%;margin-left:auto;margin-right:auto;aspect-ratio:384.53/233.56}.odonto.printDeciduous .odontoStatusLayer.deciduous,.odonto.printDeciduous .odontoLabelLayer.deciduous{transform:scale(.96);transform-origin:50% 50%}
 .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:#555}.legend span{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;padding:5px 9px;border-radius:999px}
           .chip{width:10px;height:10px;border-radius:999px;display:inline-block}.cp1{background:#ffd400}.cp2{background:#16a34a}.cp3{background:#dc2626}
-          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--print-line);padding:6px 7px;vertical-align:top}th{background:#f7f8fa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
-          .summary{border-top:1.25px solid var(--print-line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr);gap:0}.sum{box-sizing:border-box;border:1px solid var(--print-line);padding:8px 9px;min-height:62px;background:#fff}.sum + .sum{margin-left:-1px}.sum .lbl{font-size:10px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}.printNumHighlight{display:inline-block;border-radius:999px;padding:5px 12px;background:#dbeafe;box-shadow:inset 0 0 0 1px #93c5fd}.printNumHighlight.closed{background:#dbeafe;box-shadow:inset 0 0 0 1px #93c5fd}.printNumHighlight.discount{background:#dcfce7;box-shadow:inset 0 0 0 1px #86efac}
-          .obs{margin-top:14px;border:1.25px solid var(--print-line);padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:13px;white-space:pre-wrap;word-break:break-word}
+          table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid var(--print-line);padding:6px 7px;vertical-align:top}th{background:#f7f8fa;font-size:12px;text-transform:uppercase;letter-spacing:.08em;text-align:left}td.center{text-align:center}td.right{text-align:right}tr.done td{background:#bbf7d0}tr.paid td{background:#fef08a}tr.absent td{background:#fecaca}tr.closed td{background:#fef08a}
+          .summary{border-top:1.25px solid var(--print-line);margin-top:auto;display:grid;grid-template-columns:repeat(5,1fr);gap:0}.sum{box-sizing:border-box;border:1px solid var(--print-line);padding:8px 9px;min-height:62px;background:#fff}.sum + .sum{margin-left:-1px}.sum .lbl{font-size:12px;text-transform:uppercase;color:#444;font-weight:800;letter-spacing:.06em;margin-bottom:6px}.sum .val{font-size:16px;font-weight:800}.printNumHighlight{display:inline-block;border-radius:999px;padding:5px 12px;background:#dbeafe;box-shadow:inset 0 0 0 1px #93c5fd}.printNumHighlight.closed{background:#dbeafe;box-shadow:inset 0 0 0 1px #93c5fd}.printNumHighlight.discount{background:#dcfce7;box-shadow:inset 0 0 0 1px #86efac}
+          .obs{margin-top:14px;border:1.25px solid var(--print-line);padding:10px;page-break-inside:auto}.obsText{margin-top:8px;line-height:1.45;font-size:12px;white-space:pre-wrap;word-break:break-word}
           .foot{margin-top:16px;text-align:center;font-size:10.5px;line-height:1.35;color:#374151;font-weight:600}.foot .auditLine{margin-top:2px;font-size:9.5px;color:#4b5563;font-weight:500}.foot .auditLine b{font-weight:800;color:#1f2937}
           @media print{body{padding:0}.sheet{border:none}tr.done td{background:#bbf7d0 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.paid td,tr.closed td{background:#fef08a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr.absent td{background:#fecaca !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.printNumHighlight,.printNumHighlight.closed,.printNumHighlight.discount{-webkit-print-color-adjust:exact;print-color-adjust:exact}.odontoPaintLayer .odontogramaTooth.paid .cls-2,.odontoPaintLayer .odontogramaTooth.plan .cls-2,.odontoPaintLayer .odontogramaTooth.closed .cls-2,.odontoPaintLayer .odontogramaTooth.done .cls-2,.odontoPaintLayer .odontogramaTooth.absent .cls-2{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>
@@ -25665,7 +25781,7 @@ window.CRONOS_PROC_UI = {
       const neutralEntry={...entry};
       const cronosFooterLogo = new URL('../assets/brand/cronos-symbol.png', window.location.href).href;
       const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha de Avaliação - ${patientName}</title><style>
-        @page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;width:210mm;height:297mm;overflow:hidden}body{font-family:Arial,sans-serif;color:#111}.sheet{width:210mm;height:297mm;padding:8mm 9mm 7mm;display:flex;flex-direction:column;position:relative;isolation:isolate;overflow:hidden;background:#fff}.sheet:before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:linear-gradient(to bottom,rgba(20,126,219,.58) 0%,rgba(62,181,190,.32) 5.5%,rgba(119,204,107,.16) 9.5%,rgba(255,255,255,0) 16%),linear-gradient(to top,rgba(119,204,107,.52) 0%,rgba(62,181,190,.28) 5.5%,rgba(20,126,219,.14) 9.5%,rgba(255,255,255,0) 16%);-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet>*{position:relative;z-index:1}.head{display:grid;grid-template-columns:112px minmax(0,1fr) 270px;gap:10px;align-items:center;border-bottom:1.5px solid #777;padding-bottom:9px}.logo img{max-width:78px;max-height:60px}.logo{font-weight:800}.title h1{margin:0;font-size:23px;line-height:1.05}.title p{margin:4px 0 0;color:#555;font-weight:700;font-size:11px;line-height:1.15}.meta{text-align:right;font-size:10.5px;line-height:1.4}.meta .dentistLine{white-space:nowrap;font-size:10px}.patientHighlight{margin-top:6px;padding:0 2px;font-size:18px;font-weight:800;line-height:1.2;color:#397a9e}.patient{display:grid;grid-template-columns:1.08fr .88fr .95fr .84fr .90fr;gap:5px;margin-top:8px}.field{border:1px solid #999;padding:7px 8px;min-height:48px;display:flex;flex-direction:column;justify-content:center}.lbl{font-size:8.5px;text-transform:uppercase;font-weight:800;letter-spacing:.065em;color:#444;line-height:1}.val{margin-top:4px;font-size:12px;font-weight:800;line-height:1.15}.field.phoneField .val{white-space:nowrap;font-size:11.5px;letter-spacing:.01em}.odontoWrap{border:1px solid #aaa;margin-top:8px;padding:6px}.odonto{position:relative;width:100%;border:1px solid #d1d5db;border-radius:8px;overflow:hidden;background:#fff}.odonto img{display:block;width:100%;height:auto;object-fit:contain}.section{font-size:15px;font-weight:800;text-align:center;margin:8px 0 4px;color:#397a9e;line-height:1.1}.planTableWrap{position:relative;width:100%;isolation:isolate}.planWatermark{position:absolute;z-index:0;left:50%;top:50%;transform:translate(-50%,-50%);width:52%;max-height:82%;object-fit:contain;opacity:.06;pointer-events:none;user-select:none}.planTableWrap table{position:relative;z-index:1;background:transparent}table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #333;height:18px;padding:1.5px 4px;line-height:1.05;background:transparent}th{height:19px;font-size:9px;font-weight:700;text-align:left;background:rgba(250,250,250,.82)}th:first-child,td:first-child{width:40px;text-align:center}th:nth-child(3){width:105px}th:nth-child(4){width:105px}th:last-child{width:90px}.cronosFooter{margin-top:5px;text-align:center;color:#374151;font-size:10.5px;line-height:1.2;font-weight:600;letter-spacing:.01em;white-space:nowrap;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}.cronosFooter b{font-weight:800;color:#1f2937}.cronosFooter .auditLine{margin-top:1px;font-size:9.5px;color:#4b5563;font-weight:500}.cronosFooter .auditLine b{font-weight:800;color:#1f2937}@media print{html,body{width:210mm;height:297mm;overflow:hidden}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.sheet{width:210mm;height:297mm;break-inside:avoid;page-break-inside:avoid;overflow:hidden}.planWatermark{opacity:.20 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.cronosFooter{break-inside:avoid;page-break-inside:avoid}}
+        @page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;width:210mm;height:297mm;overflow:hidden}body{font-family:Arial,sans-serif;color:#111;font-size:12px}.sheet{width:210mm;height:297mm;padding:8mm 9mm 7mm;display:flex;flex-direction:column;position:relative;isolation:isolate;overflow:hidden;background:#fff}.sheet:before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:linear-gradient(to bottom,rgba(20,126,219,.58) 0%,rgba(62,181,190,.32) 5.5%,rgba(119,204,107,.16) 9.5%,rgba(255,255,255,0) 16%),linear-gradient(to top,rgba(119,204,107,.52) 0%,rgba(62,181,190,.28) 5.5%,rgba(20,126,219,.14) 9.5%,rgba(255,255,255,0) 16%);-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet>*{position:relative;z-index:1}.head{display:grid;grid-template-columns:112px minmax(0,1fr) 270px;gap:10px;align-items:center;border-bottom:1.5px solid #777;padding-bottom:9px}.logo img{max-width:78px;max-height:60px}.logo{font-weight:800}.title h1{margin:0;font-size:23px;line-height:1.05}.title p{margin:4px 0 0;color:#555;font-weight:700;font-size:12px;line-height:1.15}.meta{text-align:right;font-size:12px;line-height:1.4}.meta .dentistLine{white-space:nowrap;font-size:12px}.patientHighlight{margin-top:6px;padding:0 2px;font-size:18px;font-weight:800;line-height:1.2;color:#397a9e}.patient{display:grid;grid-template-columns:1.08fr .88fr .95fr .84fr .90fr;gap:5px;margin-top:8px}.field{border:1px solid #999;padding:7px 8px;min-height:48px;display:flex;flex-direction:column;justify-content:center}.lbl{font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.065em;color:#444;line-height:1}.val{margin-top:4px;font-size:12px;font-weight:800;line-height:1.15}.field.phoneField .val{white-space:nowrap;font-size:12px;letter-spacing:.01em}.odontoWrap{border:1px solid #aaa;margin-top:8px;padding:6px}.odonto{position:relative;width:100%;border:1px solid #d1d5db;border-radius:8px;overflow:hidden;background:#fff}.odonto img{display:block;width:100%;height:auto;object-fit:contain}.section{font-size:15px;font-weight:800;text-align:center;margin:8px 0 4px;color:#397a9e;line-height:1.1}.planTableWrap{position:relative;width:100%;isolation:isolate}.planWatermark{position:absolute;z-index:0;left:50%;top:50%;transform:translate(-50%,-50%);width:52%;max-height:82%;object-fit:contain;opacity:.06;pointer-events:none;user-select:none}.planTableWrap table{position:relative;z-index:1;background:transparent}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #333;height:18px;padding:1.5px 4px;line-height:1.05;background:transparent}th{height:19px;font-size:12px;font-weight:700;text-align:left;background:rgba(250,250,250,.82)}th:first-child,td:first-child{width:40px;text-align:center}th:nth-child(3){width:105px}th:nth-child(4){width:105px}th:last-child{width:90px}.cronosFooter{margin-top:5px;text-align:center;color:#374151;font-size:12px;line-height:1.2;font-weight:600;letter-spacing:.01em;white-space:nowrap;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}.cronosFooter b{font-weight:800;color:#1f2937}.cronosFooter .auditLine{margin-top:1px;font-size:9.5px;color:#4b5563;font-weight:500}.cronosFooter .auditLine b{font-weight:800;color:#1f2937}@media print{html,body{width:210mm;height:297mm;overflow:hidden}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.sheet{width:210mm;height:297mm;break-inside:avoid;page-break-inside:avoid;overflow:hidden}.planWatermark{opacity:.20 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.cronosFooter{break-inside:avoid;page-break-inside:avoid}}
       </style></head><body><div class="sheet"><div class="head"><div class="logo">${branding?.logoDataUri?`<img src="${branding.logoDataUri}" alt="${clinicName}">`:clinicName}</div><div class="title"><h1>FICHA DE AVALIAÇÃO</h1><p>PLANO DE TRATAMENTO / ODONTOGRAMA</p></div><div class="meta"><b>Data:</b> ${fmtBR(todayISO())}<br><span class="dentistLine"><b>Dentista avaliador:</b> ${dentist}</span>${cro?`<br><b>${cro}</b>`:''}<br><b>Tratamento:</b> ${treatment}</div></div><div class="patientHighlight">${patientName}</div><div class="patient"><div class="field phoneField"><div class="lbl">Telefone</div><div class="val">${phone}</div></div><div class="field"><div class="lbl">CPF</div><div class="val">${cpf}</div></div><div class="field"><div class="lbl">Nascimento</div><div class="val">${birth}</div></div><div class="field"><div class="lbl">Profissão</div><div class="val">${profession}</div></div><div class="field"><div class="lbl">Bairro</div><div class="val">${district}</div></div></div><div class="odontoWrap"><div class="odonto"><img src="../assets/img/odontograma_misto_ficha.jpg" alt="Odontograma com dentição permanente e decídua"></div></div><div class="section">Plano de tratamento</div><div class="planTableWrap"><img class="planWatermark" src="${cronosFooterLogo}" alt="" aria-hidden="true"><table><thead><tr><th>Nº</th><th>PROCEDIMENTO</th><th>DENTE</th><th>FACE</th><th>Valor</th></tr></thead><tbody>${blankRows}</tbody></table></div><div class="cronosFooter"><div>Documento emitido por <b>Cronos Odonto</b> • cronosodonto.com</div><div class="auditLine">Impresso por <b>${printActorName}</b> • ${printTimestamp}</div></div></div><script>window.onload=()=>setTimeout(()=>window.print(),350);<\/script></body></html>`;
       const w=window.open('','_blank'); if(!w) return toast('Popup bloqueado','Permita popups para imprimir a ficha.'); w.document.open(); w.document.write(html); w.document.close();
     };
