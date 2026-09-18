@@ -1192,45 +1192,103 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
   <span class="muted" id="cronosWaSettingsHint" style="font-size:12px"></span>
 </div>
 
-<div class="cronosWaAutomationPanel">
+<div class="cronosWaAutomationPanel" id="cronosWaAutomationPanel">
   <div class="cronosWaAutomationHead">
     <div>
-      <strong>Automações</strong>
-      <span>O Cronos cria a fila no horário escolhido pela clínica. Se o computador responsável cair, outro ativo continua o que estiver pendente.</span>
-    </div>
-    <label class="cronosWaSwitch"><input id="cronosWaAutomationEnabled" type="checkbox"><span>Ativar</span></label>
-  </div>
-  <div class="cronosWaAutomationGrid">
-    <label class="field">
-      <span>Horário diário</span>
-      <input class="input" id="cronosWaSendTime" type="time" value="14:00">
-    </label>
-    <div class="cronosWaAutomationChecks">
-      <label><input id="cronosWaAppointmentEnabled" type="checkbox" checked> Consultas — 1 dia antes</label>
-      <label><input id="cronosWaBirthdayEnabled" type="checkbox" checked> Aniversários — no mesmo dia</label>
-      <label><input id="cronosWaInstallmentEnabled" type="checkbox" checked> Boleto/Pix — 1 dia antes</label>
+      <strong>Automações de mensagens</strong>
+      <span>Cada mensagem tem seu próprio período, horário e modo de envio.</span>
     </div>
   </div>
 
-  <div class="cronosWaTemplateBlock">
-    <label for="cronosWaAppointmentTemplate">Mensagem de confirmação</label>
-    <textarea id="cronosWaAppointmentTemplate" maxlength="4000"></textarea>
-    <small>{{primeiroNome}}, {{clinica}}, {{data}}, {{hora}}, {{profissional}}</small>
+  <div class="cronosWaAutomationRule">
+    <div class="cronosWaAutomationRuleHead">
+      <div>
+        <strong>Confirmação de consulta</strong>
+        <span>Agendamentos futuros da clínica.</span>
+      </div>
+      <div class="cronosWaAutomationChecks">
+        <label><input id="cronosWaAppointmentEnabled" type="checkbox" checked> Ativa</label>
+        <label><input id="cronosWaAppointmentAuto" type="checkbox" checked> Envio automático</label>
+      </div>
+    </div>
+    <div class="cronosWaAutomationGrid">
+      <label class="field">
+        <span>Dias antes</span>
+        <input class="input" id="cronosWaAppointmentDaysBefore" type="number" min="0" max="30" value="1">
+      </label>
+      <label class="field">
+        <span>Horário</span>
+        <input class="input" id="cronosWaAppointmentTime" type="time" value="14:00">
+      </label>
+    </div>
+    <div class="cronosWaTemplateBlock">
+      <label for="cronosWaAppointmentTemplate">Mensagem</label>
+      <textarea id="cronosWaAppointmentTemplate" maxlength="4000"></textarea>
+      <small>{{primeiroNome}}, {{clinica}}, {{data}}, {{hora}}, {{profissional}}</small>
+    </div>
   </div>
-  <div class="cronosWaTemplateBlock">
-    <label for="cronosWaBirthdayTemplate">Mensagem de aniversário</label>
-    <textarea id="cronosWaBirthdayTemplate" maxlength="4000"></textarea>
-    <small>{{primeiroNome}}, {{nome}}, {{clinica}}, {{idade}}</small>
+
+  <div class="cronosWaAutomationRule">
+    <div class="cronosWaAutomationRuleHead">
+      <div>
+        <strong>Aniversário</strong>
+        <span>Pacientes aniversariantes.</span>
+      </div>
+      <div class="cronosWaAutomationChecks">
+        <label><input id="cronosWaBirthdayEnabled" type="checkbox" checked> Ativa</label>
+        <label><input id="cronosWaBirthdayAuto" type="checkbox" checked> Envio automático</label>
+      </div>
+    </div>
+    <div class="cronosWaAutomationGrid">
+      <label class="field">
+        <span>Dias antes</span>
+        <input class="input" id="cronosWaBirthdayDaysBefore" type="number" min="0" max="30" value="0">
+      </label>
+      <label class="field">
+        <span>Horário</span>
+        <input class="input" id="cronosWaBirthdayTime" type="time" value="09:00">
+      </label>
+    </div>
+    <div class="cronosWaTemplateBlock">
+      <label for="cronosWaBirthdayTemplate">Mensagem</label>
+      <textarea id="cronosWaBirthdayTemplate" maxlength="4000"></textarea>
+      <small>{{primeiroNome}}, {{nome}}, {{clinica}}, {{idade}}</small>
+    </div>
   </div>
-  <div class="cronosWaTemplateBlock">
-    <label for="cronosWaInstallmentTemplate">Mensagem de vencimento</label>
-    <textarea id="cronosWaInstallmentTemplate" maxlength="4000"></textarea>
-    <small>{{primeiroNome}}, {{clinica}}, {{valor}}, {{vencimento}}, {{forma}}, {{parcela}}, {{total}}</small>
+
+  <div class="cronosWaAutomationRule">
+    <div class="cronosWaAutomationRuleHead">
+      <div>
+        <strong>Vencimento de Boleto/Pix</strong>
+        <span>Parcelas pendentes com vencimento programado.</span>
+      </div>
+      <div class="cronosWaAutomationChecks">
+        <label><input id="cronosWaInstallmentEnabled" type="checkbox" checked> Ativa</label>
+        <label><input id="cronosWaInstallmentAuto" type="checkbox" checked> Envio automático</label>
+      </div>
+    </div>
+    <div class="cronosWaAutomationGrid">
+      <label class="field">
+        <span>Dias antes</span>
+        <input class="input" id="cronosWaInstallmentDaysBefore" type="number" min="0" max="30" value="1">
+      </label>
+      <label class="field">
+        <span>Horário</span>
+        <input class="input" id="cronosWaInstallmentTime" type="time" value="10:00">
+      </label>
+    </div>
+    <div class="cronosWaTemplateBlock">
+      <label for="cronosWaInstallmentTemplate">Mensagem</label>
+      <textarea id="cronosWaInstallmentTemplate" maxlength="4000"></textarea>
+      <small>{{primeiroNome}}, {{clinica}}, {{valor}}, {{vencimento}}, {{forma}}, {{parcela}}, {{total}}</small>
+    </div>
   </div>
+
   <div class="cronosWaSettingsActions">
     <button class="btn ok" id="cronosWaSaveAutomation" type="button">Salvar automações</button>
     <span class="muted" id="cronosWaAutomationHint" style="font-size:12px"></span>
   </div>
+</div>
 </div>
 </div>
 <div class="card" id="agendaClinicScheduleCard">
