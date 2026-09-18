@@ -8392,17 +8392,6 @@ function cronosMoV2NormalizeHydratedCollections(db){
     return copy;
   }).filter(e => e.id);
 
-  try{
-    window.__CRONOS_MO_V2_DEBUG__ = {
-      version: 'v127',
-      clinicId: CLOUD_CLINIC_ID,
-      contacts: db.contacts.length,
-      entries: db.entries.length,
-      linkedContacts: linked,
-      masterId
-    };
-    console.info('Cronos V127 MO V2 debug', window.__CRONOS_MO_V2_DEBUG__);
-  }catch(_){ }
   return db;
 }
 
@@ -10515,9 +10504,12 @@ function getPrefs(){
 }
 
 function applyTemplate(tpl, vars){
+  const tratamento = String(vars?.tratamento || "").trim() || "nossos serviços";
   return String(tpl||"")
-    .replaceAll("{nome}", vars.nome||"")
-    .replaceAll("{tratamento}", vars.tratamento||"")
+    .replaceAll("{nome}", vars?.nome||"")
+    .replaceAll("{tratamento}", tratamento)
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .replace(/\s{2,}/g, " ")
     .trim();
 }
 
@@ -10537,6 +10529,10 @@ function openWhatsAppForEntry(entryId){
   const treatment = (e?.treatment==="Outros") ? (e?.treatmentOther||"Outros") : (e?.treatment||"");
   const tpl = getPrefs().waTemplate;
   const msg = applyTemplate(tpl, { nome: c?.name||"", tratamento: treatment });
+  if(window.CRONOS_WHATSAPP?.open){
+    window.CRONOS_WHATSAPP.open({ phone, message:msg, title:"Enviar WhatsApp" });
+    return;
+  }
   const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
   window.open(url, "_blank");
 }
@@ -16734,9 +16730,15 @@ function openWhats(entryId){
     const phone = cronosPhoneToWhatsApp(contact.phone || entry.phone || "");
     if(!phone) return toast("Sem telefone", "Esse lead não tem telefone válido.");
     const tpl = (db.settings && db.settings.waTemplate) ? String(db.settings.waTemplate) : "Oi {nome}! Vi seu interesse. Posso te ajudar?";
-    const msg = tpl
-      .replaceAll("{nome}", String(contact.name||entry.name||""))
-      .replaceAll("{tratamento}", String(entry.treatment==="Outros" ? (entry.treatmentOther||"") : (entry.treatment||"")));
+    const treatment = String(entry.treatment==="Outros" ? (entry.treatmentOther||"") : (entry.treatment||"")).trim();
+    const msg = applyTemplate(tpl, {
+      nome: String(contact.name||entry.name||""),
+      tratamento: treatment
+    });
+    if(window.CRONOS_WHATSAPP?.open){
+      window.CRONOS_WHATSAPP.open({ phone, message:msg, title:"Enviar WhatsApp" });
+      return;
+    }
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
     window.open(url, "_blank");
   }catch(e){
@@ -25892,4 +25894,85 @@ window.CRONOS_PROC_UI = {
       timers.set(host, timer);
     }catch(_){ }
   }, {capture:true, passive:true});
+})();
+
+(function(){
+  function isoLocal(date){
+    const y=date.getFullYear(), m=String(date.getMonth()+1).padStart(2,'0'), d=String(date.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+  function addDaysISO(days){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+days); return isoLocal(d); }
+  function firstName(name){ return String(name||'').trim().split(/\s+/)[0] || ''; }
+  function moneyBR(value){ return Number(value||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+  function fmtBR(iso){ const s=String(iso||''); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s.slice(8,10)}/${s.slice(5,7)}/${s.slice(0,4)}` : s; }
+  function phoneDigits(v){ let d=String(v||'').replace(/\D/g,''); if((d.length===10||d.length===11)&&!d.startsWith('55')) d=`55${d}`; return d; }
+  function clinicName(db,a){ return String(db?.settings?.clinicBranding?.clinicName || db?.settings?.clinicName || CLOUD_CLINIC_NAME || a?.clinicName || 'Clínica').trim(); }
+  function ageOnDate(birthISO,dateISO){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(birthISO||''))||!/^\d{4}-\d{2}-\d{2}$/.test(String(dateISO||''))) return '';
+    const [by,bm,bd]=birthISO.split('-').map(Number), [dy,dm,dd]=dateISO.split('-').map(Number);
+    let age=dy-by; if(dm<bm||(dm===bm&&dd<bd)) age--; return age>=0&&age<130?String(age):'';
+  }
+  function currentDb(){ try{return DB;}catch(_){return null;} }
+  function actorNow(){ try{return currentActor();}catch(_){return null;} }
+  function ownContact(db,id,masterId){ return (db?.contacts||[]).find(c=>String(c?.id||'')===String(id||'')&&(!masterId||!c?.masterId||c.masterId===masterId))||null; }
+  function professionalMap(db){ return new Map((db?.settings?.professionals||[]).map(p=>[String(p?.id||''),String(p?.name||'Profissional')])); }
+
+  function appointmentCandidates(db,a){
+    const tomorrow=addDaysISO(1), profs=professionalMap(db), store=db?.settings?.agendaData||{};
+    return (Array.isArray(store.appointments)?store.appointments:[]).filter(x=>{
+      const st=String(x?.agendaStatus||x?.status||'').toLowerCase();
+      return String(x?.date||'')===tomorrow && !['desmarcado','remarcado','realizado','falta'].includes(st) && x?.confirmed!==true;
+    }).map(x=>({
+      type:'appointment', entityId:String(x.id||`${x.patient||''}|${x.date||''}|${x.time||''}`), referenceDate:tomorrow,
+      phone:phoneDigits(x.phone),
+      vars:{ nome:String(x.patient||''), primeiroNome:firstName(x.patient), clinica:clinicName(db,a), data:fmtBR(tomorrow), hora:String(x.time||''), profissional:profs.get(String(x.professionalId||''))||'profissional da clínica' }
+    })).filter(x=>x.phone);
+  }
+
+  function birthdayCandidates(db,a){
+    const today=addDaysISO(0), md=today.slice(5), masterId=String(a?.masterId||a?.clinicId||'');
+    return (db?.contacts||[]).filter(c=>{
+      const b=String(c?.birthDate||'');
+      return (!masterId||!c?.masterId||String(c.masterId)===masterId) && /^\d{4}-\d{2}-\d{2}$/.test(b) && b.slice(5)===md;
+    }).map(c=>({
+      type:'birthday', entityId:String(c.id||c.phone||c.name||''), referenceDate:today, phone:phoneDigits(c.phone),
+      vars:{ nome:String(c.name||''), primeiroNome:firstName(c.name), clinica:clinicName(db,a), idade:ageOnDate(String(c.birthDate||''),today) }
+    })).filter(x=>x.phone);
+  }
+
+  function installmentCandidates(db,a){
+    const tomorrow=addDaysISO(1), masterId=String(a?.masterId||a?.clinicId||''), out=[];
+    for(const entry of (db?.entries||[])){
+      if(masterId&&entry?.masterId&&String(entry.masterId)!==masterId) continue;
+      const contact=ownContact(db,entry.contactId,masterId); if(!contact) continue;
+      const push=(p,title,method,id)=>{
+        const due=String(p?.dueDate||p?.due||''); if(due!==tomorrow) return;
+        const paid=!!p?.paidAt || String(p?.status||'').toUpperCase()==='PAGA' || (typeof paymentPaid==='function'&&paymentPaid(p)); if(paid) return;
+        const form=String(p?.payMethod||method||'').trim(); const low=form.toLowerCase();
+        if(!(low.includes('pix')||low.includes('boleto')||low.includes('carnê')||low.includes('carne'))) return;
+        out.push({ type:'installment', entityId:String(id), referenceDate:tomorrow, phone:phoneDigits(contact.phone), vars:{
+          nome:String(contact.name||''), primeiroNome:firstName(contact.name), clinica:clinicName(db,a), valor:moneyBR(p?.amount||0), vencimento:fmtBR(tomorrow), forma:form||'Boleto/Pix', parcela:String(p?.number||''), total:String(p?.total||''), titulo:String(title||'')
+        }});
+      };
+      try{
+        for(const plan of (typeof ensureFinancialPlans==='function'?ensureFinancialPlans(entry):(entry.financialPlans||[]))){
+          for(const p of (plan?.payments||[])) push(p,plan?.title||entry?.treatment||'',p?.payMethod||'',`fin:${entry.id}:${plan?.id||''}:${p?.id||p?.number||''}`);
+        }
+      }catch(_){ }
+      if(entry?.installPlan&&!entry.installPlan.migratedToFinancialPlanId){
+        try{ if(typeof ensureInstallments==='function') ensureInstallments(entry); }catch(_){ }
+        for(const p of (entry.installments||[])) push(p,entry.installPlan?.title||entry?.treatment||'',p?.payMethod||entry.installPlan?.payMethod||'',`legacy:${entry.id}:${p?.number||''}:${p?.dueDate||p?.due||''}`);
+      }
+    }
+    return out.filter(x=>x.phone);
+  }
+
+  window.CRONOS_WHATSAPP_DATA=Object.freeze({
+    buildAutomationCandidates(){
+      const db=currentDb(), a=actorNow(); if(!db||!a) return {appointments:[],birthdays:[],installments:[]};
+      return { appointments:appointmentCandidates(db,a), birthdays:birthdayCandidates(db,a), installments:installmentCandidates(db,a) };
+    },
+    clinicId(){ return String(window.__CRONOS_CLINIC_ID__||''); },
+    clinicName(){ const db=currentDb(),a=actorNow(); return clinicName(db,a); }
+  });
 })();

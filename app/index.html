@@ -96,6 +96,7 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 }
 </style>
 
+  <link rel="stylesheet" href="../assets/css/cronos-whatsapp.css?build=v1490-whatsapp-onboarding-20260918">
 </head>
 
 
@@ -1167,6 +1168,71 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 <span class="muted" id="clinicIdentitySavedHint" style="font-size:12px"></span>
 </div>
 </div>
+<div class="card" id="cronosWaSettingsCard">
+<h3>WhatsApp do Cronos</h3>
+<div class="muted" style="line-height:1.5; margin-bottom:12px">
+  Uma única sessão por clínica. O computador ativo assume os envios e outro pode continuar automaticamente se ele sair do ar.
+</div>
+<div class="cronosWaSettingsStatus" id="cronosWaSettingsStatus" data-status="offline">
+  <span class="cronosWaSettingsDot" aria-hidden="true"></span>
+  <div class="cronosWaSettingsStatusText">
+    <strong id="cronosWaSettingsTitle">Verificando WhatsApp...</strong>
+    <span id="cronosWaSettingsDetail">Consultando a clínica e este computador</span>
+  </div>
+</div>
+<div class="cronosWaQr cronosWaSettingsQr" id="cronosWaSettingsQr" hidden>
+  <img id="cronosWaSettingsQrImage" alt="QR Code para conectar o WhatsApp" />
+  <div>
+    <strong>Leia o QR pelo celular</strong>
+    <span>WhatsApp → Aparelhos conectados → Conectar um aparelho</span>
+  </div>
+</div>
+<div class="cronosWaSettingsActions">
+  <button class="btn ok" id="cronosWaSettingsToggle" type="button">Conectar WhatsApp</button>
+  <span class="muted" id="cronosWaSettingsHint" style="font-size:12px"></span>
+</div>
+
+<div class="cronosWaAutomationPanel">
+  <div class="cronosWaAutomationHead">
+    <div>
+      <strong>Automações</strong>
+      <span>O Cronos cria a fila no horário escolhido pela clínica. Se o computador responsável cair, outro ativo continua o que estiver pendente.</span>
+    </div>
+    <label class="cronosWaSwitch"><input id="cronosWaAutomationEnabled" type="checkbox"><span>Ativar</span></label>
+  </div>
+  <div class="cronosWaAutomationGrid">
+    <label class="field">
+      <span>Horário diário</span>
+      <input class="input" id="cronosWaSendTime" type="time" value="14:00">
+    </label>
+    <div class="cronosWaAutomationChecks">
+      <label><input id="cronosWaAppointmentEnabled" type="checkbox" checked> Consultas — 1 dia antes</label>
+      <label><input id="cronosWaBirthdayEnabled" type="checkbox" checked> Aniversários — no mesmo dia</label>
+      <label><input id="cronosWaInstallmentEnabled" type="checkbox" checked> Boleto/Pix — 1 dia antes</label>
+    </div>
+  </div>
+
+  <div class="cronosWaTemplateBlock">
+    <label for="cronosWaAppointmentTemplate">Mensagem de confirmação</label>
+    <textarea id="cronosWaAppointmentTemplate" maxlength="4000"></textarea>
+    <small>{{primeiroNome}}, {{clinica}}, {{data}}, {{hora}}, {{profissional}}</small>
+  </div>
+  <div class="cronosWaTemplateBlock">
+    <label for="cronosWaBirthdayTemplate">Mensagem de aniversário</label>
+    <textarea id="cronosWaBirthdayTemplate" maxlength="4000"></textarea>
+    <small>{{primeiroNome}}, {{nome}}, {{clinica}}, {{idade}}</small>
+  </div>
+  <div class="cronosWaTemplateBlock">
+    <label for="cronosWaInstallmentTemplate">Mensagem de vencimento</label>
+    <textarea id="cronosWaInstallmentTemplate" maxlength="4000"></textarea>
+    <small>{{primeiroNome}}, {{clinica}}, {{valor}}, {{vencimento}}, {{forma}}, {{parcela}}, {{total}}</small>
+  </div>
+  <div class="cronosWaSettingsActions">
+    <button class="btn ok" id="cronosWaSaveAutomation" type="button">Salvar automações</button>
+    <span class="muted" id="cronosWaAutomationHint" style="font-size:12px"></span>
+  </div>
+</div>
+</div>
 <div class="card" id="agendaClinicScheduleCard">
 <h3>Horário de funcionamento</h3>
 <div class="muted" style="line-height:1.5; margin-bottom:10px">
@@ -1289,14 +1355,15 @@ body.light.cronos-ficha-open #modalBg > .modal.modalFichaWide .toothChip,
 
 <script src="../assets/js/core/cronos-repository.js?build=persistence-v492-20260915"></script>
 <script src="../assets/js/core/cronos-permissions.js?build=v145-agenda-acl-20260917"></script>
-<script src="../assets/js/app.js?build=v145-agenda-acl-20260917"></script>
+<script src="../assets/js/app.js?build=v1490-whatsapp-onboarding-20260918"></script>
 <script src="../assets/js/cronos-billing.js?build=billing-v1-43-code-hygiene-20260917"></script>
 <script src="../assets/js/intraoral-camera.js?build=20260828-billing-feature-v19"></script>
-<script src="../assets/js/hoje_no_cronos.js?build=v1390-nav-icon-20260917"></script>
-<script src="../assets/js/cronos_fluxos.js?build=agenda-settings-v1350-20260917"></script>
-<script src="../assets/js/simulador_credito.js?build=v463-2-4-aux-visibility-v14-20260827"></script>
+<script src="../assets/js/hoje_no_cronos.js?build=v146-whatsapp-local-20260917"></script>
+<script src="../assets/js/cronos_fluxos.js?build=v1490-whatsapp-onboarding-20260918"></script>
+<script src="../assets/js/simulador_credito.js?build=v146-whatsapp-local-20260917"></script>
 <script src="../assets/js/performance.js?build=v463-2-4-performance-stable-render-v15-20260828"></script>
 <script src="../assets/js/agenda.js?build=agenda-v1430-code-hygiene-20260917"></script>
+<script src="../assets/js/cronos-whatsapp.js?build=v1501-install-flow-fix-20260918"></script>
 
 <style>
   /* Ajustes visuais do Cronos */

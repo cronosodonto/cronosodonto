@@ -988,7 +988,12 @@ Observação: esta é uma simulação estimativa e pode variar conforme aprovaç
     if(!S.result)return toast('Simulação','Calcule antes de enviar.');
     const e=getEntry(), c=contactOf(load(),e), ph=phone(c.phone);
     if(!ph)return toast('WhatsApp','Paciente sem telefone.');
-    window.open(`https://wa.me/${ph}?text=${encodeURIComponent(resultText())}`,'_blank');
+    const message = resultText();
+    if(window.CRONOS_WHATSAPP?.open){
+      window.CRONOS_WHATSAPP.open({ phone:ph, message, title:'Enviar simulação pelo WhatsApp' });
+      return;
+    }
+    window.open(`https://wa.me/${ph}?text=${encodeURIComponent(message)}`,'_blank');
   }
   function printText(text){
     const safe=esc(text||'').replace(/\n/g,'<br>');

@@ -2673,7 +2673,7 @@
       .replaceAll("{vencimento}", info.dueDate ? fmtBR(info.dueDate) : "")
       .replaceAll("{forma}", String(info.payMethod || ""))
       .replaceAll("{titulo}", String(info.planTitle || ""))
-      .replaceAll("{tratamento}", String(info.planTitle || entry?.treatment || ""));
+      .replaceAll("{tratamento}", String(info.planTitle || entry?.treatment || "tratamento"));
   }
 
   function firstName(fullName){
@@ -2725,7 +2725,11 @@
     const phone = taskPhone(db, task, entry);
 
     if(phone){
-      window.open(waLink(phone, msg), "_blank");
+      if(window.CRONOS_WHATSAPP?.open){
+        window.CRONOS_WHATSAPP.open({ phone, message:msg, title:"Enviar WhatsApp" });
+      }else{
+        window.open(waLink(phone, msg), "_blank");
+      }
       return;
     }
 
