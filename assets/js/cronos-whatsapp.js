@@ -479,6 +479,17 @@
     if(automationTimer)clearInterval(automationTimer);automationTimer=setInterval(()=>void runAutomationScan(false),30000);setTimeout(()=>void runAutomationScan(false),7000);
   }
 
+  async function enqueueAutomation(options={}){
+    const type=String(options.type||'automation');
+    const entityId=String(options.entityId||'');
+    const referenceDate=String(options.referenceDate||localDateISO());
+    const phone=normalizePhone(options.phone||'');
+    const message=String(options.message||'').trim();
+    if(!phone||!message)throw new Error('Envio automático sem telefone ou mensagem.');
+    const dedupeKey=String(options.dedupeKey||`auto:${type}:${entityId}:${referenceDate}`);
+    return userHub('enqueue',{dispatch_type:type,dedupe_key:dedupeKey,entity_id:entityId,reference_date:referenceDate,phone,message});
+  }
+
   interceptLinks();initSettingsPanel();startBackground();
-  window.CRONOS_WHATSAPP=Object.freeze({open,close,status:refreshAllStatus,settingsStatus:refreshSettingsStatus,normalizePhone,parseUrl:parseWhatsAppUrl,connectorUrl:CONNECTOR,hubUrl:HUB,installerUrl:CONNECTOR_INSTALLER,install:()=>openInstallModal(false),runAutomationScan:()=>runAutomationScan(true)});
+  window.CRONOS_WHATSAPP=Object.freeze({open,close,status:refreshAllStatus,settingsStatus:refreshSettingsStatus,normalizePhone,parseUrl:parseWhatsAppUrl,connectorUrl:CONNECTOR,hubUrl:HUB,installerUrl:CONNECTOR_INSTALLER,install:()=>openInstallModal(false),runAutomationScan:()=>runAutomationScan(true),enqueueAutomation});
 })();
