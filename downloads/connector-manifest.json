@@ -1,9 +1,7 @@
-{
-  "version": "0.6.1",
-  "file": "CronosConnectorSetup.msi",
-  "format": "msi",
-  "built_by": "GitHub Actions",
-  "local_port": 3210,
-  "sha256": null,
-  "signing": "optional-until-certificate-is-configured"
+﻿{
+    "local_port":  3210,
+    "sha256":  "22d14a0423201f80deff381fad9da5c07ef484d1546f9998118d45a7dc738888",
+    "format":  "msi",
+    "version":  "0.6.1",
+    "file":  "CronosConnectorSetup.msi"
 }
