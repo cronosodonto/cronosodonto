@@ -459,11 +459,101 @@
     await userHub('enqueue',{dispatch_type:type,dedupe_key:dedupe,entity_id:item.entityId,reference_date:item.referenceDate,phone:item.phone,message});
   }
 
+  function dateAdd(iso,days){
+    const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);if(!m)return '';
+    const d=new Date(Number(m[1]),Number(m[2])-1,Number(m[3]),12,0,0,0);d.setDate(d.getDate()+Number(days||0));
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  function dateBR(iso){
+    const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[3]}/${m[2]}/${m[1]}`:String(iso||'');
+  }
+  function moneyBR(value){
+    const n=Number(value||0);try{return n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}catch(_){return `R$ ${n.toFixed(2).replace('.',',')}`;}
+  }
+  function appDb(){
+    try{return typeof window.loadDB==='function'?window.loadDB():null;}catch(_){return null;}
+  }
+  function clinicLabel(db){
+    try{
+      const a=typeof window.currentActor==='function'?window.currentActor():null;
+      const byClinic=db?.settings?.clinicBranding?.byClinic||{};
+      const keys=[a?.masterId,a?.clinicId,a?.authUid,a?.id].filter(Boolean).map(String);
+      for(const key of keys){if(byClinic[key]?.clinicName)return String(byClinic[key].clinicName);}
+      return String(db?.settings?.clinicName||db?.settings?.clinic||a?.clinicName||a?.masterName||'Clínica');
+    }catch(_){return 'Clínica';}
+  }
+  function professionalsMap(db){
+    let list=[];
+    try{if(typeof window.cronosGetProfessionals==='function')list=window.cronosGetProfessionals(db,typeof window.currentActor==='function'?window.currentActor():null,{activeOnly:false})||[];}catch(_){}
+    if(!list.length)list=Array.isArray(db?.settings?.professionals)?db.settings.professionals:[];
+    return new Map(list.map(p=>[String(p?.id||''),String(p?.name||'Profissional')]));
+  }
+  function contactMap(db){return new Map((Array.isArray(db?.contacts)?db.contacts:[]).map(x=>[String(x?.id||''),x]));}
+  function validAutoStatus(value){
+    const s=String(value||'').toLowerCase();
+    return !s.includes('desmarc')&&!s.includes('cancel')&&!s.includes('remarc')&&!s.includes('falt')&&!s.includes('realiz');
+  }
+  function buildScheduledCandidates(){
+    const db=appDb();if(!db)return null;
+    const today=localDateISO(),contacts=contactMap(db),pros=professionalsMap(db),clinic=clinicLabel(db);
+    const result={appointments:[],birthdays:[],installments:[]};
+    const apptDate=dateAdd(today,Math.max(0,Number(waSettings.appointment_days_before??1)));
+    const agenda=db?.settings?.agendaData||{},overrides=agenda?.overrides||{};
+    for(const e of Array.isArray(db.entries)?db.entries:[]){
+      const key=String(e?.id||''),ov=overrides[key]||{};
+      const date=String(ov.date||e?.apptDate||'').slice(0,10),time=String(ov.time||e?.apptTime||'').slice(0,5);
+      const status=String(ov.agendaStatus||ov.status||e?.status||'');
+      if(date!==apptDate||!time||!validAutoStatus(status))continue;
+      const contact=contacts.get(String(e?.contactId||''))||{};
+      const phone=normalizePhone(contact.phone||e?.phone||'');if(!phone)continue;
+      const name=String(contact.name||e?.name||e?.lead||'Paciente'),professional=pros.get(String(ov.professionalId??e?.professionalId??''))||'Profissional';
+      result.appointments.push({entityId:`entry:${key}`,referenceDate:date,phone,vars:{primeiroNome:name.trim().split(/\s+/)[0]||name,nome:name,clinica:clinic,data:dateBR(date),hora:time,profissional:professional}});
+    }
+    for(const a of Array.isArray(agenda?.appointments)?agenda.appointments:[]){
+      const date=String(a?.date||'').slice(0,10),time=String(a?.time||'').slice(0,5);
+      if(date!==apptDate||!time||!validAutoStatus(a?.agendaStatus||a?.status||''))continue;
+      const contact=contacts.get(String(a?.contactId||''))||{};
+      const phone=normalizePhone(contact.phone||a?.phone||'');if(!phone)continue;
+      const name=String(contact.name||a?.patient||'Paciente'),professional=pros.get(String(a?.professionalId||''))||'Profissional';
+      result.appointments.push({entityId:`agenda:${a?.id||''}`,referenceDate:date,phone,vars:{primeiroNome:name.trim().split(/\s+/)[0]||name,nome:name,clinica:clinic,data:dateBR(date),hora:time,profissional:professional}});
+    }
+
+    const birthOffset=Math.max(0,Number(waSettings.birthday_days_before??0));
+    const targetBirthday=dateAdd(today,birthOffset),targetParts=targetBirthday.split('-');
+    for(const contact of Array.isArray(db.contacts)?db.contacts:[]){
+      const raw=String(contact?.birthDate||contact?.birthday||contact?.birth_date||'').slice(0,10),m=raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if(!m||m[2]!==targetParts[1]||m[3]!==targetParts[2])continue;
+      const phone=normalizePhone(contact?.phone||'');if(!phone)continue;
+      const name=String(contact?.name||'Paciente');
+      let age=Number(targetParts[0])-Number(m[1]);if(!Number.isFinite(age)||age<0||age>130)age='';
+      result.birthdays.push({entityId:`contact:${contact?.id||name}`,referenceDate:targetBirthday,phone,vars:{primeiroNome:name.trim().split(/\s+/)[0]||name,nome:name,clinica:clinic,idade:String(age)}});
+    }
+
+    const installmentDate=dateAdd(today,Math.max(0,Number(waSettings.installment_days_before??1)));
+    const seen=new Set();
+    const addInstallment=(entry,pay,planTitle='')=>{
+      const due=String(pay?.dueDate||pay?.due||'').slice(0,10);if(due!==installmentDate)return;
+      const method=String(pay?.payMethod||pay?.method||pay?.paymentMethod||'').toLowerCase();
+      if(method&&!method.includes('pix')&&!method.includes('boleto'))return;
+      const status=String(pay?.status||'').toLowerCase();if(status.includes('paid')||status.includes('pago')||status.includes('receb'))return;
+      const contact=contacts.get(String(entry?.contactId||''))||{};
+      const phone=normalizePhone(contact.phone||entry?.phone||'');if(!phone)return;
+      const id=String(pay?.id||`${due}:${pay?.number||''}:${pay?.amount||''}`),dedupe=`${entry?.id||''}:${id}`;if(seen.has(dedupe))return;seen.add(dedupe);
+      const name=String(contact.name||entry?.name||entry?.lead||'Paciente');
+      result.installments.push({entityId:`installment:${dedupe}`,referenceDate:due,phone,vars:{primeiroNome:name.trim().split(/\s+/)[0]||name,nome:name,clinica:clinic,valor:moneyBR(pay?.amount||pay?.value||0),vencimento:dateBR(due),forma:String(pay?.payMethod||pay?.method||pay?.paymentMethod||''),parcela:String(pay?.number||''),total:String(pay?.total||''),titulo:String(planTitle||'')}});
+    };
+    for(const e of Array.isArray(db.entries)?db.entries:[]){
+      for(const p of Array.isArray(e?.installments)?e.installments:[])addInstallment(e,p,e?.installPlan?.title||e?.treatment||'');
+      for(const plan of Array.isArray(e?.financialPlans)?e.financialPlans:[])for(const p of Array.isArray(plan?.payments)?plan.payments:[])addInstallment(e,p,plan?.title||e?.treatment||'');
+    }
+    return result;
+  }
+
   async function runAutomationScan(force=false){
     if(!clinicId())return;const now=hhmm(),minuteKey=`${localDateISO()}|${now}`;if(!force&&minuteKey===lastAutomationMinute)return;lastAutomationMinute=minuteKey;
     try{
       await ensureSettingsFresh(120000);
-      const data=window.CRONOS_WHATSAPP_DATA?.buildAutomationCandidates?.();if(!data)return;
+      const data=buildScheduledCandidates()||window.CRONOS_WHATSAPP_DATA?.buildAutomationCandidates?.();if(!data)return;
       const jobs=[];
       if(waSettings.appointment_enabled!==false&&waSettings.appointment_auto!==false&&now>=cleanTime(waSettings.appointment_time))for(const x of data.appointments||[])jobs.push(enqueueCandidate('appointment',x,waSettings.appointment_template));
       if(waSettings.birthday_enabled!==false&&waSettings.birthday_auto!==false&&now>=cleanTime(waSettings.birthday_time))for(const x of data.birthdays||[])jobs.push(enqueueCandidate('birthday',x,waSettings.birthday_template));
