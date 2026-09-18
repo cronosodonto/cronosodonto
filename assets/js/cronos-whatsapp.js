@@ -6,7 +6,10 @@
   const CONNECTOR_INSTALLER='/downloads/CronosConnectorSetup.msi';
   const CONNECTOR_RELEASE='0.6.1';
   const DEFAULTS={
-    enabled:false, send_time:'14:00', appointment_enabled:true, birthday_enabled:true, installment_enabled:true,
+    enabled:true,
+    appointment_enabled:true, appointment_auto:true, appointment_days_before:1, appointment_time:'14:00',
+    birthday_enabled:true, birthday_auto:true, birthday_days_before:0, birthday_time:'09:00',
+    installment_enabled:true, installment_auto:true, installment_days_before:1, installment_time:'10:00',
     appointment_template:'Olá, {{primeiroNome}}! 😊 Sua consulta na {{clinica}} está agendada para amanhã, {{data}}, às {{hora}}, com {{profissional}}. Podemos confirmar sua presença?',
     birthday_template:'Oi, {{primeiroNome}}! Feliz aniversário! 🥳 A equipe da {{clinica}} deseja um novo ciclo cheio de saúde, alegria e muitos motivos pra sorrir.',
     installment_template:'Olá, {{primeiroNome}}! Passando para lembrar que sua parcela de {{valor}} vence amanhã ({{vencimento}}). Forma de pagamento: {{forma}}. Se já realizou o pagamento, desconsidere esta mensagem.'
@@ -320,7 +323,13 @@
 
   function settingsNodes(){
     const card=document.getElementById('cronosWaSettingsCard');if(!card)return null;
-    const id=x=>document.getElementById(x);return{card,status:id('cronosWaSettingsStatus'),title:id('cronosWaSettingsTitle'),detail:id('cronosWaSettingsDetail'),qr:id('cronosWaSettingsQr'),qrImage:id('cronosWaSettingsQrImage'),toggle:id('cronosWaSettingsToggle'),hint:id('cronosWaSettingsHint'),enabled:id('cronosWaAutomationEnabled'),time:id('cronosWaSendTime'),appt:id('cronosWaAppointmentEnabled'),birth:id('cronosWaBirthdayEnabled'),inst:id('cronosWaInstallmentEnabled'),apptTpl:id('cronosWaAppointmentTemplate'),birthTpl:id('cronosWaBirthdayTemplate'),instTpl:id('cronosWaInstallmentTemplate'),save:id('cronosWaSaveAutomation'),automationHint:id('cronosWaAutomationHint')};
+    const id=x=>document.getElementById(x);return{
+      card,status:id('cronosWaSettingsStatus'),title:id('cronosWaSettingsTitle'),detail:id('cronosWaSettingsDetail'),qr:id('cronosWaSettingsQr'),qrImage:id('cronosWaSettingsQrImage'),toggle:id('cronosWaSettingsToggle'),hint:id('cronosWaSettingsHint'),
+      appt:id('cronosWaAppointmentEnabled'),apptAuto:id('cronosWaAppointmentAuto'),apptDays:id('cronosWaAppointmentDaysBefore'),apptTime:id('cronosWaAppointmentTime'),
+      birth:id('cronosWaBirthdayEnabled'),birthAuto:id('cronosWaBirthdayAuto'),birthDays:id('cronosWaBirthdayDaysBefore'),birthTime:id('cronosWaBirthdayTime'),
+      inst:id('cronosWaInstallmentEnabled'),instAuto:id('cronosWaInstallmentAuto'),instDays:id('cronosWaInstallmentDaysBefore'),instTime:id('cronosWaInstallmentTime'),
+      apptTpl:id('cronosWaAppointmentTemplate'),birthTpl:id('cronosWaBirthdayTemplate'),instTpl:id('cronosWaInstallmentTemplate'),save:id('cronosWaSaveAutomation'),automationHint:id('cronosWaAutomationHint')
+    };
   }
 
   function renderSettingsStatus(){
@@ -358,7 +367,18 @@
   }
 
   function fillSettingsForm(s){
-    const n=settingsNodes();if(!n)return;waSettings={...DEFAULTS,...(s||{})};n.enabled.checked=waSettings.enabled===true;n.time.value=cleanTime(waSettings.send_time);n.appt.checked=waSettings.appointment_enabled!==false;n.birth.checked=waSettings.birthday_enabled!==false;n.inst.checked=waSettings.installment_enabled!==false;n.apptTpl.value=waSettings.appointment_template||DEFAULTS.appointment_template;n.birthTpl.value=waSettings.birthday_template||DEFAULTS.birthday_template;n.instTpl.value=waSettings.installment_template||DEFAULTS.installment_template;settingsFormClinic=clinicId();
+    const n=settingsNodes();if(!n)return;
+    const incoming=s||{};
+    waSettings={...DEFAULTS,...incoming};
+    if(incoming.send_time){
+      if(incoming.appointment_time===undefined)waSettings.appointment_time=incoming.send_time;
+      if(incoming.birthday_time===undefined)waSettings.birthday_time=incoming.send_time;
+      if(incoming.installment_time===undefined)waSettings.installment_time=incoming.send_time;
+    }
+    n.appt.checked=waSettings.appointment_enabled!==false;n.apptAuto.checked=waSettings.appointment_auto!==false;n.apptDays.value=String(Math.max(0,Number(waSettings.appointment_days_before??1)));n.apptTime.value=cleanTime(waSettings.appointment_time);
+    n.birth.checked=waSettings.birthday_enabled!==false;n.birthAuto.checked=waSettings.birthday_auto!==false;n.birthDays.value=String(Math.max(0,Number(waSettings.birthday_days_before??0)));n.birthTime.value=cleanTime(waSettings.birthday_time);
+    n.inst.checked=waSettings.installment_enabled!==false;n.instAuto.checked=waSettings.installment_auto!==false;n.instDays.value=String(Math.max(0,Number(waSettings.installment_days_before??1)));n.instTime.value=cleanTime(waSettings.installment_time);
+    n.apptTpl.value=waSettings.appointment_template||DEFAULTS.appointment_template;n.birthTpl.value=waSettings.birthday_template||DEFAULTS.birthday_template;n.instTpl.value=waSettings.installment_template||DEFAULTS.installment_template;settingsFormClinic=clinicId();
   }
 
   async function loadSettings(){
@@ -376,7 +396,13 @@
   async function saveSettings(){
     const n=settingsNodes();if(!n)return;n.save.disabled=true;n.automationHint.textContent='Salvando...';
     try{
-      const payload={enabled:n.enabled.checked,send_time:n.time.value||'14:00',appointment_enabled:n.appt.checked,birthday_enabled:n.birth.checked,installment_enabled:n.inst.checked,appointment_template:n.apptTpl.value.trim(),birthday_template:n.birthTpl.value.trim(),installment_template:n.instTpl.value.trim()};
+      const payload={
+        enabled:true,
+        appointment_enabled:n.appt.checked,appointment_auto:n.apptAuto.checked,appointment_days_before:Math.max(0,Number(n.apptDays.value||0)),appointment_time:n.apptTime.value||'14:00',
+        birthday_enabled:n.birth.checked,birthday_auto:n.birthAuto.checked,birthday_days_before:Math.max(0,Number(n.birthDays.value||0)),birthday_time:n.birthTime.value||'09:00',
+        installment_enabled:n.inst.checked,installment_auto:n.instAuto.checked,installment_days_before:Math.max(0,Number(n.instDays.value||0)),installment_time:n.instTime.value||'10:00',
+        appointment_template:n.apptTpl.value.trim(),birthday_template:n.birthTpl.value.trim(),installment_template:n.instTpl.value.trim()
+      };
       const r=await userHub('settings_save',{settings:payload});fillSettingsForm(r.settings);settingsLoadedClinic=clinicId();settingsFetchedAt=Date.now();n.automationHint.textContent='Automações salvas.';await runAutomationScan(true);
     }catch(e){n.automationHint.textContent=e?.message||'Não foi possível salvar.';}finally{n.save.disabled=false;}
   }
@@ -433,16 +459,105 @@
     await userHub('enqueue',{dispatch_type:type,dedupe_key:dedupe,entity_id:item.entityId,reference_date:item.referenceDate,phone:item.phone,message});
   }
 
+  function dateAdd(iso,days){
+    const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);if(!m)return '';
+    const d=new Date(Number(m[1]),Number(m[2])-1,Number(m[3]),12,0,0,0);d.setDate(d.getDate()+Number(days||0));
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  function dateBR(iso){
+    const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[3]}/${m[2]}/${m[1]}`:String(iso||'');
+  }
+  function moneyBR(value){
+    const n=Number(value||0);try{return n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}catch(_){return `R$ ${n.toFixed(2).replace('.',',')}`;}
+  }
+  function appDb(){
+    try{return typeof window.loadDB==='function'?window.loadDB():null;}catch(_){return null;}
+  }
+  function clinicLabel(db){
+    try{
+      const a=typeof window.currentActor==='function'?window.currentActor():null;
+      const byClinic=db?.settings?.clinicBranding?.byClinic||{};
+      const keys=[a?.masterId,a?.clinicId,a?.authUid,a?.id].filter(Boolean).map(String);
+      for(const key of keys){if(byClinic[key]?.clinicName)return String(byClinic[key].clinicName);}
+      return String(db?.settings?.clinicName||db?.settings?.clinic||a?.clinicName||a?.masterName||'Clínica');
+    }catch(_){return 'Clínica';}
+  }
+  function professionalsMap(db){
+    let list=[];
+    try{if(typeof window.cronosGetProfessionals==='function')list=window.cronosGetProfessionals(db,typeof window.currentActor==='function'?window.currentActor():null,{activeOnly:false})||[];}catch(_){}
+    if(!list.length)list=Array.isArray(db?.settings?.professionals)?db.settings.professionals:[];
+    return new Map(list.map(p=>[String(p?.id||''),String(p?.name||'Profissional')]));
+  }
+  function contactMap(db){return new Map((Array.isArray(db?.contacts)?db.contacts:[]).map(x=>[String(x?.id||''),x]));}
+  function validAutoStatus(value){
+    const s=String(value||'').toLowerCase();
+    return !s.includes('desmarc')&&!s.includes('cancel')&&!s.includes('remarc')&&!s.includes('falt')&&!s.includes('realiz');
+  }
+  function buildScheduledCandidates(){
+    const db=appDb();if(!db)return null;
+    const today=localDateISO(),contacts=contactMap(db),pros=professionalsMap(db),clinic=clinicLabel(db);
+    const result={appointments:[],birthdays:[],installments:[]};
+    const apptDate=dateAdd(today,Math.max(0,Number(waSettings.appointment_days_before??1)));
+    const agenda=db?.settings?.agendaData||{},overrides=agenda?.overrides||{};
+    for(const e of Array.isArray(db.entries)?db.entries:[]){
+      const key=String(e?.id||''),ov=overrides[key]||{};
+      const date=String(ov.date||e?.apptDate||'').slice(0,10),time=String(ov.time||e?.apptTime||'').slice(0,5);
+      const status=String(ov.agendaStatus||ov.status||e?.status||'');
+      if(date!==apptDate||!time||!validAutoStatus(status))continue;
+      const contact=contacts.get(String(e?.contactId||''))||{};
+      const phone=normalizePhone(contact.phone||e?.phone||'');if(!phone)continue;
+      const name=String(contact.name||e?.name||e?.lead||'Paciente'),professional=pros.get(String(ov.professionalId??e?.professionalId??''))||'Profissional';
+      result.appointments.push({entityId:`entry:${key}`,referenceDate:date,phone,vars:{primeiroNome:name.trim().split(/\s+/)[0]||name,nome:name,clinica:clinic,data:dateBR(date),hora:time,profissional:professional}});
+    }
+    for(const a of Array.isArray(agenda?.appointments)?agenda.appointments:[]){
+      const date=String(a?.date||'').slice(0,10),time=String(a?.time||'').slice(0,5);
+      if(date!==apptDate||!time||!validAutoStatus(a?.agendaStatus||a?.status||''))continue;
+      const contact=contacts.get(String(a?.contactId||''))||{};
+      const phone=normalizePhone(contact.phone||a?.phone||'');if(!phone)continue;
+      const name=String(contact.name||a?.patient||'Paciente'),professional=pros.get(String(a?.professionalId||''))||'Profissional';
+      result.appointments.push({entityId:`agenda:${a?.id||''}`,referenceDate:date,phone,vars:{primeiroNome:name.trim().split(/\s+/)[0]||name,nome:name,clinica:clinic,data:dateBR(date),hora:time,profissional:professional}});
+    }
+
+    const birthOffset=Math.max(0,Number(waSettings.birthday_days_before??0));
+    const targetBirthday=dateAdd(today,birthOffset),targetParts=targetBirthday.split('-');
+    for(const contact of Array.isArray(db.contacts)?db.contacts:[]){
+      const raw=String(contact?.birthDate||contact?.birthday||contact?.birth_date||'').slice(0,10),m=raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if(!m||m[2]!==targetParts[1]||m[3]!==targetParts[2])continue;
+      const phone=normalizePhone(contact?.phone||'');if(!phone)continue;
+      const name=String(contact?.name||'Paciente');
+      let age=Number(targetParts[0])-Number(m[1]);if(!Number.isFinite(age)||age<0||age>130)age='';
+      result.birthdays.push({entityId:`contact:${contact?.id||name}`,referenceDate:targetBirthday,phone,vars:{primeiroNome:name.trim().split(/\s+/)[0]||name,nome:name,clinica:clinic,idade:String(age)}});
+    }
+
+    const installmentDate=dateAdd(today,Math.max(0,Number(waSettings.installment_days_before??1)));
+    const seen=new Set();
+    const addInstallment=(entry,pay,planTitle='')=>{
+      const due=String(pay?.dueDate||pay?.due||'').slice(0,10);if(due!==installmentDate)return;
+      const method=String(pay?.payMethod||pay?.method||pay?.paymentMethod||'').toLowerCase();
+      if(method&&!method.includes('pix')&&!method.includes('boleto'))return;
+      const status=String(pay?.status||'').toLowerCase();if(status.includes('paid')||status.includes('pago')||status.includes('receb'))return;
+      const contact=contacts.get(String(entry?.contactId||''))||{};
+      const phone=normalizePhone(contact.phone||entry?.phone||'');if(!phone)return;
+      const id=String(pay?.id||`${due}:${pay?.number||''}:${pay?.amount||''}`),dedupe=`${entry?.id||''}:${id}`;if(seen.has(dedupe))return;seen.add(dedupe);
+      const name=String(contact.name||entry?.name||entry?.lead||'Paciente');
+      result.installments.push({entityId:`installment:${dedupe}`,referenceDate:due,phone,vars:{primeiroNome:name.trim().split(/\s+/)[0]||name,nome:name,clinica:clinic,valor:moneyBR(pay?.amount||pay?.value||0),vencimento:dateBR(due),forma:String(pay?.payMethod||pay?.method||pay?.paymentMethod||''),parcela:String(pay?.number||''),total:String(pay?.total||''),titulo:String(planTitle||'')}});
+    };
+    for(const e of Array.isArray(db.entries)?db.entries:[]){
+      for(const p of Array.isArray(e?.installments)?e.installments:[])addInstallment(e,p,e?.installPlan?.title||e?.treatment||'');
+      for(const plan of Array.isArray(e?.financialPlans)?e.financialPlans:[])for(const p of Array.isArray(plan?.payments)?plan.payments:[])addInstallment(e,p,plan?.title||e?.treatment||'');
+    }
+    return result;
+  }
+
   async function runAutomationScan(force=false){
     if(!clinicId())return;const now=hhmm(),minuteKey=`${localDateISO()}|${now}`;if(!force&&minuteKey===lastAutomationMinute)return;lastAutomationMinute=minuteKey;
     try{
       await ensureSettingsFresh(120000);
-      if(!waSettings?.enabled)return;if(now<cleanTime(waSettings.send_time))return;
-      const data=window.CRONOS_WHATSAPP_DATA?.buildAutomationCandidates?.();if(!data)return;
+      const data=buildScheduledCandidates()||window.CRONOS_WHATSAPP_DATA?.buildAutomationCandidates?.();if(!data)return;
       const jobs=[];
-      if(waSettings.appointment_enabled!==false)for(const x of data.appointments||[])jobs.push(enqueueCandidate('appointment',x,waSettings.appointment_template));
-      if(waSettings.birthday_enabled!==false)for(const x of data.birthdays||[])jobs.push(enqueueCandidate('birthday',x,waSettings.birthday_template));
-      if(waSettings.installment_enabled!==false)for(const x of data.installments||[])jobs.push(enqueueCandidate('installment',x,waSettings.installment_template));
+      if(waSettings.appointment_enabled!==false&&waSettings.appointment_auto!==false&&now>=cleanTime(waSettings.appointment_time))for(const x of data.appointments||[])jobs.push(enqueueCandidate('appointment',x,waSettings.appointment_template));
+      if(waSettings.birthday_enabled!==false&&waSettings.birthday_auto!==false&&now>=cleanTime(waSettings.birthday_time))for(const x of data.birthdays||[])jobs.push(enqueueCandidate('birthday',x,waSettings.birthday_template));
+      if(waSettings.installment_enabled!==false&&waSettings.installment_auto!==false&&now>=cleanTime(waSettings.installment_time))for(const x of data.installments||[])jobs.push(enqueueCandidate('installment',x,waSettings.installment_template));
       for(let i=0;i<jobs.length;i+=8)await Promise.allSettled(jobs.slice(i,i+8));
     }catch(_){ }
   }
@@ -454,6 +569,17 @@
     if(automationTimer)clearInterval(automationTimer);automationTimer=setInterval(()=>void runAutomationScan(false),30000);setTimeout(()=>void runAutomationScan(false),7000);
   }
 
+  async function enqueueAutomation(options={}){
+    const type=String(options.type||'automation');
+    const entityId=String(options.entityId||'');
+    const referenceDate=String(options.referenceDate||localDateISO());
+    const phone=normalizePhone(options.phone||'');
+    const message=String(options.message||'').trim();
+    if(!phone||!message)throw new Error('Envio automático sem telefone ou mensagem.');
+    const dedupeKey=String(options.dedupeKey||`auto:${type}:${entityId}:${referenceDate}`);
+    return userHub('enqueue',{dispatch_type:type,dedupe_key:dedupeKey,entity_id:entityId,reference_date:referenceDate,phone,message});
+  }
+
   interceptLinks();initSettingsPanel();startBackground();
-  window.CRONOS_WHATSAPP=Object.freeze({open,close,status:refreshAllStatus,settingsStatus:refreshSettingsStatus,normalizePhone,parseUrl:parseWhatsAppUrl,connectorUrl:CONNECTOR,hubUrl:HUB,installerUrl:CONNECTOR_INSTALLER,install:()=>openInstallModal(false),runAutomationScan:()=>runAutomationScan(true)});
+  window.CRONOS_WHATSAPP=Object.freeze({open,close,status:refreshAllStatus,settingsStatus:refreshSettingsStatus,normalizePhone,parseUrl:parseWhatsAppUrl,connectorUrl:CONNECTOR,hubUrl:HUB,installerUrl:CONNECTOR_INSTALLER,install:()=>openInstallModal(false),runAutomationScan:()=>runAutomationScan(true),enqueueAutomation});
 })();
