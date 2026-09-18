@@ -948,7 +948,7 @@
     const active = f.active !== false;
     const ordered = steps.slice().sort((a,b)=>Number(a.dayOffset||0)-Number(b.dayOffset||0));
     const summary = ordered.map((s,i)=>`
-      <span class="flowStepChip"><b>D+${Number(s.dayOffset||0)}</b><span>${escapeHTML(s.title || `Etapa ${i+1}`)}</span></span>
+      <span class="flowStepChip"><b>D+${Number(s.dayOffset||0)}</b><span>${escapeHTML(s.title || `Etapa ${i+1}`)}</span><small>${escapeHTML(s.sendTime || '10:00')} · ${s.autoSend===true?'Auto':'Manual'}</small></span>
     `).join("");
     return `
       <div class="flowCard" data-flow-id="${escapeHTML(f.id)}" data-flow-search="${escapeHTML([f.name,f.description,...ordered.map(s=>`${s.title||''} ${s.message||''} ${s.internalNote||s.note||''}`)].join(' '))}">
@@ -979,7 +979,7 @@
 
   function stepEditorHTML(step={}, idx=0){
     return `
-      <div class="flowStepBox" data-step-index="${idx}">
+      <div class="flowStepBox" data-step-index="${idx}" data-step-id="${escapeHTML(step.id || '')}">
         <div class="flowStepHead">
           <div class="flowStepLabel"><span class="flowStepIndex">${idx+1}</span><b>Etapa ${idx+1}</b></div>
           <button class="btn danger" type="button" onclick="CRONOS_FLUXOS.removeStep(this)">Remover</button>
@@ -993,6 +993,19 @@
             <label>Intervalo</label>
             <input class="flowStepDays" type="number" min="0" value="${Number(step.dayOffset || 0)}"/>
             <div class="flowHelp">dias após início</div>
+          </div>
+        </div>
+        <div class="flowTwo" style="margin-top:10px">
+          <div>
+            <label>Horário</label>
+            <input class="flowStepTime" type="time" value="${escapeHTML(step.sendTime || '10:00')}"/>
+          </div>
+          <div>
+            <label>Modo de envio</label>
+            <select class="flowStepMode">
+              <option value="manual" ${step.autoSend===true?'':'selected'}>Manual</option>
+              <option value="auto" ${step.autoSend===true?'selected':''}>Automático</option>
+            </select>
           </div>
         </div>
         <div style="margin-top:10px">
@@ -1030,15 +1043,15 @@
       description:"",
       active:true,
       steps:[
-        { title:"Mensagem inicial", dayOffset:0, message:"Oi, {primeiroNome}! Tudo bem? Passando para saber se você ainda tem interesse em conversar sobre {tratamento}.", internalNote:"", link:"", mediaHint:"" },
-        { title:"Reforço", dayOffset:1, message:"Oi, {primeiroNome}! Conseguiu ver minha mensagem anterior? Posso te ajudar com alguma dúvida?", internalNote:"", link:"", mediaHint:"" },
-        { title:"Última tentativa", dayOffset:3, message:"Oi, {primeiroNome}! Como não consegui falar com você, vou deixar sua ficha em aberto por aqui. Quando quiser retomar, é só me chamar. 😊", internalNote:"", link:"", mediaHint:"" }
+        { title:"Mensagem inicial", dayOffset:0, sendTime:"10:00", autoSend:false, message:"Oi, {primeiroNome}! Tudo bem? Passando para saber se você ainda tem interesse em conversar sobre {tratamento}.", internalNote:"", link:"", mediaHint:"" },
+        { title:"Reforço", dayOffset:1, sendTime:"10:00", autoSend:false, message:"Oi, {primeiroNome}! Conseguiu ver minha mensagem anterior? Posso te ajudar com alguma dúvida?", internalNote:"", link:"", mediaHint:"" },
+        { title:"Última tentativa", dayOffset:3, sendTime:"10:00", autoSend:false, message:"Oi, {primeiroNome}! Como não consegui falar com você, vou deixar sua ficha em aberto por aqui. Quando quiser retomar, é só me chamar. 😊", internalNote:"", link:"", mediaHint:"" }
       ]
     };
 
     openModalSafe({
       title: existing ? "Editar fluxo assistido" : "Novo fluxo assistido",
-      sub: "Monte uma sequência manual. O Cronos cria as etapas futuras e joga no Hoje no Cronos.",
+      sub: "Defina o intervalo, horário e se cada etapa será manual ou automática.",
       maxWidth:"980px",
       bodyHTML: `
         <div class="flowEditor">
@@ -1064,7 +1077,7 @@
           <div class="flowEditorSectionHead">
             <div>
               <h4>Etapas do fluxo</h4>
-              <div class="flowHelp">Cada etapa entra no Hoje no Cronos conforme o intervalo definido.</div>
+              <div class="flowHelp">Etapas manuais entram no Hoje no Cronos; etapas automáticas são enviadas no horário definido.</div>
             </div>
             <button class="btn" type="button" onclick="CRONOS_FLUXOS.addStep()">＋ Adicionar etapa</button>
           </div>
@@ -1117,6 +1130,8 @@
       id: box.dataset.stepId || uid("flowStep"),
       title: String(qs(".flowStepTitle", box)?.value || `Mensagem ${idx+1}`).trim(),
       dayOffset: Math.max(0, parseInt(qs(".flowStepDays", box)?.value || "0", 10) || 0),
+      sendTime: String(qs(".flowStepTime", box)?.value || "10:00"),
+      autoSend: String(qs(".flowStepMode", box)?.value || "manual") === "auto",
       message: String(qs(".flowStepMessage", box)?.value || "").trim(),
       internalNote: String(qs(".flowStepNote", box)?.value || "").trim(),
       link: String(qs(".flowStepLink", box)?.value || "").trim(),
@@ -1308,7 +1323,7 @@
               <input id="activateFlowStart" type="date" value="${todayISO()}" onchange="CRONOS_FLUXOS.previewActivation('${escapeHTML(entryId)}')"/>
             </div>
           </div>
-          <div class="flowHelp" style="margin-top:8px">As etapas aparecem no Hoje no Cronos na data certa. Fluxo não envia nada sozinho; ele orienta a equipe.</div>
+          <div class="flowHelp" style="margin-top:8px">Etapas manuais aparecem no Hoje no Cronos. Etapas automáticas são enviadas pelo WhatsApp no dia e horário configurados.</div>
           <div id="activateFlowPreview" style="margin-top:12px"></div>
         </div>
       `,
@@ -1335,7 +1350,7 @@
         <b>Prévia das tarefas geradas</b>
         <div style="display:grid;gap:8px;margin-top:10px">
           ${steps.map((s,i)=>`
-            <div class="flowMeta"><b>${escapeHTML(s.title || `Etapa ${i+1}`)}</b> • ${fmtBR(addDaysISO(start, s.dayOffset || 0))} • D+${Number(s.dayOffset||0)}</div>
+            <div class="flowMeta"><b>${escapeHTML(s.title || `Etapa ${i+1}`)}</b> • ${fmtBR(addDaysISO(start, s.dayOffset || 0))} • ${escapeHTML(s.sendTime || '10:00')} • D+${Number(s.dayOffset||0)} • ${s.autoSend===true?'Automático':'Manual'}</div>
           `).join("")}
         </div>
       </div>
@@ -1374,6 +1389,8 @@
         title: s.title || `Mensagem ${idx+1}`,
         dayOffset: Number(s.dayOffset || 0),
         dueDate: addDaysISO(start, Number(s.dayOffset || 0)),
+        sendTime: String(s.sendTime || "10:00"),
+        autoSend: s.autoSend === true,
         message: applyVars(s.message || "", db, entry),
         rawMessage: s.message || "",
         internalNote: s.internalNote || s.note || "",
@@ -1393,6 +1410,57 @@
     toast("Fluxo ativado ✅", flow.name);
     try{ window.CRONOS_TODAY?.render?.(); }catch(_){}
     try{ window.CRONOS_TODAY?.updateNavCount?.(); }catch(_){}
+  }
+
+  function normalizePhone(value){
+    let d=String(value||"").replace(/\D/g,"");
+    if((d.length===10||d.length===11)&&!d.startsWith("55"))d="55"+d;
+    return d;
+  }
+  async function runAutomaticFlowSteps(){
+    const db=load();
+    if(!db||!Array.isArray(db.flowRuns)||!window.CRONOS_WHATSAPP?.enqueueAutomation)return;
+    const today=todayISO();
+    const now=new Date();
+    const clock=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+    let changed=false;
+    for(const run of db.flowRuns){
+      if(run?.active===false)continue;
+      const entry=getEntry(db,run.entryId);
+      if(!entry)continue;
+      const contact=getContact(db,entry);
+      const phone=normalizePhone(contact?.phone||entry?.phone||"");
+      if(!phone)continue;
+      for(const step of run.steps||[]){
+        if(step?.done===true||step?.autoSend!==true)continue;
+        const due=String(step.dueDate||"").slice(0,10);
+        const at=String(step.sendTime||"10:00").slice(0,5);
+        if(!due||due>today||(due===today&&clock<at))continue;
+        const message=String(step.message||"").trim();
+        if(!message)continue;
+        try{
+          await window.CRONOS_WHATSAPP.enqueueAutomation({
+            type:"flow",
+            entityId:`${run.id}:${step.stepId||step.index||""}`,
+            referenceDate:due,
+            phone,
+            message,
+            dedupeKey:`auto:flow:${run.id}:${step.stepId||step.index||""}:${due}`
+          });
+          step.done=true;
+          step.doneAt=nowISO();
+          step.doneBy="Automação WhatsApp";
+          step.autoQueuedAt=step.doneAt;
+          changed=true;
+        }catch(_){}
+      }
+      if((run.steps||[]).length&&(run.steps||[]).every(s=>s.done===true))run.active=false;
+    }
+    if(changed){
+      try{await Promise.resolve(save(db,{immediate:true,silent:true}));}catch(_){}
+      try{window.CRONOS_TODAY?.render?.();}catch(_){}
+      try{window.CRONOS_TODAY?.updateNavCount?.();}catch(_){}
+    }
   }
 
   document.addEventListener('cronos:billing-status-updated', ()=>{
@@ -1435,6 +1503,8 @@
         injectLeadButtons($("view-leads") || document);
       }catch(_){}
     }, 6000);
+    setTimeout(()=>void runAutomaticFlowSteps(),7000);
+    setInterval(()=>void runAutomaticFlowSteps(),30000);
   }
 
   window.CRONOS_FLUXOS = {
