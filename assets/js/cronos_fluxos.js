@@ -594,6 +594,14 @@
       prefBody.appendChild(sub);
       chargeCard.remove();
     }
+    const automation = $('cronosWaAutomationPanel');
+    if(automation && !prefBody.contains(automation)){
+      const sub = document.createElement('div');
+      sub.className = 'settingsMsgSubCard';
+      sub.id = 'messageAutomationSettingsBlock';
+      sub.appendChild(automation);
+      prefBody.appendChild(sub);
+    }
     ensureBirthdayMessageBlock(prefBody);
     bindBirthdayTemplateButtons();
   }
@@ -601,8 +609,8 @@
     {key:'identity',title:'Identidade da clínica',subtitle:'Nome, e-mail, logo e identidade da ficha',find:()=>primaryClinicIdentityCard(),icon:`<svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/><path d="M9 9h.01M15 9h.01M9 12h.01M15 12h.01"/></svg>`},
     {key:'schedule',title:'Horário de funcionamento',subtitle:'Expediente, pausas e intervalos da clínica',find:()=>$('agendaClinicScheduleCard'),icon:`<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M7 3 5 5M17 3l2 2"/></svg>`},
     {key:'billing',title:'Plano e assinatura',subtitle:'Plano atual, validade e pagamentos do Cronos',find:()=>$('cronosBillingSettingsCard'),icon:`<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M7 15h4"/><path d="M16.5 13.5v3"/><path d="M15 15h3"/></svg>`},
-    {key:'messages',title:'Preferências de mensagens',subtitle:'WhatsApp, cobrança e aniversariantes',find:()=>findSettingsCardByTextarea('waTemplate'),icon:`<svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M7.5 9h9M7.5 13h6"/></svg>`},
-    {key:'whatsapp',title:'WhatsApp',subtitle:'Sessão da clínica, automações e computador responsável',find:()=>$('cronosWaSettingsCard'),icon:`<svg viewBox="0 0 24 24"><path d="M20.5 11.8a8.5 8.5 0 0 1-12.6 7.5L3 21l1.6-4.7a8.5 8.5 0 1 1 15.9-4.5z"/><path d="M8.4 8.2c.3-.6.6-.6.9-.6h.5c.2 0 .4.1.5.4l.8 1.9c.1.3.1.5-.1.7l-.6.8c-.2.2-.1.4 0 .6.5.9 1.3 1.7 2.2 2.2.2.1.4.2.6 0l.9-1.1c.2-.2.4-.2.7-.1l2 .9c.3.1.4.3.4.5 0 .3-.2 1.5-1 2.1-.7.6-1.6.8-2.6.5-1.1-.3-2.5-.8-4.2-2.3-1.3-1.2-2.2-2.6-2.6-3.6-.4-1-.4-2 .1-2.9z"/></svg>`},
+    {key:'messages',title:'Preferências de mensagens',subtitle:'Textos, horários e automações de mensagens',find:()=>findSettingsCardByTextarea('waTemplate'),icon:`<svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M7.5 9h9M7.5 13h6"/></svg>`},
+    {key:'whatsapp',title:'WhatsApp',subtitle:'Sessão da clínica e computador responsável',find:()=>$('cronosWaSettingsCard'),icon:`<svg viewBox="0 0 24 24"><path d="M20.5 11.8a8.5 8.5 0 0 1-12.6 7.5L3 21l1.6-4.7a8.5 8.5 0 1 1 15.9-4.5z"/><path d="M8.4 8.2c.3-.6.6-.6.9-.6h.5c.2 0 .4.1.5.4l.8 1.9c.1.3.1.5-.1.7l-.6.8c-.2.2-.1.4 0 .6.5.9 1.3 1.7 2.2 2.2.2.1.4.2.6 0l.9-1.1c.2-.2.4-.2.7-.1l2 .9c.3.1.4.3.4.5 0 .3-.2 1.5-1 2.1-.7.6-1.6.8-2.6.5-1.1-.3-2.5-.8-4.2-2.3-1.3-1.2-2.2-2.6-2.6-3.6-.4-1-.4-2 .1-2.9z"/></svg>`},
     {key:'flows',title:'Fluxos assistidos',subtitle:'Sequências manuais para o Hoje no Cronos',find:()=>$(CARD_ID),icon:`<svg viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="2"/><rect x="15" y="15" width="6" height="6" rx="2"/><path d="M9 6h4a4 4 0 0 1 4 4v5"/><path d="m14 12 3 3 3-3"/></svg>`},
     {key:'security',title:'Segurança do acesso',subtitle:'Senha e acesso do usuário',find:()=>topLevelSettingsCards().find(card=>inferCardTitle(card).toLowerCase().includes('segurança'))||null,icon:`<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><rect x="9" y="10" width="6" height="5" rx="1"/><path d="M10.5 10V8.5a1.5 1.5 0 0 1 3 0V10"/></svg>`},
     {key:'professionals',title:'Profissionais',subtitle:'Dentistas e profissionais clínicos',find:()=>$('settingsProfessionalsCard'),icon:`<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M16 11h6"/></svg>`},
@@ -724,7 +732,7 @@
       const lead=Array.from(panel.children).find(node=>node.classList?.contains('muted'));
       if(lead) lead.classList.add('settingsSectionLead');
     }
-    ['chargeTemplateSettingsBlock','birthdayTemplateSettingsBlock'].forEach(id=>{
+    ['chargeTemplateSettingsBlock','birthdayTemplateSettingsBlock','messageAutomationSettingsBlock'].forEach(id=>{
       const block=$(id); if(!block) return;
       block.classList.add('settingsSurface');
       const actionRow=Array.from(block.children).find(node=>node.querySelector?.('button'));
